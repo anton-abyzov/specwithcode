@@ -33,7 +33,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
 
 import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -63,15 +62,19 @@ export interface PersonalSharePeerState {
 
 /**
  * The seam for the reconciler (1448 T-14): where each other machine stands,
- * by environment id. Optional. Without it, `status` shows a link member as
- * joined and every other confirmed machine as waiting. Back it with state
- * the reconciler also writes, not with the reconciler itself, so this
- * service stays below it in the layer graph.
+ * by environment id, and the lock the share engine takes while it changes
+ * this seat's link. Back it with state the reconciler also writes, not with
+ * the reconciler itself, so this service stays below it in the layer graph.
  */
 export class PersonalSharePeers extends Context.Service<
   PersonalSharePeers,
   {
     readonly states: Effect.Effect<ReadonlyMap<EnvironmentId, PersonalSharePeerState>>;
+    /**
+     * Runs `effect` under the engine's own lock (`PersonalShareStates.changing`),
+     * so a switch change or an undo never runs while a join writes the link.
+     */
+    readonly changing: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
 >()("specweave-studio/project/PersonalShare/PersonalSharePeers") {}
 
@@ -126,8 +129,9 @@ const make = Effect.gen(function* () {
   const fleet = yield* FleetTargets.FleetTargets;
   const peers = yield* PersonalSharePeers;
   const restorePoints = yield* PersonalRestorePoint.PersonalRestorePoint;
-  // One change at a time, so two windows turning the switch never interleave.
-  const changes = yield* Semaphore.make(1);
+  // One change at a time, and the engine's lock: two windows turning the switch never
+  // interleave, and the switch never goes off while a join writes the link (1448 D-12).
+  const changes = peers.changing;
 
   const readSettings = settings.getSettings.pipe(
     Effect.mapError((cause) =>
@@ -272,7 +276,7 @@ const make = Effect.gen(function* () {
   });
 
   const setShared: PersonalShare["Service"]["setShared"] = (input) =>
-    changes.withPermits(1)(
+    changes(
       Effect.gen(function* () {
         const self = yield* environment.getEnvironmentId;
         const current = yield* readSettings;
@@ -321,7 +325,7 @@ const make = Effect.gen(function* () {
    * copy is restored; the state just before is saved as a "before-undo" point.
    */
   const undo: PersonalShare["Service"]["undo"] = (input) =>
-    changes.withPermits(1)(
+    changes(
       Effect.gen(function* () {
         const assistant = yield* readAssistant;
         const points =

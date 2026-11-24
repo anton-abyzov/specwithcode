@@ -170,6 +170,11 @@ export interface LinkedPeerSyncDeps {
   readonly personalPeerAllowed?: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
   /** Personal seats: what each side can call, so one side drives a one-way pair (1448 AC-18). */
   readonly personalReach?: (environmentId: EnvironmentId) => Effect.Effect<PairReach>;
+  /**
+   * Personal seats: whether the owner's switch is on here (1448 D-12). While it
+   * is off, this machine's personal seats pair with no one, even when still linked.
+   */
+  readonly personalSwitchOn?: Effect.Effect<boolean>;
   readonly memory: Pick<LinkedMemorySync["Service"], "memoryExport" | "memoryMerge">;
   readonly plans: Pick<ProjectPlanService["Service"], "exportLinked" | "mergeLinked">;
   readonly peers: Pick<
@@ -310,9 +315,14 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
 
     /** The copies of `project` this server pairs with, and the side it plays in each. */
     const rolesOf = (projects: ReadonlyArray<Project>) =>
-      deps.personalReach === undefined
-        ? Effect.succeed(undefined)
-        : personalPairRoles(selfEnvironmentId, projects, deps.personalReach);
+      Effect.gen(function* () {
+        // No roles at all: every personal pair is skipped while the switch is off here.
+        if (deps.personalSwitchOn !== undefined && !(yield* deps.personalSwitchOn))
+          return new Map() as PersonalPairRoles;
+        return deps.personalReach === undefined
+          ? undefined
+          : yield* personalPairRoles(selfEnvironmentId, projects, deps.personalReach);
+      });
 
     const pairsOf = (
       project: Project,
@@ -1345,6 +1355,7 @@ export const make = Effect.gen(function* () {
     addPredecessorMembers: link.addPredecessorMembers,
     ...personalPeerSyncDeps(projects, environment, yield* WorkGrants.WorkGrants),
     personalReach: share.reach,
+    personalSwitchOn: share.switchOn,
     memory,
     plans,
     peers,

@@ -494,4 +494,48 @@ describe("PersonalShareEngine: the owner acts while an exchange runs", () => {
       assert.strictEqual((yield* stateOf(laptop, desktop))?.state, "switch_off");
     }),
   );
+
+  it.effect("the starter's switch goes off while it saves its copies: it writes no link", () =>
+    Effect.gen(function* () {
+      const { laptop, desktop } = yield* pair;
+      // After `apply` read the switch: only the read just before the link write sees it.
+      laptop.setOnSnapshot(() => laptop.switchOff());
+      yield* laptop.engine.exchange(desktop.environmentId);
+      assert.strictEqual(desktop.identity()?.id, LINK);
+      assert.lengthOf(laptop.snapshots, 1);
+      assert.isUndefined(laptop.identity());
+      assert.strictEqual((yield* stateOf(laptop, desktop))?.state, "switch_off");
+    }),
+  );
+
+  it.effect("the joining seat's switch goes off while it saves its copies: nothing is merged", () =>
+    Effect.gen(function* () {
+      const { laptop, desktop } = yield* pair;
+      yield* laptop.write("MEMORY.md", "# Memory\n\n- Laptop note\n");
+      yield* desktop.write("MEMORY.md", "# Memory\n\n- Desktop note\n");
+      const before = yield* desktop.contents;
+      desktop.setOnSnapshot(() => desktop.switchOff());
+      yield* laptop.engine.exchange(desktop.environmentId);
+      assert.lengthOf(desktop.snapshots, 1);
+      assert.isUndefined(desktop.identity());
+      assert.isUndefined(laptop.identity());
+      assert.deepStrictEqual(yield* desktop.contents, before);
+      assert.strictEqual((yield* stateOf(desktop, laptop))?.state, "switch_off");
+    }),
+  );
+
+  it.effect("a link change waits while the owner's switch or undo holds the seat's lock", () =>
+    Effect.gen(function* () {
+      const { laptop } = yield* pair;
+      // `PersonalShare` takes this lock through `layerPeers`; the engine takes it in `apply`.
+      const outcome = yield* laptop.states.changing(
+        Effect.raceFirst(
+          laptop.states.changing(Effect.succeed("ran")),
+          Effect.yieldNow.pipe(Effect.as("waited")),
+        ),
+      );
+      assert.strictEqual(outcome, "waited");
+      assert.strictEqual(yield* laptop.states.changing(Effect.succeed("ran")), "ran");
+    }),
+  );
 });

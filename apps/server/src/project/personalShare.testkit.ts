@@ -286,9 +286,12 @@ export const makeShareSeat = (
       list: (id: ProjectId) =>
         Effect.sync(() => points.filter((point) => point.projectId === id).toReversed()),
     };
+    /** Runs while the database copy is saved, as the owner acting in the middle of a join. */
+    let onSnapshot: (() => void) | undefined;
     const snapshot = {
       snapshot: (operationId: string) =>
         Effect.sync(() => {
+          onSnapshot?.();
           snapshots.push(operationId);
           return `/tmp/backups/personal-link/${operationId}.sqlite`;
         }),
@@ -473,6 +476,9 @@ export const makeShareSeat = (
       },
       setOnReceive: (hook: ((request: PersonalShareRequest) => void) | undefined) => {
         onReceive = hook;
+      },
+      setOnSnapshot: (hook: (() => void) | undefined) => {
+        onSnapshot = hook;
       },
       failNextLinkWrites: (count: number) => {
         failLinkWrites = count;

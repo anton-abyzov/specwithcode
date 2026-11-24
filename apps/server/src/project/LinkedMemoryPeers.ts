@@ -23,8 +23,9 @@ import * as Option from "effect/Option";
 import { cloudUserIdOf, connectAccountReaderStored } from "../cloud/connectAccount.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
-import { linkedCopyFor } from "./LinkedPeerRoute.ts";
+import { linkedCopyFor, personalSwitchGuard } from "./LinkedPeerRoute.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -63,6 +64,10 @@ export const makeReceiver = Effect.gen(function* () {
 
   const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
+  // A linked Percy seat moves no memory while the owner's switch is off here (1448 D-12).
+  const switchGuard = personalSwitchGuard(
+    yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+  );
   // Read from the stored link: this service runs below CloudLink in the server's layers.
   const readAccount = yield* connectAccountReaderStored;
   const readLocalCloudUserId = () => readAccount.pipe(Effect.map(cloudUserIdOf));
@@ -88,6 +93,7 @@ export const makeReceiver = Effect.gen(function* () {
       Effect.tap(() =>
         Option.isSome(state) ? state.value.peerSeen(caller.sourceEnvironmentId) : Effect.void,
       ),
+      Effect.flatMap(switchGuard),
     );
 
   return LinkedMemoryPeerReceiver.of({

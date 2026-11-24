@@ -70,6 +70,8 @@ const harness = (input: {
   readonly fenced?: "unlinked" | "dropped" | null;
   readonly removalChanged?: boolean;
   readonly reach?: LinkedPeerSyncDeps["personalReach"];
+  /** The owner's switch on this machine; unset leaves the switch out, as before it existed. */
+  readonly switchOn?: boolean;
 }) =>
   Effect.gen(function* () {
     const state = yield* LinkedPeerSyncState.make;
@@ -150,6 +152,7 @@ const harness = (input: {
       },
       peers,
       ...(input.reach === undefined ? {} : { personalReach: input.reach }),
+      ...(input.switchOn === undefined ? {} : { personalSwitchOn: Effect.succeed(input.switchOn) }),
     };
     const sync = yield* makeLinkedPeerSync(deps);
     return { sync, log, personalFlags };
@@ -169,6 +172,20 @@ describe("LinkedPeerSync: linked personal assistant", () => {
         ]);
         assert.deepStrictEqual(personalFlags, [true]);
       }),
+  );
+
+  it.effect("a seat still linked while its switch is off here syncs nothing (1448 D-12)", () =>
+    Effect.gen(function* () {
+      for (const self of [a, b]) {
+        const off = yield* harness({ self, listed: [a, b], switchOn: false });
+        yield* off.sync.tick;
+        assert.deepStrictEqual(off.log, []);
+      }
+      // The same driver with its switch on merges memory.
+      const on = yield* harness({ self: a, listed: [a, b], switchOn: true });
+      yield* on.sync.tick;
+      assert.isTrue(on.log.some((line) => line.startsWith("memory-")));
+    }),
   );
 
   it.effect("the driver reads settings and removals and merges memory", () =>

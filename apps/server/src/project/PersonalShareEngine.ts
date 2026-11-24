@@ -31,7 +31,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Semaphore from "effect/Semaphore";
+import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { type ConnectAccount, connectAccountReaderStored } from "../cloud/connectAccount.ts";
@@ -75,6 +75,7 @@ import {
   adoptMembers,
   joinLink,
   linkedTo,
+  PersonalShareLinkError,
   type ShareLinkServices,
   shareContentOf,
   sharedMemoryOf,
@@ -121,6 +122,8 @@ export class PersonalShareEngine extends Context.Service<
     ) => Effect.Effect<{ readonly selfCanCall: boolean; readonly peerCanCall: boolean }>;
     /** The machines this one considers: confirmed here, link members, and vouched for. */
     readonly candidates: Effect.Effect<ReadonlyArray<EnvironmentId>>;
+    /** Whether the owner's switch is on here now; a failed read counts as off. */
+    readonly switchOn: Effect.Effect<boolean>;
   }
 >()("specweave-studio/project/PersonalShareEngine") {}
 
@@ -165,6 +168,8 @@ const REMOVED_DETAIL =
 const PAUSED_DETAIL =
   "Paused: this machine could not read its SpecWithCode Connect sign-in or settings. Nothing changed.";
 
+const isShareLinkError = Schema.is(PersonalShareLinkError);
+
 const seatViewOf = (environmentId: string, seat: ShareSeatState): ShareSeatView => ({
   environmentId,
   start: seat.start,
@@ -180,10 +185,15 @@ const peerViewOf = (state: Extract<PersonalSharePhase1, { accepted: true }>): Sh
 });
 
 export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const { selfEnvironmentId: self, states } = deps;
-    // One change of this seat's link at a time: the reconciler and an incoming call never interleave.
-    const applying = yield* Semaphore.make(1);
+    // One change of this seat's link at a time: the reconciler, an incoming call and the
+    // owner's switch or undo (`PersonalShare`, through the same states) never interleave.
+    const applying = states.changing;
+    const switchOn: Effect.Effect<boolean> = deps.settings.pipe(
+      Effect.map((current) => current.shared.enabled),
+      Effect.orElseSucceed(() => false),
+    );
     const peerSync = personalPeerSyncDeps(deps.projects, {
       getEnvironmentId: Effect.succeed(self),
     });
@@ -341,7 +351,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         readonly switchedOnAt: string | undefined;
       },
     ) =>
-      applying.withPermits(1)(
+      applying(
         Effect.gen(function* () {
           const view = yield* readSelf;
           if (view === null) {
@@ -400,6 +410,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
                   peer: peerContent,
                   nowIso: now,
                   ...(seat.switchedOnAt === undefined ? {} : { switchedOnAt: seat.switchedOnAt }),
+                  switchOn,
                 });
                 return yield* record(
                   peer,
@@ -415,10 +426,11 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
                   peer: peerContent,
                   nowIso: now,
                   ...(seat.switchedOnAt === undefined ? {} : { switchedOnAt: seat.switchedOnAt }),
+                  switchOn,
                 });
                 return yield* record(peer, "joined", undefined, true);
               case "admit":
-                yield* admitMember(deps, { project, peer: peerContent, nowIso: now });
+                yield* admitMember(deps, { project, peer: peerContent, nowIso: now, switchOn });
                 return yield* record(peer, "joined", undefined, true);
               case "wait":
                 return yield* record(
@@ -428,7 +440,13 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
                 );
             }
           }).pipe(Effect.result);
-          if (Result.isFailure(outcome)) yield* record(peer, "waiting", outcome.failure.message);
+          if (Result.isFailure(outcome)) {
+            const failure = outcome.failure;
+            // The switch went off while the link was being made: nothing was linked.
+            if (isShareLinkError(failure) && failure.stage === "switched_off")
+              return yield* recordOwnRefusal(peer, view, "switch_off");
+            yield* record(peer, "waiting", failure.message);
+          }
         }),
       );
 
@@ -640,7 +658,7 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
       return [...ids].map((id) => id as EnvironmentId);
     });
 
-    return PersonalShareEngine.of({ answer, exchange, reach, candidates });
+    return PersonalShareEngine.of({ answer, exchange, reach, candidates, switchOn });
   });
 
 /** The grant this machine issued to `peer`, as the share rule reads it; unreadable is none. */

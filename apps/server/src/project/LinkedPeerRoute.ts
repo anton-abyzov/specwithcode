@@ -52,6 +52,7 @@ import {
 } from "../handoff/linkedSyncWire.ts";
 import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import { coordinatorContentDigest, ProjectLink } from "./ProjectLink.ts";
@@ -231,6 +232,40 @@ export const linkedCopyFor = (
       return yield* refuse(403, "needs_grant", "This machine's work grant does not cover it.");
     return project;
   });
+
+/** What a peer is told while the owner's Percy switch is off on this machine (1448 D-12). */
+export const PERSONAL_SWITCH_OFF_MESSAGE =
+  "Percy is off on this machine, so its personal assistant does not sync.";
+
+/**
+ * Refuses a linked personal seat on this machine while the owner's switch is
+ * off here (1448 D-12): a seat still linked then, for example after a failed
+ * leave, gives a peer that drives the pair nothing and takes nothing from it.
+ * A failed settings read counts as off. Without the settings service (a test
+ * of the route alone) nothing is refused here.
+ */
+export const personalSwitchGuard = (
+  settings: Option.Option<ServerSettings.ServerSettingsService["Service"]>,
+) => {
+  const off = Option.match(settings, {
+    onNone: () => Effect.succeed(false),
+    onSome: (service) =>
+      service.getSettings.pipe(
+        Effect.map((current) => !current.personalAssistantShared.enabled),
+        Effect.orElseSucceed(() => true),
+      ),
+  });
+  return (project: Project): Effect.Effect<Project, HandoffRefusal> =>
+    !isPersonalAssistantProject(project)
+      ? Effect.succeed(project)
+      : off.pipe(
+          Effect.flatMap((isOff) =>
+            isOff
+              ? Effect.fail(refuse(409, "invalid", PERSONAL_SWITCH_OFF_MESSAGE))
+              : Effect.succeed(project),
+          ),
+        );
+};
 
 /** What a removed personal seat is told by a seat that still lists it (1448 AC-07). */
 export const PERSONAL_SEAT_REMOVED_MESSAGE =
@@ -419,6 +454,9 @@ export const make = Effect.gen(function* () {
   const guard = yield* Effect.serviceOption(CoordinatorReleaseGuard);
   const state = yield* Effect.serviceOption(LinkedPeerSyncState);
   const peers = yield* Effect.serviceOption(HandoffPeers);
+  const switchGuard = personalSwitchGuard(
+    yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
+  );
   // Read from the stored link: this service runs below CloudLink in the server's layers.
   const readAccount = yield* connectAccountReaderStored;
   const readLocalCloudUserId = () => readAccount.pipe(Effect.map(cloudUserIdOf));
@@ -455,7 +493,7 @@ export const make = Effect.gen(function* () {
         request.forProjectId,
       );
       if (Option.isSome(state)) yield* state.value.peerSeen(caller.sourceEnvironmentId);
-      return project;
+      return yield* switchGuard(project);
     });
 
   const codeCopyFor = (

@@ -4,7 +4,9 @@
  * member lists (so this seat can accept them as vouched for), and the grants
  * this machine holds that a peer refused (so the pair's driver flips to the
  * side whose grant works). Written by the share engine and the reconciler,
- * read by `PersonalShare.status` through `PersonalSharePeers`.
+ * read by `PersonalShare.status` through `PersonalSharePeers`. It also holds
+ * the one lock every change of this seat's link takes: the engine's join,
+ * start and admit, and the owner's switch and undo (`changing`).
  *
  * @module PersonalShareState
  */
@@ -14,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import { PersonalSharePeers, type PersonalSharePeerState } from "./PersonalShare.ts";
 
@@ -51,6 +54,12 @@ export class PersonalShareStates extends Context.Service<
     readonly markInbound: (environmentId: EnvironmentId) => Effect.Effect<void>;
     /** When the peer last called this machine on the share path, in epoch milliseconds. */
     readonly inboundAt: (environmentId: EnvironmentId) => Effect.Effect<number | null>;
+    /**
+     * Runs `effect` as the only change of this seat's link in progress: the
+     * engine applying a decision and the owner's switch or undo never
+     * interleave, so the switch cannot go off in the middle of a join.
+     */
+    readonly changing: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
 >()("specweave-studio/project/PersonalShareState/PersonalShareStates") {}
 
@@ -62,6 +71,7 @@ export const make = Effect.gen(function* () {
     inbound: new Map(),
   });
   const update = (change: (current: Store) => Store) => Ref.update(store, change);
+  const lock = yield* Semaphore.make(1);
   return PersonalShareStates.of({
     record: (environmentId, state) =>
       Clock.currentTimeMillis.pipe(
@@ -130,17 +140,18 @@ export const make = Effect.gen(function* () {
       ),
     inboundAt: (environmentId) =>
       Ref.get(store).pipe(Effect.map((current) => current.inbound.get(environmentId) ?? null)),
+    changing: (effect) => lock.withPermits(1)(effect),
   });
 });
 
 /** One instance per server: the engine, the reconciler and `status` share it. */
 export const layer = Layer.effect(PersonalShareStates, make);
 
-/** `PersonalShare.status` reads the peer states through its optional seam. */
+/** `PersonalShare` reads the peer states, and takes the engine's lock, through its seam. */
 export const layerPeers = Layer.effect(
   PersonalSharePeers,
   Effect.gen(function* () {
     const states = yield* PersonalShareStates;
-    return PersonalSharePeers.of({ states: states.states });
+    return PersonalSharePeers.of({ states: states.states, changing: states.changing });
   }),
 );

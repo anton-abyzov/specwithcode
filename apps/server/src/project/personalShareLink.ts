@@ -45,7 +45,15 @@ import type * as ProjectService from "./ProjectService.ts";
 export class PersonalShareLinkError extends Schema.TaggedError<PersonalShareLinkError>()(
   "PersonalShareLinkError",
   {
-    stage: Schema.Literals(["read", "snapshot", "restore_point", "merge", "settings", "write"]),
+    stage: Schema.Literals([
+      "read",
+      "snapshot",
+      "restore_point",
+      "merge",
+      "settings",
+      "write",
+      "switched_off",
+    ]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -63,6 +71,8 @@ export class PersonalShareLinkError extends Schema.TaggedError<PersonalShareLink
         return "Could not take the link's settings; it tries again.";
       case "write":
         return "Could not write the link on this machine; it tries again.";
+      case "switched_off":
+        return "Percy was turned off on this machine while it linked; nothing was linked.";
     }
   }
 }
@@ -78,6 +88,19 @@ export interface ShareLinkServices extends AutoMergeServices {
 
 const failed = (stage: PersonalShareLinkError["stage"]) => (cause: unknown) =>
   new PersonalShareLinkError({ stage, cause });
+
+/**
+ * Stops the link change when the owner's switch is off now (1448 D-12). Read
+ * again before each write that links, after the slow copies: the switch read
+ * when the change began may have gone off since, and a link written then
+ * would keep syncing a seat whose owner turned it off.
+ */
+const requireSwitchOn = (switchOn: Effect.Effect<boolean>) =>
+  switchOn.pipe(
+    Effect.flatMap((on) =>
+      on ? Effect.void : Effect.fail(new PersonalShareLinkError({ stage: "switched_off" })),
+    ),
+  );
 
 /** This seat as a link member: its own entry when it is listed, else a fresh one. */
 export const selfMemberFor = (
@@ -343,10 +366,14 @@ export const joinLink = (
     readonly nowIso: string;
     /** When the owner last turned this seat's switch on: a series begins there. */
     readonly switchedOnAt?: string;
+    /** Whether the owner's switch is on now; a failed read counts as off. */
+    readonly switchOn: Effect.Effect<boolean>;
   },
 ) =>
   Effect.gen(function* () {
     const copies = yield* ensureSeriesCopies(services, input.project, input.switchedOnAt);
+    // Nothing is merged for a seat whose switch went off while its copies were saved.
+    yield* requireSwitchOn(input.switchOn);
     yield* autoMergeJoiningSeat(services, {
       projectId: input.project.id,
       link: { files: input.peer.memory.files, index: input.peer.memory.index },
@@ -363,6 +390,7 @@ export const joinLink = (
     const project = yield* reload(services, input.project);
     const self = selfMemberFor(project, input.selfEnvironmentId);
     const members = membersWith(input.peer.link?.members ?? [input.peer.self], self);
+    yield* requireSwitchOn(input.switchOn);
     yield* writeJoin(
       services,
       project,
@@ -388,6 +416,8 @@ export const startLink = (
     readonly nowIso: string;
     /** When the owner last turned this seat's switch on: a series begins there. */
     readonly switchedOnAt?: string;
+    /** Whether the owner's switch is on now; a failed read counts as off. */
+    readonly switchOn: Effect.Effect<boolean>;
   },
 ) =>
   Effect.gen(function* () {
@@ -398,6 +428,7 @@ export const startLink = (
     yield* forgetPeerFilesTombstones(services, input.project, input.peer);
     const project = yield* reload(services, input.project);
     const self = selfMemberFor(project, input.selfEnvironmentId);
+    yield* requireSwitchOn(input.switchOn);
     yield* writeJoin(
       services,
       project,
@@ -424,6 +455,8 @@ export const admitMember = (
     readonly project: Project;
     readonly peer: PersonalShareContent;
     readonly nowIso: string;
+    /** Whether the owner's switch is on now; a failed read counts as off. */
+    readonly switchOn: Effect.Effect<boolean>;
   },
 ) =>
   Effect.gen(function* () {
@@ -435,6 +468,7 @@ export const admitMember = (
     if (identity.members.some((member) => member.environmentId === peer.environmentId)) return;
     yield* forgetPeerFilesTombstones(services, project, input.peer);
     const binding = settings.coordinatorBinding ?? { epoch: 0, state: "active" as const };
+    yield* requireSwitchOn(input.switchOn);
     yield* services.projects
       .update({
         projectId: project.id,

@@ -18,7 +18,9 @@ import {
 import { renamedMemoryName } from "@specweave-studio/shared/personalAssistantMigration";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,6 +43,7 @@ import * as PersonalLinkService from "./PersonalLinkService.ts";
 import * as PersonalRestorePoint from "./personalRestorePoint.ts";
 import * as PersonalShare from "./PersonalShare.ts";
 import { joinLink, PersonalShareLinkError } from "./personalShareLink.ts";
+import * as PersonalShareState from "./PersonalShareState.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -92,9 +95,30 @@ const stores = Layer.mergeAll(
   Layer.provideMerge(NodeServices.layer),
 );
 
+/** Runs while the database copy is saved: the owner acting in the middle of a join. */
+let onSnapshot: Effect.Effect<void, never, any> = Effect.void;
+/** Runs when `PersonalShare` asks for the engine's lock, before it waits for it. */
+let onChanging: Effect.Effect<void> = Effect.void;
+
 const snapshot = Layer.succeed(PersonalLinkSnapshot, {
-  snapshot: (operationId: string) => Effect.succeed(`/scratch/backups/${operationId}.sqlite`),
+  snapshot: (operationId: string) =>
+    Effect.suspend(() => onSnapshot).pipe(
+      Effect.as(`/scratch/backups/${operationId}.sqlite`),
+    ) as Effect.Effect<string>,
 });
+
+/** The engine's states and lock, with `PersonalShare` reaching them as the server wires it. */
+const peers = Layer.effect(
+  PersonalShare.PersonalSharePeers,
+  Effect.gen(function* () {
+    const states = yield* PersonalShareState.PersonalShareStates;
+    return PersonalShare.PersonalSharePeers.of({
+      states: states.states,
+      changing: (effect) =>
+        Effect.suspend(() => onChanging).pipe(Effect.andThen(states.changing(effect))),
+    });
+  }),
+).pipe(Layer.provideMerge(PersonalShareState.layer));
 
 const share = PersonalShare.layer.pipe(
   Layer.provideMerge(
@@ -116,11 +140,20 @@ const share = PersonalShare.layer.pipe(
       Layer.succeed(ManagedProjectFolders.ManagedProjectFolders, {
         createNamedProject: () => Effect.die("this machine already has its assistant"),
       } as never),
-      Layer.succeed(PersonalShare.PersonalSharePeers, { states: Effect.succeed(new Map()) }),
+      peers,
     ).pipe(Layer.provideMerge(snapshot)),
   ),
   Layer.provideMerge(stores),
 );
+
+/** The owner's switch as the engine reads it before each link write. */
+const switchReader = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  return settings.getSettings.pipe(
+    Effect.map((current) => current.personalAssistantShared.enabled),
+    Effect.orElseSucceed(() => false),
+  );
+});
 
 const memoryOf = Effect.gen(function* () {
   const workspace = yield* Workspace.ProjectWorkspaceService;
@@ -200,6 +233,7 @@ it.effect(
         restorePoints: yield* PersonalRestorePoint.PersonalRestorePoint,
         snapshot: yield* PersonalLinkSnapshot,
       };
+      const switchOn = yield* switchReader;
       let failLinkWrite = true;
       const flaky = {
         getById: projects.getById,
@@ -220,6 +254,7 @@ it.effect(
             title: "Percy",
             peer: starter,
             nowIso: "2026-11-24T10:00:00.000Z",
+            switchOn,
           },
         );
       });
@@ -285,6 +320,7 @@ const seedLaptop = Effect.gen(function* () {
     restorePoints: yield* PersonalRestorePoint.PersonalRestorePoint,
     snapshot: yield* PersonalLinkSnapshot,
   };
+  const switchOn = yield* switchReader;
   const join = (
     switchedOnAt: string | undefined,
     projectsFor: Pick<typeof projects, "getById" | "update"> = projects,
@@ -302,6 +338,7 @@ const seedLaptop = Effect.gen(function* () {
           peer: starter,
           nowIso: "2026-11-24T10:00:00.000Z",
           ...(switchedOnAt === undefined ? {} : { switchedOnAt }),
+          switchOn,
         },
       );
     });
@@ -380,6 +417,75 @@ it.effect(
       yield* join(yield* switchedOnAt);
       yield* share.undo({});
       assert.deepStrictEqual(yield* memoryOf, between);
+    }).pipe(Effect.provide(share), Effect.scoped),
+  60_000,
+);
+
+it.effect(
+  "the switch going off while a join saves its copies leaves the seat unlinked and unmerged",
+  () =>
+    Effect.gen(function* () {
+      const { projects, join } = yield* seedLaptop;
+      yield* turnSwitch(true);
+      const original = yield* memoryOf;
+      // The owner turns Percy off after the join read the switch, while the database copy is saved.
+      onSnapshot = turnSwitch(false).pipe(Effect.orDie);
+      const failed = yield* join(yield* switchedOnAt).pipe(
+        Effect.ensuring(Effect.sync(() => (onSnapshot = Effect.void))),
+        Effect.flip,
+      );
+      assert.instanceOf(failed, PersonalShareLinkError);
+      assert.strictEqual(failed.stage, "switched_off");
+      const after = Option.getOrThrow(yield* projects.getById(PERCY));
+      assert.notStrictEqual(after.workspaceSettings?.logicalProject?.id, LINK);
+      assert.isAtMost(after.workspaceSettings?.logicalProject?.members.length ?? 0, 1);
+      assert.deepStrictEqual(yield* memoryOf, original);
+    }).pipe(Effect.provide(share), Effect.scoped),
+  60_000,
+);
+
+it.effect(
+  "an undo asked for while a join holds the engine's lock runs after it, and its result stands",
+  () =>
+    Effect.gen(function* () {
+      const { projects, join } = yield* seedLaptop;
+      const states = yield* PersonalShareState.PersonalShareStates;
+      const percy = yield* PersonalShare.PersonalShare;
+      yield* turnSwitch(true);
+      const original = yield* memoryOf;
+
+      const asked = yield* Deferred.make<void>();
+      onChanging = Deferred.succeed(asked, undefined).pipe(Effect.asVoid);
+      let undo: Fiber.Fiber<unknown, unknown> | undefined;
+      // The owner runs undo just before the join writes its link.
+      const hooked = {
+        getById: projects.getById,
+        update: (input: Parameters<typeof projects.update>[0]) =>
+          input.ownership?.mode !== "join-as-member"
+            ? projects.update(input)
+            : Effect.gen(function* () {
+                const started = yield* Effect.forkDetach(percy.undo({}));
+                undo = started;
+                // Waits until the undo asks for the lock, or, without the shared lock, until it ran.
+                yield* Effect.raceFirst(
+                  Deferred.await(asked),
+                  Fiber.await(started).pipe(Effect.asVoid),
+                );
+                return yield* projects.update(input);
+              }),
+      };
+      // The join runs under the engine's lock, as `PersonalShareEngine.apply` runs it.
+      yield* states.changing(join(yield* switchedOnAt, hooked));
+      onChanging = Effect.void;
+      assert.isDefined(undo);
+      yield* Fiber.join(undo!);
+
+      const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+      assert.strictEqual(settings.personalAssistantShared.enabled, false);
+      const after = Option.getOrThrow(yield* projects.getById(PERCY));
+      assert.notStrictEqual(after.workspaceSettings?.logicalProject?.id, LINK);
+      assert.isAtMost(after.workspaceSettings?.logicalProject?.members.length ?? 0, 1);
+      assert.deepStrictEqual(yield* memoryOf, original);
     }).pipe(Effect.provide(share), Effect.scoped),
   60_000,
 );

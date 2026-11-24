@@ -243,6 +243,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           states: Effect.succeed(
             options.peerStates ?? new Map<EnvironmentId, PersonalShare.PersonalSharePeerState>(),
           ),
+          changing: (effect) => effect,
         }),
         Layer.succeed(PersonalRestorePoint.PersonalRestorePoint, {
           capture: () => Effect.die("no capture in these tests"),
