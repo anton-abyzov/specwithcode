@@ -1156,7 +1156,7 @@ export const make = Effect.gen(function* () {
   /** Forgets a user-saved environment. Callers hold its lease lock. */
   const removeLocked = Effect.fn("EnvironmentRegistry.removeLocked")(function* (
     environmentId: EnvironmentId,
-    options?: { readonly keepRemote?: boolean },
+    options?: { readonly keepRemote?: boolean; readonly cacheCleared?: boolean },
   ) {
     if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
       return yield* new PlatformEnvironmentRemovalError({
@@ -1178,20 +1178,22 @@ export const make = Effect.gen(function* () {
       next.delete(environmentId);
       return next;
     });
-    yield* Effect.all(
-      [
-        cache.clear(environmentId).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not clear cached environment data after removal.", {
-              environmentId,
-              error,
-            }),
+    if (options?.cacheCleared !== true) {
+      yield* Effect.all(
+        [
+          cache.clear(environmentId).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not clear cached environment data after removal.", {
+                environmentId,
+                error,
+              }),
+            ),
           ),
-        ),
-        ownedDataCleanup.clear(environmentId),
-      ],
-      { concurrency: "unbounded", discard: true },
-    );
+          ownedDataCleanup.clear(environmentId),
+        ],
+        { concurrency: "unbounded", discard: true },
+      );
+    }
 
     if (options?.keepRemote === true) return;
     for (const route of connectionRoutes(entry)) {
@@ -1350,7 +1352,10 @@ export const make = Effect.gen(function* () {
         yield* closeServiceScope(environmentId);
         yield* cache.clear(environmentId);
         yield* ownedDataCleanup.clear(environmentId);
-        yield* removeLocked(environmentId);
+        // Still saved when the catalog write fails: its connection runs again.
+        yield* removeLocked(environmentId, { cacheCleared: true }).pipe(
+          Effect.tapError(() => createServiceScope(entry)),
+        );
       }),
     );
 
