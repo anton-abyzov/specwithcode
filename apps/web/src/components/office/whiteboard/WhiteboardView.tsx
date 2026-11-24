@@ -1,0 +1,351 @@
+import {
+  type WhiteboardFile,
+  mergeWhiteboardSave,
+  parseWhiteboard,
+  whiteboardRevision,
+} from "@specweave-studio/shared/officeWhiteboard";
+import { DownloadIcon } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useTx } from "../../../i18n";
+import { Button } from "../../ui/button";
+import {
+  WHITEBOARD_HOST_PROPERTY,
+  type WhiteboardFrameApi,
+  type WhiteboardFrameElement,
+  type WhiteboardFrameHost,
+  type WhiteboardTheme,
+  whiteboardFrameUrl,
+} from "./bridge";
+
+/** How long drawing must pause before the whiteboard saves. */
+export const WHITEBOARD_AUTOSAVE_MS = 800;
+
+export type WhiteboardSaveOutcome = boolean | "conflict";
+
+type Status = "saved" | "dirty" | "saving" | "error";
+
+function download(data: Blob | string, filename: string, type: string): void {
+  const blob = typeof data === "string" ? new Blob([data], { type }) : data;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+/**
+ * A whiteboard (`.excalidraw` file) in the embedded Excalidraw editor. Edits
+ * save on their own after a short pause, each write checked against the
+ * revision it builds on; a change on disk while editing shows the same
+ * Reload latest / Keep my edits banner as a sheet. A change on disk with no
+ * edits waiting simply shows up.
+ */
+export function WhiteboardView(props: {
+  readonly text: string;
+  readonly name: string;
+  readonly mode: WhiteboardTheme;
+  /** Writes the file; resolves false on failure or "conflict" when the revision moved. */
+  readonly onSave?:
+    | ((contents: string, expectedRevision: string) => Promise<WhiteboardSaveOutcome>)
+    | undefined;
+  /** Fetches the file again from disk (on conflict and Reload latest). */
+  readonly onReload?: (() => void | Promise<void>) | undefined;
+  /** Where whiteboard.html is served; the app's own copy by default. */
+  readonly frameUrl?: string | undefined;
+}): ReactNode {
+  const tx = useTx();
+  const incomingRevision = useMemo(() => whiteboardRevision(props.text), [props.text]);
+  const parsed = useMemo(() => parseWhiteboard(props.text), [props.text]);
+  const apiRef = useRef<WhiteboardFrameApi | null>(null);
+  const frameRef = useRef<WhiteboardFrameElement | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // What the editor shows and what the next write is checked against.
+  const state = useRef({
+    base: incomingRevision,
+    loaded: parsed.ok ? parsed.file : (null as WhiteboardFile | null),
+    own: new Set<string>([incomingRevision]),
+    dirty: false,
+    saving: false,
+    conflict: false,
+  });
+  const [status, setStatus] = useState<Status>("saved");
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [baseRevision, setBaseRevision] = useState(incomingRevision);
+  const propsRef = useRef(props);
+  useEffect(() => {
+    propsRef.current = props;
+  });
+
+  const flush = useCallback(async (options?: { readonly force?: string }): Promise<void> => {
+    const current = state.current;
+    const api = apiRef.current;
+    const onSave = propsRef.current.onSave;
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+    if (api === null || onSave === undefined || current.saving) return;
+    if (current.conflict && options?.force === undefined) return;
+    if (!current.dirty && options?.force === undefined) return;
+    let contents: string;
+    try {
+      contents = mergeWhiteboardSave(api.serialize(), current.loaded);
+    } catch (cause) {
+      setStatus("error");
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return;
+    }
+    const revision = whiteboardRevision(contents);
+    const expected = options?.force ?? current.base;
+    current.dirty = false;
+    if (revision === current.base && options?.force === undefined) {
+      setStatus("saved");
+      return;
+    }
+    current.saving = true;
+    current.own.add(revision);
+    setStatus("saving");
+    let outcome: WhiteboardSaveOutcome;
+    try {
+      outcome = await onSave(contents, expected);
+    } catch {
+      outcome = false;
+    }
+    current.saving = false;
+    if (outcome === "conflict") {
+      current.conflict = true;
+      current.dirty = true;
+      setConflict(true);
+      setStatus("dirty");
+      void propsRef.current.onReload?.();
+      return;
+    }
+    if (!outcome) {
+      current.dirty = true;
+      setStatus("error");
+      setError(tx("The whiteboard could not be saved."));
+      return;
+    }
+    current.base = revision;
+    setBaseRevision(revision);
+    const saved = parseWhiteboard(contents);
+    if (saved.ok) current.loaded = saved.file;
+    current.conflict = false;
+    setConflict(false);
+    setError(null);
+    // An edit made while this one was on its way saves next.
+    if (current.dirty) {
+      setStatus("dirty");
+      timer.current = setTimeout(() => void flushRef.current(), WHITEBOARD_AUTOSAVE_MS);
+    } else {
+      setStatus("saved");
+    }
+  }, [tx]);
+
+  const flushRef = useRef(flush);
+  useEffect(() => {
+    flushRef.current = flush;
+  }, [flush]);
+  // One frame per mounted view: later text arrives through load().
+  const [host] = useState<WhiteboardFrameHost>(() => ({
+    text: props.text,
+    theme: props.mode,
+    viewOnly: props.onSave === undefined,
+    onReady: (api) => {
+      apiRef.current = api;
+      setReady(true);
+      api.focus();
+    },
+    onEdit: () => {
+      if (propsRef.current.onSave === undefined) return;
+      state.current.dirty = true;
+      setStatus("dirty");
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = setTimeout(() => void flushRef.current(), WHITEBOARD_AUTOSAVE_MS);
+    },
+    onError: (message) => setError(message),
+  }));
+
+  const attachFrame = useCallback(
+    (element: WhiteboardFrameElement | null) => {
+      frameRef.current = element;
+      if (element !== null) element[WHITEBOARD_HOST_PROPERTY] = host;
+    },
+    [host],
+  );
+
+  // The file on disk moved: follow it when nothing is waiting, otherwise ask.
+  useEffect(() => {
+    const current = state.current;
+    if (current.own.has(incomingRevision) || incomingRevision === current.base) return;
+    if (!parsed.ok) return;
+    if (current.dirty || current.saving || current.conflict) {
+      current.conflict = true;
+      setConflict(true);
+      return;
+    }
+    const api = apiRef.current;
+    if (api === null) return;
+    api.load(props.text);
+    current.base = incomingRevision;
+    setBaseRevision(incomingRevision);
+    current.loaded = parsed.file;
+    current.own = new Set([incomingRevision]);
+  }, [incomingRevision, parsed, props.text]);
+
+  useEffect(() => {
+    apiRef.current?.setTheme(props.mode);
+  }, [props.mode, ready]);
+
+  useEffect(() => {
+    apiRef.current?.setViewOnly(props.onSave === undefined);
+  }, [props.onSave, ready]);
+
+  // Leaving the editor saves what is waiting.
+  useEffect(
+    () => () => {
+      if (state.current.dirty && !state.current.conflict) void flush();
+    },
+    [flush],
+  );
+
+  const reloadLatest = () => {
+    const current = state.current;
+    current.conflict = false;
+    current.dirty = false;
+    setConflict(false);
+    setError(null);
+    setStatus("saved");
+    if (parsed.ok && apiRef.current !== null) {
+      apiRef.current.load(props.text);
+      current.base = incomingRevision;
+      setBaseRevision(incomingRevision);
+      current.loaded = parsed.file;
+      current.own = new Set([incomingRevision]);
+    }
+    void props.onReload?.();
+  };
+
+  const keepMine = () => {
+    // Overwrite exactly the revision now on disk, never an unchecked write.
+    void flush({ force: incomingRevision });
+  };
+
+  const exportAs = async (kind: "png" | "svg" | "excalidraw") => {
+    const api = apiRef.current;
+    if (api === null) return;
+    setError(null);
+    try {
+      if (kind === "png") download(await api.exportPng(), `${props.name}.png`, "image/png");
+      else if (kind === "svg")
+        download(await api.exportSvg(), `${props.name}.svg`, "image/svg+xml");
+      else
+        download(
+          mergeWhiteboardSave(api.serialize(), state.current.loaded),
+          `${props.name}.excalidraw`,
+          "application/vnd.excalidraw+json",
+        );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : tx("Export failed."));
+    }
+  };
+
+  if (!parsed.ok && !ready) {
+    return (
+      <p className="m-auto p-6 text-center text-muted-foreground text-sm" role="alert">
+        {parsed.error}
+      </p>
+    );
+  }
+
+  const statusText =
+    props.onSave === undefined
+      ? tx("View only")
+      : status === "saving"
+        ? tx("Saving…")
+        : status === "dirty"
+          ? tx("Unsaved changes")
+          : status === "error"
+            ? tx("Not saved")
+            : tx("Saved");
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-office="whiteboard">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5 text-xs">
+        <span
+          className="min-w-0 flex-1 truncate text-muted-foreground"
+          role="status"
+          data-whiteboard-status={props.onSave === undefined ? "view-only" : status}
+        >
+          {statusText}
+        </span>
+        {(["png", "svg", "excalidraw"] as const).map((kind) => (
+          <Button
+            key={kind}
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!ready}
+            onClick={() => void exportAs(kind)}
+            data-whiteboard-export={kind}
+          >
+            <DownloadIcon aria-hidden />
+            {kind === "png" ? "PNG" : kind === "svg" ? "SVG" : ".excalidraw"}
+          </Button>
+        ))}
+      </div>
+      {conflict ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-warning/10 px-3 py-1.5 text-xs"
+          role="alert"
+          data-whiteboard-conflict
+        >
+          <span>{tx("This whiteboard changed on disk while you were editing.")}</span>
+          <div className="inline-flex gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={reloadLatest}
+              data-whiteboard-conflict-reload
+            >
+              {tx("Reload latest")}
+            </Button>
+            {props.onSave ? (
+              <Button
+                type="button"
+                size="sm"
+                disabled={status === "saving" || incomingRevision === baseRevision}
+                onClick={keepMine}
+                data-whiteboard-conflict-keep
+              >
+                {incomingRevision === baseRevision
+                  ? tx("Refreshing latest...")
+                  : tx("Keep my edits")}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      {error !== null ? (
+        <p className="shrink-0 border-b px-3 py-1.5 text-destructive text-xs" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <iframe
+        ref={attachFrame}
+        src={props.frameUrl ?? whiteboardFrameUrl()}
+        title={tx("Whiteboard editor")}
+        className="min-h-0 w-full flex-1 border-0"
+        allow="clipboard-read; clipboard-write"
+        data-whiteboard-frame
+      />
+    </div>
+  );
+}

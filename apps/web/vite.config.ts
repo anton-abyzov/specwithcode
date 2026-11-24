@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeZlib from "node:zlib";
 
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
@@ -17,6 +18,7 @@ import {
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
+import { excalidrawAssetsPlugin } from "./vite/excalidrawAssets";
 import { studioModulePreloadDependencies } from "./scripts/studio-module-preload";
 
 const repoEnv = loadRepoEnv();
@@ -189,6 +191,7 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindPlugins(bundledDev),
+      excalidrawAssetsPlugin(NodeURL.fileURLToPath(new URL(".", import.meta.url))),
     ],
     optimizeDeps: {
       include: [
@@ -292,6 +295,13 @@ export default defineConfig(() => {
       modulePreload: { resolveDependencies: studioModulePreloadDependencies },
       outDir: "dist",
       emptyOutDir: true,
+      // The whiteboard editor is its own page, loaded in a frame only when a whiteboard opens.
+      rollupOptions: {
+        input: {
+          main: NodeURL.fileURLToPath(new URL("./index.html", import.meta.url)),
+          whiteboard: NodeURL.fileURLToPath(new URL("./whiteboard.html", import.meta.url)),
+        },
+      },
       manifest: true,
       sourcemap: buildSourcemap,
     },
