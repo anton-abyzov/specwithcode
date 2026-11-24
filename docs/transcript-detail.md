@@ -21,16 +21,16 @@ On desktop and web ⌥⌘O (Ctrl+Alt+O) moves every conversation on screen to it
 
 ## Rows
 
-| Row                                           | Results only                                       | Folded steps (default)                                  | Everything                                         |
-| --------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| Your messages                                 | shown                                              | shown                                                   | shown                                              |
-| The turn's reply (its last agent text)        | shown                                              | shown                                                   | shown                                              |
-| Notes (agent text before the reply)           | settled: folded; running: only the latest          | settled: folded; running: shown                         | shown                                              |
-| Thinking                                      | never, even opened                                 | folded with the steps around it                         | shown                                              |
-| Commands, tool calls, edits, searches, agents | folded                                             | folded; on iOS an agent still at work stays visible     | shown                                              |
-| A failed step                                 | a "N failed" count on its fold                     | a count on its fold; running: on its own while latest   | shown                                              |
-| The turn's own error                          | shown                                              | shown                                                   | shown                                              |
-| Approvals, questions, access requests         | shown (web and desktop: a card above the composer) | shown (web and desktop: a card above the composer)      | shown (web and desktop: a card above the composer) |
+| Row                                           | Results only                                       | Folded steps (default)                                | Everything                                         |
+| --------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| Your messages                                 | shown                                              | shown                                                 | shown                                              |
+| The turn's reply (its last agent text)        | shown                                              | shown                                                 | shown                                              |
+| Notes (agent text before the reply)           | settled: folded; running: only the latest          | settled: folded; running: shown                       | shown                                              |
+| Thinking                                      | never, even opened                                 | folded with the steps around it                       | shown                                              |
+| Commands, tool calls, edits, searches, agents | folded                                             | folded; on iOS an agent still at work stays visible   | shown                                              |
+| A failed step                                 | a "N failed" count on its fold                     | a count on its fold; running: on its own while latest | shown                                              |
+| The turn's own error                          | shown                                              | shown                                                 | shown                                              |
+| Approvals, questions, access requests         | shown (web and desktop: a card above the composer) | shown (web and desktop: a card above the composer)    | shown (web and desktop: a card above the composer) |
 
 ## Folds
 

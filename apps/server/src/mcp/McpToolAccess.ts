@@ -400,6 +400,44 @@ const guardAdvisorCallers = <Tools extends Record<string, Tool.Any>>(
     ]),
   ) as unknown as Toolkit.HandlersFrom<Tools>;
 
+export const DO_NOT_RETRY = "Do not retry this call.";
+
+/** Refusals that the same call cannot get past: only the user, or a different call, changes them. */
+const FINAL_REFUSAL_CODES: ReadonlySet<OrchestratorMcpFailure["code"]> = new Set([
+  "capability_denied",
+  "outside_grant_scope",
+  "account_not_allowed",
+  "machine_not_authorized",
+]);
+
+/**
+ * Ends a final refusal with "Do not retry this call.": agents otherwise repeat a refused call
+ * several times before reading why. A failure passed on from another machine already has it.
+ */
+export const markFinalRefusal = <E>(error: E): E =>
+  error instanceof OrchestratorMcpFailure &&
+  FINAL_REFUSAL_CODES.has(error.code) &&
+  !error.message.includes(DO_NOT_RETRY)
+    ? (new OrchestratorMcpFailure({
+        code: error.code,
+        message: `${error.message.trimEnd()} ${DO_NOT_RETRY}`,
+      }) as E)
+    : error;
+
+const markFinalRefusals = <Tools extends Record<string, Tool.Any>>(
+  handlers: Toolkit.HandlersFrom<Tools>,
+): Toolkit.HandlersFrom<Tools> =>
+  Object.fromEntries(
+    Object.entries(handlers as unknown as Record<string, AnyToolHandler>).map(([name, handler]) => [
+      name,
+      (...args: ReadonlyArray<unknown>) =>
+        Effect.mapError(
+          Effect.suspend(() => handler(...args)),
+          markFinalRefusal,
+        ),
+    ]),
+  ) as unknown as Toolkit.HandlersFrom<Tools>;
+
 /** `Toolkit.toLayer` for handlers that all declare their access. */
 export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX = never>(
   toolkit: Toolkit.Toolkit<Tools>,
@@ -416,7 +454,7 @@ export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX =
         const handlers = Effect.isEffect(build)
           ? checkedHandlers<Toolkit.HandlersFrom<Tools>>(yield* build)
           : checked!;
-        return guardAdvisorCallers(toolkit, handlers, threads);
+        return markFinalRefusals(guardAdvisorCallers(toolkit, handlers, threads));
       }),
     ),
   );
@@ -482,7 +520,7 @@ export const toWorkerLayer = <Tools extends Record<string, Tool.Any>, EX = never
             ],
           ),
         );
-        return guarded as unknown as Toolkit.HandlersFrom<Tools>;
+        return markFinalRefusals(guarded as unknown as Toolkit.HandlersFrom<Tools>);
       }),
     ),
   );
