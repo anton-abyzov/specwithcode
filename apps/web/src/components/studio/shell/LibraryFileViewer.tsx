@@ -108,7 +108,17 @@ export function LibraryFileViewer(props: {
       className="viewer-overlay-frame"
       data-library-viewer="true"
       onKeyDown={(event) => {
-        if (event.target instanceof HTMLInputElement) return;
+        // Arrows move the caret where text is typed (a field, an editor, the Word page).
+        const target = event.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          (target instanceof HTMLElement &&
+            (target.isContentEditable || target.closest("[data-keybinding-capture]") !== null))
+        ) {
+          return;
+        }
         if (event.key === "ArrowLeft" && count > 1) step(-1);
         if (event.key === "ArrowRight" && count > 1) step(1);
       }}

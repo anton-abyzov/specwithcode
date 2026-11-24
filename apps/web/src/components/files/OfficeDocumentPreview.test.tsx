@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
     failure: unknown;
   },
   asked: [] as unknown[],
+  canWrite: true,
 }));
 
 vi.mock("~/i18n", () => ({
@@ -47,6 +48,14 @@ vi.mock("../office/SheetView", () => ({
     <div data-sheet-view={props.mode ?? ""}>{props.text}</div>
   ),
 }));
+vi.mock("~/state/session", () => ({
+  useEnvironmentScope: () => state.canWrite,
+}));
+vi.mock("../office/document/HostDocumentEditor", () => ({
+  HostDocumentEditor: (props: { path: string; canWrite: boolean }) => (
+    <div data-document-editor={props.canWrite ? "edit" : "read"}>{props.path}</div>
+  ),
+}));
 vi.mock("./DeckPreview", () => ({
   FilePreviewCard: (props: { reason: string; name: string }) => (
     <div data-file-card={props.name}>{props.reason}</div>
@@ -69,6 +78,7 @@ beforeEach(() => {
   state.capabilities = { officeDocumentPreview: true };
   state.query = { data: null, error: null, failure: null };
   state.asked.length = 0;
+  state.canWrite = true;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -229,5 +239,32 @@ describe("HostDocumentPreview & DocxDocumentView", () => {
     };
     await act(() => root.render(<DocxDocumentView name="empty.docx" preview={empty} />));
     expect(container.textContent).toContain("no readable text blocks");
+  });
+});
+
+describe("HostDocumentPreview with the Word editor", () => {
+  it("opens the editor when the machine edits documents, read only without write access", async () => {
+    state.capabilities = { officeDocumentPreview: true, officeDocumentEditing: true };
+    await act(async () => {
+      root.render(<HostDocumentPreview environmentId={environmentId} path="/p/a.docx" name="a.docx" />);
+    });
+    expect(container.querySelector("[data-document-editor]")?.getAttribute("data-document-editor")).toBe("edit");
+    // The editor opens the file itself; the preview query is never asked.
+    expect(state.asked.every((atom) => atom === null)).toBe(true);
+
+    state.canWrite = false;
+    await act(async () => {
+      root.render(<HostDocumentPreview environmentId={environmentId} path="/p/b.docx" name="b.docx" />);
+    });
+    expect(container.querySelector("[data-document-editor]")?.getAttribute("data-document-editor")).toBe("read");
+  });
+
+  it("keeps the preview on a machine that cannot edit documents", async () => {
+    state.capabilities = { officeDocumentPreview: true };
+    await act(async () => {
+      root.render(<HostDocumentPreview environmentId={environmentId} path="/p/a.docx" name="a.docx" />);
+    });
+    expect(container.querySelector("[data-document-editor]")).toBeNull();
+    expect(state.asked.some((atom) => atom !== null)).toBe(true);
   });
 });

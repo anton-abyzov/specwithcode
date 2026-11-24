@@ -65,6 +65,7 @@ import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
 import { OfficeToolkit } from "../../mcp/toolkits/office/tools.ts";
 import { WhiteboardToolkit } from "../../mcp/toolkits/office/whiteboard.ts";
+import { DocumentToolkit } from "../../mcp/toolkits/office/document.ts";
 import { DecisionToolkit } from "../../mcp/toolkits/decision/tools.ts";
 import { MachinesToolkit } from "../../mcp/toolkits/machines/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
@@ -1169,6 +1170,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(OfficeToolkit.tools),
       ...Object.values(WhiteboardToolkit.tools),
+      ...Object.values(DocumentToolkit.tools),
       ...Object.values(MachinesToolkit.tools),
       ...Object.values(DecisionToolkit.tools),
       ...Object.values(DesignToolkit.tools),

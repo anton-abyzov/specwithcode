@@ -22,7 +22,11 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { CONNECT_SIGN_IN_STATE_CHANNEL } from "../ipc/channels.ts";
-import { clerkOAuthRedirectUrl, installClerkOAuthTransport } from "./DesktopClerkOAuthTransport.ts";
+import {
+  clerkOAuthRedirectUrl,
+  connectBrowserReturnUrl,
+  installClerkOAuthTransport,
+} from "./DesktopClerkOAuthTransport.ts";
 import { clerkTokenFilePath, withOwnerOnlyTokenFile } from "./DesktopClerkTokenStorage.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -160,8 +164,11 @@ export const make = Effect.gen(function* () {
       }
 
       // The SDK refuses a second sign-in while one waits for the browser and
-      // tells the window nothing. Take over that one request; the redirect
-      // URL, token storage, passkeys and the instance lock stay the SDK's.
+      // tells the window nothing. Take over that one request. A production
+      // build also answers the redirect-URL request with the spec-weave.com
+      // return page, so the browser tab lands on a page instead of staying
+      // on the provider's (1453). Token storage, passkeys, the instance lock
+      // and the callback link (studio://app/) stay the SDK's.
       // Its own callback listeners stay registered and do nothing, because
       // its waiting slot stays empty. Released before the bridge, and safe
       // in either order: both remove the same handler, which cannot throw.
@@ -192,6 +199,10 @@ export const make = Effect.gen(function* () {
               );
             },
             redirectUrl: clerkOAuthRedirectUrl(desktopClerkRenderer(environment.isDevelopment)),
+            browserRedirectUrl: connectBrowserReturnUrl({
+              isDevelopment: environment.isDevelopment,
+              frontendApiHostname: desktopClerkFrontendApiHostname,
+            }),
             stateChannel: CONNECT_SIGN_IN_STATE_CHANNEL,
             log: ({ event, ...fields }) => {
               void runPromise(

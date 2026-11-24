@@ -84,6 +84,8 @@ export interface SubscriptionRow {
   readonly renewalKey: string | null;
   readonly driver: ServerProvider["driver"];
   readonly displayName: string | null;
+  /** The instance's registry icon URL, naming an ACP Registry agent; null otherwise. */
+  readonly iconUrl: string | null;
   readonly plan: string | null;
   readonly email: string | null;
   /** Machines signed in to it, or the hub that read it. */
@@ -133,15 +135,9 @@ export function nextRenewalOn(dayOfMonth: number, now: number): number {
     const last = new Date(year, month + 1, 0).getDate();
     return new Date(year, month, Math.min(dayOfMonth, last)).getTime();
   };
-  const startOfToday = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  ).getTime();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const thisMonth = inMonth(today.getFullYear(), today.getMonth());
-  return thisMonth >= startOfToday
-    ? thisMonth
-    : inMonth(today.getFullYear(), today.getMonth() + 1);
+  return thisMonth >= startOfToday ? thisMonth : inMonth(today.getFullYear(), today.getMonth() + 1);
 }
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -273,7 +269,11 @@ function lastLossOf(
   const window = account.limits.windows.find((candidate) => candidate.id === latest.windowId);
   const endedAt = Date.parse(latest.endedAt);
   return {
-    windowTitle: window ? windowTitle(window) : latest.windowKind === "monthly" ? "Monthly" : "Weekly",
+    windowTitle: window
+      ? windowTitle(window)
+      : latest.windowKind === "monthly"
+        ? "Monthly"
+        : "Weekly",
     lostPercent: Math.round(latest.lostPercent),
     endedAt,
     upperBound: lossIsUpperBound({ endedAt, lastReadAt: Date.parse(latest.lastReadAt) }),
@@ -304,6 +304,7 @@ export function subscriptionRows(
       renewalKey,
       driver: account.driver,
       displayName: account.displayName,
+      iconUrl: account.iconUrl ?? null,
       plan: account.limits.planLabel?.trim() || account.plan?.trim() || null,
       email: account.email?.trim() || null,
       machines:
@@ -323,7 +324,8 @@ export function subscriptionRows(
             ? {
                 at: reported,
                 source: "provider",
-                vendor: VENDORS[String(account.driver)] ?? account.displayName ?? String(account.driver),
+                vendor:
+                  VENDORS[String(account.driver)] ?? account.displayName ?? String(account.driver),
               }
             : null,
       credits:

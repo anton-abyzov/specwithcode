@@ -15,7 +15,7 @@ final class MobileReadabilityUITests: SWCUITestCase {
     XCTAssertTrue(app.staticTexts["json"].exists)
     attachScreenshot("Scheduled check Markdown and readable orchestration activities")
     tap(button("Find conversations, Done"))
-    waitFor(button(startingWith: "Find conversations, Tool: studio-code.studio_thread_list"))
+    waitFor(button(startingWith: "Find conversations, Tool: studio_thread_list"))
     attachScreenshot("Exact protocol identity is optional technical detail")
   }
 
@@ -100,7 +100,7 @@ final class MobileReadabilityUITests: SWCUITestCase {
     attachScreenshot("Readable collapsed activity preserves material tool failure")
     revealOlder(success)
     tap(success)
-    let expanded = button(startingWith: "Read conversation, Tool: mcp__studio_code__studio_thread_read")
+    let expanded = button(startingWith: "Read conversation, Tool: studio_thread_read")
     waitFor(expanded)
     attachScreenshot("Technical tool identity remains available on disclosure")
   }

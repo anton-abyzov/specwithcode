@@ -9,6 +9,7 @@ import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { Button } from "../../ui/button";
 import { Toggle, ToggleGroup } from "../../ui/toggle-group";
 import { EfficiencyChart, ScoreRing, useGrowIn } from "./EfficiencyChart";
+import type { ProviderGroup } from "./providerGroups";
 import { ResetsTable } from "./ResetsTable";
 import { formatDay } from "./SubscriptionRow";
 import {
@@ -132,6 +133,7 @@ function PlanEditor({
 function GroupRow({
   group,
   driver,
+  iconUrl,
   color,
   editing,
   onEdit,
@@ -140,6 +142,8 @@ function GroupRow({
   readonly group: DashboardGroup;
   /** The provider whose logo leads the name; null for a machine group. */
   readonly driver: UsageResetPeriod["driver"] | null;
+  /** A registry agent's icon URL, so its own mark leads the name. */
+  readonly iconUrl?: string | null | undefined;
   readonly color: string;
   readonly editing: boolean;
   readonly onEdit: (() => void) | null;
@@ -158,6 +162,7 @@ function GroupRow({
           <ProviderInstanceIcon
             driverKind={driver}
             displayName={group.label}
+            acpRegistryIconUrl={iconUrl ?? undefined}
             showBadge={false}
             className="size-4 shrink-0"
             iconClassName="size-4 text-foreground/80"
@@ -216,7 +221,8 @@ export interface SubscriptionsDashboardProps {
   readonly prices: Readonly<Record<string, number>>;
   readonly labelOf: (accountKey: string) => string;
   readonly colorOf: (accountKey: string) => string;
-  readonly providerOf: (driver: UsageResetPeriod["driver"]) => string;
+  /** The provider an account counts under: its driver, or one ACP Registry agent. */
+  readonly groupOf: (accountKey: string, driver: UsageResetPeriod["driver"]) => ProviderGroup;
   readonly providerColorOf: (driver: UsageResetPeriod["driver"]) => string;
   readonly machinesOf: (accountKey: string) => readonly string[];
   /** Tokens the unused quota of one reset would have bought, or null when not measurable. */
@@ -246,7 +252,10 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
     prices,
     groupsOf: ({ accountKey, driver }) =>
       groupBy === "provider"
-        ? [{ key: `provider:${driver}`, label: props.providerOf(driver) }]
+        ? (() => {
+            const group = props.groupOf(accountKey, driver);
+            return [{ key: `provider:${group.key}`, label: group.label }];
+          })()
         : groupBy === "account"
           ? [{ key: accountKey, label: props.labelOf(accountKey) }]
           : (() => {
@@ -295,12 +304,16 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
     dashboard.previousUpperBound
       ? null
       : Math.round(dashboard.score - dashboard.previousScore);
+  const firstPeriodOf = (group: DashboardGroup) =>
+    accountWidePeriods(ledger ?? []).find((period) =>
+      group.accountKeys.includes(period.accountKey),
+    ) ?? null;
   const driverOfGroup = (group: DashboardGroup) =>
-    groupBy === "machine"
-      ? null
-      : (accountWidePeriods(ledger ?? []).find((period) =>
-          group.accountKeys.includes(period.accountKey),
-        )?.driver ?? null);
+    groupBy === "machine" ? null : (firstPeriodOf(group)?.driver ?? null);
+  const iconUrlOfGroup = (group: DashboardGroup) => {
+    const first = groupBy === "machine" ? null : firstPeriodOf(group);
+    return first === null ? null : props.groupOf(first.accountKey, first.driver).iconUrl;
+  };
   const colorOfGroup = (group: DashboardGroup) => {
     if (groupBy === "account") return props.colorOf(group.key);
     const first = accountWidePeriods(ledger ?? []).find((period) =>
@@ -476,6 +489,7 @@ export function SubscriptionsDashboard(props: SubscriptionsDashboardProps) {
                   key={group.key}
                   group={group}
                   driver={driverOfGroup(group)}
+                  iconUrl={iconUrlOfGroup(group)}
                   color={colorOfGroup(group)}
                   editing={isEditing}
                   onEdit={only === null ? null : () => setEditing(group.key)}

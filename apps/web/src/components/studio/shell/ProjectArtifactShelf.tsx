@@ -71,6 +71,7 @@ import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import { useCreateWhiteboard } from "../../office/whiteboard/newWhiteboard";
+import { NewArtifactMenu, useCanCreateDocument } from "./NewArtifactMenu";
 import { Tip } from "./Tip";
 
 const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
@@ -637,8 +638,9 @@ export function ProjectArtifactShelf(props: {
     true,
     Schema.Boolean,
   );
+  const canCreate = useCanCreateDocument(props.environmentId);
   // Only logs or data: the shelf stays, with View all, so they are one click away.
-  if (props.artifacts.length === 0 && !whiteboards.canCreate) return null;
+  if (props.artifacts.length === 0 && !canCreate && !whiteboards.canCreate) return null;
   const scroll = (direction: 1 | -1) =>
     rowRef.current?.scrollBy({ left: direction * 360, behavior: "smooth" });
   return (
@@ -675,6 +677,7 @@ export function ProjectArtifactShelf(props: {
             </button>
           </Tip>
         ) : null}
+        <NewArtifactMenu environmentId={props.environmentId} workspaceRoot={props.workspaceRoot} />
         {open && shown.length >= 2 ? (
           <>
             <button

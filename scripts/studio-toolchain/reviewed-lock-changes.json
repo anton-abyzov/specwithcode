@@ -7303,6 +7303,137 @@
     },
     {
       "op": "add",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": [
+        "jszip:",
+        "  specifier: 3.10.1",
+        "  version: 3.10.1"
+      ],
+      "commit": "b2826e2c405f499bdda2302683be0ba9e914b2c8",
+      "pr": null,
+      "reason": "1451 Word editor: the .docx writer builds the package with jszip, exact pin; jszip 3.10.1 was already in the lock."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/web:", "dependencies:"],
+      "lines": [
+        "'@tiptap/extension-image':",
+        "  specifier: 3.31.3",
+        "  version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "1451 Word editor: Tiptap extension-image, exact 3.31.3 like the other Tiptap packages."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/web:", "dependencies:"],
+      "lines": [
+        "'@tiptap/extension-table':",
+        "  specifier: 3.31.3",
+        "  version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "1451 Word editor: Tiptap extension-table, exact 3.31.3 like the other Tiptap packages."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/web:", "dependencies:"],
+      "lines": [
+        "'@tiptap/extension-text-align':",
+        "  specifier: 3.31.3",
+        "  version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "1451 Word editor: Tiptap extension-text-align, exact 3.31.3 like the other Tiptap packages."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "package": "@tiptap/extension-image@3.31.3",
+      "integrity": "sha512-wWNG9BOtx2Cg4vwxPVGDIJ5DGX+ETkldeoaFJLB1NXUL4OPUiVTf8cHZ+hdYgJWP704BEB7jQgjlpvdi6VigTg==",
+      "lines": [
+        "'@tiptap/extension-image@3.31.3':",
+        "  resolution: {integrity: sha512-wWNG9BOtx2Cg4vwxPVGDIJ5DGX+ETkldeoaFJLB1NXUL4OPUiVTf8cHZ+hdYgJWP704BEB7jQgjlpvdi6VigTg==}",
+        "  peerDependencies:",
+        "    '@tiptap/core': 3.31.3"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "Registry record of Tiptap extension-image 3.31.3; peers only, no dependencies."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@tiptap/extension-image@3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))':",
+        "  dependencies:",
+        "    '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "Snapshot of Tiptap extension-image 3.31.3 with its Tiptap peers."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "package": "@tiptap/extension-table@3.31.3",
+      "integrity": "sha512-7cnVPHhdiGGeauYqca6JVyPLTqZbqFEEk9nn2e2E8+fBo6zVtV07AktJBqth/XEzjZxcUmGxjoeuWYAisWjUHg==",
+      "lines": [
+        "'@tiptap/extension-table@3.31.3':",
+        "  resolution: {integrity: sha512-7cnVPHhdiGGeauYqca6JVyPLTqZbqFEEk9nn2e2E8+fBo6zVtV07AktJBqth/XEzjZxcUmGxjoeuWYAisWjUHg==}",
+        "  peerDependencies:",
+        "    '@tiptap/core': 3.31.3",
+        "    '@tiptap/pm': 3.31.3"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "Registry record of Tiptap extension-table 3.31.3; peers only, no dependencies."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@tiptap/extension-table@3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)':",
+        "  dependencies:",
+        "    '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)",
+        "    '@tiptap/pm': 3.31.3"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "Snapshot of Tiptap extension-table 3.31.3 with its Tiptap peers."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "package": "@tiptap/extension-text-align@3.31.3",
+      "integrity": "sha512-26BJ7c28EyvHzJovNpuenKiIgfRI4KsT/OjBB00y58MyZ0kRXc6dwZVclw8y66clupKTLTWYCDUsy0P/xHj+cA==",
+      "lines": [
+        "'@tiptap/extension-text-align@3.31.3':",
+        "  resolution: {integrity: sha512-26BJ7c28EyvHzJovNpuenKiIgfRI4KsT/OjBB00y58MyZ0kRXc6dwZVclw8y66clupKTLTWYCDUsy0P/xHj+cA==}",
+        "  peerDependencies:",
+        "    '@tiptap/core': 3.31.3"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "Registry record of Tiptap extension-text-align 3.31.3; peers only, no dependencies."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@tiptap/extension-text-align@3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))':",
+        "  dependencies:",
+        "    '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)"
+      ],
+      "commit": "084b8fbbc5a814b0c68a3dc9df2721408ab6e9ed",
+      "pr": null,
+      "reason": "Snapshot of Tiptap extension-text-align 3.31.3 with its Tiptap peers."
+    },
+    {
+      "op": "add",
       "parent": ["overrides:"],
       "lines": ["'@excalidraw/excalidraw>nanoid': '-'"],
       "commit": "d2ecb67942e126959001520d68050948461a878d",

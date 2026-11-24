@@ -276,7 +276,10 @@ describe("studio_project_create on another machine", () => {
           "M1: This machine lets M4's work use only some of its projects, so it cannot add projects here. Ask the user here, or widen what M4 may use in Settings > Machines > Who can run work here.",
       });
       const refused = yield* setup({ createFails: limited }).create({ title: "X", machine: "M1" });
-      expect(refused).toMatchObject({ code: "outside_grant_scope", message: limited.message });
+      expect(refused).toMatchObject({
+        code: "outside_grant_scope",
+        message: `${limited.message} Do not retry this call.`,
+      });
 
       const missing = new OrchestratorMcpFailure({
         code: "invalid_request",

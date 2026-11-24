@@ -9,6 +9,7 @@ import { GoogleToolkit } from "./toolkits/google/tools.ts";
 import { HtmlToolkit } from "./toolkits/html/tools.ts";
 import { OfficeToolkit } from "./toolkits/office/tools.ts";
 import { WhiteboardToolkit } from "./toolkits/office/whiteboard.ts";
+import { DocumentToolkit } from "./toolkits/office/document.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -37,6 +38,7 @@ const TOOLS = [
   HtmlToolkit,
   OfficeToolkit,
   WhiteboardToolkit,
+  DocumentToolkit,
   MachinesToolkit,
   DecisionToolkit,
   DesignToolkit,

@@ -108,7 +108,7 @@ it.effect("a coordinator is refused a preview tool; a worker uses it", () =>
       assert.deepInclude(refused, {
         _tag: "OrchestratorMcpFailure",
         code: "capability_denied",
-        message: McpToolAccess.COORDINATOR_HANDS_ON_REFUSAL,
+        message: `${McpToolAccess.COORDINATOR_HANDS_ON_REFUSAL} ${McpToolAccess.DO_NOT_RETRY}`,
       });
       const listed = (yield* list(workerId)).at(-1)?.result;
       assert.deepInclude(listed, { sessions: [], nextCursor: null });
