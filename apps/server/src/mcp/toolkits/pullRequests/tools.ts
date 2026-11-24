@@ -108,30 +108,35 @@ export class PullRequestThreadNotFoundError extends Schema.TaggedError<PullReque
   }
 }
 
+/** "Could not link the pull request: Thread X was stopped." when the cause said why. */
+function withReason(sentence: string, reason: string | undefined): string {
+  return reason ? `${sentence.replace(/\.$/u, "")}: ${reason}` : sentence;
+}
+
 export class PullRequestLinkFailedError extends Schema.TaggedError<PullRequestLinkFailedError>()(
   "PullRequestLinkFailedError",
-  { cause: Schema.Defect() },
+  { cause: Schema.Defect(), reason: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
-    return "Could not link the pull request.";
+    return withReason("Could not link the pull request.", this.reason);
   }
 }
 
 export class PullRequestUnlinkFailedError extends Schema.TaggedError<PullRequestUnlinkFailedError>()(
   "PullRequestUnlinkFailedError",
-  { cause: Schema.Defect() },
+  { cause: Schema.Defect(), reason: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
-    return "Could not unlink the pull request.";
+    return withReason("Could not unlink the pull request.", this.reason);
   }
 }
 
 export class PullRequestWatchFailedError extends Schema.TaggedError<PullRequestWatchFailedError>()(
   "PullRequestWatchFailedError",
-  { cause: Schema.Defect() },
+  { cause: Schema.Defect(), reason: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
-    return "Could not change whether the pull request is watched.";
+    return withReason("Could not change whether the pull request is watched.", this.reason);
   }
 }
 

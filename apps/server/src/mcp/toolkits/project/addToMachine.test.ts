@@ -663,7 +663,7 @@ describe("studio_project_add_to_machine", () => {
     });
   });
 
-  it.effect("passes the machine's grant refusal through unchanged", () => {
+  it.effect("passes the machine's grant refusal through, marked final once", () => {
     const message =
       "M1: This machine lets M4's work use only some of its projects, so it cannot clone repositories here.";
     const { add } = setup({
@@ -671,7 +671,10 @@ describe("studio_project_add_to_machine", () => {
     });
     return Effect.gen(function* () {
       const refused = yield* add({ machine: "M1", projectId });
-      expect(refused).toMatchObject({ code: "outside_grant_scope", message });
+      expect(refused).toMatchObject({
+        code: "outside_grant_scope",
+        message: `${message} Do not retry this call.`,
+      });
     });
   });
 

@@ -62,7 +62,8 @@ function entriesFor(testCase: DetailCase): { entries: TimelineEntry[]; latestRun
           : {
               ...shared,
               label: "Ran command",
-              tone: row.kind === "failed" ? "error" : "tool",
+              // As projected: a failed call keeps the tool tone and fails by its status.
+              tone: "tool",
               itemType: "command_execution",
               command: "ls",
               detail: row.kind === "failed" ? "exit 1" : "ok",

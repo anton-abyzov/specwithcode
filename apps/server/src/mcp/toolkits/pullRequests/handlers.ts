@@ -26,6 +26,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -159,6 +160,24 @@ export function listThreadPullRequests(
   };
 }
 
+/**
+ * Why the orchestrator refused a pull request command, in its own words ("Thread X was
+ * stopped."), so the tool's failure can say it instead of only that it failed.
+ */
+const isSubagentReadOnlyError = Schema.is(Orchestrator.OrchestratorSubagentThreadReadOnlyError);
+const isDispatchError = Schema.is(Orchestrator.OrchestratorDispatchError);
+
+const dispatchRefusalReason = (cause: Cause.Cause<unknown>): Option.Option<string> => {
+  const error = Cause.squash(cause);
+  if (isSubagentReadOnlyError(error)) {
+    return Option.some(error.message);
+  }
+  if (isDispatchError(error) && typeof error.cause === "string") {
+    return Option.some(error.cause);
+  }
+  return Option.none();
+};
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
 
@@ -223,7 +242,15 @@ const make = Effect.gen(function* () {
     > =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.failCause(cause as Cause.Cause<never>)
-        : Effect.fail(new Failure({ cause }));
+        : Effect.fail(
+            new Failure({
+              cause,
+              ...Option.match(dispatchRefusalReason(cause), {
+                onNone: () => ({}),
+                onSome: (reason) => ({ reason }),
+              }),
+            }),
+          );
 
   /**
    * Starts or stops a watch. One command links an unlinked pull request and watches it, and the

@@ -349,7 +349,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
         description:
-          "Run the thread on another machine in the owner's fleet: its id or label from studio_machine_list, or \"local\" for this one; a named machine that cannot take it is refused, never substituted. Omitted means the project's worker machine when a project coordinator calls (this machine when that one is unreachable, not granted or lacks the model; placement.skipped says why), otherwise this machine. The thread runs in the matching project there, with no broader modes than the user allowed for that machine; its completion wakes the caller unless reportBack is false.",
+          'Run the thread on another machine in the owner\'s fleet: its id or label from studio_machine_list, or "local" for this one; a named machine that cannot take it is refused, never substituted, so call studio_machine_list first and name only a machine whose status is "ready" with a project that matches this one (any other status is refused, and its allow step is the user\'s to take). Omitted means the project\'s worker machine when a project coordinator calls (this machine when that one is unreachable, not granted or lacks the model; placement.skipped says why), otherwise this machine. The thread runs in the matching project there, with no broader modes than the user allowed for that machine; its completion wakes the caller unless reportBack is false.',
       }),
     ),
     machineProjectId: Schema.optional(
