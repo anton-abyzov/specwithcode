@@ -108,8 +108,24 @@ const setControl = (atMs, instance, behaviour) => {
 };
 
 let server;
-const t0 = Date.now();
-const elapsed = () => Date.now() - t0;
+const started = Date.now();
+// The schedule's clock starts at the first send, so a slow boot never squeezes its events.
+let t0 = null;
+const elapsed = () => (t0 === null ? 0 : Date.now() - t0);
+/** Workers the rig asked each thread to launch; the checker holds the server to it. */
+const expectations = { workers: {} };
+const cleanUp = async () => {
+  await S.stopServer(server);
+  S.stopStragglers(scratch);
+  if (!args.keep) NodeFS.rmSync(scratch, { recursive: true, force: true });
+};
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+  process.once(signal, () => {
+    receipt.error = `stopped by ${signal}`;
+    receipt.verdict = "error";
+    save();
+    void cleanUp().finally(() => process.exit(2));
+  });
 try {
   // Fixed at start: every source reports room, the condition the m4 ping-pong needed.
   const usage = instances.map((name) => `${name}=10@acct-${name}`).join(",");
@@ -143,6 +159,7 @@ try {
     creationSource: "web",
   });
   const send = async (text, mode) => {
+    t0 ??= Date.now();
     const messageId = `chaos-msg-${dispatched.length + 1}-${NodeCrypto.randomUUID()}`;
     dispatched.push({ threadId, messageId, atMs: elapsed() });
     schedule.push({ atMs: elapsed(), kind: "send", messageId, mode });
@@ -165,6 +182,7 @@ try {
     await send("CHAOS-REPLY ping-pong m1", "start_immediately");
   } else {
     const workers = Number(args.workers);
+    expectations.workers[threadId] = workers;
     setControl(0, "w", { delayMs: rand.int(200, 4000) });
     const calls = Array.from(
       { length: workers },
@@ -252,10 +270,9 @@ try {
   receipt.error = String(error?.stack ?? error);
   receipt.verdict = "error";
 } finally {
-  receipt.elapsedMs = elapsed();
+  receipt.elapsedMs = Date.now() - started;
   save();
-  await S.stopServer(server);
-  if (!args.keep) NodeFS.rmSync(scratch, { recursive: true, force: true });
+  await cleanUp();
 }
 console.log(
   `${args.scenario} seed ${seed}: ${receipt.verdict} (${receipt.violations.length} violations) -> ${out}/receipt.json`,
@@ -265,8 +282,16 @@ for (const violation of receipt.violations.slice(0, 10))
 if (receipt.error) console.log(receipt.error);
 process.exit({ pass: 0, violated: 1, stalled: 3 }[receipt.verdict] ?? 2);
 
-/** The thread, every worker thread it launched, the agents' logs and what was sent. */
+/**
+ * The thread, every worker thread it launched, the agents' logs and what was
+ * sent. Missing evidence is a rig error, never a quiet pass: a server that died
+ * or a projection that cannot be read throws.
+ */
 async function collect(server, rootThreadId) {
+  if (server.child.exitCode !== null || server.child.signalCode !== null)
+    throw new Error(
+      `the scratch server exited (${server.child.exitCode ?? server.child.signalCode})`,
+    );
   const threads = [];
   const seen = new Set();
   const queue = [rootThreadId];
@@ -274,15 +299,19 @@ async function collect(server, rootThreadId) {
     const id = queue.shift();
     if (seen.has(id)) continue;
     seen.add(id);
-    let view;
-    try {
-      view = await S.projection(server, id);
-    } catch {
-      continue;
-    }
+    const view = await S.projection(server, id);
+    if (!view?.thread || !Array.isArray(view.runs))
+      throw new Error(`no projection for thread ${id}`);
     threads.push(view);
     for (const child of view.subagents ?? [])
       if (child.childThreadId) queue.push(child.childThreadId);
   }
-  return { threads, turns: S.readTurns(home), dispatched, schedule, nowMs: Date.now() };
+  return {
+    threads,
+    turns: S.readTurns(home),
+    dispatched,
+    expectations,
+    schedule,
+    nowMs: Date.now(),
+  };
 }

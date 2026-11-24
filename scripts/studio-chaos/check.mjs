@@ -17,7 +17,8 @@
  *   agent was told the task ended.
  * - `no-return-before-reset`: after a run on a source stops on a usage limit, no
  *   later automatic fallback of that thread goes back to the source before the
- *   stop's reset, or `holdMs` when it names none; and one stop starts at most
+ *   stop's reset, or `holdMs` when it names none (holds span threads, and a
+ *   run that completes on the source ends them); and one stop starts at most
  *   one fallback. A person's own message runs on the thread's current model and
  *   is no switch.
  */
@@ -33,6 +34,8 @@ const sourceOf = (run) =>
   `${run.providerInstanceId ?? run.modelSelection?.instanceId}\u0000${run.modelSelection?.model ?? ""}`;
 const label = (key) => key.replace("\u0000", "/");
 const ms = (iso) => (iso ? Date.parse(iso) : Number.NaN);
+/** The server's automatic limit fallback: `limit-fallback:<thread>:[hop-N:]<run>`. */
+const isAutomatic = (run) => (run.userMessageId ?? "").startsWith(LIMIT_FALLBACK_PREFIX);
 
 /** The usage-limit failure of a run, from its error turn items; null when it did not stop on one. */
 export function limitFailureOf(view, run) {
@@ -117,12 +120,22 @@ function checkRunsOnce(view, collected, violations, notes) {
         runId: null,
         detail: `message ${messageId} started ${count} chains`,
       });
-  // The rig's own sends must run in the order it sent them.
+  // Every message the rig sent ran (or still waits), in the order it was sent.
   const order = collected.dispatched
     .filter((entry) => entry.threadId === threadId)
     .map((entry) => entry.messageId);
+  const heads = new Map(list.map((chain) => [chain.messageId, chain]));
+  if (!busy)
+    for (const messageId of order)
+      if (!heads.has(messageId))
+        violations.push({
+          rule: "runs-once",
+          threadId,
+          runId: null,
+          detail: `message ${messageId} was accepted but never ran`,
+        });
   const ran = list.map((chain) => chain.messageId).filter((id) => order.includes(id));
-  const expected = order.filter((id) => ran.includes(id));
+  const expected = order.filter((id) => heads.has(id));
   if (ran.join("|") !== expected.join("|"))
     violations.push({
       rule: "runs-once",
@@ -130,6 +143,18 @@ function checkRunsOnce(view, collected, violations, notes) {
       runId: null,
       detail: `messages ran as ${ran.join(", ")} but were sent as ${expected.join(", ")}`,
     });
+  // Ordinals follow dispatch; the provider work must start in that order too.
+  for (let index = 1; index < expected.length; index++) {
+    const before = ms(heads.get(expected[index - 1]).runs[0].startedAt);
+    const after = ms(heads.get(expected[index]).runs[0].startedAt);
+    if (Number.isFinite(before) && Number.isFinite(after) && after < before)
+      violations.push({
+        rule: "runs-once",
+        threadId,
+        runId: heads.get(expected[index]).runs[0].id,
+        detail: `message ${expected[index]} started before ${expected[index - 1]}, which was sent first`,
+      });
+  }
   // Witness: the agents' answered turns for this thread equal the completed runs.
   const sessions = sessionsOf(view);
   const answered = collected.turns.filter(
@@ -170,13 +195,14 @@ function checkResultDelivered(view, collected, violations) {
       });
       continue;
     }
-    // A disposed delivery is fine only when the launcher itself is gone or stopped.
-    if (state === "disposed" && view.runs.some((run) => ACTIVE.has(run.status)))
+    // A disposed delivery is fine once the run that launched the worker stopped.
+    const launcher = view.runs.find((run) => run.id === child.runId);
+    if (state === "disposed" && launcher && ACTIVE.has(launcher.status))
       violations.push({
         rule: "result-delivered",
         threadId,
         runId: null,
-        detail: `worker ${worker}'s delivery was disposed while its launcher still runs`,
+        detail: `worker ${worker}'s delivery was disposed while the run that launched it still runs`,
       });
     // The worker's own agent answered, and that answer is the stored result.
     const token = /^CHAOS-RESULT ([\w-]+)$/m.exec(child.prompt ?? "")?.[1];
@@ -203,46 +229,100 @@ function checkResultDelivered(view, collected, violations) {
         detail: `worker ${worker} is ${state} but no prompt to the launcher's agent named task ${child.id} as ended`,
       });
   }
+  // Every launch the rig asked for made a worker, and no launch call failed.
+  const wanted = collected.expectations?.workers?.[threadId];
+  const busy = view.runs.some((run) => ACTIVE.has(run.status));
+  const launched = (view.subagents ?? []).filter(
+    (child) => child.origin === "app_owned" && /^CHAOS-RESULT /m.test(child.prompt ?? ""),
+  ).length;
+  if (wanted !== undefined && !busy && launched !== wanted)
+    violations.push({
+      rule: "result-delivered",
+      threadId,
+      runId: null,
+      detail: `the rig asked for ${wanted} workers and ${launched} were launched`,
+    });
+  for (const turn of collected.turns)
+    if (sessions.has(turn.sessionId))
+      for (const call of turn.calls ?? [])
+        if (call.status !== 200 || call.error)
+          violations.push({
+            rule: "result-delivered",
+            threadId,
+            runId: null,
+            detail: `the launcher's ${call.name ?? "MCP"} call failed (status ${call.status}${call.error ? `, ${call.error}` : ""})`,
+          });
 }
 
-function checkNoReturn(view, holdMs, violations) {
-  const threadId = view.thread.id;
-  const runs = [...view.runs].sort((x, y) => x.ordinal - y.ordinal);
-  const holds = [];
-  for (const run of runs) {
+/**
+ * Holds are per source (instance and model) across every thread, as 1460 holds
+ * them machine-wide; a run that completes on the source is evidence of room and
+ * ends its holds. Per thread, each limit stop may start one automatic fallback.
+ */
+function checkNoReturn(collected, holdMs, violations) {
+  const all = collected.threads
+    .flatMap((view) => view.runs.map((run) => ({ view, run })))
+    .sort((x, y) => ms(x.run.requestedAt) - ms(y.run.requestedAt) || x.run.ordinal - y.run.ordinal);
+  const holds = new Map();
+  for (const { view, run } of all) {
     const source = sourceOf(run);
     const startedAt = ms(run.requestedAt);
-    const automatic = (run.userMessageId ?? "").startsWith(LIMIT_FALLBACK_PREFIX);
-    const held =
-      automatic && holds.find((hold) => hold.source === source && startedAt < hold.until);
+    const held = isAutomatic(run)
+      ? (holds.get(source) ?? []).find((hold) => startedAt < hold.until)
+      : undefined;
     if (held)
       violations.push({
         rule: "no-return-before-reset",
-        threadId,
+        threadId: view.thread.id,
         runId: run.id,
-        detail: `fallback run ${run.ordinal} went back to ${label(source)} ${Math.round((startedAt - held.stoppedAt) / 1000)} s after run ${held.ordinal} stopped there on a limit`,
+        detail: `fallback run ${run.ordinal} went back to ${label(source)} ${Math.round((startedAt - held.stoppedAt) / 1000)} s after run ${held.ordinal}${held.threadId === view.thread.id ? "" : ` of thread ${held.threadId}`} stopped there on a limit`,
       });
+    if (run.status === "completed") holds.delete(source);
     const failure = limitFailureOf(view, run);
     if (failure) {
       const stoppedAt = ms(run.completedAt ?? run.requestedAt);
       const reset = ms(failure.resetAt);
-      holds.push({
-        source,
-        ordinal: run.ordinal,
-        stoppedAt,
-        until: Number.isFinite(reset) ? reset : stoppedAt + holdMs,
-      });
-      const fallbacks = runs.filter(
-        (other) => other.userMessageId === `${LIMIT_FALLBACK_PREFIX}${threadId}:${run.id}`,
-      );
-      if (fallbacks.length > 1)
+      holds.set(source, [
+        ...(holds.get(source) ?? []),
+        {
+          threadId: view.thread.id,
+          ordinal: run.ordinal,
+          stoppedAt,
+          until: Number.isFinite(reset) ? reset : stoppedAt + holdMs,
+        },
+      ]);
+    }
+  }
+  for (const view of collected.threads) {
+    const threadId = view.thread.id;
+    let stop = null;
+    const ids = new Map();
+    for (const run of [...view.runs].sort((x, y) => x.ordinal - y.ordinal)) {
+      if (isAutomatic(run)) {
+        ids.set(run.userMessageId, (ids.get(run.userMessageId) ?? 0) + 1);
+        if (stop === null || stop.used >= 1)
+          violations.push({
+            rule: "no-return-before-reset",
+            threadId,
+            runId: run.id,
+            detail:
+              stop === null
+                ? `fallback run ${run.ordinal} started with no limit stop before it`
+                : `limit stop of run ${stop.ordinal} started more than one fallback (run ${run.ordinal})`,
+          });
+        if (stop !== null) stop.used += 1;
+      }
+      if (limitFailureOf(view, run)) stop = { ordinal: run.ordinal, used: 0 };
+      else if (run.status === "completed") stop = null;
+    }
+    for (const [messageId, count] of ids)
+      if (count > 1)
         violations.push({
           rule: "no-return-before-reset",
           threadId,
-          runId: run.id,
-          detail: `limit stop of run ${run.ordinal} started ${fallbacks.length} fallbacks`,
+          runId: null,
+          detail: `fallback ${messageId} started ${count} runs`,
         });
-    }
   }
 }
 
@@ -253,8 +333,8 @@ export function check(collected, { holdMs = DEFAULT_HOLD_MS } = {}) {
   for (const view of collected.threads) {
     checkRunsOnce(view, collected, violations, notes);
     checkResultDelivered(view, collected, violations);
-    checkNoReturn(view, holdMs, violations);
   }
+  checkNoReturn(collected, holdMs, violations);
   const runs = collected.threads.flatMap((view) => view.runs);
   return {
     violations,

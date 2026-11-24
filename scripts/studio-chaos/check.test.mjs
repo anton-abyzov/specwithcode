@@ -130,7 +130,7 @@ NodeTest.test("one limit stop starting two fallbacks is a double switch", () => 
   ];
   const result = check(collect([view({ runs, turnItems: [limitItem(1)] })]));
   NodeAssert.ok(rules(result).includes("no-return-before-reset"));
-  NodeAssert.ok(result.violations.some((v) => /started 2 fallbacks/.test(v.detail)));
+  NodeAssert.ok(result.violations.some((v) => /started 2 runs/.test(v.detail)));
   NodeAssert.ok(rules(result).includes("runs-once"), "m1 completed twice");
 });
 
@@ -231,5 +231,105 @@ NodeTest.test("a still-running worker is not judged yet", () => {
       }),
     ]),
   );
+  NodeAssert.deepEqual(result.violations, []);
+});
+
+// Review round 1 (GPT-6.2 Sol, November 24, 2026): each case below passed before the fix.
+
+NodeTest.test("an accepted message that never ran is a violation", () => {
+  const runs = [run(1, "a", "completed", "m1")];
+  const dispatched = [
+    { threadId: T, messageId: "m1" },
+    { threadId: T, messageId: "m2" },
+  ];
+  const result = check(collect([view({ runs })], { dispatched }));
+  NodeAssert.deepEqual(rules(result), ["runs-once"]);
+  NodeAssert.match(result.violations[0].detail, /m2 was accepted but never ran/);
+});
+
+NodeTest.test("provider work that starts out of dispatch order is a violation", () => {
+  const first = { ...run(1, "a", "completed", "m1"), startedAt: at(20) };
+  const second = { ...run(2, "a", "completed", "m2"), startedAt: at(10) };
+  const dispatched = [
+    { threadId: T, messageId: "m1" },
+    { threadId: T, messageId: "m2" },
+  ];
+  const result = check(collect([view({ runs: [first, second] })], { dispatched }));
+  NodeAssert.deepEqual(rules(result), ["runs-once"]);
+  NodeAssert.match(result.violations[0].detail, /m2 started before m1/);
+});
+
+NodeTest.test("a storm whose workers never launched is a violation", () => {
+  const runs = [run(1, "a", "completed", "m1")];
+  const turns = [
+    {
+      sessionId: session("a", 1),
+      outcome: "answered",
+      text: "",
+      calls: [{ name: "delegate_task", status: 200, error: "Provider not ready" }],
+    },
+  ];
+  const result = check({
+    threads: [view({ runs })],
+    turns,
+    dispatched: [],
+    expectations: { workers: { [T]: 2 } },
+  });
+  NodeAssert.deepEqual(rules(result), ["result-delivered", "result-delivered"]);
+  NodeAssert.match(result.violations[0].detail, /asked for 2 workers and 0 were launched/);
+  NodeAssert.match(result.violations[1].detail, /delegate_task call failed/);
+});
+
+NodeTest.test("a disposal after its launching run stopped passes despite a later turn", () => {
+  const runs = [run(1, "a", "interrupted", "m1"), run(2, "a", "running", "m2")];
+  const child = worker({ runId: runId(1), completionDelivery: { state: "disposed" } });
+  const result = check(collect([view({ runs, subagents: [child] })]));
+  NodeAssert.deepEqual(result.violations, []);
+});
+
+NodeTest.test(
+  "holds span threads: another thread's fallback onto a held source is a return",
+  () => {
+    const other = "chaos-other";
+    const otherRun = {
+      ...run(1, "a", "running", `${LIMIT_FALLBACK_PREFIX}${other}:run:x`, 8),
+      id: `run:thread:${other}:ordinal:1`,
+      threadId: other,
+    };
+    const first = view({ runs: [run(1, "a", "failed", "m1", 0)], turnItems: [limitItem(1)] });
+    const second = { ...view({ runs: [otherRun] }), thread: { id: other } };
+    const result = check(collect([first, second]));
+    NodeAssert.ok(
+      result.violations.some((v) =>
+        /went back to a\/chaos .* of thread chaos-thread/.test(v.detail),
+      ),
+    );
+  },
+);
+
+NodeTest.test("a completed run on the source ends its hold", () => {
+  const runs = [
+    run(1, "a", "failed", "m1", 0),
+    run(2, "b", "failed", fallbackOf(1), 5),
+    run(3, "a", "completed", `${LIMIT_FALLBACK_PREFIX}${T}:hop-1:${runId(1)}`, 15),
+  ];
+  const other = "chaos-other";
+  const roomOnA = {
+    ...view({
+      runs: [{ ...run(9, "a", "completed", "o1", 10), id: `run:thread:${other}:ordinal:9` }],
+    }),
+    thread: { id: other },
+  };
+  const result = check(collect([view({ runs, turnItems: [limitItem(1), limitItem(2)] }), roomOnA]));
+  NodeAssert.deepEqual(result.violations, []);
+});
+
+NodeTest.test("1460's hop ids still count as one fallback per stop", () => {
+  const runs = [
+    run(1, "a", "failed", "m1"),
+    run(2, "b", "failed", `${LIMIT_FALLBACK_PREFIX}${T}:${runId(1)}`),
+    run(3, "c", "completed", `${LIMIT_FALLBACK_PREFIX}${T}:hop-1:${runId(1)}`),
+  ];
+  const result = check(collect([view({ runs, turnItems: [limitItem(1), limitItem(2)] })]));
   NodeAssert.deepEqual(result.violations, []);
 });

@@ -21,7 +21,7 @@
  * A prompt line `MCP-CALL {"name","arguments"}` makes that studio-code MCP
  * call with the thread's own credential (any number of lines, in order), so a
  * coordinator can fan out `delegate_task` workers. A call whose arguments carry
- * a `clientRequestId` runs once across every instance (`<control>.calls`): a
+ * a `clientRequestId` runs once across every instance (`<control>.calls/`): a
  * fallback's context handoff repeats the original message, and a replayed
  * launch would be the rig's doing, not the server's. A line `CHAOS-REPLY <text>`
  * is echoed in the answer; a line `CHAOS-RESULT <token>` is answered as
@@ -83,14 +83,22 @@ function control() {
   }
 }
 
-/** Records the call key; true when an earlier turn on any instance already made the call. */
-function alreadyCalled(key) {
-  if (!controlFile) return false;
-  const file = `${controlFile}.calls`;
-  const done = NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8").split("\n") : [];
-  if (done.includes(key)) return true;
-  NodeFS.appendFileSync(file, `${key}\n`);
-  return false;
+/**
+ * Claims the call key for this turn by creating its marker file, which fails
+ * when another instance created it first (no read-then-write race). A call
+ * that fails gives its claim back, so a later turn may retry it.
+ */
+function claimCall(key) {
+  if (!controlFile) return () => {};
+  const dir = `${controlFile}.calls`;
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const marker = `${dir}/${key.replace(/[^\w.-]/g, "_")}`;
+  try {
+    NodeFS.closeSync(NodeFS.openSync(marker, "wx"));
+  } catch {
+    return null;
+  }
+  return () => NodeFS.rmSync(marker, { force: true });
 }
 
 function log(entry) {
@@ -195,12 +203,26 @@ async function prompt(id, params) {
     let outcome;
     try {
       const { name, arguments: args } = JSON.parse(match[1]);
-      if (args?.clientRequestId && alreadyCalled(args.clientRequestId)) continue;
+      const release = args?.clientRequestId ? claimCall(args.clientRequestId) : () => {};
+      if (release === null) continue;
       const endpoint = sessions.get(sessionId);
       outcome = endpoint
         ? await mcpCall(endpoint, name, args)
         : { status: 0, body: "no studio-code MCP server was given to this session" };
-      calls.push({ name, status: outcome.status, error: outcome.body?.result?.isError === true });
+      const failed = outcome.status !== 200 || outcome.body?.result?.isError === true;
+      if (failed) release();
+      calls.push({
+        name,
+        status: outcome.status,
+        error: failed
+          ? String(
+              outcome.body?.result?.content?.[0]?.text ??
+                outcome.body?.error?.message ??
+                outcome.body ??
+                "failed",
+            ).slice(0, 300)
+          : false,
+      });
     } catch (error) {
       calls.push({ status: 0, error: String(error?.message ?? error) });
     }

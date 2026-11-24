@@ -69,6 +69,13 @@ export function makeHome(dir, { instances, models = {}, settings = {} }) {
     `#!/bin/sh\ncase "$*" in\n  "--get ComputerName"|"--get LocalHostName") echo "Chaos rig" ;;\n  *) exec /usr/sbin/scutil "$@" ;;\nesac\n`,
     { mode: 0o755 },
   );
+  // The server reads PATH through the login shell; this one runs the command with no profile,
+  // so no host dotfile can point the scratch server at live credentials.
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "login-shell"),
+    `#!/bin/sh\nexport PATH="${bin}:$PATH"\nshift\nexec /bin/sh -c "$1"\n`,
+    { mode: 0o755 },
+  );
   const control = NodePath.join(dir, "control.json");
   NodeFS.writeFileSync(control, JSON.stringify({ instances: {} }));
   const logs = Object.fromEntries(
@@ -177,12 +184,23 @@ export async function startServer(home, { env = {}, logFile, entry } = {}) {
         GIT_CONFIG_NOSYSTEM: "1",
         STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
         STUDIO_DISABLE_AUTO_UPDATE: "true",
+        SHELL: NodePath.join(home.bin, "login-shell"),
         ...env,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
   if (logFile) NodeFS.writeFileSync(logFile, "", { flag: "a" });
+  try {
+    return await signInBootstrap(home, child, origin, logFile);
+  } catch (error) {
+    // Nobody else holds this PID yet: stop it here rather than leak it.
+    await stopServer({ child }, { kill: true });
+    throw error;
+  }
+}
+
+async function signInBootstrap(home, child, origin, logFile) {
   const credential = await new Promise((done, reject) => {
     let buffer = "";
     let settled = false;
@@ -221,6 +239,31 @@ export async function startServer(home, { env = {}, logFile, entry } = {}) {
   if (response.status !== 200) throw new Error(`token exchange failed (${response.status})`);
   const server = { home, origin, child, token: (await response.json()).access_token };
   return server;
+}
+
+/**
+ * Ends any process still running from this rig's own scratch folder (agents a
+ * killed server left behind). The folder is unique to the run, so nothing
+ * else matches it.
+ */
+export function stopStragglers(dir) {
+  let listed = "";
+  try {
+    listed = NodeChildProcess.execFileSync("/usr/bin/pgrep", ["-f", dir], { encoding: "utf8" });
+  } catch {
+    return [];
+  }
+  const pids = listed
+    .split("\n")
+    .map(Number)
+    .filter((pid) => pid > 0 && pid !== process.pid);
+  for (const pid of pids)
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  return pids;
 }
 
 /** Stops the server this rig started (its own PID only); SIGKILL when `kill`. */
