@@ -12610,6 +12610,7 @@ export default function ChatView(props: ChatViewProps) {
       image: ComposerImageAttachment | null;
     },
     manualCodexCreditIntent?: ManualCodexCreditIntent,
+    sendOptions?: { readonly skipClaudeShip?: boolean },
   ) => {
     e?.preventDefault();
     // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open Hand off
@@ -13142,7 +13143,22 @@ export default function ChatView(props: ChatViewProps) {
       !directAnnotation &&
       !composerHasNonPromptContent &&
       multipleModelSelections === null &&
-      claudeShip.intercept(trimmed)
+      sendOptions?.skipClaudeShip !== true &&
+      claudeShip.intercept(
+        trimmed,
+        () =>
+          // Sent as written, with the same dispatch the person chose.
+          void onSendRef.current(
+            undefined,
+            dispatchMode,
+            submissionIntent,
+            undefined,
+            manualCodexCreditIntent,
+            {
+              skipClaudeShip: true,
+            },
+          ),
+      )
     ) {
       return;
     }
@@ -15107,7 +15123,6 @@ export default function ChatView(props: ChatViewProps) {
     setWorkLocallyResendDraftId,
   ]);
   const onSendRef = useLatestRef(onSend);
-  claudeShip.composer.resend = () => void onSendRef.current();
   claudeShip.composer.clearDraft = () => {
     promptRef.current = "";
     setComposerDraftPrompt(composerDraftTarget, "");

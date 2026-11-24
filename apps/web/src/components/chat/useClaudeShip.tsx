@@ -48,9 +48,8 @@ export interface ClaudeShipContext {
   readonly dropTerminal: (threadTarget: ScopedThreadRef, terminalId: string) => void;
 }
 
-/** Set by the composer each render: send the draft as a prompt, and clear it. */
+/** Set by the composer each render: clears the draft once the terminal opened. */
 export interface ClaudeShipComposerHandlers {
-  resend?: () => void;
   clearDraft?: () => void;
 }
 
@@ -59,8 +58,11 @@ export interface ClaudeShipComposerHandlers {
  * line to a Claude Code session in the thread's terminal (increment 1458).
  */
 export function useClaudeShip(context: ClaudeShipContext): {
-  /** True when the draft was one of these commands and the card took it. */
-  readonly intercept: (text: string) => boolean;
+  /**
+   * True when the draft was one of these commands and the card took it.
+   * `sendAsWritten` sends that same draft past the card, for a custom command of the same name.
+   */
+  readonly intercept: (text: string, sendAsWritten: () => void) => boolean;
   readonly composer: ClaudeShipComposerHandlers;
   readonly dialog: ReactNode;
 } {
@@ -69,17 +71,12 @@ export function useClaudeShip(context: ClaudeShipContext): {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const composer = useRef<ClaudeShipComposerHandlers>({}).current;
-  // One send that skips the card: the person chose to send the line to Claude as written.
-  // It holds for a moment only, so a send that stopped early can't skip a later card.
-  const bypassUntil = useRef(0);
+  const sendAsWrittenRef = useRef<(() => void) | null>(null);
 
-  const intercept = useCallback((text: string) => {
-    if (Date.now() < bypassUntil.current) {
-      bypassUntil.current = 0;
-      return false;
-    }
+  const intercept = useCallback((text: string, sendAsWritten: () => void) => {
     const parsed = parseClaudeShipCommand(text);
     if (parsed === null) return false;
+    sendAsWrittenRef.current = sendAsWritten;
     setError(null);
     setLine(parsed);
     return true;
@@ -145,9 +142,10 @@ export function useClaudeShip(context: ClaudeShipContext): {
   };
 
   const onSendAnyway = () => {
+    const sendAsWritten = sendAsWrittenRef.current;
+    sendAsWrittenRef.current = null;
     setLine(null);
-    bypassUntil.current = Date.now() + 2_000;
-    composer.resend?.();
+    sendAsWritten?.();
   };
 
   const dialog =
