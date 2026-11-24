@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { csvToSheetDocument, detectDelimiter, parseDelimited, sheetTabToCsv } from "./csv.ts";
 import { evaluateSheet } from "./formula.ts";
 import { type SheetDocument, SHEET_ARTIFACT_KIND, SHEET_ARTIFACT_VERSION } from "./model.ts";
+import { insertRows, SheetEditLimitError } from "./edit.ts";
 import {
   buildXlsxParts,
+  fromXlsxFormulaText,
   xlsxColumnWidth,
   xlsxFormulaText,
   xlsxNumberFormatCode,
@@ -127,3 +129,39 @@ describe("csv", () => {
     expect(back.cells).toEqual({ A1: "'=not a formula", B1: "-x" });
   });
 });
+
+describe("review fixes", () => {
+  it("renames all tabs at once, so a truncated name never captures another tab's references", () => {
+    const long = "T".repeat(32);
+    const short = "T".repeat(31);
+    const book = doc([
+      { name: long, cells: { A1: 10 } },
+      { name: short, cells: { A1: 99 } },
+      { name: "Use", cells: { A1: `='${long}'!A1` } },
+    ]);
+    const names = xlsxSheetNames(book);
+    const sheet3 = buildXlsxParts(book)["xl/worksheets/sheet3.xml"]!;
+    expect(names[0]).toBe(short);
+    expect(sheet3).toContain(`<f>${names[0]}!A1</f><v>10</v>`);
+    expect(sheet3).not.toContain(names[1]!);
+  });
+
+  it("leaves quoted text and quoted tab names alone when it prefixes or strips functions", () => {
+    expect(xlsxFormulaText("='Forecast IFNA(1)'!A1+IFNA(B1,0)")).toBe("'Forecast IFNA(1)'!A1+_xlfn.IFNA(B1,0)");
+    expect(fromXlsxFormulaText('"literal _xlfn.example"&_xlfn.CONCAT(A1)')).toBe('="literal _xlfn.example"&CONCAT(A1)');
+    expect(fromXlsxFormulaText("'It''s _xlfn.IFNA('!A1")).toBe("='It''s _xlfn.IFNA('!A1");
+  });
+
+  it("refuses an insert that would push cells off the sheet", () => {
+    const book = doc([{ name: "T", cells: { A100000: 42, B1: "=A100000" } }]);
+    expect(() => insertRows(book, 0, 0)).toThrow(SheetEditLimitError);
+    expect(insertRows(doc([{ name: "T", cells: { A5: 1 } }]), 0, 0).tabs[0]!.cells).toEqual({ A6: 1 });
+  });
+
+  it("imports CSV text that looks like a formula as text", () => {
+    const tab = csvToSheetDocument("a,=1+2\n", { title: "x" }).document.tabs[0]!;
+    expect(tab.cells.B1).toBe("'=1+2");
+    expect(evaluateSheet(doc([tab])).valueAt(0, { col: 1, row: 0 })).toBe("=1+2");
+  });
+});
+

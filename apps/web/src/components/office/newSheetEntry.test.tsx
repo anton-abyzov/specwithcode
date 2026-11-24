@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   capabilities: { officeWorkbookEdit: true } as Record<string, boolean>,
   calls: [] as Array<{ command: string; request: { input: Record<string, string> } }>,
   toasts: [] as unknown[],
+  onDisk: new Set<string>(),
 }));
 
 vi.mock("~/i18n", () => ({
@@ -23,6 +24,10 @@ vi.mock("../../i18n", () => ({
 vi.mock("~/state/session", () => ({ useEnvironmentScope: () => state.canWrite }));
 vi.mock("~/state/entities", () => ({
   useServerConfigs: () => new Map([["host", { environment: { capabilities: state.capabilities } }]]),
+}));
+vi.mock("../files/projectFilesQueryState", () => ({
+  useProjectFileReader: () => async (_env: unknown, _cwd: string, path: string) =>
+    state.onDisk.has(path) ? { _tag: "contents", contents: "{}" } : { _tag: "gone" },
 }));
 vi.mock("~/state/projects", () => ({ projectEnvironment: { writeFile: "writeFile" } }));
 vi.mock("~/studio/design", () => ({ design: { importWorkbook: "importWorkbook" } }));
@@ -71,6 +76,7 @@ beforeEach(() => {
   state.capabilities = { officeWorkbookEdit: true };
   state.calls.length = 0;
   state.toasts.length = 0;
+  state.onDisk.clear();
   entry = null;
   container = document.createElement("div");
   document.body.append(container);
@@ -117,6 +123,16 @@ describe("the Sheet entry in the New menu", () => {
     expect(state.calls[0]?.request.input).toEqual({ title: "Budget", data: "UEsDBA==" });
     expect(state.calls[1]?.request.input.relativePath).toBe(".specweave/reports/budget.sheet.json");
     expect(JSON.stringify(state.toasts)).toContain("Left out: Charts.");
+  });
+
+  it("never writes over a Sheet the shelf has not listed yet", async () => {
+    state.onDisk.add(".specweave/reports/untitled-sheet-2.sheet.json");
+    await render();
+    const created = await entry!.create();
+    expect(created?.path).toBe(".specweave/reports/untitled-sheet-3.sheet.json");
+    expect(state.calls.map((call) => call.request.input.relativePath)).toEqual([
+      ".specweave/reports/untitled-sheet-3.sheet.json",
+    ]);
   });
 
   it("offers nothing without file write", async () => {

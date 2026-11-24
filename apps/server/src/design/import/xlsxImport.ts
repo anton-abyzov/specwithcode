@@ -24,6 +24,7 @@ import {
   type SheetTab,
   type SheetTone,
   XLSX_TONE_FILLS,
+  fromXlsxFormulaText,
   XLSX_TONE_FONTS,
 } from "@specweave-studio/shared/officeSheet";
 
@@ -319,6 +320,15 @@ function readSharedStrings(archive: OoxmlArchive): string[] {
 
 const MAX_TAINT_PROPAGATION_OPS = 200_000;
 
+/** Worksheet elements the Sheet model has no place for, as the loss notice names them. */
+const SHEET_PARTS_NOT_KEPT: ReadonlyArray<readonly [string, string]> = [
+  ["autoFilter", "Filters"],
+  ["conditionalFormatting", "Conditional formatting"],
+  ["dataValidations", "Data validation (dropdowns)"],
+  ["hyperlinks", "Hyperlinks"],
+  ["sheetProtection", "Sheet protection"],
+];
+
 const FORMATS_DROPPED_NOTE = "Some number formats (too many different ranges)";
 const STYLES_DROPPED_NOTE = "Some cell styles (too many different ranges)";
 const STYLING_DROPPED_NOTE = "Number formats, cell styles and column widths (workbook too large)";
@@ -457,7 +467,12 @@ export async function readXlsxWorkbook(
   }
 
   const unsupported = new Set<string>();
+  const definedNames = findChild(workbookXml, "definedNames");
+  if (findChildren(definedNames, "definedName").some((entry) => !/^_xlnm\./i.test(entry.attrs.name ?? ""))) {
+    unsupported.add("Named ranges");
+  }
   for (const partPath of archive.entries.keys()) {
+    if (/^xl\/tables\//i.test(partPath)) unsupported.add("Tables");
     if (/^xl\/charts\//i.test(partPath)) unsupported.add("Charts");
     if (/^xl\/pivotTables\//i.test(partPath)) unsupported.add("Pivot tables");
     if (/^xl\/comments\d*\.xml$/i.test(partPath)) unsupported.add("Cell comments");
@@ -517,6 +532,12 @@ export async function readXlsxWorkbook(
     if (mergeCellsEl && findChildren(mergeCellsEl, "mergeCell").length > 0) {
       unsupported.add("Merged cell spans");
     }
+    // Sheet parts the editor neither shows nor writes back: a save would drop them.
+    for (const [element, label] of SHEET_PARTS_NOT_KEPT) {
+      if (findChild(sheetXml, element)) unsupported.add(label);
+    }
+    const pane = findChild(findChild(findChild(sheetXml, "sheetViews"), "sheetView"), "pane");
+    if (pane?.attrs.state === "frozen" || pane?.attrs.state === "frozenSplit") unsupported.add("Frozen panes");
 
     const widths: Record<string, number> = {};
     const colsEl = findChild(sheetXml, "cols");
@@ -589,8 +610,8 @@ export async function readXlsxWorkbook(
           const isSharedOrArray = formulaType === "array" || formulaType === "shared";
           const normalizedFormula =
             !isSharedOrArray && formulaText.length > 0 && formulaText.length <= SHEET_LIMITS.formulaChars
-              ? // Newer functions carry an "_xlfn." prefix in the file.
-                `=${formulaText.replace(/^=/, "").replace(/_xlfn\./gi, "")}`
+              ? // Newer functions carry an "_xlfn." prefix in the file; quoted text keeps it.
+                fromXlsxFormulaText(formulaText)
               : null;
           const withinFormulaCap =
             normalizedFormula !== null && normalizedFormula.length <= SHEET_LIMITS.formulaChars;

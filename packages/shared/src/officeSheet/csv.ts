@@ -153,7 +153,9 @@ export function csvToSheetDocument(
     const fields = rows[row]!;
     if (fields.length > SHEET_LIMITS.columns) truncated = true;
     for (let col = 0; col < Math.min(fields.length, SHEET_LIMITS.columns); col += 1) {
-      const parsed = parseCellInput(fields[col]!);
+      // Data only: text that looks like a formula stays text, as typed with an apostrophe.
+      const field = fields[col]!;
+      const parsed = parseCellInput(field.startsWith("=") ? `'${field}` : field);
       if (parsed.input === null) continue;
       if (count >= SHEET_LIMITS.cells) {
         truncated = true;

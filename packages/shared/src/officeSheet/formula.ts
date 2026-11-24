@@ -176,7 +176,8 @@ interface FormulaCell {
 }
 
 function literalValue(input: SheetCellInput): SheetValue {
-  return input;
+  // An apostrophe keeps "=..." as text and is not part of the value, as in a spreadsheet.
+  return typeof input === "string" && input.startsWith("'=") ? input.slice(1) : input;
 }
 
 function toNumber(value: SheetValue): number | SheetError {

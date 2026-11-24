@@ -27,6 +27,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
+import { useProjectFileReader } from "../files/projectFilesQueryState";
 import type { ArtifactNewEntry, CreatedArtifact } from "../studio/shell/ArtifactNewMenu";
 import { sheetFileName } from "./sheetFiles";
 
@@ -68,6 +69,7 @@ export function useNewSheetEntry(props: {
   const capabilities = useServerConfigs().get(props.environmentId)?.environment.capabilities;
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
   const importWorkbook = useAtomCommand(design.importWorkbook, { reportFailure: false });
+  const readFile = useProjectFileReader();
   if (!canWrite) return null;
 
   const fail = (description: string): null => {
@@ -82,7 +84,18 @@ export function useNewSheetEntry(props: {
     if (new TextEncoder().encode(contents).byteLength > SHEET_LIMITS.bytes) {
       return fail(tx("The sheet is larger than a Sheet may hold."));
     }
-    const relativePath = newSheetPath(document.title, props.taken);
+    // The shelf's list may be behind another window: a name is used only once
+    // the file is seen to be absent, so a new Sheet never replaces one.
+    const taken = new Set(props.taken);
+    let relativePath: string | null = null;
+    for (let attempt = 0; attempt < 20 && relativePath === null; attempt += 1) {
+      const candidate = newSheetPath(document.title, taken);
+      const existing = await readFile(props.environmentId, props.workspaceRoot, candidate, 64);
+      if (existing._tag === "gone") relativePath = candidate;
+      else if (existing._tag === "contents") taken.add(candidate);
+      else return fail(tx("The project folder could not be read."));
+    }
+    if (relativePath === null) return fail(tx("No free file name for the sheet."));
     const result = await writeFile({
       environmentId: props.environmentId,
       input: { cwd: props.workspaceRoot, relativePath, contents },

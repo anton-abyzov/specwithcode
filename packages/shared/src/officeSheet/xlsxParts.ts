@@ -7,7 +7,7 @@
  * executed, and every text is XML-escaped.
  */
 import { SHEET_GRID } from "./chart.ts";
-import { renameFormulaTab } from "./sheetRefs.ts";
+import { renameFormulaTabs } from "./sheetRefs.ts";
 import { type SheetEvaluation, evaluateSheet, isSheetError } from "./formula.ts";
 import {
   type CellAddress,
@@ -111,25 +111,29 @@ export function xlsxSheetNames(document: SheetDocument): string[] {
   });
 }
 
-/** A formula as the file holds it: no "=", newer functions prefixed. */
-export function xlsxFormulaText(formula: string): string {
+/**
+ * Rename each function call in a formula, leaving text in "double quotes"
+ * (string literals) and 'single quotes' (tab names) as it is.
+ */
+export function mapFormulaFunctionNames(formula: string, rename: (name: string) => string): string {
   let out = "";
-  let index = formula.startsWith("=") ? 1 : 0;
-  let inString = false;
+  let index = 0;
+  let quote: '"' | "'" | null = null;
   while (index < formula.length) {
     const char = formula[index]!;
-    if (char === '"') {
-      inString = !inString;
+    // A doubled quote inside quotes toggles twice, so it stays inside.
+    if (char === '"' || char === "'") {
+      if (quote === null) quote = char;
+      else if (quote === char) quote = null;
       out += char;
       index += 1;
       continue;
     }
-    if (!inString) {
-      const match = /^[A-Za-z][A-Za-z0-9.]*(?=\()/.exec(formula.slice(index));
+    if (quote === null) {
+      const match = /^[A-Za-z_][A-Za-z0-9._]*(?=\()/.exec(formula.slice(index));
       const before = out.at(-1);
       if (match && (before === undefined || !/[A-Za-z0-9_.$'!]/.test(before))) {
-        const name = match[0].toUpperCase();
-        out += FUTURE_FUNCTIONS.has(name) ? `_xlfn.${name}` : match[0];
+        out += rename(match[0]);
         index += match[0].length;
         continue;
       }
@@ -139,6 +143,21 @@ export function xlsxFormulaText(formula: string): string {
   }
   return out;
 }
+
+/** A formula as the file holds it: no "=", newer functions prefixed. */
+export function xlsxFormulaText(formula: string): string {
+  const body = formula.startsWith("=") ? formula.slice(1) : formula;
+  return mapFormulaFunctionNames(body, (name) =>
+    FUTURE_FUNCTIONS.has(name.toUpperCase()) ? `_xlfn.${name.toUpperCase()}` : name,
+  );
+}
+
+/** A formula from a file as the Sheet writes it: "=" in front, the "_xlfn." prefix gone. */
+export function fromXlsxFormulaText(text: string): string {
+  const body = text.startsWith("=") ? text.slice(1) : text;
+  return `=${mapFormulaFunctionNames(body, (name) => name.replace(/^_xlfn\./i, ""))}`;
+}
+
 
 interface StyleTable {
   readonly xfIndex: (format: SheetNumberFormat | undefined, style: SheetCellStyle | undefined) => number;
@@ -235,9 +254,8 @@ function cellXml(
 ): string {
   const s = xf > 0 ? ` s="${xf}"` : "";
   if (typeof input === "string" && isFormulaInput(input)) {
-    let formula: string = input;
     // Formulas name the tabs as Excel names them.
-    for (const [from, to] of tabNames) formula = renameFormulaTab(formula, from, to);
+    const formula = renameFormulaTabs(input, tabNames);
     const f = `<f>${xmlEscape(xlsxFormulaText(formula))}</f>`;
     if (value === null) return `<c r="${ref}"${s}>${f}</c>`;
     if (isSheetError(value)) return `<c r="${ref}"${s} t="e">${f}<v>${xmlEscape(value.error)}</v></c>`;

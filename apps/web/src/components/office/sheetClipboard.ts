@@ -309,7 +309,9 @@ export function planSheetPaste(
         entries.push([address, internal !== null && isFormulaInput(internal) ? offsetFormula(internal, dCol, dRow) : internal]);
         continue;
       }
-      const parsed = parseCellInput(grid.rows[sr]?.[sc] ?? "");
+      // Text from another app is data: a cell showing "=1+2" stays that text.
+      const text = grid.rows[sr]?.[sc] ?? "";
+      const parsed = parseCellInput(text.startsWith("=") ? `'${text}` : text);
       entries.push([address, parsed.input]);
       if (parsed.format) formats.push([address, parsed.format]);
     }

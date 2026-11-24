@@ -108,11 +108,15 @@ export function useSheetEditor(input: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pointAnchor = useRef<CellAddress | null>(null);
 
-  // A file changed by someone else (an agent, another window) starts a new history.
+  // A file changed by someone else (an agent, another window) starts a new
+  // history. Only a newly arrived revision counts: an edit on its way to disk
+  // re-renders over the old one and must keep its Undo.
   const { incomingRevision, isOwnRevision } = input;
-  useEffect(() => {
+  const [seenRevision, setSeenRevision] = useState(incomingRevision);
+  if (incomingRevision !== seenRevision) {
+    setSeenRevision(incomingRevision);
     if (!isOwnRevision(incomingRevision)) setHistory(EMPTY_SHEET_HISTORY);
-  }, [incomingRevision, isOwnRevision]);
+  }
 
   const range = selection ? normalize(selection.anchor, selection.focus) : null;
 

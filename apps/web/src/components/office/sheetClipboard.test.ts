@@ -70,6 +70,15 @@ describe("copy", () => {
 });
 
 describe("paste from other apps", () => {
+  it("keeps text that looks like a formula as text", () => {
+    const grid = readSheetClipboard({ html: "<table><tr><td>=1+2</td><td>4</td></tr></table>" })!;
+    const plan = planSheetPaste(grid, r("A1"), LIMITS)!;
+    expect(plan.entries).toEqual([
+      [{ col: 0, row: 0 }, "'=1+2"],
+      [{ col: 1, row: 0 }, 4],
+    ]);
+  });
+
   it("reads an Excel HTML table, numbers and merged cells", () => {
     const excel = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><!--StartFragment--><table>
       <tr><td colspan=2 x:str>Region</td><td>Total</td></tr>

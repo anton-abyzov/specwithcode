@@ -16,6 +16,7 @@ import {
 import { parseSheetDocument } from "@specweave-studio/shared/officeSheet";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import { readableHostFile } from "../../assets/AssetAccess.ts";
 import { writeFileStringAtomically } from "../../atomicWrite.ts";
@@ -28,6 +29,20 @@ import { readXlsxWorkbook } from "./xlsxImport.ts";
 export function workbookRevision(bytes: Uint8Array): string {
   return NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 }
+
+/**
+ * One save at a time per workbook on this machine, from the revision check to
+ * the rename, so two editors that read the same revision cannot both win.
+ */
+const saveLocks = new Map<string, Semaphore.Semaphore>();
+const saveLockFor = (file: string): Semaphore.Semaphore => {
+  let lock = saveLocks.get(file);
+  if (!lock) {
+    lock = Semaphore.makeUnsafe(1);
+    saveLocks.set(file, lock);
+  }
+  return lock;
+};
 
 const notFound = () =>
   new DesignError({ code: "not_found", detail: "The file is not on this machine any more." });
@@ -61,23 +76,27 @@ export const saveWorkbook = (input: DesignSaveWorkbookInput) =>
     // Only an existing, readable, unprotected workbook is written over.
     const file = yield* readableHostFile(input.path).pipe(Effect.orElseSucceed(() => null));
     if (file === null) return yield* notFound();
-    const current = yield* readBoundedHostFile(file, DESIGN_WORKBOOK_MAX_BYTES, "workbook");
-    if (workbookRevision(current) !== input.expectedRevision) {
-      return yield* new DesignError({
-        code: "conflict",
-        detail: "The workbook changed on disk since it was opened. Reload it before saving.",
-      });
-    }
-    yield* writeFileStringAtomically({ filePath: file, contents: bytes }).pipe(
-      Effect.mapError((error) =>
-        LOCK_CODES.has(errorCode(error) ?? "")
-          ? new DesignError({
-              code: "operation_failed",
-              detail:
-                "The workbook is open or locked in another app, such as Excel. Close it there and save again.",
-            })
-          : new DesignError({ code: "operation_failed", detail: "The workbook could not be written." }),
-      ),
+    yield* saveLockFor(file).withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* readBoundedHostFile(file, DESIGN_WORKBOOK_MAX_BYTES, "workbook");
+        if (workbookRevision(current) !== input.expectedRevision) {
+          return yield* new DesignError({
+            code: "conflict",
+            detail: "The workbook changed on disk since it was opened. Reload it before saving.",
+          });
+        }
+        yield* writeFileStringAtomically({ filePath: file, contents: bytes }).pipe(
+          Effect.mapError((error) =>
+            LOCK_CODES.has(errorCode(error) ?? "")
+              ? new DesignError({
+                  code: "operation_failed",
+                  detail:
+                    "The workbook is open or locked in another app, such as Excel. Close it there and save again.",
+                })
+              : new DesignError({ code: "operation_failed", detail: "The workbook could not be written." }),
+          ),
+        );
+      }),
     );
     return { revision: workbookRevision(bytes) };
   }).pipe(Effect.withSpan("WorkbookSave.saveWorkbook"));

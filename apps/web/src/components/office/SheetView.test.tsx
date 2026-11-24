@@ -546,6 +546,21 @@ describe("SheetView", () => {
     return { calls, settle, onSave };
   }
 
+  it("keeps Undo while an edit is still on its way to disk", async () => {
+    const { settle, onSave } = deferredSaves();
+    const inst = render(STATEMENT, onSave);
+    const undo = () =>
+      inst.root.findAll((node) => node.type === "button" && node.props["data-sheet-tool"] === "undo")[0]!;
+    expect(undo().props.disabled).toBe(true);
+    act(() => inst.root.findByProps({ "data-sheet-columns-toggle": true }).props.onClick());
+    act(() => inst.root.findByProps({ "data-col-right": "A" }).props.onClick());
+    expect(undo().props.disabled).toBe(false);
+    await act(async () => {
+      settle[0]!(true);
+    });
+    expect(undo().props.disabled).toBe(false);
+  });
+
   it("takes the late echo of an earlier write for its own, also after the queue went idle", async () => {
     const { calls, settle, onSave } = deferredSaves();
     const inst = render(STATEMENT, onSave);

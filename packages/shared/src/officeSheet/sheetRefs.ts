@@ -218,6 +218,16 @@ export function renameFormulaTab(formula: string, from: string, to: string): str
   );
 }
 
+/** Several tabs renamed at once, each reference by its original name, so a chain never redirects one. */
+export function renameFormulaTabs(formula: string, renames: ReadonlyArray<readonly [string, string]>): string {
+  if (renames.length === 0) return formula;
+  return mapFormulaRefs(formula, (unit) => {
+    if (unit.tab === null) return null;
+    const rename = renames.find(([from]) => sameTab(unit.tab!, from));
+    return rename ? { start: unit.start, ...(unit.end ? { end: unit.end } : {}), tab: rename[1] } : null;
+  });
+}
+
 /** References to a deleted tab become #REF!. */
 export function deleteFormulaTab(formula: string, deleted: string): string {
   return mapFormulaRefs(formula, (unit) =>

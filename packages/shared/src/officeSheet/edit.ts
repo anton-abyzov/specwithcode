@@ -529,6 +529,21 @@ function shiftRowGroups(groups: ReadonlyArray<SheetRowGroup> | undefined, shift:
 export function shiftAxis(document: SheetDocument, tabIndex: number, shift: AxisShift): SheetDocument {
   const target = document.tabs[tabIndex];
   if (!target || shift.count === 0) return document;
+  if (shift.count > 0) {
+    // An insert never pushes data off the sheet: refuse it instead of losing cells.
+    const limit = shift.axis === "row" ? SHEET_LIMITS.rows : SHEET_LIMITS.columns;
+    for (const name of Object.keys(target.cells)) {
+      const address = parseCellAddress(name);
+      const at = address ? (shift.axis === "row" ? address.row : address.col) : -1;
+      if (at >= shift.at && at + shift.count >= limit) {
+        throw new SheetEditLimitError(
+          shift.axis === "row"
+            ? "Inserting here would push cells past the last row. Clear the bottom rows first."
+            : "Inserting here would push cells past the last column. Clear the rightmost columns first.",
+        );
+      }
+    }
+  }
   const tabs = document.tabs.map((tab, index) => {
     const own = index === tabIndex;
     const cells: Record<string, SheetCellInput> = {};

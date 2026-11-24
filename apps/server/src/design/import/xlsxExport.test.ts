@@ -207,6 +207,51 @@ describe("workbook save and import", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("lets only one of two saves from the same revision win", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-xlsx-race-" });
+      const file = path.join(root, "budget.xlsx");
+      yield* fs.writeFile(file, writeXlsxWorkbook(BOOK));
+      const revision = workbookRevision(yield* fs.readFile(file));
+      const edit = (cell: string) =>
+        serializeSheetDocument({
+          ...BOOK,
+          tabs: BOOK.tabs.map((tab, index) => (index === 0 ? { ...tab, cells: { ...tab.cells, [cell]: 1 } } : tab)),
+        });
+      const results = yield* Effect.all(
+        [
+          Effect.result(saveWorkbook({ path: file, sheetJson: edit("G1"), expectedRevision: revision })),
+          Effect.result(saveWorkbook({ path: file, sheetJson: edit("H1"), expectedRevision: revision })),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const failures = results.filter((result) => result._tag === "Failure");
+      expect(results.length - failures.length).toBe(1);
+      expect(failures).toHaveLength(1);
+      expect((failures[0] as { failure: { code: string } }).failure.code).toBe("conflict");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it("names worksheet parts a save would drop, such as filters and validation", async () => {
+    const parts = buildXlsxParts(BOOK);
+    parts["xl/worksheets/sheet1.xml"] = parts["xl/worksheets/sheet1.xml"]!.replace(
+      "</sheetData>",
+      '</sheetData><autoFilter ref="A1:B4"/><dataValidations count="1"><dataValidation sqref="A2"/></dataValidations>',
+    );
+    const encoder = new TextEncoder();
+    const bytes = zipFiles(xlsxPartOrder(parts).map((n) => [n, encoder.encode(parts[n]!)] as const));
+    const result = await readXlsxWorkbook(bytes, "Filtered");
+    expect(result.unsupportedFeatures).toEqual(expect.arrayContaining(["Filters", "Data validation (dropdowns)"]));
+  });
+
+  it("keeps quoted text that mentions a function prefix", async () => {
+    const book: SheetDocument = { ...BOOK, tabs: [{ name: "T", cells: { A1: '="literal _xlfn.example"' } }] };
+    const parsed = parseSheetDocument((await readXlsxWorkbook(writeXlsxWorkbook(book), "T")).sheetJson);
+    expect(parsed.ok && parsed.document.tabs[0]?.cells.A1).toBe('="literal _xlfn.example"');
+  });
+
   it.effect("imports uploaded bytes as a sheet without writing anything", () =>
     Effect.gen(function* () {
       const data = Buffer.from(writeXlsxWorkbook(BOOK)).toString("base64");
