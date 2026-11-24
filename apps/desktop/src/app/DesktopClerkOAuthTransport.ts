@@ -24,7 +24,10 @@ import type { DesktopConnectSignInState } from "@specweave-studio/contracts";
 
 /** `OAUTH_TRANSPORT_CHANNELS.open` in `@clerk/electron`. */
 export const CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL = "clerk:oauth-transport:open";
-/** `OAUTH_TRANSPORT_CHANNELS.getRedirectUrl` in `@clerk/electron`; stays the SDK's. */
+/**
+ * `OAUTH_TRANSPORT_CHANNELS.getRedirectUrl` in `@clerk/electron`. Stays the
+ * SDK's unless `browserRedirectUrl` is given.
+ */
 export const CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL = "clerk:oauth-transport:get-redirect-url";
 /** The SDK's own limit (`CALLBACK_TIMEOUT_MS`). */
 export const CLERK_OAUTH_CALLBACK_TIMEOUT_MS = 180_000;
@@ -58,6 +61,9 @@ export type ClerkOAuthOpenHandler = (
   url: unknown,
 ) => Promise<ClerkOAuthCallbackResult>;
 
+/** Answers the SDK's "where does the browser come back to" request. */
+export type ClerkOAuthRedirectUrlHandler = (event: ClerkOAuthInvokeEvent) => Promise<string>;
+
 /** One line per change of state. No field ever holds a URL, a query, a token or a nonce. */
 export interface ClerkOAuthLogEntry {
   readonly event: DesktopConnectSignInState | "cancelled" | "refused" | "callback-ignored";
@@ -71,7 +77,7 @@ export interface ClerkOAuthLogEntry {
 
 export interface ClerkOAuthTransportDependencies {
   readonly ipcMain: {
-    handle(channel: string, listener: ClerkOAuthOpenHandler): void;
+    handle(channel: string, listener: ClerkOAuthOpenHandler | ClerkOAuthRedirectUrlHandler): void;
     removeHandler(channel: string): void;
   };
   readonly app: {
@@ -85,8 +91,16 @@ export interface ClerkOAuthTransportDependencies {
   readonly openExternal: (url: string) => Promise<void>;
   /** Brings the window that asked to the front when its sign-in comes back. */
   readonly focusWindow: (sender: ClerkOAuthSender) => void;
-  /** `scheme://host/` of the renderer origin: where the browser sends the person back. */
+  /** `scheme://host/` of the renderer origin: the only callback link that completes a sign-in. */
   readonly redirectUrl: string;
+  /**
+   * Where Clerk sends the browser when the sign-in ends, when that is not
+   * `redirectUrl` itself. The production app uses an https page that forwards
+   * to `redirectUrl` with the same query: a custom-scheme redirect commits no
+   * page, so the browser tab otherwise stays on the provider's last page,
+   * still looking busy. Omitted: the SDK's own answer (`redirectUrl`) stays.
+   */
+  readonly browserRedirectUrl?: string | undefined;
   /** The channel the window listens on for `DesktopConnectSignInState`. */
   readonly stateChannel: string;
   readonly log: (entry: ClerkOAuthLogEntry) => void;
@@ -103,6 +117,27 @@ export function clerkOAuthRedirectUrl(renderer: {
   readonly host: string;
 }): string {
   return `${renderer.scheme}://${renderer.host}/`;
+}
+
+/** The https page on spec-weave.com that forwards a finished sign-in to `studio://app/`. */
+export const CONNECT_BROWSER_RETURN_URL = "https://spec-weave.com/connect/return/";
+/** The production Clerk instance, whose redirect allowlist holds that page. */
+export const CONNECT_PRODUCTION_CLERK_HOSTNAME = "clerk.spec-weave.com";
+
+/**
+ * The page the browser comes back to, or `undefined` to keep the SDK's
+ * direct `scheme://host/` redirect. Only a production build on the
+ * production Clerk instance uses the page: it forwards to `studio://` alone,
+ * and only that instance allows it as a redirect.
+ */
+export function connectBrowserReturnUrl(build: {
+  readonly isDevelopment: boolean;
+  readonly frontendApiHostname: string | undefined;
+}): string | undefined {
+  if (build.isDevelopment) return undefined;
+  return build.frontendApiHostname === CONNECT_PRODUCTION_CLERK_HOSTNAME
+    ? CONNECT_BROWSER_RETURN_URL
+    : undefined;
 }
 
 /** The SDK's `isMainFrameEvent`: only the top frame of a window, never a guest page or a subframe. */
@@ -319,6 +354,18 @@ export function installClerkOAuthTransport(
   // Electron allows one handler per channel and throws on a second.
   ipcMain.removeHandler(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL);
   ipcMain.handle(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL, handleOpen);
+  const { browserRedirectUrl } = dependencies;
+  if (browserRedirectUrl !== undefined) {
+    // The SDK's rule for this channel: a window's main frame only.
+    const handleRedirectUrl: ClerkOAuthRedirectUrlHandler = (event) => {
+      if (!isClerkOAuthMainFrameEvent(event)) {
+        return Promise.reject(new Error(NOT_MAIN_FRAME_MESSAGE));
+      }
+      return Promise.resolve(browserRedirectUrl);
+    };
+    ipcMain.removeHandler(CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL);
+    ipcMain.handle(CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL, handleRedirectUrl);
+  }
   app.on("open-url", openUrlListener as (...args: never[]) => void);
   app.on("second-instance", secondInstanceListener as (...args: never[]) => void);
 
@@ -341,6 +388,9 @@ export function installClerkOAuthTransport(
       () =>
         app.removeListener("second-instance", secondInstanceListener as (...args: never[]) => void),
       () => ipcMain.removeHandler(CLERK_OAUTH_TRANSPORT_OPEN_CHANNEL),
+      ...(browserRedirectUrl === undefined
+        ? []
+        : [() => ipcMain.removeHandler(CLERK_OAUTH_TRANSPORT_REDIRECT_URL_CHANNEL)]),
     ];
     for (const step of steps) {
       try {
