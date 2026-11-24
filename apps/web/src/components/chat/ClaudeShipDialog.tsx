@@ -164,7 +164,7 @@ export function ClaudeShipDialog(props: ClaudeShipDialogProps) {
         </DialogPanel>
         <DialogFooter>
           <Button
-            variant="ghost"
+            variant="outline"
             className="sm:me-auto"
             disabled={props.opening}
             onClick={props.onSendAnyway}
@@ -185,7 +185,7 @@ export function ClaudeShipDialog(props: ClaudeShipDialogProps) {
             data-testid="claude-ship-open-terminal"
           >
             <TerminalSquareIcon />
-            {tx("Open Claude Code terminal")}
+            {tx("Open terminal")}
           </Button>
         </DialogFooter>
       </DialogPopup>
