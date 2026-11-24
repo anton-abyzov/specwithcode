@@ -83,7 +83,7 @@ const row = (
       durationMs: 7 * DAY,
       kind: "weekly",
       accountWide: true,
-      spent: false,
+      spent: leftPercent === 0,
       amounts: null,
     },
   ],
@@ -106,11 +106,13 @@ const index = effectivenessIndex(
       accountKey: "acpRegistry:one@example.com",
       displayName: "GitHub Copilot",
       iconUrl: copilotIcon,
+      atLimit: true,
     }),
     row(acp, 0, now + 14 * DAY, {
       key: "copilot-two",
       accountKey: "acpRegistry:two@example.com",
       displayName: "GitHub Copilot Enterprise",
+      atLimit: true,
     }),
     row(acp, 55, now + 9 * DAY, {
       key: "gemini",

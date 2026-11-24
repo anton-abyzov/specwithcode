@@ -22,7 +22,10 @@ export const AGENT_DRIVERS: ReadonlySet<string> = new Set(["acpRegistry", "antig
 /** Models past this many share the last colour as "Other models". */
 export const MAX_MODELS = 6;
 export const OTHER_MODELS = "Other models";
-const UNKNOWN_MODEL = "Model not recorded";
+// Internal bucket keys no reported model id can take (ids are trimmed, so no leading space).
+const UNKNOWN_MODEL = " unknown";
+const OTHER_BUCKET = " other";
+const UNKNOWN_LABEL = "Model not recorded";
 
 export interface ModelTotals {
   readonly model: string;
@@ -187,7 +190,7 @@ export function agentStats(
     .map(([model]) => model);
   const named = ranked.length > MAX_MODELS ? ranked.slice(0, MAX_MODELS - 1) : ranked;
   const folded = ranked.length > named.length;
-  const slot = (model: string) => (named.includes(model) ? model : OTHER_MODELS);
+  const slot = (model: string) => (named.includes(model) ? model : OTHER_BUCKET);
 
   const days = daysBetween(range.sinceDay, range.untilDay).map((day): AgentDay => {
     const turns = new Map<string, number>();
@@ -217,12 +220,12 @@ export function agentStats(
     );
 
   // Shown as people say it ("Opus 5.5"); ids that would read the same keep their id.
-  const shortOf = (id: string) => (id === UNKNOWN_MODEL ? id : shortModelName(id));
+  const shortOf = (id: string) => (id === UNKNOWN_MODEL ? UNKNOWN_LABEL : shortModelName(id));
   const shortCount = new Map<string, number>();
   for (const id of modelTurns.keys())
     shortCount.set(shortOf(id), (shortCount.get(shortOf(id)) ?? 0) + 1);
   const label = (id: string) =>
-    id === OTHER_MODELS ? id : (shortCount.get(shortOf(id)) ?? 0) > 1 ? id : shortOf(id);
+    id === OTHER_BUCKET ? OTHER_MODELS : (shortCount.get(shortOf(id)) ?? 0) > 1 ? id : shortOf(id);
   const relabel = (turns: ReadonlyMap<string, number>) =>
     new Map([...turns].map(([id, count]) => [label(id), count] as const));
 
@@ -231,7 +234,7 @@ export function agentStats(
       ...agent,
       models: agent.models.map((entry) => ({ ...entry, model: label(entry.model) })),
     })),
-    models: (folded ? [...named, OTHER_MODELS] : named).map(label),
+    models: (folded ? [...named, OTHER_BUCKET] : named).map(label),
     days: days.map((day) => ({ ...day, turns: relabel(day.turns) })),
     turns: list.reduce((sum, agent) => sum + agent.turns, 0),
     tokens: list.reduce((sum, agent) => sum + agent.tokens, 0),

@@ -183,6 +183,21 @@ describe("agentStats", () => {
     );
   });
 
+  it("keeps a model whose id reads like a bucket apart from the bucket", () => {
+    const view = agentStats(
+      [
+        report([
+          cell("acpRegistry:copilot@example.com", "unknown", "2026-11-21", 2),
+          cell("acpRegistry:copilot@example.com", "Model not recorded", "2026-11-21", 1),
+        ]),
+      ],
+      agentOf,
+      range,
+    );
+    expect(view.agents[0]?.models.map((entry) => entry.turns)).toEqual([2, 1]);
+    expect(view.models).toHaveLength(2);
+  });
+
   it("is empty with no registry turns", () => {
     const view = agentStats([report([])], agentOf, range);
     expect(view).toMatchObject({ turns: 0, agents: [], models: [] });

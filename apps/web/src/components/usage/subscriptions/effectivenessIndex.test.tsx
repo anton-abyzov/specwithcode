@@ -217,11 +217,13 @@ describe("EffectivenessSummaryView", () => {
         accountKey: "acpRegistry:one@example.com",
         displayName: "Work Copilot",
         iconUrl: copilotIcon,
+        atLimit: true,
       }),
       row(acp, 0, now + 7 * DAY, {
         key: "c2",
         accountKey: "acpRegistry:two@example.com",
         displayName: "GitHub Copilot Enterprise",
+        atLimit: true,
       }),
       row(acp, 60, now + 3 * DAY, {
         key: "g1",
@@ -264,6 +266,7 @@ describe("EffectivenessSummaryView", () => {
       "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg";
     const spentWindow = (target: SubscriptionRow, spent: boolean, resetsAt: number | null) => ({
       ...target,
+      atLimit: spent,
       windows: target.windows.map((window) =>
         window.id === "weekly" ? { ...window, leftPercent: 0, spent, resetsAt } : window,
       ),
@@ -302,6 +305,15 @@ describe("EffectivenessSummaryView", () => {
     expect(provider.atLimit).toBe(true);
     expect(provider.atLimitUntil).toBe(now + 6 * DAY);
     expect(subline(provider, now)).toContain("at its limit until");
+    // Premium pool spent but the provider says ordinary use still runs (the row is not at
+    // its limit): no "at its limit" for the provider either.
+    const stillRuns = { ...known, atLimit: false };
+    expect(effectivenessIndex([stillRuns], [], now).providers[0]?.atLimit ?? false).toBe(false);
+    // Blocked by a spend control with nothing spent: at its limit, no date.
+    const capped = { ...rounded, atLimit: true };
+    const cappedProvider = effectivenessIndex([capped], [], now).providers[0]!;
+    expect(cappedProvider.atLimit).toBe(true);
+    expect(cappedProvider.atLimitUntil).toBeNull();
     // No account has a reset time: still at its limit, without a date.
     const alone = effectivenessIndex([unknown], [], now).providers[0]!;
     expect(alone.atLimit).toBe(true);

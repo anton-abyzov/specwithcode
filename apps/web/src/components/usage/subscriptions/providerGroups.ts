@@ -69,9 +69,12 @@ export function providerGroupOf(source: ProviderGroupSource): ProviderGroup {
       iconUrl: null,
     };
   }
-  const brand =
-    providerBrandFor({ driverKind: REGISTRY_DRIVER, acpRegistryIconUrl: iconUrl }) ??
-    providerBrandForName(name ?? undefined);
+  // The registry's own identity first: its icon names a brand we draw, or at least an
+  // agent id, and either outranks whatever an instance was called. Only an instance with
+  // no registry icon is named by its display name.
+  const iconBrand = providerBrandFor({ driverKind: REGISTRY_DRIVER, acpRegistryIconUrl: iconUrl });
+  const agentId = acpAgentIdFromIconUrl(iconUrl);
+  const brand = iconBrand ?? (agentId === null ? providerBrandForName(name ?? undefined) : null);
   if (brand !== null) {
     return {
       key: `${REGISTRY_DRIVER}:${brand}`,
@@ -80,9 +83,6 @@ export function providerGroupOf(source: ProviderGroupSource): ProviderGroup {
       iconUrl,
     };
   }
-  // An agent the app has no mark for is still one agent by its registry id, whatever
-  // each instance is called; only without an id does the name decide.
-  const agentId = acpAgentIdFromIconUrl(iconUrl);
   if (agentId !== null) {
     return { key: `${REGISTRY_DRIVER}:agent:${agentId}`, label: name ?? agentId, driver, iconUrl };
   }

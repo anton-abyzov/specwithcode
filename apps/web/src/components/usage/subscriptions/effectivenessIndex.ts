@@ -144,14 +144,23 @@ export function effectivenessIndex(
       });
     const soonest = live.toSorted((left, right) => left.resetsAt - right.resetsAt)[0];
     const projectedLeft = mean(live.flatMap((entry) => (entry.left === null ? [] : [entry.left])));
-    // Spent when every live account of the provider has used its whole account-wide window
-    // (not a rounded 0% left): one spare account, with or without a reset time, still runs.
+    // At its limit when every live account is blocked, as its own row decides it (the
+    // provider's run permission and spend controls first, then a spent account-wide window,
+    // never a rounded 0% left). It frees up when the first account does: an account blocked
+    // only by spent windows frees when the last of them resets; any other block has no date.
     const liveRows = rows.filter((row) => rowGroup.get(row)?.key === group.key && !row.offline);
-    const mains = liveRows.map(mainWindow);
-    const spent = mains.length > 0 && mains.every((window) => window?.spent === true);
-    const spentResets = mains.flatMap((window) =>
-      window?.resetsAt != null && window.resetsAt > now ? [window.resetsAt] : [],
-    );
+    const spent = liveRows.length > 0 && liveRows.every((row) => row.atLimit);
+    const freeAt = (row: SubscriptionRow): number | null => {
+      const blocking = row.windows.filter((window) => window.accountWide && window.spent);
+      if (blocking.length === 0) return null;
+      const resets = blocking.map((window) => window.resetsAt);
+      if (resets.some((at) => at === null || at <= now)) return null;
+      return Math.max(...(resets as number[]));
+    };
+    const spentResets = liveRows.flatMap((row) => {
+      const at = freeAt(row);
+      return at === null ? [] : [at];
+    });
     return {
       driver: group.driver,
       group,

@@ -77,4 +77,11 @@ describe("groupResolver", () => {
     // An account no row describes stays with its driver's catch-all, never another agent.
     expect(groupOf("acpRegistry:gone@example.com", acp).label).toBe("Other registry agents");
   });
+  it("never lets an instance name outrank the registry id of an agent without a mark", () => {
+    const icon = "https://cdn.agentclientprotocol.com/registry/v1/latest/new-agent.svg";
+    const night = providerGroupOf({ driver: acp, displayName: "Night shift", iconUrl: icon });
+    const named = providerGroupOf({ driver: acp, displayName: "Copilot testing", iconUrl: icon });
+    expect(named.key).toBe("acpRegistry:agent:new-agent");
+    expect(named.key).toBe(night.key);
+  });
 });
