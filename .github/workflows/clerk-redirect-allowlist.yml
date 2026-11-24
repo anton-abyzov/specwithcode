@@ -1,0 +1,43 @@
+name: Connect sign-in redirect allowlist
+
+# Adds the desktop app's browser return page to the production Clerk
+# instance's redirect allowlist (1453). Run by hand; it only adds the URL
+# when it is missing and never removes or changes other entries.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only report whether the URL is already allowed.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  allowlist:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment:
+      name: production
+    steps:
+      - name: Add the return page
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          RETURN_URL: https://spec-weave.com/connect/return/
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLERK_SECRET_KEY}" ]; then echo "CLERK_SECRET_KEY is not set"; exit 1; fi
+          auth=(-H "Authorization: Bearer ${CLERK_SECRET_KEY}")
+          existing="$(curl -fsS "${auth[@]}" https://api.clerk.com/v1/redirect_urls)"
+          if jq -e --arg url "${RETURN_URL}" 'map(.url) | index($url) != null' <<<"${existing}" >/dev/null; then
+            echo "Already allowed: ${RETURN_URL}"
+            exit 0
+          fi
+          echo "Missing: ${RETURN_URL} ($(jq length <<<"${existing}") entries today)"
+          if [ "${DRY_RUN}" = "true" ]; then exit 0; fi
+          curl -fsS -X POST "${auth[@]}" -H "Content-Type: application/json" \
+            -d "$(jq -n --arg url "${RETURN_URL}" '{url: $url}')" \
+            https://api.clerk.com/v1/redirect_urls | jq '{id, url}'
