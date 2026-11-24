@@ -57,21 +57,26 @@ export function foldLimitHops(
   rows: ReadonlyArray<Row>,
   isExpanded: (groupId: string) => boolean,
 ): Row[] {
-  const stoppedRunIds = new Set<string>();
+  // Each stopped run's own limit failures, to know its refusal text by.
+  const stoppedRuns = new Map<string, string[]>();
   for (const row of rows) {
-    const runId = failureItem(row)?.runId;
-    if (runId) stoppedRunIds.add(runId);
+    const item = failureItem(row);
+    if (!item?.runId) continue;
+    const messages = stoppedRuns.get(item.runId) ?? [];
+    messages.push(item.failure.message);
+    stoppedRuns.set(item.runId, messages);
   }
-  if (stoppedRunIds.size < 2) return [...rows];
+  if (stoppedRuns.size < 2) return [...rows];
   // Only the refusal itself folds: a real answer from a run that later
   // stopped stays in view and ends the stretch.
   const isStoppedRunText = (row: Row) =>
     (row.kind === "message" || row.kind === "assistant-meta") &&
     row.message.role === "assistant" &&
     row.message.runId != null &&
-    stoppedRunIds.has(row.message.runId) &&
+    stoppedRuns.has(row.message.runId) &&
     // A reply's details row stays with its reply (see `summarize`).
-    (row.kind === "assistant-meta" || isProviderRefusalText(row.message.text));
+    (row.kind === "assistant-meta" ||
+      isProviderRefusalText(row.message.text, stoppedRuns.get(row.message.runId)));
 
   const out: Row[] = [];
   let index = 0;

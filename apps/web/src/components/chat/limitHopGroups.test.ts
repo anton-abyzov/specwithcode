@@ -71,12 +71,12 @@ function thread() {
       });
       return api;
     },
-    limit(id: string, run: string) {
+    limit(id: string, run: string, message = "Usage limit") {
       items.push({
         ...base(id, run),
         type: "error",
         status: "failed",
-        failure: { class: "usage_limit", message: "Usage limit", code: null, retryable: null },
+        failure: { class: "usage_limit", message, code: null, retryable: null },
       });
       return api;
     },
@@ -255,6 +255,26 @@ describe("limit hop groups (1460 AC-06)", () => {
     expect(kinds.filter((kind) => kind.startsWith("limit-hops"))).toEqual([
       "limit-hops:2",
       "limit-hops:2",
+    ]);
+  });
+
+  it("takes the incident's Cursor refusal into the group by the run's own failure", () => {
+    const cursor =
+      "Gemini 4 Neon is not included in your weekly usage. Switch models or buy credits.";
+    const built = thread()
+      .prompt("prompt", "run-1")
+      .reply("answer", "run-1", "Starting the build.");
+    built.limit("limit-1", "run-1").hop("run-1", "run-2", "copilot", "cursor");
+    built.reply("refusal-2", "run-2", cursor).limit("limit-2", "run-2", cursor);
+    built.hop("run-2", "run-3", "cursor", "copilot");
+    built.reply("refusal-3", "run-3", "Error: You have exceeded your monthly quota");
+    built.limit("limit-3", "run-3", "Monthly quota used up on this provider.");
+    built.hop("run-3", "run-4", "copilot", "cursor");
+    expect(shape(built.rows())).toEqual([
+      "user:prompt",
+      "assistant:answer",
+      "assistant-meta",
+      "limit-hops:3",
     ]);
   });
 

@@ -27,6 +27,7 @@ import {
   makeSweep,
   ProviderFallbackEnv,
 } from "./ProviderFallbackWorker.ts";
+import { LIMIT_SOURCE_BACKOFF_MS } from "./limitSourceHolds.ts";
 import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { LimitSourceHoldsShared } from "./UnopenableHolds.ts";
@@ -101,8 +102,9 @@ type Run = ReturnType<typeof run>;
 const stoppedShell = (
   latest: Run,
   lastErrorClass: "usage_limit" | "provider_error" = "usage_limit",
+  id = "t1",
 ) => ({
-  id: ThreadId.make("t1"),
+  id: ThreadId.make(id),
   projectId: project.id,
   providerInstanceId: latest.providerInstanceId,
   modelSelection: latest.modelSelection,
@@ -145,6 +147,9 @@ function harness(
     turnItems: [] as unknown[],
     /** Handoff triggers the sweep asked another machine about. */
     considered: [] as string[],
+    /** What changes while the other machine answers, before the last check. */
+    whileAsked: null as (() => void) | null,
+    admitted: [] as string[],
     dispatched: [] as OrchestrationV2ServerCommand[],
   };
   const deps = Layer.mergeAll(
@@ -193,8 +198,12 @@ function harness(
     Effect.provideService(MachineLimitHandoff, {
       bind: () => Effect.void,
       consider: (input) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           state.considered.push(input.trigger.key);
+          if (state.whileAsked !== null) {
+            state.whileAsked();
+            state.admitted.push(`${input.trigger.key}=${yield* input.admit}`);
+          }
           return "skipped" as const;
         }),
       holds: () => Effect.succeed(false),
@@ -338,6 +347,14 @@ describe("the hop cap through the sweep", () => {
       expect(state.dispatched).toHaveLength(5);
       // Nor does a parked chain ask another machine to take it (D-04).
       expect(state.considered.slice(askedBefore)).toEqual([]);
+
+      // An hour on, every hold has run out and the sources read room again:
+      // a parked chain still waits for a person, with no way back sent.
+      state.providers = pool;
+      clock += LIMIT_SOURCE_BACKOFF_MS;
+      yield* step();
+      yield* step();
+      expect(state.dispatched).toHaveLength(5);
     }),
   );
 });
@@ -401,4 +418,54 @@ describe("a hold on a source whose read covers each model", () => {
       }),
     );
   });
+});
+
+describe("the last check before a handoff", () => {
+  const codexId = ProviderInstanceId.make("codex");
+  const gpt = "gpt-6";
+  const codexAt = (at: number, usedPercent: number) =>
+    withRoom(provider(codexId, "codex", at), gpt, usedPercent);
+  const claudeAt = (at: number, usedPercent: number) =>
+    withRoom(provider(claudeId, "claudeAgent", at), opus, usedPercent);
+
+  itEffect.effect("reads a usage read that came in while the other machine answered", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(
+        {
+          ...settings,
+          defaultModelSelection: { instanceId: codexId, model: gpt },
+          modelLanes: {
+            routine: [
+              { instanceId: codexId, model: gpt },
+              { instanceId: claudeId, model: opus },
+            ],
+            complex: [],
+          },
+          providerLimitMachineTargets: [
+            {
+              environmentId: "minis" as never,
+              label: "Minis",
+              modelSelection: { instanceId: codexId, model: gpt },
+            },
+          ],
+        } as ServerSettings,
+        // Claude's read still shows room; only its stop says otherwise.
+        [codexAt(stoppedAt - 60_000, 100), claudeAt(stoppedAt - 60_000, 30)],
+      );
+      // t1 is out on Codex; t2's stop holds Claude whatever its read says.
+      const r1 = run("r1", 1, codexId, gpt, "m1", stoppedAt);
+      const r2 = {
+        ...run("r2", 1, claudeId, opus, "m2", stoppedAt),
+        threadId: ThreadId.make("t2"),
+      };
+      state.runs = [r1, r2];
+      state.threads = [stoppedShell(r1), stoppedShell(r2, "usage_limit", "t2")];
+      // A Claude usage read after the stop shows room before Minis answers.
+      state.whileAsked = () => {
+        state.providers = [codexAt(stoppedAt - 60_000, 100), claudeAt(stoppedAt + 4_000, 20)];
+      };
+      yield* sweep();
+      expect(state.admitted).toContain("limit-handoff:t1:r1=false");
+    }),
+  );
 });

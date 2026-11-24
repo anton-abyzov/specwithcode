@@ -57,13 +57,32 @@ function limitStoppedRuns(items: ReadonlyArray<UsageRecoveryItem>): ReadonlySet<
 
 /**
  * Text a provider wrote as its whole answer when it refused the turn on a
- * limit, by the rule the server fails such a turn on (`isUsageLimitReply`,
- * with or without its `Error:` prefix): "Error: You have exceeded your
- * monthly quota". Empty text counts too. Any other wording is an answer.
+ * limit. Either the server's own rule for such a reply names it
+ * (`isUsageLimitReply`, with or without its `Error:` prefix: "Error: You
+ * have exceeded your monthly quota"), or it repeats the limit failure the run
+ * recorded (Cursor's "… is not included in your weekly usage", which arrives
+ * as the run's error). Empty text counts too. Any other wording is an answer.
  */
-export function isProviderRefusalText(text: string): boolean {
+export function isProviderRefusalText(
+  text: string,
+  failureMessages: ReadonlyArray<string> = [],
+): boolean {
   const trimmed = text.trim();
-  return (
-    trimmed.length === 0 || isUsageLimitReply(trimmed) || isUsageLimitReply(`Error: ${trimmed}`)
-  );
+  if (trimmed.length === 0 || isUsageLimitReply(trimmed) || isUsageLimitReply(`Error: ${trimmed}`))
+    return true;
+  if (trimmed.length > MAX_LIMIT_REPLY_LENGTH) return false;
+  const said = normalized(trimmed);
+  return failureMessages.some((message) => {
+    const failure = normalized(message);
+    return (
+      failure.length >= 12 && (said === failure || said.includes(failure) || failure.includes(said))
+    );
+  });
 }
+
+const normalized = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[\s\u00a0]+/gu, " ")
+    .replace(/[.!…]+$/u, "")
+    .trim();

@@ -152,4 +152,9 @@ it("names a refusal by the server's own rule, never by a word in an answer (1460
     isProviderRefusalText("The bucket quota is 5 GB; the upload exceeded it, so I split the file."),
   ).toBe(false);
   expect(isProviderRefusalText("Please try again after 3 PM.")).toBe(false);
+  // Cursor's refusal arrives as the run's error; its text repeats that failure.
+  const cursor = "Gemini 4 Neon is not included in your weekly usage.";
+  expect(isProviderRefusalText(cursor)).toBe(false);
+  expect(isProviderRefusalText(cursor, [cursor])).toBe(true);
+  expect(isProviderRefusalText("I split the file and the upload worked.", [cursor])).toBe(false);
 });

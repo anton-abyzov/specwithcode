@@ -721,6 +721,33 @@ export const providerLimitStep: typeof limitStep = (thread, providers, rule, now
 };
 
 /** Targets this stop already tried, plus every source a current limit stop holds (1460). */
+/**
+ * Whether a usage read releases a held source (1460 D-05, D-08): on a driver
+ * whose read covers each model, a usage read taken after the stop, not
+ * unavailable, that reads this model's percent and shows room. A status
+ * refresh or an unavailable read never does.
+ */
+export function usageReadReleasesHold(
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+): (key: string, stoppedAt: number) => boolean {
+  return (key, stoppedAt) => {
+    const provider = providers.find((entry) => key.startsWith(`${entry.instanceId}\u0000`));
+    if (provider === undefined || !readReleasesHold(provider.driver)) return false;
+    const model = key.slice(provider.instanceId.length + 1);
+    const limits = provider.usageLimits;
+    const readAt = Date.parse(limits?.checkedAt ?? "");
+    return (
+      limits != null &&
+      !limits.unavailable &&
+      Number.isFinite(readAt) &&
+      readAt > stoppedAt &&
+      providerUsedPercent(provider, nowMs, model) !== null &&
+      limitReadShowsRoom(provider, stoppedAt, nowMs, model) === "room"
+    );
+  };
+}
+
 export function withHeldSources(
   tried: ReadonlySet<string> | undefined,
   held: ReadonlySet<string>,
@@ -1914,23 +1941,7 @@ export const makeSweep = Effect.gen(function* () {
       previousSourceHolds,
       holdThreads.filter((thread) => !simulatedStop(thread) && !outlivedHolds.has(thread.id)),
       now,
-      (key, stoppedAt) => {
-        const provider = providers.find((entry) => key.startsWith(`${entry.instanceId}\u0000`));
-        if (provider === undefined || !readReleasesHold(provider.driver)) return false;
-        const model = key.slice(provider.instanceId.length + 1);
-        // Only a usage read taken after the stop, that reads this model, says
-        // anything; a status refresh or an unavailable read never does.
-        const limits = provider.usageLimits;
-        const readAt = Date.parse(limits?.checkedAt ?? "");
-        return (
-          limits != null &&
-          !limits.unavailable &&
-          Number.isFinite(readAt) &&
-          readAt > stoppedAt &&
-          providerUsedPercent(provider, now, model) !== null &&
-          limitReadShowsRoom(provider, stoppedAt, now, model) === "room"
-        );
-      },
+      usageReadReleasesHold(providers, now),
     );
     yield* Ref.set(sourceHolds, sourceHoldsNow);
     const heldSources = heldSourceKeys(sourceHoldsNow, now);
@@ -2272,24 +2283,21 @@ export const makeSweep = Effect.gen(function* () {
           // So are the holds: one that ended while a machine answered no longer
           // counts its sign-in as limited.
           const limitedNow = limitedAt(at);
+          // And the source holds, with any usage read that came in meanwhile.
+          const heldNow = heldSourceKeys(
+            limitSourceHolds(sourceHoldsNow, [], at, usageReadReleasesHold(own, at)),
+            at,
+          );
           const local =
             providerLimitStep(current, own, rule, at, {
               ...options,
               limited: limitedNow,
-              failedTargets: withHeldSources(triedTargets, heldSourceKeys(sourceHoldsNow, at)),
+              failedTargets: withHeldSources(triedTargets, heldNow),
             })?.type ?? null;
           return limitHandoffStillAdmitted(
             trigger,
             // A source hold that ended meanwhile no longer counts the track out.
-            triggerFor(
-              current,
-              own,
-              rule,
-              local,
-              at,
-              limitedNow,
-              heldSourceKeys(sourceHoldsNow, at),
-            ),
+            triggerFor(current, own, rule, local, at, limitedNow, heldNow),
           );
         }),
       ).pipe(
@@ -2312,6 +2320,9 @@ export const makeSweep = Effect.gen(function* () {
       // Handing off, or continued elsewhere (persisted, so also after a restart).
       if (yield* machineHandoff.localTurnBlocked(thread.id)) continue;
       if (step === null) {
+        // A parked chain goes back home only when a person says so, from the
+        // card: a reset there is no reason to start hopping again (1460 D-04).
+        if (options.parked && stoppedOnLimit(thread)) continue;
         // Most threads have no way back to send. Judged on the snapshot first,
         // so they cost no lock, settings read or shell re-read each sweep.
         // The rule-off answer is the looser one: it can only find more. A model
