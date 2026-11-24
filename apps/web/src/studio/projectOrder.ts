@@ -77,12 +77,14 @@ function preLinkKeys<M>(group: LinkedOrderGroup<M>, unlinkedKey: (member: M) => 
 
 /**
  * A link moves a copy from its repository's key to its logical project's key. A linked
- * project the order has never seen takes the place of the key its copies had before:
- * the pin, its pinned slot and recorded members, or its place among the unpinned. The
- * old key keeps no pin, since what is still listed under it is another machine's copy.
- * Derived from the current groups alone, so it repeats safely and needs no record of
- * the grouping before the link. A pin recorded for copies that are none of the linked
- * project's stays with those copies. An unlink moves a pinned linked project, no longer
+ * project takes the pin of the key its copies had before when that pin's recorded
+ * members include one of its copies, even if the linked key was already saved among the
+ * unpinned (a window on an older build may have saved it there). A pin with no recorded
+ * members moves only when nothing is listed under the old key any more: with copies
+ * still there, it cannot tell whose pin it was, and it stays. A linked project the order
+ * has never seen and that takes no pin goes where its copies' unpinned key is. The old
+ * key keeps no pin it gave up. Derived from the current groups alone, so it repeats
+ * safely and needs no record of the grouping before the link. An unlink moves a pinned linked project, no longer
  * listed, to the group its recorded copies are in now.
  */
 export function followLinkedProjects<M>(
@@ -98,15 +100,18 @@ export function followLinkedProjects<M>(
   let changed = false;
   for (const group of groups) {
     const key = group.projectKey;
-    if (!key.startsWith(LINKED_KEY_PREFIX) || known.has(key)) continue;
+    if (!key.startsWith(LINKED_KEY_PREFIX) || pinned.includes(key)) continue;
     const ids = memberIds(group);
     const sources = preLinkKeys(group, unlinkedKey);
     const pinSource = sources.find((source) => {
       if (!pinned.includes(source)) return false;
       const recorded = pinnedMembers[source] ?? [];
-      return recorded.length === 0 || recorded.some((id) => ids.includes(id));
+      return recorded.length === 0 ? !listed.has(source) : recorded.some((id) => ids.includes(id));
     });
+    if (pinSource === undefined && known.has(key)) continue;
     if (pinSource !== undefined) {
+      const saved = unpinned.indexOf(key);
+      if (saved !== -1) unpinned.splice(saved, 1);
       pinned[pinned.indexOf(pinSource)] = key;
       pinnedMembers[key] = ids;
       delete pinnedMembers[pinSource];

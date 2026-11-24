@@ -221,7 +221,11 @@ describe("a link moves the project's key", () => {
   it("writes nothing before the host's order and the saved choices have loaded", async () => {
     localStorage.setItem(
       "studio:sidebar-project-order:v1",
-      JSON.stringify({ pinned: [repositoryKey], unpinned: [] }),
+      JSON.stringify({
+        pinned: [repositoryKey],
+        unpinned: [],
+        pinnedMembers: { [repositoryKey]: ["A:a1", "B:b1"] },
+      }),
     );
     state.client.projectCoordinatorMachines = { [repositoryKey]: "C:old-project" };
     state.hydration = "loading";
@@ -261,10 +265,48 @@ describe("a link moves the project's key", () => {
     });
   });
 
+  it("moves the pin to a linked project an older build already saved unpinned", async () => {
+    host({
+      pinned: [repositoryKey],
+      unpinned: [linkedKey, "other"],
+      pinnedMembers: { [repositoryKey]: ["A:a1", "B:b1"] },
+    });
+    groups = afterLink;
+    await render();
+    expect(current[0]).toEqual({
+      pinned: [linkedKey],
+      unpinned: [repositoryKey, "other"],
+      pinnedMembers: { [linkedKey]: ["B:b1", "C:c1"] },
+    });
+  });
+
+  it("leaves an unrecorded pin on the copies still listed under it", async () => {
+    // Nothing says whether B's copy was ever in the pinned group on this host.
+    host({ pinned: [repositoryKey], unpinned: [] });
+    groups = afterLink;
+    await render();
+    expect(current[0].pinned).toEqual([repositoryKey]);
+    expect(state.update).not.toHaveBeenCalled();
+  });
+
+  it("moves an unrecorded pin when nothing is listed under the old key any more", async () => {
+    host({ pinned: [repositoryKey], unpinned: ["other"] });
+    groups = [
+      { projectKey: linkedKey, memberProjects: [copy("B", "b1", true), copy("C", "c1", true)] },
+      { projectKey: "other", memberProjects: [copy("A", "o1")] },
+    ] as never;
+    await render();
+    expect(current[0].pinned).toEqual([linkedKey]);
+  });
+
   it("keeps the move in this browser's copy while the host holds no order", async () => {
     localStorage.setItem(
       "studio:sidebar-project-order:v1",
-      JSON.stringify({ pinned: [repositoryKey], unpinned: [] }),
+      JSON.stringify({
+        pinned: [repositoryKey],
+        unpinned: [],
+        pinnedMembers: { [repositoryKey]: ["A:a1", "B:b1"] },
+      }),
     );
     host({ pinned: [], unpinned: [] });
     groups = afterLink;
