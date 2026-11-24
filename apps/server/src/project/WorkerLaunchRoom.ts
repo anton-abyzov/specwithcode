@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailure.ts";
-import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
+import { heldLimitSources, usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { projectCompatibleProviders } from "./ProjectProviderCompatibility.ts";
@@ -62,6 +62,8 @@ export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(fu
     rule,
     nowMs,
     limitedInstanceIds: limited,
+    // A model a provider just refused stays off new workers too (1460).
+    heldSelections: yield* heldLimitSources(nowMs),
   });
   const moved = decision.selection !== input.preferred;
   if (moved)

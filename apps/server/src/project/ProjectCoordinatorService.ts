@@ -59,7 +59,7 @@ import {
   limitStopIsCurrent,
   ProviderFallbackEnv,
 } from "../orchestration-v2/ProviderFallbackWorker.ts";
-import { heldInstances } from "../orchestration-v2/UnopenableHolds.ts";
+import { heldInstances, heldLimitSources } from "../orchestration-v2/UnopenableHolds.ts";
 import { limitStopIsAccountWide } from "@specweave-studio/shared/regularTrack";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
 import { requestCapacityRecheck } from "../studio/Capacity.ts";
@@ -393,6 +393,7 @@ const make = Effect.gen(function* () {
           rule,
           nowMs,
           limitedInstanceIds: limited,
+          heldSelections: yield* heldLimitSources(nowMs),
           savedStoppedAtMs: savedStop?.at ?? null,
           savedStopWasPlanLimit: savedStop?.planLimit === true,
         });

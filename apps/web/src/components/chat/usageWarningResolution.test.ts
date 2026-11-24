@@ -8,7 +8,7 @@ import {
 } from "@specweave-studio/contracts";
 import type { UsageRecoveryRun, UsageRecoveryItem } from "./usageWarningResolution";
 import { expect, it } from "vite-plus/test";
-import { usageWarningResolved } from "./usageWarningResolution";
+import { isProviderRefusalText, usageWarningResolved } from "./usageWarningResolution";
 const old: UsageRecoveryRun = {
   id: RunId.make("old"),
   ordinal: 1,
@@ -83,4 +83,84 @@ it("does not count workspace setup commands as provider recovery", () => {
       { ...setup, providerTurnId: ProviderTurnId.make("provider-turn") },
     ]),
   ).toBe(true);
+});
+
+it("does not count a later run that only wrote its own limit refusal (1460)", () => {
+  const refused = { ...next, status: "failed" as const };
+  const refusal: UsageRecoveryItem = {
+    ...answer,
+    text: "Error: You have exceeded your monthly quota",
+  };
+  const limit: UsageRecoveryItem = {
+    ...answer,
+    id: TurnItemId.make("limit"),
+    type: "error",
+    failure: {
+      class: "usage_limit",
+      message: "Monthly quota used up on this provider.",
+      code: null,
+      retryable: null,
+    },
+  } as UsageRecoveryItem;
+  expect(usageWarningResolved("old", [old, refused], [refusal, limit])).toBe(false);
+  // The same text on a run that failed for another reason still counts.
+  expect(usageWarningResolved("old", [old, refused], [refusal])).toBe(true);
+});
+
+it("counts a real answer from a run that later stopped on its own limit (1460)", () => {
+  const refused = { ...next, status: "failed" as const };
+  const limit = {
+    ...answer,
+    id: TurnItemId.make("limit-2"),
+    type: "error",
+    failure: { class: "usage_limit", message: "Usage limit", code: null, retryable: null },
+  } as UsageRecoveryItem;
+  const real: UsageRecoveryItem = {
+    ...answer,
+    text: `I fixed the parser. ${"The tests cover each case and pass now. ".repeat(12)}`,
+  };
+  expect(usageWarningResolved("old", [old, refused], [real, limit])).toBe(true);
+  // So does tool work, whatever the text.
+  const edit = {
+    ...answer,
+    id: TurnItemId.make("edit"),
+    type: "file_change",
+  } as unknown as UsageRecoveryItem;
+  expect(usageWarningResolved("old", [old, refused], [edit, limit])).toBe(true);
+});
+
+it("never reads a short note from a run that stopped on its limit as recovery (1460)", () => {
+  const refused = { ...next, status: "failed" as const };
+  const limit = {
+    ...answer,
+    id: TurnItemId.make("limit-3"),
+    type: "error",
+    failure: { class: "usage_limit", message: "Usage limit", code: null, retryable: null },
+  } as UsageRecoveryItem;
+  // A refusal the classifier does not know, in the length of any notice.
+  const note: UsageRecoveryItem = { ...answer, text: "Please try again after 3 PM." };
+  expect(usageWarningResolved("old", [old, refused], [note, limit])).toBe(false);
+});
+
+it("names a refusal by the server's own rule, never by a word in an answer (1460)", () => {
+  expect(
+    isProviderRefusalText("Error: You have exceeded your monthly quota (Request ID: ab:12)"),
+  ).toBe(true);
+  expect(isProviderRefusalText("You have exceeded your monthly quota.")).toBe(true);
+  expect(isProviderRefusalText("")).toBe(true);
+  expect(
+    isProviderRefusalText("The bucket quota is 5 GB; the upload exceeded it, so I split the file."),
+  ).toBe(false);
+  expect(isProviderRefusalText("Please try again after 3 PM.")).toBe(false);
+  // Cursor's refusal arrives as the run's error; its text repeats that failure.
+  const cursor = "Gemini 4 Neon is not included in your weekly usage.";
+  expect(isProviderRefusalText(cursor)).toBe(false);
+  expect(isProviderRefusalText(cursor, [cursor])).toBe(true);
+  expect(isProviderRefusalText("I split the file and the upload worked.", [cursor])).toBe(false);
+  expect(isProviderRefusalText(`Error: ${cursor} (Request ID: ab-12)`, [cursor])).toBe(true);
+  // Part of the failure, or the failure inside an answer, is an answer.
+  expect(isProviderRefusalText("Continue.", [cursor])).toBe(false);
+  expect(isProviderRefusalText(`The build is done. Cursor then said: ${cursor}`, [cursor])).toBe(
+    false,
+  );
 });

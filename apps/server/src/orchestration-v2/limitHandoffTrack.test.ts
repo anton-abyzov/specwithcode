@@ -692,3 +692,33 @@ describe(`the automatic track start with a machine on ${PREVIOUS_RELEASE}, and w
     );
   });
 });
+
+describe("a track whose room here is only sources a limit stop holds (1460)", () => {
+  it("is out here, so another machine may take the thread", () => {
+    // The thread stopped on one Claude account; the track's other account reads as roomy.
+    const roomy = [
+      source(claudeTwo, "claudeAgent", "b@example.test", [OPUS], 100),
+      source(claude, "claudeAgent", "a@example.test", [OPUS], 30),
+    ];
+    const only = {
+      ...tracks,
+      modelLanes: { routine: [{ instanceId: claude, model: OPUS }], complex: [] },
+    };
+    const input = {
+      thread: thread({
+        providerInstanceId: claudeTwo,
+        modelSelection: { instanceId: claudeTwo, model: OPUS },
+        ...routed("routine"),
+      }),
+      rule: only as Parameters<typeof limitHandoffTrackState>[0]["rule"],
+      providers: roomy,
+      nowMs: now,
+    };
+    expect(limitHandoffTrackState(input)).toMatchObject({ kind: "track", outHere: false });
+    const held = new Set([`${claude}\u0000${OPUS}`]);
+    expect(limitHandoffTrackState({ ...input, heldSources: held })).toMatchObject({
+      kind: "track",
+      outHere: true,
+    });
+  });
+});

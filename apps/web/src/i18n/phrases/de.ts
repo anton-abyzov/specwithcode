@@ -6,6 +6,7 @@ import { machineLabelsDe } from "./machineLabels/de";
 import { actionMachineDe } from "./actionMachine/de";
 import { coordinatorMessagesDe } from "./coordinatorMessages/de";
 import { providerSignInDe } from "./providerSignIn/de";
+import { limitHopsDe } from "./limitHops/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
@@ -16,6 +17,7 @@ export const de: PhraseCatalog = {
   ...actionMachineDe,
   ...coordinatorMessagesDe,
   ...providerSignInDe,
+  ...limitHopsDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
   Account: "Konto",

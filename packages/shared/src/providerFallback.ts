@@ -410,10 +410,11 @@ export function reportsNoUsage(provider: ServerProvider): boolean {
 
 /** Whether a launch fallback may return without waiting for usage evidence. */
 export function launchPickReportsNoUsage(provider: ServerProvider): boolean {
-  return reportsNoUsage(provider) && (
-    provider.usageLimits !== undefined ||
-    provider.driver === "muse" ||
-    isGitHubCopilotIcon(null, provider.iconUrl)
+  return (
+    reportsNoUsage(provider) &&
+    (provider.usageLimits !== undefined ||
+      provider.driver === "muse" ||
+      isGitHubCopilotIcon(null, provider.iconUrl))
   );
 }
 
@@ -750,7 +751,10 @@ export function describeFallbackOrder(input: {
   // built-in track entry is nobody's choice, so it gets the expansion's trust.
   const namedTiers = chain.fromTiers
     ? new Set(
-        effectiveFallbackOrder(input.rule, input.currentModel, input.providers, { expand: false, lane: input.lane })
+        effectiveFallbackOrder(input.rule, input.currentModel, input.providers, {
+          expand: false,
+          lane: input.lane,
+        })
           .order.map(fallbackSelectionKey)
           .filter((key) => !chain.builtIn.has(key)),
       )
@@ -845,7 +849,10 @@ export function resolveProviderFallback(
  */
 function withMovedEffort(
   target: ModelSelection,
-  input: Pick<ResolveProviderFallbackInput, "providers" | "currentInstanceId" | "currentModel" | "currentOptions">,
+  input: Pick<
+    ResolveProviderFallbackInput,
+    "providers" | "currentInstanceId" | "currentModel" | "currentOptions"
+  >,
 ): ModelSelection {
   const descriptors = input.providers
     .find((provider) => provider.instanceId === target.instanceId)
@@ -857,7 +864,8 @@ function withMovedEffort(
     target.model === input.currentModel &&
     input.providers.find((provider) => provider.instanceId === target.instanceId)?.driver ===
       input.providers.find((provider) => provider.instanceId === input.currentInstanceId)?.driver
-  ) return target;
+  )
+    return target;
   const carried =
     input.currentOptions === undefined
       ? undefined
@@ -1004,25 +1012,29 @@ function resolveProviderFallbackPass(input: {
         sourceOrder: input.rule.defaultModelProviders,
       }).filter((selection) => {
         const provider = input.providers.find((item) => item.instanceId === selection.instanceId);
-        return provider !== undefined && (
-          explicitlyNamed.has(fallbackSelectionKey(selection)) ||
-          !isHeldSource(provider, selection.model)
+        return (
+          provider !== undefined &&
+          (explicitlyNamed.has(fallbackSelectionKey(selection)) ||
+            !isHeldSource(provider, selection.model))
         );
       });
       if (order.length === 0) return null;
-      return describeFallbackOrder({
-        ...input,
-        rule: {
-          ...input.rule,
-          threadModelMode: "model",
-          providerLimitFallbackModelSelection: null,
-          providerLimitFallbackModels: order,
-        },
-      }).find((entry) =>
-        (entry.unavailable === null ||
-          (entry.unavailable === "unverified" && usageNeverRead(entry.provider))) &&
-        !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
-      )?.selection ?? null;
+      return (
+        describeFallbackOrder({
+          ...input,
+          rule: {
+            ...input.rule,
+            threadModelMode: "model",
+            providerLimitFallbackModelSelection: null,
+            providerLimitFallbackModels: order,
+          },
+        }).find(
+          (entry) =>
+            (entry.unavailable === null ||
+              (entry.unavailable === "unverified" && usageNeverRead(entry.provider))) &&
+            !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
+        )?.selection ?? null
+      );
     }
     const reserved = reviewOnlyModel({ adversarialReview: input.rule.adversarialReview });
     return (
@@ -1340,15 +1352,19 @@ export function resolveWorkerLaunchSelection(input: {
   readonly rule: ProviderFallbackRule;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string>;
+  /** Sources (`fallbackSelectionKey`) a current limit stop holds, whatever their read (1460). */
+  readonly heldSelections?: ReadonlySet<string>;
 }): { readonly selection: ModelSelection; readonly reason: WorkerLaunchSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
+  const held = input.heldSelections;
   const preferred = input.preferred;
   const preferredProvider = input.providers.find(
     (provider) => provider.instanceId === preferred.instanceId,
   );
   const full = (provider: ServerProvider | undefined, model: string): boolean => {
     if (provider === undefined) return false;
+    if (held?.has(fallbackSelectionKey({ instanceId: provider.instanceId, model }))) return true;
     if (limited.has(provider.instanceId) || usageDeniesTurn(provider, model)) return true;
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && used >= threshold;
@@ -1359,6 +1375,7 @@ export function resolveWorkerLaunchSelection(input: {
     return { selection: preferred, reason: "waits-for-reset" };
   if (
     !limited.has(preferred.instanceId) &&
+    !held?.has(fallbackSelectionKey(preferred)) &&
     usageResetsSoon({
       provider: preferredProvider,
       threshold,
@@ -1385,6 +1402,7 @@ export function resolveWorkerLaunchSelection(input: {
         // with verified room does (see resolveProviderFallback).
         verifiedOnly: true,
         excludedModels: input.rule.providerLimitExcludedModels,
+        excludedSelections: held,
       });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
@@ -1443,6 +1461,7 @@ export function resolveWorkerLaunchSelection(input: {
     belowPercent: threshold,
     anyReady: true,
     limitedInstanceIds: limited,
+    ...(held === undefined ? {} : { excludedSelections: held }),
   });
   if (target === null) return { selection: preferred, reason: "no-room" };
   const targetProvider = input.providers.find(
@@ -1657,11 +1676,15 @@ export function resolveCoordinatorTurnSelection(input: {
    * longer applies and the coordinator goes back to it.
    */
   readonly savedStopWasPlanLimit?: boolean;
+  /** Sources (`fallbackSelectionKey`) a current limit stop holds, whatever their read (1460). */
+  readonly heldSelections?: ReadonlySet<string>;
 }): { readonly selection: ModelSelection; readonly reason: CoordinatorTurnSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
+  const held = input.heldSelections;
   const full = (provider: ServerProvider | undefined, model: string): boolean => {
     if (provider === undefined) return false;
+    if (held?.has(fallbackSelectionKey({ instanceId: provider.instanceId, model }))) return true;
     if (limited.has(provider.instanceId)) return true;
     if (usageDeniesTurn(provider, model)) return true;
     const used = providerUsedPercent(provider, input.nowMs, model);
@@ -1695,6 +1718,7 @@ export function resolveCoordinatorTurnSelection(input: {
     !savedBroken &&
     !stoppedRecently &&
     !limited.has(input.saved.instanceId) &&
+    !held?.has(fallbackSelectionKey(input.saved)) &&
     usageResetsSoon({
       provider: savedProvider,
       threshold,
@@ -1767,6 +1791,7 @@ export function resolveCoordinatorTurnSelection(input: {
       belowPercent,
       anyReady: true,
       limitedInstanceIds: limited,
+      ...(held === undefined ? {} : { excludedSelections: held }),
     });
   // With the saved provider broken, a fallback past the switch threshold but
   // not spent still beats refusing every message.
