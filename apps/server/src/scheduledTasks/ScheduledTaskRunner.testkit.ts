@@ -165,6 +165,8 @@ export interface Network {
   during?: ((from: string, to: string, op: string) => Effect.Effect<void>) | undefined;
   /** What `from`'s routines may do on `to`; absent, anything. */
   ceiling?: ((from: string, to: string) => RuntimeMode) | undefined;
+  /** The work grant `to` gives `from`; absent, an own grant with routines on. */
+  grant?: ((from: string, to: string) => EffectiveWorkGrant | null) | undefined;
   /**
    * Machines that read a change and answer as 1.0.387 did: that tag's edit
    * schema has `kind` and `routine` only, so what else a save carries is dropped
@@ -262,7 +264,7 @@ export const fleet = (
           const answered = yield* route(
             {
               sourceEnvironmentId: self,
-              grant: grantFor(self),
+              grant: network.grant === undefined ? grantFor(self) : network.grant(from, to),
               runtimeCeiling: network.ceiling?.(from, to) ?? "full-access",
             },
             wire,

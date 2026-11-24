@@ -1061,7 +1061,9 @@ describe("workbook save and import authorization (1451)", () => {
 
   it("needs file write to save a workbook and file read to import one", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.designSaveWorkbook)).toBe(AuthFilesystemWriteScope);
-    expect(requiredScopeForRpcMethod(WS_METHODS.designImportWorkbook)).toBe(AuthFilesystemReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.designImportWorkbook)).toBe(
+      AuthFilesystemReadScope,
+    );
   });
 
   it.effect("refuses a save without file write before its handler runs", () =>
@@ -1089,5 +1091,54 @@ describe("workbook save and import authorization (1451)", () => {
       ).toMatchObject({ requiredPermission: AuthFilesystemWriteScope });
       expect(invoked.count).toBe(0);
     }).pipe(Effect.scoped),
+  );
+});
+
+describe("Link routine move authorization (1472)", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<
+        keyof typeof RPC_REQUIRED_SCOPES,
+        typeof WS_METHODS.projectLinkMoveRoutine
+      > => tag !== WS_METHODS.projectLinkMoveRoutine,
+    ),
+  );
+
+  it.effect.each([
+    {
+      scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      missing: AuthSettingsWriteScope,
+    },
+    {
+      scopes: [AuthOrchestrationReadScope, AuthSettingsWriteScope],
+      missing: AuthOrchestrationOperateScope,
+    },
+  ])(
+    "refuses moving a linked copy's routine without $missing before its handler runs",
+    ({ scopes, missing }) =>
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.projectLinkMoveRoutine, () =>
+                Effect.sync(() => handled.push("move")).pipe(Effect.andThen(Effect.never)),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+        );
+        expect(
+          yield* client[WS_METHODS.projectLinkMoveRoutine]({
+            projectId: ProjectId.make("project-joining"),
+            target: EnvironmentId.make("env-kept"),
+            routineId: "routine",
+            choice: "move",
+          }).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "EnvironmentAuthorizationError", requiredPermission: missing });
+        expect(handled).toEqual([]);
+      }).pipe(Effect.scoped),
   );
 });

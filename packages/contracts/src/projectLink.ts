@@ -133,14 +133,54 @@ export const ProjectLinkNote = Schema.Struct({
 });
 export type ProjectLinkNote = typeof ProjectLinkNote.Type;
 
-/** A routine this copy's coordinator owns, as the link review names it. */
 /** Most routines a link preview names; a copy with more lists the first ones. */
 export const PROJECT_LINK_ROUTINES_MAX = 200;
+/** A routine this copy's coordinator owns, as the link review names it. */
 export const ProjectLinkRoutine = Schema.Struct({
   id: bounded(256),
   title: bounded(1000),
+  /**
+   * A webhook routine: its URL is this machine's, so a link never moves it.
+   * Absent from servers before 1472, which list no webhook routines.
+   */
+  webhook: Schema.optional(Schema.Boolean),
 });
 export type ProjectLinkRoutine = typeof ProjectLinkRoutine.Type;
+
+/**
+ * What the person chose for one of the joining copy's routines (1472). `move`
+ * hands it to the kept machine through the runner move; `leave-off` turns it
+ * off here. Keeping it where it is sends nothing.
+ */
+export const ProjectLinkRoutineChoice = Schema.Literals(["move", "leave-off"]);
+export type ProjectLinkRoutineChoice = typeof ProjectLinkRoutineChoice.Type;
+
+/** Sent to the joining copy once the kept copy committed the link. */
+export const ProjectLinkMoveRoutineInput = Schema.Struct({
+  projectId: ProjectId,
+  /** The kept copy's machine: a member of this copy's linked project. */
+  target: EnvironmentId,
+  routineId: bounded(256),
+  choice: ProjectLinkRoutineChoice,
+});
+export type ProjectLinkMoveRoutineInput = typeof ProjectLinkMoveRoutineInput.Type;
+
+/** Most setup notes one moved routine lists. */
+export const PROJECT_LINK_ROUTINE_SETUP_MAX = 12;
+
+export const ProjectLinkMoveRoutineResult = Schema.Struct({
+  routineId: bounded(256),
+  /**
+   * `moved`: it runs on the kept machine now and is off here. `left-off`: off
+   * here, as chosen. `stays`: it was not moved and keeps running here (a
+   * webhook routine). `failed`: it did not move and is paused here.
+   */
+  outcome: Schema.Literals(["moved", "left-off", "stays", "failed"]),
+  detail: bounded(500),
+  /** What may need setting up on the kept machine, read from the routine's own brief. */
+  setup: Schema.Array(bounded(500)).check(Schema.isMaxLength(PROJECT_LINK_ROUTINE_SETUP_MAX)),
+});
+export type ProjectLinkMoveRoutineResult = typeof ProjectLinkMoveRoutineResult.Type;
 
 /**
  * A joining copy's version of a note the person chose not to keep. The kept copy
@@ -245,8 +285,8 @@ export const ProjectLinkPreview = Schema.Struct({
   /** After a takeover: coordinator turns this copy ran while it was unreachable. */
   ranWhileDisconnected: Schema.optional(Schema.Array(ProjectDisconnectedTurn)),
   /**
-   * The routines this copy's coordinator owns. They stop running when this copy
-   * joins another as a member. Absent from servers that do not report them.
+   * The routines this copy's coordinator owns, for the link review's choice of
+   * where each runs (1472). Absent from servers that do not report them.
    */
   routines: Schema.optional(
     Schema.Array(ProjectLinkRoutine).check(Schema.isMaxLength(PROJECT_LINK_ROUTINES_MAX)),

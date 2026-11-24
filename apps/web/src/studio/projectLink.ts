@@ -63,6 +63,11 @@ export const projectLink = {
     label: "project-link:commit",
     tag: WS_METHODS.projectLinkCommit,
   }),
+  /** Joining machine, after the commit: one routine moved or left off as the review chose (1472). */
+  moveRoutine: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:move-routine",
+    tag: WS_METHODS.projectLinkMoveRoutine,
+  }),
   unlink: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "project-link:unlink",
     tag: WS_METHODS.projectUnlink,
