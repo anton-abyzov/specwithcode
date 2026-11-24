@@ -8,7 +8,7 @@ export const LOCK_UPSTREAM = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
 // A record edit is not an approval. This digest pins the reviewed closed set of
 // lock changes, so approving another one also takes a reviewed edit here.
 export const LOCK_REVIEW_SHA256 =
-  "c4b862aa7010b091e1d32cec95a39fe3c00d1fe5330e9ef20b10c677330d630d";
+  "67cab84a2eacfe216d46b2027b414771fb1e3e2fc51abf0bf4d8560d911ee859";
 const LOCK_REVIEW_PATH = "scripts/studio-toolchain/reviewed-lock-changes.json";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const LAYOUT = "Pinned lock data must keep pnpm's two-space block layout";
