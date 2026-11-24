@@ -155,11 +155,11 @@ it("shows an image report as an image from its host path, with no text read", as
   expect(find("data-image-stage").map((node) => node.props["data-image-stage"])).toEqual([
     "https://asset.test/mockup.png",
   ]);
-  // Rooted at the copy, so a page's own stylesheets and images resolve.
+  // An image is served as the exact file.
   expect(state.assets.at(-1)).toEqual({
     _tag: "draft-workspace-file",
-    cwd: "/Users/me/.specwithcode/userdata/board-copies/b96/897",
-    path: ".specweave/increments/1342-office/reports/mockup.png",
+    cwd: ROOT,
+    path: `${COPY}/mockup.png`,
   });
   expect(state.reads.every((read) => !read.enabled)).toBe(true);
 });
@@ -215,4 +215,20 @@ it("roots a workspace page at the workspace, so its siblings load", async () => 
     cwd: ROOT,
     path: ".specweave/increments/1-a/reports/mockup.html",
   });
+});
+
+it("roots a Board copy's page at the copy, and a Windows page at its workspace", async () => {
+  const { libraryAssetResource } = await import("./LibraryFileViewer");
+  expect(libraryAssetResource(ROOT, `${COPY}/mockup.html`, "html")).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "/Users/me/.specwithcode/userdata/board-copies/b96/897",
+    path: ".specweave/increments/1342-office/reports/mockup.html",
+  });
+  expect(libraryAssetResource("C:\\Work\\App", "c:\\work\\app\\docs\\r.html", "html")).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Work\\App",
+    path: "docs/r.html",
+  });
+  // A video stays on the exact-file path the server serves.
+  expect(libraryAssetResource(ROOT, `${ROOT}/clip.mp4`, "video").path).toBe(`${ROOT}/clip.mp4`);
 });

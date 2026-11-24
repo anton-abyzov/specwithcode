@@ -169,7 +169,7 @@ describe("BoardIncrementView", () => {
   const asked: string[] = [];
   const links: string[] = [];
   const files: Array<{ files: ReadonlyArray<BoardViewFile>; path: string }> = [];
-  const wheres: string[] = [];
+  const wheres: Array<(path: string) => string> = [];
   let closed = 0;
   let stepped: string[] = [];
 
@@ -824,7 +824,7 @@ describe("BoardIncrementView", () => {
       ];
       await click(byText("Reports"));
       expect(files[0]).toEqual({ files: readable, path: at("parity.md") });
-      expect(wheres[0]).toBe("From the project folder");
+      expect(wheres[0]!(at("parity.md"))).toBe("From the project folder");
 
       const evidence = byText("Task evidence (2)")!;
       expect(evidence.getAttribute("aria-expanded")).toBe("false");
@@ -853,7 +853,11 @@ describe("BoardIncrementView", () => {
       runtime.reply = detail(card);
       await render({ card });
       await click(byText("Spec file"));
-      expect(wheres).toEqual(["From worktree fix-login"]);
+      expect(wheres[0]!(SPEC)).toBe("From worktree fix-login");
+      // A report the project folder adds to that copy's list says so.
+      expect(wheres[0]!("/elsewhere/project/.specweave/increments/x/reports/a.md")).toBe(
+        "From the project folder",
+      );
     });
 
     it("offers to plan an increment that has no spec", async () => {

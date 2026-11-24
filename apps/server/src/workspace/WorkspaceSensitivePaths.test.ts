@@ -258,6 +258,23 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         NodeFS.mkdirSync(NodePath.dirname(planted), { recursive: true });
         NodeFS.linkSync(draft, planted);
         yield* expectRefused(planted);
+        // The same in a sibling install's state folder under the app home.
+        const sibling = NodePath.join(
+          homeDir,
+          ".specwithcode",
+          "stage",
+          "userdata",
+          "board-copies",
+          "h",
+          "c",
+          ".specweave",
+          "increments",
+          "1-a",
+          "spec.md",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(sibling), { recursive: true });
+        NodeFS.linkSync(draft, sibling);
+        yield* expectRefused(sibling);
       }),
     );
 

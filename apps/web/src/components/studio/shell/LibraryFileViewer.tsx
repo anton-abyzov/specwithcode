@@ -72,26 +72,44 @@ export function unreadableFileText(input: {
 }
 
 /**
- * The asset a viewer page loads, rooted so an HTML page's own stylesheets and
- * images resolve: a workspace file from the workspace, a Board copy's file
- * from the copy's root (the folder holding `.specweave/`), anything else as
- * the exact host file.
+ * The asset an HTML page loads, rooted so its own stylesheets and images
+ * resolve: a workspace file from the workspace, a Board copy's file from the
+ * copy's root (the folder holding `.specweave/`). Every other kind, and a page
+ * outside both, is served as the exact host file.
  */
 export function libraryAssetResource(
   workspaceRoot: string,
   path: string,
+  kind: string,
 ): { readonly _tag: "draft-workspace-file"; readonly cwd: string; readonly path: string } {
+  const exact = { _tag: "draft-workspace-file" as const, cwd: workspaceRoot, path };
   const absolute = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
-  if (!absolute) return { _tag: "draft-workspace-file", cwd: workspaceRoot, path };
-  const root = workspaceRoot.replace(/[\\/]+$/, "");
-  if (path.startsWith(`${root}/`)) {
-    return { _tag: "draft-workspace-file", cwd: root, path: path.slice(root.length + 1) };
+  if (kind !== "html") return exact;
+  if (!absolute) return exact;
+  // Compared with forward slashes, and without case on a Windows drive path.
+  const windows = /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
+  const comparable = (value: string) => {
+    const slashed = value.replaceAll("\\", "/");
+    return windows ? slashed.toLowerCase() : slashed;
+  };
+  const target = comparable(path);
+  const root = comparable(workspaceRoot).replace(/\/+$/, "");
+  if (root !== "" && target.startsWith(`${root}/`)) {
+    return {
+      _tag: "draft-workspace-file",
+      cwd: workspaceRoot,
+      path: path.slice(root.length + 1).replaceAll("\\", "/"),
+    };
   }
-  const at = path.replaceAll("\\", "/").lastIndexOf("/.specweave/increments/");
+  const at = target.lastIndexOf("/.specweave/increments/");
   if (at > 0) {
-    return { _tag: "draft-workspace-file", cwd: path.slice(0, at), path: path.slice(at + 1) };
+    return {
+      _tag: "draft-workspace-file",
+      cwd: path.slice(0, at),
+      path: path.slice(at + 1).replaceAll("\\", "/"),
+    };
   }
-  return { _tag: "draft-workspace-file", cwd: workspaceRoot, path };
+  return exact;
 }
 
 function hostPath(workspaceRoot: string, path: string): string {
@@ -343,8 +361,8 @@ function LibraryAssetBody(props: {
   readonly where?: string | undefined;
 }): ReactNode {
   const resource = useMemo<AssetResource>(
-    () => libraryAssetResource(props.workspaceRoot, props.path),
-    [props.path, props.workspaceRoot],
+    () => libraryAssetResource(props.workspaceRoot, props.path, props.kind),
+    [props.kind, props.path, props.workspaceRoot],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
   const [broken, setBroken] = useState(false);

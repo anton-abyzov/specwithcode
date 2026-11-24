@@ -1172,6 +1172,9 @@ export function makeSensitivePathGuard(
    * there with a second name is a planted hard link, whatever it points at.
    */
   const inBoardCopies = (target: string) => {
+    // By shape, like every other state rule: a `userdata`/`dev` folder holding
+    // `board-copies`, whatever base, identity or configured state folder it is
+    // in. A project folder of that shape only loses its hard-linked files.
     const candidate = normalize(target);
     if (
       stateDirectories.some((directory) =>
@@ -1183,9 +1186,7 @@ export function makeSensitivePathGuard(
     const segments = candidate.split(NodePath.sep);
     return segments.some(
       (segment, index) =>
-        STATE_DIRECTORY_NAMES.has(segment) &&
-        segments[index + 1] === BOARD_COPIES_DIRECTORY &&
-        segments.slice(0, index).some((part) => APP_HOME_SEGMENTS.has(part)),
+        STATE_DIRECTORY_NAMES.has(segment) && segments[index + 1] === BOARD_COPIES_DIRECTORY,
     );
   };
   const statCached = (target: string, cache: IdentityStatCache) => {

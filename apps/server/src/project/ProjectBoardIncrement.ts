@@ -48,8 +48,13 @@ const REASON_CHARS = 300;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
 /** The review records incrementReview.ts opens without a root bound of its own. */
 const REVIEW_FILE = /^review(-[A-Za-z0-9._-]+)?\.md$/u;
-/** Subfolders of `reports/` the panel lists (one level), beyond `reviews/`; the file limit applies after ranking. */
-const REPORT_SUBFOLDERS = 64;
+/**
+ * Subfolders of `reports/` read (one level), beyond `reviews/`: as many as a
+ * remote copy can hold files, so none is dropped before ranking; the 30-file
+ * limit applies after it. Read a few at a time.
+ */
+const REPORT_SUBFOLDERS = 400;
+const REPORT_FOLDER_READS = 16;
 
 function inside(root: string, candidate: string): boolean {
   const relative = NodePath.relative(root, candidate);
@@ -133,7 +138,9 @@ async function stamp(file: string): Promise<string> {
 }
 
 const listingStamp = (entries: ReadonlyArray<Entry>) =>
-  entries.map((entry) => `${entry.name}:${entry.file ? "f" : "o"}:${entry.stamp}`).join("/");
+  entries
+    .map((entry) => `${entry.name}:${entry.file ? "f" : entry.dir ? "d" : "o"}:${entry.stamp}`)
+    .join("/");
 
 /** One file under `reports/`, by its path inside it (`parity.md`, `screens/a.png`). */
 interface ReportFile {
@@ -162,12 +169,17 @@ async function reportTree(
   // A linked `reviews/` still counts for the review reader, but its files are
   // not listed: only real folders are.
   const realReviews = top.some((entry) => entry.name === "reviews" && entry.dir);
-  const listed = await Promise.all(
-    folders.map(async (entry) => {
-      const inner = await listEntries(NodePath.join(reportsDir, entry.name), realFolder);
-      return { name: entry.name, entries: inner === "outside" ? [] : inner };
-    }),
-  );
+  const listed: Array<{ name: string; entries: Entry[] }> = [];
+  for (let start = 0; start < folders.length; start += REPORT_FOLDER_READS) {
+    listed.push(
+      ...(await Promise.all(
+        folders.slice(start, start + REPORT_FOLDER_READS).map(async (entry) => {
+          const inner = await listEntries(NodePath.join(reportsDir, entry.name), realFolder);
+          return { name: entry.name, entries: inner === "outside" ? [] : inner };
+        }),
+      )),
+    );
+  }
   return {
     files: [
       ...plain(top, ""),

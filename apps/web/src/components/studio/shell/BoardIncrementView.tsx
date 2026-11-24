@@ -101,10 +101,14 @@ export interface BoardIncrementViewProps {
   onOpenThread: (thread: EnvironmentThreadShell) => void;
   onOpenLink: (url: string) => void;
   /**
-   * Opens files in the viewer. `where` says which copy of the increment they
-   * come from ("From origin/main, fetched 2 h ago"), for a file that cannot be read.
+   * Opens files in the viewer. `where` says which copy of the increment a file
+   * comes from ("From origin/main, fetched 2 h ago"), for one that cannot be read.
    */
-  onOpenFiles: (files: ReadonlyArray<BoardViewFile>, path: string, where: string) => void;
+  onOpenFiles: (
+    files: ReadonlyArray<BoardViewFile>,
+    path: string,
+    where: (path: string) => string,
+  ) => void;
   /** Puts a request in the coordinator's composer; absent when the person cannot send. */
   onAsk?: ((prompt: string) => void) | undefined;
 }
@@ -234,7 +238,20 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
           tx,
           source.kind === "remote" && source.fetchedAt ? compactAge(source.fetchedAt, now) : "",
         );
-  const where = sourceLine ?? "From the project folder";
+  // The card's copy holds its spec; a report outside that increment folder is
+  // one the project folder adds to the list. Compared with forward slashes and,
+  // on a Windows path, without case.
+  const where = (path: string) => {
+    if (sourceLine === null || specPath === null) return "From the project folder";
+    const comparable = (value: string) => {
+      const slashed = value.replaceAll("\\", "/");
+      return /^[A-Za-z]:/.test(slashed) || slashed.startsWith("//")
+        ? slashed.toLowerCase()
+        : slashed;
+    };
+    const folder = comparable(specPath).replace(/\/spec\.md$/u, "/");
+    return comparable(path).startsWith(folder) ? sourceLine : "From the project folder";
+  };
   const openSpec =
     specPath === null || missing
       ? null

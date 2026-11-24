@@ -523,6 +523,41 @@ describe("readProjectBoardIncrement", () => {
     expect(result.reports.map((report) => report.name)).toEqual(["parity.md"]);
   });
 
+  it("reads again when reviews/ turns from a folder into a link", async () => {
+    const root = await project();
+    const folder = await increment(root, "0016-relinked");
+    const reports = NodePath.join(folder, "reports");
+    await rewrite(NodePath.join(reports, "parity.md"), "# Parity");
+    await rewrite(NodePath.join(reports, "reviews", "review-a.md"), "Verdict: ship");
+    const read = () => readProjectBoardIncrement(root, { incrementId: "0016-relinked", now: NOW });
+    const first = await read();
+    if (first === null || first === "invalid") throw new Error("expected an increment");
+    expect(first.reports.map((report) => report.name)).toContain("reviews/review-a.md");
+    await NodeFSP.rename(NodePath.join(reports, "reviews"), NodePath.join(folder, "kept"));
+    await NodeFSP.symlink(NodePath.join(folder, "kept"), NodePath.join(reports, "reviews"));
+    const second = await read();
+    if (second === null || second === "invalid") throw new Error("expected an increment");
+    expect(second.reports.map((report) => report.name)).toEqual(["parity.md"]);
+  });
+
+  it("finds a report in a folder after many empty ones", async () => {
+    const root = await project();
+    const folder = await increment(root, "0017-many-folders");
+    const reports = NodePath.join(folder, "reports");
+    for (let index = 0; index < 70; index += 1) {
+      await NodeFSP.mkdir(NodePath.join(reports, `a-${String(index).padStart(2, "0")}`), {
+        recursive: true,
+      });
+    }
+    await rewrite(NodePath.join(reports, "z-results", "parity.md"), "# Parity");
+    const result = await readProjectBoardIncrement(root, {
+      incrementId: "0017-many-folders",
+      now: NOW,
+    });
+    if (result === null || result === "invalid") throw new Error("expected an increment");
+    expect(result.reports.map((report) => report.name)).toEqual(["z-results/parity.md"]);
+  });
+
   it("skips a screens folder linked out of the increment", async () => {
     const root = await project();
     const folder = await increment(root, "0013-linked-screens");

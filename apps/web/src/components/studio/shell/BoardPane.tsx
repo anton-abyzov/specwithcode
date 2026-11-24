@@ -224,8 +224,8 @@ function BoardCards({
   const [opened, setOpened] = useState<{
     files: ReadonlyArray<BoardViewFile>;
     path: string;
-    /** Which copy of the increment the files come from. */
-    where: string;
+    /** Which copy of the increment a file comes from. */
+    where: (path: string) => string;
   } | null>(null);
   useEffect(() => {
     const next = filter.trim();
@@ -711,12 +711,7 @@ function BoardCards({
           workspaceRoot={workspaceRoot}
           files={opened.files}
           path={opened.path}
-          // Reports the project folder adds to another copy's list say so.
-          unreadableWhere={
-            opened.path.startsWith(`${workspaceRoot.replace(/[\\/]+$/, "")}/`)
-              ? "From the project folder"
-              : opened.where
-          }
+          unreadableWhere={opened.where(opened.path)}
           onPath={(path) => setOpened({ ...opened, path })}
           onClose={() => setOpened(null)}
         />
