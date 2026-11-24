@@ -367,12 +367,15 @@ export function useSheetEditor(input: {
     event.preventDefault();
     if (editing) commitEdit(null);
     let current = range;
+    // A header acts on the selected rows (columns) only when whole rows (columns) are selected.
+    const wholeRows = current !== null && current.start.col === 0 && current.end.col >= grid.columns - 1;
+    const wholeCols = current !== null && current.start.row === 0 && current.end.row >= grid.rows - 1;
     const inside =
       current !== null &&
       (kind === "row"
-        ? address.row >= current.start.row && address.row <= current.end.row
+        ? wholeRows && address.row >= current.start.row && address.row <= current.end.row
         : kind === "col"
-          ? address.col >= current.start.col && address.col <= current.end.col
+          ? wholeCols && address.col >= current.start.col && address.col <= current.end.col
           : address.col >= current.start.col &&
             address.col <= current.end.col &&
             address.row >= current.start.row &&

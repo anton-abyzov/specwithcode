@@ -5,6 +5,8 @@
 //   ?view=document            a parsed .docx, read from /document.json
 //   ?tab=Loan|Investment|Revenue   the tab to open
 //   ?animate=off              every chart with animate: false
+//   ?view=edit               a small editable workbook for the editor's key and edit tests
+//   ?platform=mac|other       which command key the editor takes (Cmd or Ctrl)
 //   ?theme=light|dark
 import type {
   DesignPreviewDocumentResult,
@@ -23,6 +25,56 @@ const dark = params.get("theme") === "dark";
 document.documentElement.classList.toggle("dark", dark);
 const mode = dark ? "dark" : "light";
 const view = params.get("view") ?? "sheet";
+const platform = params.get("platform") === "mac" ? "mac" : params.get("platform") === "other" ? "other" : undefined;
+
+/** What the editor last saved, for the checks to read. */
+declare global {
+  interface Window {
+    sheetSaved?: string;
+    sheetSaves?: number;
+  }
+}
+
+const EDIT_WORKBOOK = JSON.stringify({
+  v: 1,
+  kind: "sheet",
+  title: "Editor check",
+  tabs: [
+    {
+      name: "Data",
+      cells: {
+        A1: "Item",
+        B1: "Cost",
+        A2: "Tea",
+        B2: 4,
+        A3: "Cake",
+        B3: 6,
+        A4: "Total",
+        B4: "=SUM(B2:B3)",
+      },
+      styles: { "A1:B1": { bold: true, fill: true } },
+    },
+    { name: "Summary", cells: { A1: "Total", B1: "=Data!B4" } },
+  ],
+});
+
+/** A workbook saved in memory, as the app saves to the file. */
+function EditSheet(): ReactNode {
+  const [text, setText] = useState(EDIT_WORKBOOK);
+  return (
+    <SheetView
+      text={text}
+      mode={mode}
+      platform={platform}
+      onSave={async (contents) => {
+        window.sheetSaved = contents;
+        window.sheetSaves = (window.sheetSaves ?? 0) + 1;
+        setText(contents);
+        return true;
+      }}
+    />
+  );
+}
 
 /** The demo workbook, saved in memory so a chart or layout change shows at once. */
 function DemoSheet(): ReactNode {
@@ -38,6 +90,7 @@ function DemoSheet(): ReactNode {
     <SheetView
       text={text}
       mode={mode}
+      platform={platform}
       onSave={async (contents) => {
         setText(contents);
         return true;
@@ -85,6 +138,14 @@ function WordDocument(): ReactNode {
 
 createRoot(document.getElementById("root")!).render(
   <main className="flex h-screen flex-col bg-background text-foreground">
-    {view === "workbook" ? <Workbook /> : view === "document" ? <WordDocument /> : <DemoSheet />}
+    {view === "workbook" ? (
+      <Workbook />
+    ) : view === "document" ? (
+      <WordDocument />
+    ) : view === "edit" ? (
+      <EditSheet />
+    ) : (
+      <DemoSheet />
+    )}
   </main>,
 );
