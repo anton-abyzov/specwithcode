@@ -467,6 +467,8 @@ describe("three linked personal assistant seats", () => {
   it.effect("settings edited on each seat in turn reach all three, both ways round a pair", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        // Peer stamps more than ten minutes ahead of the clock are ignored: set it to their day.
+        yield* TestClock.setTime(Date.parse("2026-11-23T12:30:00.000Z"));
         const seats = yield* threeSeats;
         const [a, b, c] = seats;
         yield* linkTrio(seats);

@@ -17,6 +17,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { ProjectUpdateInput } from "./ProjectService.ts";
 import * as Schema from "effect/Schema";
@@ -444,6 +445,8 @@ describe("personalPeerSyncDeps", () => {
 
   it.effect("applies each setting alone when the bundled write is refused", () =>
     Effect.gen(function* () {
+      // Peer stamps more than ten minutes ahead of the clock are ignored: set it to their day.
+      yield* TestClock.setTime(Date.parse("2026-11-23T12:30:00.000Z"));
       const project = makeProject({ sharedSettingsUpdatedAt: "2026-11-22T10:00:00.000Z" });
       // The new name is taken on this machine: every write carrying it is refused.
       const { deps, updates } = hooks({
@@ -463,6 +466,8 @@ describe("personalPeerSyncDeps", () => {
 
   it.effect("writes the other settings together, under the peer's stamp, in one update", () =>
     Effect.gen(function* () {
+      // Peer stamps more than ten minutes ahead of the clock are ignored: set it to their day.
+      yield* TestClock.setTime(Date.parse("2026-11-23T12:30:00.000Z"));
       const project = makeProject({ sharedSettingsUpdatedAt: "2026-11-22T10:00:00.000Z" });
       const { deps, updates } = hooks({ project, refuse: (update) => update.title !== undefined });
       const icon = { kind: "emoji", emoji: "🦉" } as const;
@@ -480,6 +485,8 @@ describe("personalPeerSyncDeps", () => {
 
   it.effect("writes nothing when every setting is refused", () =>
     Effect.gen(function* () {
+      // Peer stamps more than ten minutes ahead of the clock are ignored: set it to their day.
+      yield* TestClock.setTime(Date.parse("2026-11-23T12:30:00.000Z"));
       const project = makeProject({ sharedSettingsUpdatedAt: "2026-11-22T10:00:00.000Z" });
       const { deps, updates } = hooks({ project, refuse: () => true });
       yield* deps.syncPersonalSettings({
@@ -492,6 +499,8 @@ describe("personalPeerSyncDeps", () => {
 
   it.effect("writes every setting in one update when it is accepted", () =>
     Effect.gen(function* () {
+      // Peer stamps more than ten minutes ahead of the clock are ignored: set it to their day.
+      yield* TestClock.setTime(Date.parse("2026-11-23T12:30:00.000Z"));
       const project = makeProject({ sharedSettingsUpdatedAt: "2026-11-22T10:00:00.000Z" });
       const { deps, updates } = hooks({ project });
       yield* deps.syncPersonalSettings({
