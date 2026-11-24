@@ -15,6 +15,7 @@
  * @module personalShareDecision
  */
 import { PERSONAL_LINK_PROTOCOL_VERSION } from "@specweave-studio/contracts";
+import type { StudioFleetWorkers } from "@specweave-studio/contracts/studioFleet";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -75,10 +76,30 @@ export interface ShareGrantFacts {
   readonly issued: ShareGrantKind;
   /**
    * This machine calls the peer with a grant it holds there, and the peer
-   * checks that grant on every call. Counts only on the calling side.
+   * checks that grant on every call. Counts only on the calling side, and
+   * only as `heldGrantCounts` reads it.
    */
   readonly heldUsable: boolean;
 }
+
+/**
+ * Whether a worker grant this machine holds on the peer counts toward
+ * sharing Percy with it (D-13), read from `FleetWorkerGrants.status`.
+ *
+ * The kind of a held grant is the peer's to decide (`grantKindOf`: `own`
+ * only while the holder manages the peer and the peer's owner did not mark
+ * it another person's), and this machine stores no kind for it. A held grant
+ * can be a team grant: one minted with a pairing code the peer's owner
+ * pasted (`mintWorkerGrant` with `pairingCode`), with no management pairing
+ * there, is `team` on the peer. So the holder counts only a grant minted
+ * through its management pairing on the peer and still renewable through it
+ * (`renewable`, which needs that pairing now and `ongoingConsent` from the
+ * mint): the half of `own` it can see. The other half, the peer's owner
+ * marking the holder another person's, only the peer sees; it refuses then.
+ */
+export const heldGrantCounts = (
+  workers: Pick<StudioFleetWorkers, "status" | "renewable">,
+): boolean => workers.renewable && (workers.status === "allowed" || workers.status === "expired");
 
 /**
  * What the peer said about itself; its own word, so it can only refuse.

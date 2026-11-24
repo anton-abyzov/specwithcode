@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   decideShareStep,
+  heldGrantCounts,
   phase1Answer,
   shareAccess,
   shareGrantKind,
@@ -363,5 +364,36 @@ describe("removalStands", () => {
       reason: "not_confirmed",
     });
     expect(withoutRemoved(facts, removals, "env-laptop", "2026-11-25T00:00:00.000Z")).toBe(facts);
+  });
+});
+
+describe("heldGrantCounts: the caller's half of an own grant (1448 D-13)", () => {
+  it("counts a grant held through this machine's management pairing there", () => {
+    expect(heldGrantCounts({ status: "allowed", renewable: true })).toBe(true);
+    // Renewed on the next call through the same pairing.
+    expect(heldGrantCounts({ status: "expired", renewable: true })).toBe(true);
+  });
+
+  it("never counts a grant minted with a pasted pairing code: the peer holds it as team", () => {
+    // No management pairing there, so the peer's `grantKindOf` reads it as `team`.
+    expect(heldGrantCounts({ status: "allowed", renewable: false })).toBe(false);
+    expect(heldGrantCounts({ status: "expiring", renewable: false })).toBe(false);
+    expect(heldGrantCounts({ status: "expired", renewable: false })).toBe(false);
+  });
+
+  it("never counts a revoked grant or none", () => {
+    expect(heldGrantCounts({ status: "revoked", renewable: true })).toBe(false);
+    expect(heldGrantCounts({ status: "not_allowed", renewable: true })).toBe(false);
+  });
+
+  it("so a caller holding only a pasted-code grant shares nothing by its own facts", () => {
+    const held = heldGrantCounts({ status: "allowed", renewable: false });
+    expect(shareGrantStanding({ issued: "none", heldUsable: held })).toBe("no_grant");
+    expect(
+      shareGrantStanding({
+        issued: "none",
+        heldUsable: heldGrantCounts({ status: "allowed", renewable: true }),
+      }),
+    ).toBe("ok");
   });
 });

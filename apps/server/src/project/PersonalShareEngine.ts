@@ -7,8 +7,9 @@
  * its own stored facts (`shareAccess`): its owner listed the peer on this
  * machine, or a seat this one is linked with vouches for it; an own grant
  * exists in at least one direction (on the callee, the grant the caller
- * signed in with; on the caller, the grant it holds there, which the callee
- * checks); and the peer reports the same link id and protocol version. The
+ * signed in with; on the caller, the grant it holds there through its
+ * management pairing, `heldGrantCounts`, which the callee checks too); and
+ * the peer reports the same link id and protocol version. The
  * Connect user id a peer sends is its own word: it can only refuse.
  *
  * A seat never leaves, merges again or saves new copies because a condition
@@ -53,6 +54,7 @@ import { personalPeerSyncDeps } from "./PersonalPeerSync.ts";
 import * as PersonalRestorePoint from "./personalRestorePoint.ts";
 import {
   decideShareStep,
+  heldGrantCounts,
   type PersonalShareRefusalReason,
   phase1Answer,
   type ShareAccess,
@@ -705,15 +707,11 @@ export const make = Effect.gen(function* () {
     snapshot,
     grants: {
       issued: (peer) => issuedGrant(grants, peer),
+      // Only a grant held through this machine's management pairing there counts (D-13).
       held: (peer) =>
         peers.target(peer).pipe(
           Effect.flatMap((target) => workers.status(target.machineId)),
-          Effect.map(
-            (status) =>
-              status.status === "allowed" ||
-              status.status === "expiring" ||
-              (status.status === "expired" && status.renewable),
-          ),
+          Effect.map(heldGrantCounts),
           Effect.orElseSucceed(() => false),
         ),
     },
