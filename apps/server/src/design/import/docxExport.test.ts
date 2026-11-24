@@ -258,6 +258,68 @@ describe("docx writer", () => {
     );
   });
 
+  it("keeps every character of a run longer than one run may hold", async () => {
+    const long = `${"a".repeat(40_000)}\u{1F600}${"b".repeat(30_000)}`;
+    const zip = await JSZip.loadAsync(await buildDocx({ blocks: [] }));
+    const documentXml = (await zip.file("word/document.xml")!.async("string")).replace(
+      "<w:body>",
+      `<w:body><w:p><w:r><w:t>${long}</w:t></w:r></w:p>`,
+    );
+    zip.file("word/document.xml", documentXml);
+    const opened = await openDocxForEditing(await zip.generateAsync({ type: "uint8array" }));
+    const block = opened.document.blocks[0];
+    expect(block?.type === "paragraph" && block.runs.map((run) => run.text).join("")).toBe(long);
+    expect(opened.lossOnSave).toEqual([]);
+  });
+
+  it("names content controls and a template's own paragraph styles as losses", async () => {
+    const zip = await JSZip.loadAsync(await buildDocx({ blocks: [] }));
+    const styles = (await zip.file("word/styles.xml")!.async("string")).replace(
+      "</w:styles>",
+      '<w:style w:type="paragraph" w:styleId="ContractClause"><w:name w:val="Contract Clause"/></w:style></w:styles>',
+    );
+    zip.file("word/styles.xml", styles);
+    const documentXml = (await zip.file("word/document.xml")!.async("string")).replace(
+      "<w:body>",
+      '<w:body><w:p><w:pPr><w:pStyle w:val="ContractClause"/></w:pPr><w:r><w:t>Clause</w:t></w:r></w:p>' +
+        '<w:sdt><w:sdtPr><w:tag w:val="name"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Field</w:t></w:r></w:p></w:sdtContent></w:sdt>',
+    );
+    zip.file("word/document.xml", documentXml);
+    const opened = await openDocxForEditing(await zip.generateAsync({ type: "uint8array" }));
+    expect(opened.lossOnSave).toEqual(
+      expect.arrayContaining([
+        "Content controls such as form fields (their text is kept)",
+        "Paragraph styles from the file's template (become plain paragraphs)",
+      ]),
+    );
+    // The writer's own styles are not a loss.
+    expect((await openDocxForEditing(await buildDocx(SAMPLE))).lossOnSave).toEqual([]);
+  });
+
+  it("keeps a footer whose relationship uses single quotes", async () => {
+    const zip = await JSZip.loadAsync(await buildDocx({ blocks: [] }));
+    zip.file(
+      "word/footer1.xml",
+      '<?xml version="1.0"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Footer text</w:t></w:r></w:p></w:ftr>',
+    );
+    const rels = (await zip.file("word/_rels/document.xml.rels")!.async("string")).replace(
+      "</Relationships>",
+      "<Relationship Id='rIdFooter' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer' Target='footer1.xml'/></Relationships>",
+    );
+    zip.file("word/_rels/document.xml.rels", rels);
+    const base = await zip.generateAsync({ type: "uint8array" });
+    const saved = await buildDocx({ blocks: [{ type: "paragraph", runs: [{ text: "x" }] }] }, { base });
+    expect(await partText(saved, "word/_rels/document.xml.rels")).toContain("footer1.xml");
+    expect(await partText(saved, "word/footer1.xml")).toContain("Footer text");
+  });
+
+  it("refuses to write a document its reader would not open again", async () => {
+    const paragraph = { type: "paragraph" as const, runs: [{ text: "x".repeat(32_000) }] };
+    await expect(
+      buildDocx({ blocks: Array.from({ length: 550 }, () => paragraph) }),
+    ).rejects.toMatchObject({ code: "too_large" });
+  });
+
   it("keeps unsafe links as text and refuses a picture that is not one", async () => {
     const bytes = await buildDocx({
       blocks: [{ type: "paragraph", runs: [{ text: "x", href: "javascript:alert(1)" }] }],

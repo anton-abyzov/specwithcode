@@ -297,9 +297,8 @@ function parseRunElement(
   }
 
   if (text.length === 0) return null;
-  const clamped = text.length > MAX_RUN_CHARS ? `${text.slice(0, MAX_RUN_CHARS - 1)}…` : text;
   return {
-    text: clamped,
+    text,
     ...(bold ? { bold: true } : {}),
     ...(italic ? { italic: true } : {}),
     ...(underline ? { underline: true } : {}),
@@ -439,7 +438,21 @@ function extractParagraphRuns(
     }
   }
 
-  return { runs, bookmarks };
+  // A run longer than one run may hold goes on as several, so no text is cut.
+  const split = runs.flatMap((run) => {
+    if (run.text.length <= MAX_RUN_CHARS) return [run];
+    const parts: DocxPreviewRun[] = [];
+    for (let at = 0; at < run.text.length; ) {
+      let end = Math.min(run.text.length, at + MAX_RUN_CHARS);
+      // Never between the two halves of one character.
+      const last = run.text.charCodeAt(end - 1);
+      if (end < run.text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+      parts.push({ ...run, text: run.text.slice(at, end) });
+      at = end;
+    }
+    return parts;
+  });
+  return { runs: split, bookmarks };
 }
 
 /**

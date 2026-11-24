@@ -182,8 +182,9 @@ function baseStyleIds(existing: string | null): Map<string, string> {
   if (existing === null) return ids;
   const byName = new Map<string, string>();
   for (const match of existing.matchAll(/<w:style\b([^>]*)>([\s\S]*?)<\/w:style>/g)) {
-    const id = /w:styleId="([^"]+)"/.exec(match[1]!)?.[1];
-    const name = /<w:name\s+w:val="([^"]+)"/.exec(match[2]!)?.[1];
+    const id = xmlAttr(match[1]!, "w:styleId");
+    const nameTag = /<w:name\b[^>]*>/.exec(match[2]!)?.[0];
+    const name = nameTag === undefined ? undefined : xmlAttr(nameTag, "w:val");
     if (id !== undefined && name !== undefined && !byName.has(name.toLowerCase())) {
       byName.set(name.toLowerCase(), id);
     }
@@ -207,7 +208,7 @@ function mergeStyles(
     (id) =>
       id !== "Normal" &&
       !resolved.has(id) &&
-      !new RegExp(`w:styleId="${id}"`).test(existing) &&
+      !new RegExp(`w:styleId\\s*=\\s*["']${id}["']`).test(existing) &&
       EXTRA_STYLES[id] !== undefined,
   );
   if (missing.length === 0) return existing;
@@ -676,16 +677,33 @@ interface RelEntry {
   readonly raw?: string;
 }
 
+/** An attribute's value in either quote style XML allows (entities left as written). */
+function xmlAttr(source: string, name: string): string | undefined {
+  const match = new RegExp(`(?:^|[\\s<])${name.replace(/[:.]/g, "\\$&")}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(
+    source,
+  );
+  return match === null ? undefined : (match[1] ?? match[2]);
+}
+
 function parseRels(xml: string): RelEntry[] {
   const out: RelEntry[] = [];
   for (const match of xml.matchAll(/<Relationship\b[^>]*?\/?>(?:\s*<\/Relationship>)?/g)) {
     const raw = match[0];
-    const attr = (name: string) => new RegExp(`\\b${name}="([^"]*)"`).exec(raw)?.[1];
-    const id = attr("Id");
-    const type = attr("Type");
-    const target = attr("Target");
-    if (!id || !type || target === undefined) continue;
-    out.push({ id, type, target, external: attr("TargetMode")?.toLowerCase() === "external", raw });
+    const id = xmlAttr(raw, "Id");
+    const type = xmlAttr(raw, "Type");
+    const target = xmlAttr(raw, "Target");
+    // One it cannot read is kept exactly as written, never dropped.
+    if (!id || !type || target === undefined) {
+      out.push({ id: "", type: "", target: "", external: false, raw });
+      continue;
+    }
+    out.push({
+      id,
+      type,
+      target,
+      external: xmlAttr(raw, "TargetMode")?.toLowerCase() === "external",
+      raw,
+    });
   }
   return out;
 }
@@ -939,6 +957,27 @@ export async function buildDocx(
     [...ctx.usedImageTypes].map((kind) => [IMAGE_TYPES[kind]!.ext, IMAGE_TYPES[kind]!.mime] as const),
     addedParts,
   );
+
+  // Never write a file the editor's own reader would refuse to open again.
+  const tooLarge = () =>
+    new DocxWriteError("too_large", "The document is too large to save; split it into smaller documents.");
+  let unpacked = new TextEncoder().encode(contentTypes).byteLength;
+  for (const [name, bytes] of entries) {
+    unpacked += bytes.byteLength;
+    if (/\.(xml|rels)$/i.test(name) && bytes.byteLength > DEFAULT_OOXML_LIMITS.xmlPartBytes) throw tooLarge();
+  }
+  if (unpacked > DEFAULT_OOXML_LIMITS.unpackedBytes || entries.size + 1 > DEFAULT_OOXML_LIMITS.entries) {
+    throw tooLarge();
+  }
+  const bodyBytes = entries.get("word/document.xml");
+  if (bodyBytes !== undefined) {
+    let elements = 0;
+    for (let at = 0; at < bodyBytes.length - 1; at += 1) {
+      // `<` then a name start: one element opened.
+      if (bodyBytes[at] === 0x3c && bodyBytes[at + 1]! !== 0x2f && bodyBytes[at + 1]! !== 0x3f && bodyBytes[at + 1]! !== 0x21) elements += 1;
+    }
+    if (elements > DEFAULT_OOXML_LIMITS.xmlElements / 2) throw tooLarge();
+  }
 
   const zip = new JSZip();
   // [Content_Types].xml first, as Office writes it.

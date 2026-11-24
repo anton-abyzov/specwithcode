@@ -207,6 +207,24 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
       return yield* forbidden();
     }
 
+    const folder = NodePath.dirname(destination);
+    /**
+     * The file just opened is still in the checked folder: no folder on the way
+     * was swapped for a link between the check and the open. Node has no openat,
+     * so the open handle's identity is compared with the checked path instead.
+     */
+    const stillInCheckedFolder = async (handle: NodeFSP.FileHandle, path: string): Promise<boolean> => {
+      const real = await realpath(folder).catch(() => null);
+      if (real !== folder) return false;
+      const [opened, there] = await Promise.all([
+        handle.stat({ bigint: true }),
+        NodeFSP.lstat(path, { bigint: true }).catch(() => null),
+      ]);
+      return there !== null && there.isFile() && there.ino === opened.ino && there.dev === opened.dev;
+    };
+    const moved = () =>
+      new SaveRefused("forbidden", "A folder on the way to the document changed while saving.");
+
     return yield* Effect.tryPromise({
       try: () =>
         oneWriteAtATime(destination.toLowerCase(), async () => {
@@ -221,7 +239,7 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
             const bytes = await buildDocx(document, {
               title: NodePath.basename(target, NodePath.extname(target)),
             });
-            await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+            await NodeFSP.mkdir(folder, { recursive: true });
             const handle = await NodeFSP.open(
               destination,
               NodeFS.constants.O_WRONLY |
@@ -230,6 +248,12 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
                 (NodeFS.constants.O_NOFOLLOW ?? 0),
             );
             try {
+              if (!(await stillInCheckedFolder(handle, destination))) {
+                // Nothing is written; the empty file it made through the link goes.
+                await handle.close().catch(() => undefined);
+                await NodeFSP.unlink(destination).catch(() => undefined);
+                throw moved();
+              }
               await writeAll(handle, bytes);
               await handle.sync();
             } finally {
@@ -261,6 +285,7 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
             existing.mode & 0o777,
           );
           try {
+            if (!(await stillInCheckedFolder(handle, temporary))) throw moved();
             await writeAll(handle, bytes);
             await handle.sync();
           } catch (error) {
@@ -269,6 +294,20 @@ export const saveDocument = (input: DesignDocumentSaveInput) =>
             throw error;
           }
           await handle.close();
+          // Word or another program may have saved while this one was built: check again
+          // just before the rename. The rename itself cannot be made conditional.
+          const latest = await readCurrent(destination).catch(() => null);
+          if (latest === null || documentRevision(latest) !== currentRevision) {
+            await NodeFSP.unlink(temporary).catch(() => undefined);
+            throw new SaveRefused(
+              "conflict",
+              "The document changed on disk while it was being saved. Reload it or keep your version.",
+            );
+          }
+          if ((await realpath(folder).catch(() => null)) !== folder) {
+            await NodeFSP.unlink(temporary).catch(() => undefined);
+            throw moved();
+          }
           await NodeFSP.rename(temporary, destination).catch(async (error: unknown) => {
             await NodeFSP.unlink(temporary).catch(() => undefined);
             throw error;

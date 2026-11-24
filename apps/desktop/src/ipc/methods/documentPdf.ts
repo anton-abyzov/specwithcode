@@ -35,7 +35,18 @@ export function pdfFileName(name: string): string {
   return `${stem.length > 0 ? stem : "Document"}.pdf`;
 }
 
-async function printToPdf(html: string, pageSize: "A4" | "Letter"): Promise<Buffer> {
+/**
+ * Exports share one session, and a session keeps only its last request filter,
+ * so one print runs at a time: a second can never narrow the first one's filter.
+ */
+let printing: Promise<unknown> = Promise.resolve();
+function printToPdf(html: string, pageSize: "A4" | "Letter"): Promise<Buffer> {
+  const run = printing.then(() => printOnce(html, pageSize));
+  printing = run.catch(() => undefined);
+  return run;
+}
+
+async function printOnce(html: string, pageSize: "A4" | "Letter"): Promise<Buffer> {
   const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "swc-print-"));
   const page = NodePath.join(folder, "document.html");
   const pageUrl = NodeURL.pathToFileURL(page).href;
@@ -67,6 +78,7 @@ async function printToPdf(html: string, pageSize: "A4" | "Letter"): Promise<Buff
       margins: { top: 1, bottom: 1, left: 1, right: 1 },
     });
   } finally {
+    window.webContents.session.webRequest.onBeforeRequest(null);
     window.destroy();
     await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
   }

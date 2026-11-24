@@ -4,6 +4,7 @@
  * the document comes in, and saves and exports go out through callbacks.
  */
 import type { OfficeDocument } from "@specweave-studio/contracts";
+import type { JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import {
   AlignCenterIcon,
@@ -142,6 +143,8 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
   const saving = useRef(false);
   const again = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The page as last edited, for a save when the editor closes before autosave runs. */
+  const pending = useRef<{ toJSON: () => JSONContent } | null>(null);
   const editable = props.onSave !== undefined;
   const latest = useRef(props);
   latest.current = props;
@@ -174,8 +177,9 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
     }
     saving.current = true;
     setState("saving");
-    // Pictures from the file go back as references, not their bytes again.
-    const document = contentToDocument(editor.getJSON(), { assetReferences: true });
+    // Pictures from the file go back as references, not their bytes again. Keep my
+    // edits writes over a newer file that may not hold them any more, so it sends the bytes.
+    const document = contentToDocument(editor.getJSON(), { assetReferences: !force });
     const outcome = await onSave(document, { force });
     saving.current = false;
     if (outcome === "conflict") {
@@ -216,9 +220,10 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
         spellcheck: "true",
       },
     },
-    onUpdate: ({ transaction }) => {
+    onUpdate: ({ editor: updated, transaction }) => {
       // Only a person's edit makes the file unsaved; loading it does not.
       if (!transaction.docChanged) return;
+      pending.current = updated.state.doc;
       if (stateRef.current !== "conflict") setState(saving.current ? "saving" : "dirty");
       if (saving.current) again.current = true;
       if (timer.current !== null) clearTimeout(timer.current);
@@ -231,7 +236,15 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
 
   useEffect(
     () => () => {
-      if (timer.current !== null) clearTimeout(timer.current);
+      if (timer.current === null) return;
+      // Closed before autosave ran: save what was typed now instead of dropping it.
+      clearTimeout(timer.current);
+      timer.current = null;
+      const doc = pending.current;
+      const onSave = latest.current.onSave;
+      if (doc !== null && onSave && !saving.current) {
+        void onSave(contentToDocument(doc.toJSON(), { assetReferences: true }), { force: false });
+      }
     },
     [],
   );
@@ -483,7 +496,7 @@ export function DocumentEditor(props: DocumentEditorProps): ReactNode {
       {state === "failed" ? (
         <div className="office-doc-banner" role="alert">
           <span>The document could not be saved. Your edits are still here.</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => void save(true)}>
+          <Button type="button" size="sm" variant="outline" onClick={() => void save()}>
             Try again
           </Button>
         </div>

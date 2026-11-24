@@ -181,5 +181,26 @@ export async function openDocxForEditing(bytes: Uint8Array): Promise<EditableDoc
   if (/<w:r\b[^>]*>\s*<w:rPr>(?:(?!<\/w:rPr>)[\s\S])*<w:(sz|highlight|shd)\b/.test(xml)) {
     loss.add("Font sizes and highlights set on words");
   }
+  if (/<w:sdt\b/.test(xml)) loss.add("Content controls such as form fields (their text is kept)");
+  // Paragraph styles the editor has no kind for (a template's own styles) become plain paragraphs.
+  const stylesRaw = archive.entries.get("word/styles.xml");
+  const stylesXml = stylesRaw === undefined ? "" : new TextDecoder("utf-8").decode(stylesRaw);
+  const used = new Set(
+    [...xml.matchAll(/<w:pStyle\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/g)].map((match) => match[1]!),
+  );
+  for (const id of used) {
+    const style = new RegExp(
+      `<w:style\\b[^>]*\\bw:styleId\\s*=\\s*["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'][^>]*>([\\s\\S]*?)</w:style>`,
+    ).exec(stylesXml);
+    const name = (style === null ? undefined : /<w:name\b[^>]*\bw:val\s*=\s*["']([^"']+)["']/.exec(style[1]!)?.[1]) ?? id;
+    if (!KNOWN_PARAGRAPH_STYLE.test(name) && !KNOWN_PARAGRAPH_STYLE.test(id)) {
+      loss.add("Paragraph styles from the file's template (become plain paragraphs)");
+      break;
+    }
+  }
   return { document, lossOnSave: [...loss], keptNotShown: [...kept] };
 }
+
+/** Paragraph styles the editor keeps a kind for, by name or id, in English as Word and LibreOffice write them. */
+const KNOWN_PARAGRAPH_STYLE =
+  /^(normal|default( paragraph style)?|standard|text body|body text|heading ?[1-6]|title|list ?paragraph|list ?(bullet|number)( ?[1-9])?|(intense ?)?quote|quotations|code( ?block)?|source ?code|preformatted ?text|html ?preformatted|no ?spacing|table ?contents)$/i;
