@@ -184,6 +184,10 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./boardReports": {
+      "types": "./src/boardReports.ts",
+      "import": "./src/boardReports.ts"
+    },
     "./officeSheet": {
       "types": "./src/officeSheet/index.ts",
       "import": "./src/officeSheet/index.ts"
