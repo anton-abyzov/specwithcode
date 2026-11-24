@@ -68,7 +68,8 @@ import {
 import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
-import { SheetShelfActions } from "../../office/SheetShelfActions";
+import { useNewSheetEntry } from "../../office/newSheetEntry";
+import { type ArtifactNewEntry, ArtifactNewMenu } from "./ArtifactNewMenu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import { NewArtifactMenu, useCanCreateDocument } from "./NewArtifactMenu";
 import { Tip } from "./Tip";
@@ -524,7 +525,10 @@ export function useArtifactOpener(environmentId: EnvironmentId, workspaceRoot: s
       onClose={() => setOpened(null)}
     />
   ) : null;
-  return { open, viewer };
+  /** A file of the project by its path, such as a whiteboard just created. */
+  const openPath = (path: string, name: string) =>
+    setOpened({ file: { path, name }, files: [{ path, name }], environmentId, root: null });
+  return { open, openPath, viewer };
 }
 
 export function canOpenArtifact(artifact: ProjectArtifact): boolean {
@@ -632,9 +636,32 @@ export function ProjectArtifactShelf(props: {
     true,
     Schema.Boolean,
   );
-  const canCreate = useCanCreateDocument(props.environmentId);
+  const taken = new Set(props.artifacts.flatMap((item) => (item.path === null ? [] : [item.path])));
+  // Each kind that can be made here adds its entry to the New menu.
+  const newEntries = [
+    useNewSheetEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot, taken }),
+  ].filter((entry): entry is ArtifactNewEntry => entry !== null);
+  const newMenu = (
+    <ArtifactNewMenu entries={newEntries} onCreated={(created) => opener.openPath(created.path, created.title)} />
+  );
+  if (props.artifacts.length === 0) {
+    // Nothing yet: the header still offers New and Import, so the editors are findable.
+    if (newEntries.length === 0) return null;
+    return (
+      <section className="sws-artifact-shelf" aria-label="Artifacts" data-empty>
+        <header className="sws-artifact-shelf-head">
+          <h3>Artifacts</h3>
+          <span className="sws-artifact-shelf-empty" data-artifact-empty>
+            Nothing here yet. Make one with New, or import a file.
+          </span>
+          <span className="sws-library-spacer" />
+          {newMenu}
+        </header>
+        {opener.viewer}
+      </section>
+    );
+  }
   // Only logs or data: the shelf stays, with View all, so they are one click away.
-  if (props.artifacts.length === 0 && !canCreate) return null;
   const scroll = (direction: 1 | -1) =>
     rowRef.current?.scrollBy({ left: direction * 360, behavior: "smooth" });
   return (
@@ -654,30 +681,7 @@ export function ProjectArtifactShelf(props: {
           </button>
         </h3>
         <span className="sws-library-spacer" />
-        <NewArtifactMenu environmentId={props.environmentId} workspaceRoot={props.workspaceRoot} />
-        <SheetShelfActions
-          environmentId={props.environmentId}
-          workspaceRoot={props.workspaceRoot}
-          taken={new Set(props.artifacts.flatMap((item) => (item.path === null ? [] : [item.path])))}
-          onOpen={(path, title) =>
-            opener.open({
-              id: `file:${path}`,
-              kind: "sheet",
-              source: "output",
-              title,
-              updatedAt: Date.now(),
-              path,
-              root: null,
-              url: null,
-              byteLength: null,
-              thread: null,
-              increment: null,
-              design: null,
-              missing: false,
-              pinned: false,
-            })
-          }
-        />
+        {newMenu}
         {open && shown.length >= 2 ? (
           <>
             <button

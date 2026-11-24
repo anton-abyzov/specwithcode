@@ -48,12 +48,22 @@ vi.mock("~/state/use-atom-command", () => ({
   },
 }));
 
-import { SheetShelfActions, newSheetPath } from "./SheetShelfActions";
+import type { ArtifactNewEntry } from "../studio/shell/ArtifactNewMenu";
+import { newSheetPath, useNewSheetEntry } from "./newSheetEntry";
 
 const environmentId = EnvironmentId.make("host");
 let root: Root;
 let container: HTMLDivElement;
-const opened: Array<[string, string]> = [];
+let entry: ArtifactNewEntry | null = null;
+
+function Probe() {
+  entry = useNewSheetEntry({
+    environmentId,
+    workspaceRoot: "/repo",
+    taken: new Set([".specweave/reports/untitled-sheet.sheet.json"]),
+  });
+  return null;
+}
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -61,7 +71,7 @@ beforeEach(() => {
   state.capabilities = { officeWorkbookEdit: true };
   state.calls.length = 0;
   state.toasts.length = 0;
-  opened.length = 0;
+  entry = null;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -71,28 +81,9 @@ afterEach(async () => {
   container.remove();
 });
 
-const render = () =>
-  act(() =>
-    root.render(
-      <SheetShelfActions
-        environmentId={environmentId}
-        workspaceRoot="/repo"
-        taken={new Set([".specweave/reports/untitled-sheet.sheet.json"])}
-        onOpen={(path, title) => opened.push([path, title])}
-      />,
-    ),
-  );
+const render = () => act(() => root.render(<Probe />));
 
-const upload = async (file: File) => {
-  const input = container.querySelector<HTMLInputElement>("[data-shelf-import-input]")!;
-  Object.defineProperty(input, "files", { value: [file], configurable: true });
-  await act(async () => {
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-};
-
-describe("sheet shelf actions", () => {
+describe("the Sheet entry in the New menu", () => {
   it("names a new sheet after the ones already there", () => {
     expect(newSheetPath("Untitled sheet", new Set())).toBe(".specweave/reports/untitled-sheet.sheet.json");
     expect(newSheetPath("Untitled sheet", new Set([".specweave/reports/untitled-sheet.sheet.json"]))).toBe(
@@ -100,30 +91,28 @@ describe("sheet shelf actions", () => {
     );
   });
 
-  it("writes a blank sheet into the output folder and opens it", async () => {
+  it("writes a blank sheet into the output folder and returns it to open", async () => {
     await render();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>("[data-shelf-new-sheet]")!.click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    const created = await entry!.create();
     expect(state.calls[0]?.command).toBe("writeFile");
     expect(state.calls[0]?.request.input.relativePath).toBe(".specweave/reports/untitled-sheet-2.sheet.json");
     const parsed = parseSheetDocument(state.calls[0]!.request.input.contents!);
     expect(parsed.ok && parsed.document.tabs[0]?.name).toBe("Sheet1");
-    expect(opened).toEqual([[".specweave/reports/untitled-sheet-2.sheet.json", "Untitled sheet"]]);
+    expect(created).toEqual({ path: ".specweave/reports/untitled-sheet-2.sheet.json", title: "Untitled sheet" });
+    expect(entry!.imports?.extensions).toEqual(["xlsx", "csv", "tsv"]);
   });
 
   it("imports a .csv in the browser with typed values", async () => {
     await render();
-    await upload(new File(["Item,Cost\nTea,$4.50\n"], "Costs.csv", { type: "text/csv" }));
+    const created = await entry!.imports!.run(new File(["Item,Cost\nTea,$4.50\n"], "Costs.csv", { type: "text/csv" }));
     const written = parseSheetDocument(state.calls[0]!.request.input.contents!);
     expect(written.ok && written.document.tabs[0]?.cells).toEqual({ A1: "Item", B1: "Cost", A2: "Tea", B2: 4.5 });
-    expect(opened[0]).toEqual([".specweave/reports/costs.sheet.json", "Costs"]);
+    expect(created).toEqual({ path: ".specweave/reports/costs.sheet.json", title: "Costs" });
   });
 
   it("converts a .xlsx on the host and says what it left out", async () => {
     await render();
-    await upload(new File([new Uint8Array([80, 75, 3, 4])], "Budget.xlsx"));
+    await entry!.imports!.run(new File([new Uint8Array([80, 75, 3, 4])], "Budget.xlsx"));
     expect(state.calls[0]?.command).toBe("importWorkbook");
     expect(state.calls[0]?.request.input).toEqual({ title: "Budget", data: "UEsDBA==" });
     expect(state.calls[1]?.request.input.relativePath).toBe(".specweave/reports/budget.sheet.json");
@@ -133,6 +122,6 @@ describe("sheet shelf actions", () => {
   it("offers nothing without file write", async () => {
     state.canWrite = false;
     await render();
-    expect(container.querySelector("[data-shelf-new-sheet]")).toBeNull();
+    expect(entry).toBeNull();
   });
 });

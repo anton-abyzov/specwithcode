@@ -13,6 +13,12 @@ const runtime = vi.hoisted(() => ({
   readFrom: vi.fn(),
   answer: vi.fn(),
   createUrl: vi.fn(async () => "blob:shot"),
+  sheetEntry: null as null | {
+    id: string;
+    label: string;
+    icon: null;
+    create: () => Promise<{ path: string; title: string } | null>;
+  },
 }));
 vi.mock("@tanstack/react-router", () => ({ useRouter: () => ({ navigate: runtime.navigate }) }));
 vi.mock("../../../browser/useOpenLink", () => ({ useOpenLink: () => runtime.openLink }));
@@ -36,6 +42,7 @@ vi.mock("../../files/projectFilesQueryState", () => ({
       return runtime.answer(path);
     },
 }));
+vi.mock("../../office/newSheetEntry", () => ({ useNewSheetEntry: () => runtime.sheetEntry }));
 vi.mock("./Tip", () => ({ Tip: ({ children }: { children: unknown }) => children }));
 
 import { artifactPreviewCache, artifactPreviewKey } from "../../../studio/artifactPreview";
@@ -114,15 +121,34 @@ beforeEach(() => {
     contents: "---\nid: x\n---\n# Shelf summary\n\nThe **shelf** ships [today](https://x).\n",
   }));
   localStorage.clear();
+  runtime.sheetEntry = null;
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
 });
 
-it("shows nothing when the project has no artifacts", async () => {
+it("shows nothing when the project has no artifacts and nothing can be made here", async () => {
   await render([]);
   expect(container.querySelector(".sws-artifact-shelf")).toBeNull();
+});
+
+it("keeps New and Import findable in an empty project, and opens what New made", async () => {
+  const create = vi.fn(async () => ({ path: ".specweave/reports/untitled-sheet.sheet.json", title: "Untitled sheet" }));
+  runtime.sheetEntry = { id: "sheet", label: "Sheet", icon: null, create };
+  await render([]);
+  expect(container.querySelector("[data-artifact-empty]")?.textContent).toContain("Nothing here yet");
+  const trigger = container.querySelector<HTMLButtonElement>("[data-artifact-new]")!;
+  expect(trigger).not.toBeNull();
+  await act(async () => trigger.click());
+  const item = document.querySelector<HTMLElement>('[data-artifact-new-item="sheet"]');
+  expect(item?.textContent).toBe("Sheet");
+  await act(async () => {
+    item!.click();
+    await new Promise((done) => setTimeout(done, 0));
+  });
+  expect(create).toHaveBeenCalledOnce();
+  expect(runtime.viewer).toHaveBeenLastCalledWith(".specweave/reports/untitled-sheet.sheet.json");
 });
 
 it("lists cards newest first, pinned first, each with its age", async () => {
