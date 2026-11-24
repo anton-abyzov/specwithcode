@@ -655,6 +655,81 @@ describe("applyAutoMerge with the real memory sync", () => {
     ),
   );
 
+  it.effect("plans again without a file kept on this machine after the plan read the list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const identity = identityOf([desktop, laptop]);
+        const a = yield* machine(desktop, "Desktop", identity, "personal");
+        const b = yield* machine(laptop, "Laptop", identity, "personal");
+        yield* seed(a, b);
+        let reads = 0;
+        // The owner keeps notes.md here once the first plan has read the list.
+        const kept = new Set<string>();
+        const localOnly = {
+          read: Effect.sync(() => {
+            reads += 1;
+            const now = new Set(kept);
+            if (reads === 1) kept.add("notes.md");
+            return now;
+          }),
+          keep: (names: ReadonlyArray<string>) =>
+            Effect.sync(() => names.forEach((name) => kept.add(name))),
+        };
+        const joined = yield* autoMergeJoiningSeat(yield* servicesOf(b), {
+          projectId: laptop.projectId,
+          link: linkOf(yield* a.exported),
+          machineLabel: "Laptop",
+          environmentId: laptop.environmentId,
+          localOnly,
+        });
+        assert.deepStrictEqual(joined.renamed, []);
+        const files = yield* filesOf(b);
+        assert.strictEqual(files["notes.md"], "road notes");
+        assert.isUndefined(files[renamedMemoryName("notes.md", "Laptop", laptop.environmentId)]);
+        // The index names no copy that was never made.
+        assert.notInclude(files["MEMORY.md"]!, ".from-");
+        assert.deepStrictEqual([...kept], ["notes.md"]);
+      }),
+    ),
+  );
+
+  it.effect("keeps the flag under the new name of a file kept here while it was renamed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const identity = identityOf([desktop, laptop]);
+        const a = yield* machine(desktop, "Desktop", identity, "personal");
+        const b = yield* machine(laptop, "Laptop", identity, "personal");
+        yield* seed(a, b);
+        const services = yield* servicesOf(b);
+        const kept = new Set<string>();
+        // The owner's flag lands after the last check and before the rename.
+        const workspace: AutoMergeServices["workspace"] = {
+          ...services.workspace,
+          renameMemory: (input) =>
+            Effect.sync(() => kept.add(input.from)).pipe(
+              Effect.andThen(services.workspace.renameMemory(input)),
+            ),
+        };
+        const joined = yield* autoMergeJoiningSeat(
+          { ...services, workspace },
+          {
+            projectId: laptop.projectId,
+            link: linkOf(yield* a.exported),
+            machineLabel: "Laptop",
+            environmentId: laptop.environmentId,
+            localOnly: {
+              read: Effect.sync(() => new Set(kept)),
+              keep: (names) => Effect.sync(() => names.forEach((name) => kept.add(name))),
+            },
+          },
+        );
+        const to = renamedMemoryName("notes.md", "Laptop", laptop.environmentId);
+        assert.deepStrictEqual(joined.renamed, [{ from: "notes.md", to }]);
+        assert.isTrue(kept.has(to));
+      }),
+    ),
+  );
+
   it.effect("applies a plan made elsewhere, skipping what is already written", () =>
     Effect.scoped(
       Effect.gen(function* () {

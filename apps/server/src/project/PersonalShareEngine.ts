@@ -48,6 +48,7 @@ import type {
 } from "../handoff/personalShareWire.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
+import { PERSONAL_SEAT_LEFT_MESSAGE } from "./LinkedPeerRoute.ts";
 import { personalLinkIdForAccount } from "./personalLinkId.ts";
 import { PersonalLinkSnapshot } from "./personalLinkSnapshot.ts";
 import { personalPeerSyncDeps } from "./PersonalPeerSync.ts";
@@ -459,6 +460,27 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         return { issued, heldUsable: held } satisfies ShareGrantFacts;
       });
 
+    /**
+     * Drops only `peer`'s seat from this seat's link, as the departure handler of
+     * `LinkedPeerSync` does for a peer that answered it left; never adds anyone.
+     */
+    const dropDeparted = (peer: EnvironmentId) =>
+      applying(
+        Effect.gen(function* () {
+          const fresh = yield* readSelf;
+          if (fresh === null || !fresh.linked || fresh.assistant === undefined) return;
+          const member = fresh.assistant.workspaceSettings?.logicalProject?.members.find(
+            (entry) => entry.environmentId === peer,
+          );
+          if (member === undefined) return;
+          yield* peerSync.personalPeerFenced(fresh.assistant, member, PERSONAL_SEAT_LEFT_MESSAGE);
+        }),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Percy could not drop a seat that left", { peer, cause }),
+        ),
+      );
+
     const answer: PersonalShareEngine["Service"]["answer"] = (caller, request) =>
       Effect.gen(function* () {
         const peer = caller.sourceEnvironmentId;
@@ -504,6 +526,14 @@ export const makePersonalShareEngine = (deps: PersonalShareEngineDeps) =>
         yield* learnVouches(view, request.state);
         if (!request.state.accepted) {
           yield* record(peer, request.state.reason, PEER_REFUSAL_DETAIL[request.state.reason]);
+          // A member whose switch is off left this link, or is leaving it (1448 C1): with a
+          // one-way grant this seat cannot call it to learn so, so its own call drops its seat.
+          if (
+            request.state.reason === "switch_off" &&
+            view.linked &&
+            view.seat?.members.includes(peer)
+          )
+            yield* dropDeparted(peer);
           return { state: own };
         }
         if (request.phase === 1 || request.content === undefined) return { state: own };

@@ -177,8 +177,8 @@ describe("renamedMemoryName", () => {
   });
 
   it.each([
-    ["spaces", "Anton's MacBook Pro"],
-    ["unicode", "Антон Мак 💻"],
+    ["spaces", "Sam's MacBook Pro"],
+    ["unicode", "Мой Мак 💻"],
     ["only unicode", "Ноутбук"],
     ["empty", ""],
     ["only punctuation", " ... !!! "],

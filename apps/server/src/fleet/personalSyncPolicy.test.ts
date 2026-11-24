@@ -31,12 +31,12 @@ const linkedPersonal: PersonalSyncTarget = {
 const validCaller: PersonalSyncCaller = {
   environmentId: peerEnv,
   grant: { kind: "own", legacy: false, revoked: false },
-  cloudUserId: "user_anton_123",
+  cloudUserId: "user_owner_123",
 };
 
 const validLocal: PersonalSyncLocal = {
   environmentId: localEnv,
-  cloudUserId: "user_anton_123",
+  cloudUserId: "user_owner_123",
 };
 
 describe("isOwnPersonalSyncAllowed", () => {

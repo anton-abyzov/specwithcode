@@ -543,3 +543,38 @@ it.effect(
     }).pipe(Effect.provide(share), Effect.scoped),
   60_000,
 );
+
+it.effect(
+  "after a failed join, off, edits, on with the peer offline and off again, plain undo refuses",
+  () =>
+    Effect.gen(function* () {
+      const { projects, join } = yield* seedLaptop;
+      const percy = yield* PersonalShare.PersonalShare;
+      const failing = {
+        getById: projects.getById,
+        update: (input: Parameters<typeof projects.update>[0]) =>
+          input.ownership?.mode === "join-as-member"
+            ? Effect.fail({ _tag: "ProjectSettingsRevisionConflictError" } as never)
+            : projects.update(input),
+      };
+      // A first join saves its copy, then fails before the link: never linked.
+      yield* turnSwitch(true);
+      yield* join(yield* switchedOnAt, failing).pipe(Effect.flip);
+      const [older] = yield* (yield* PersonalRestorePoint.PersonalRestorePoint).list(PERCY);
+      assert.strictEqual(older?.reason, "before-link");
+      yield* turnSwitch(false);
+      yield* TestClock.adjust("7 days");
+      yield* write("trip.md", "A week of notes, written while Percy was off.\n");
+      // On while the peer is offline, so no join runs, then off again.
+      yield* turnSwitch(true);
+      yield* turnSwitch(false);
+      const week = yield* memoryOf;
+
+      assert.isNull((yield* percy.status).undoRestorePointId);
+      const refused = yield* percy.undo({}).pipe(Effect.flip);
+      assert.strictEqual(refused.code, "no_restore_point");
+      assert.include(refused.message, older!.id);
+      assert.deepStrictEqual(yield* memoryOf, week);
+    }).pipe(Effect.provide(share), Effect.scoped),
+  60_000,
+);

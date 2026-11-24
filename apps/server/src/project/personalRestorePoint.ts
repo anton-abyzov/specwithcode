@@ -19,6 +19,7 @@ import {
   type Project,
   type ProjectId,
   ProjectIconOverride,
+  type ProjectMemoryFile,
   PROJECT_MEMORY_MAX_FILES,
   PROJECT_MEMORY_TOTAL_BYTES,
   ProjectMemoryName,
@@ -83,6 +84,12 @@ const PointFile = Schema.Struct({
       updatedAt: Schema.String,
     }),
   ),
+  /**
+   * On a "before-undo" point: the point that undo went back to, and whether
+   * it finished. A retry of an unfinished undo saves the state from before
+   * it, so the newest "before-undo" copy is never the half-restored state.
+   */
+  undo: Schema.optionalKey(Schema.Struct({ target: Schema.String, finished: Schema.Boolean })),
 });
 type PointFile = typeof PointFile.Type;
 const decodePoint = Schema.decodeUnknownEffect(Schema.fromJsonString(PointFile));
@@ -277,7 +284,10 @@ export class PersonalRestorePoint extends Context.Service<
      * unlink and undo; the caller that knows when the switch went on names the
      * point itself).
      * The current state is saved first as a "before-undo" point, so restoring
-     * that one undoes the undo. Memory becomes exactly the point's files, and a
+     * that one undoes the undo; a retry of an undo to the same point that did
+     * not finish saves the state from before that attempt instead. Every
+     * memory file is removed or replaced only at the revision that save read,
+     * so a write after it makes the restore fail and is kept. Memory becomes exactly the point's files, and a
      * file removed here leaves no tombstone for a later sync to carry. Name,
      * icon, instructions, repositories and local-only flags go back too.
      *
@@ -392,10 +402,61 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const captureNow = (project: Project, reason: PersonalRestorePointReason) =>
+  /** What a point holds of the assistant besides memory, as it is now. */
+  const assistantOf = (project: Project): PointFile["assistant"] => {
+    const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+    return {
+      title: project.title,
+      icon: project.projectIcon ?? null,
+      instructions: settings.instructions,
+      repositories: settings.environment.repositories,
+      localOnlyMemoryFiles: settings.localOnlyMemoryFiles ?? [],
+    };
+  };
+
+  /**
+   * What a retry of an unfinished undo saves (`previous` is that attempt's
+   * point, `target` where it went): the state before the attempt ran, with
+   * every change made since by anyone but that undo. A field or file that
+   * still holds the target's value is taken from `previous`; any other value
+   * here now was written after the attempt began, and is kept as it is now.
+   */
+  const beforeAttempt = (
+    now: PointFile["assistant"],
+    files: ReadonlyArray<ProjectMemoryFile>,
+    previous: PointFile,
+    target: PointFile,
+  ) => {
+    const assistant = Object.fromEntries(
+      (Object.keys(now) as Array<keyof typeof now>).map((key) => [
+        key,
+        sameJson(now[key], target.assistant[key]) ? previous.assistant[key] : now[key],
+      ]),
+    ) as PointFile["assistant"];
+    const here = new Map(files.map((file) => [file.name, file]));
+    const targetContent = new Map(target.memory.map((entry) => [entry.name, entry.content]));
+    const names = [...new Set([...previous.memory.map((entry) => entry.name), ...here.keys()])];
+    const memory = names.toSorted().flatMap((name) => {
+      const file = here.get(name);
+      if (file !== undefined && file.content !== targetContent.get(name))
+        return [{ name, content: file.content, updatedAt: file.updatedAt }];
+      return previous.memory.filter((entry) => entry.name === name);
+    });
+    return { assistant, memory };
+  };
+
+  /**
+   * Saves the point, and returns it with the memory files read for it: their
+   * revisions are what a restore expects (`restoreMemory`). For an undo,
+   * `undo` names its target and the unfinished attempt it retries, if any.
+   */
+  const captureNow = (
+    project: Project,
+    reason: PersonalRestorePointReason,
+    undo?: { readonly target: PointFile; readonly previous: PointFile | undefined },
+  ) =>
     Effect.gen(function* () {
       const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
-      const localOnly = localOnlyMemorySet(settings);
       const files = yield* readMemory(project.id);
       const newest = (yield* pointsOf(project.id))[0];
       // Never at or before the newest point, so "newest first" holds on any clock.
@@ -407,19 +468,18 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+      const saved =
+        undo?.previous === undefined
+          ? { assistant: assistantOf(project), memory: files }
+          : beforeAttempt(assistantOf(project), files, undo.previous, undo.target);
+      const localOnly = localOnlyMemorySet(saved.assistant);
       const point: PointFile = {
         version: 1,
         id: `${idStamp(savedAt)}-${reason}-${randomBytes(4).toString("hex")}`,
         projectId: project.id,
         reason,
         savedAt,
-        assistant: {
-          title: project.title,
-          icon: project.projectIcon ?? null,
-          instructions: settings.instructions,
-          repositories: settings.environment.repositories,
-          localOnlyMemoryFiles: settings.localOnlyMemoryFiles ?? [],
-        },
+        assistant: saved.assistant,
         link: {
           logicalProjectId: settings.logicalProject?.id ?? null,
           members: (settings.logicalProject?.members ?? []).map((member) => ({
@@ -428,16 +488,31 @@ const make = Effect.gen(function* () {
           })),
           routineOwner: settings.coordinatorBinding?.routineOwner ?? true,
         },
-        memory: files.map((file) => ({
+        memory: saved.memory.map((file) => ({
           name: file.name,
           content: file.content,
           sha256: memoryContentHash(file.content),
           localOnly: localOnly.has(file.name),
           updatedAt: file.updatedAt,
         })),
+        ...(undo === undefined ? {} : { undo: { target: undo.target.id, finished: false } }),
       };
       yield* writePoint(point);
-      return summaryOf(point);
+      return { point, files };
+    });
+
+  /**
+   * The state before an undo to `target`, saved as a "before-undo" point. A
+   * retry of an undo to the same target that did not finish saves the state
+   * before that attempt (`beforeAttempt`), never the half-restored one, so
+   * the newest "before-undo" copy always holds everything the undo replaced.
+   */
+  const beforeUndo = (project: Project, target: PointFile) =>
+    Effect.gen(function* () {
+      const newest = (yield* pointsOf(project.id))[0];
+      const previous =
+        newest?.undo?.target === target.id && !newest.undo.finished ? newest : undefined;
+      return yield* captureNow(project, "before-undo", { target, previous });
     });
 
   /** The point to restore, checked in full: nothing is written before this succeeds. */
@@ -556,11 +631,22 @@ const make = Effect.gen(function* () {
    * content changes, is forgotten first: no tombstone, and the restored file
    * starts with no versions, so no later sync reads it as newer than a peer's.
    */
-  const restoreMemory = (projectId: ProjectId, point: PointFile) =>
+  const restoreMemory = (
+    projectId: ProjectId,
+    point: PointFile,
+    saved: ReadonlyArray<ProjectMemoryFile>,
+  ) =>
     Effect.gen(function* () {
       const failed = (name: string) => (cause: unknown) =>
         new PersonalRestoreStorageError({ projectId, stage: "restore-memory", name, cause });
-      const current = new Map((yield* readMemory(projectId)).map((file) => [file.name, file]));
+      // The files as the "before-undo" point holds them. Every forget below expects the
+      // revision seen there, so a chat's write since then is a conflict, never lost.
+      const current = new Map(saved.map((file) => [file.name, file]));
+      const written = (yield* readMemory(projectId)).find(
+        (file) => current.get(file.name)?.revision !== file.revision,
+      );
+      if (written !== undefined)
+        return yield* failed(written.name)("Memory was written after the state before was saved.");
       const wanted = new Map(point.memory.map((entry) => [entry.name, entry]));
       const forget = (name: string, revision: number) =>
         workspace
@@ -602,6 +688,7 @@ const make = Effect.gen(function* () {
   const capture: PersonalRestorePoint["Service"]["capture"] = (projectId, reason) =>
     loadAssistant(projectId).pipe(
       Effect.flatMap((project) => captureNow(project, reason)),
+      Effect.map(({ point }) => summaryOf(point)),
       lock.withPermits(1),
     );
 
@@ -614,10 +701,20 @@ const make = Effect.gen(function* () {
       const point = yield* readPoint(project, id);
       const members = project.workspaceSettings?.logicalProject?.members.length ?? 0;
       if (members > 1) return yield* new PersonalRestoreStillLinkedError({ projectId, members });
-      const savedBefore = yield* captureNow(project, "before-undo");
+      const before = yield* beforeUndo(project, point);
       const repositoriesRestored = yield* restoreSettings(project, point);
-      const memory = yield* restoreMemory(projectId, point);
-      return { restored: summaryOf(point), savedBefore, memory, repositoriesRestored };
+      const memory = yield* restoreMemory(projectId, point, before.files);
+      // Finished: a later undo to this point saves the state as it is then. A failed mark
+      // only makes that later save start from this point, with every change since kept.
+      yield* writePoint({ ...before.point, undo: { target: point.id, finished: true } }).pipe(
+        Effect.ignore,
+      );
+      return {
+        restored: summaryOf(point),
+        savedBefore: summaryOf(before.point),
+        memory,
+        repositoriesRestored,
+      };
     }).pipe(lock.withPermits(1));
 
   return PersonalRestorePoint.of({ capture, list, restore });

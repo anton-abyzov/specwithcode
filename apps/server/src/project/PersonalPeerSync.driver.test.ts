@@ -142,7 +142,9 @@ const harness = (input: {
       personalPeerAllowed: (environmentId) =>
         Effect.succeed(input.allowed?.(environmentId) ?? true),
       memory: {
-        memoryExport: () => Effect.succeed({ digest: "m".repeat(64) } as never),
+        // A page names the link it was read on; a pass stops on a page of another link.
+        memoryExport: () =>
+          Effect.succeed({ logicalProjectId: "logical:percy", digest: "m".repeat(64) } as never),
         memoryMerge: () => Effect.succeed({} as never),
       },
       plans: {

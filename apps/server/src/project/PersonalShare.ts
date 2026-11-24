@@ -136,6 +136,26 @@ const sameShared = (left: PersonalAssistantShared, right: PersonalAssistantShare
   left.machines.length === right.machines.length &&
   left.machines.every((id, index) => id === right.machines[index]);
 
+/**
+ * The copy plain `percy undo` goes back to: the current series' "before-link"
+ * point (`seriesPointOf`). With the switch off and the seat in no link there
+ * is no current series, whatever was saved before (D-16): the owner names the
+ * copy. A join that failed before the switch went off and on and off again
+ * left no departure or undo to end its series, so the switch ends it.
+ */
+const undoPointOf = <P extends PersonalShareRestorePoint>(
+  assistant: Project,
+  points: ReadonlyArray<P>,
+  shared: PersonalAssistantShared,
+): P | undefined =>
+  !shared.enabled && (assistant.workspaceSettings?.logicalProject?.members.length ?? 0) <= 1
+    ? undefined
+    : PersonalRestorePoint.seriesPointOf(
+        assistant,
+        points,
+        shared.enabled ? shared.enabledAt : undefined,
+      );
+
 const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -227,14 +247,7 @@ const make = Effect.gen(function* () {
     });
     const ownName = normalizeMachineNickname(current.machineNicknames[self]?.name ?? "");
     const points = yield* restorePointsOf(assistant);
-    const undoPoint =
-      assistant === undefined
-        ? undefined
-        : PersonalRestorePoint.seriesPointOf(
-            assistant,
-            points,
-            shared.enabled ? shared.enabledAt : undefined,
-          );
+    const undoPoint = assistant === undefined ? undefined : undoPointOf(assistant, points, shared);
     return {
       enabled: shared.enabled,
       environmentId: self,
@@ -373,11 +386,7 @@ const make = Effect.gen(function* () {
           assistant === undefined
             ? undefined
             : input.restorePointId === undefined
-              ? PersonalRestorePoint.seriesPointOf(
-                  assistant,
-                  points,
-                  shared.enabled ? shared.enabledAt : undefined,
-                )
+              ? undoPointOf(assistant, points, shared)
               : points.find((point) => point.id === input.restorePointId);
         if (assistant === undefined || chosen === undefined)
           return yield* refuse(

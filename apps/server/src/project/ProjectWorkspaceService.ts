@@ -709,6 +709,12 @@ const make = Effect.gen(function* () {
         .withTransaction(
           Effect.gen(function* () {
             if (!validName(input.to)) return yield* fail(input.projectId, "invalid");
+            // A file kept on this machine never moves to a name that is not: that name syncs.
+            const kept = localOnlyMemorySet(
+              (yield* requireProject(input.projectId)).workspaceSettings,
+            );
+            if (kept.has(input.from) && !kept.has(input.to))
+              return yield* fail(input.projectId, "conflict");
             const source = yield* readMemory({ projectId: input.projectId, name: input.from });
             if (source.revision !== input.expectedRevision)
               return yield* fail(input.projectId, "conflict");

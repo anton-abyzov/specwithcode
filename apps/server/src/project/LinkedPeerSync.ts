@@ -36,6 +36,7 @@ import { CoordinatorMessageOutbox } from "./CoordinatorMessageOutbox.ts";
 import {
   type EnvironmentId,
   logicalProjectMemberKey,
+  type LinkedMemoryExport,
   type LinkedServerSyncError,
   type LinkedServerSyncKind,
   type LogicalProjectMember,
@@ -110,6 +111,7 @@ import {
   fallbackPersonalPairRole,
   type PersonalPairRoles,
   personalPairRoles,
+  personalPassHolds,
 } from "./personalPairDrivers.ts";
 import { PersonalShareEngine } from "./PersonalShareEngine.ts";
 import { PersonalShareReconciler } from "./PersonalShareReconciler.ts";
@@ -450,19 +452,31 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
       };
     };
 
-    /** Two-way memory between this copy and the peer's; the error the pass ended with. */
+    /** Two-way memory with the peer's copy; a personal pass stops off its link. */
     const syncMemory = (
       selfMember: LinkedMemoryMember,
       peerMember: LinkedMemoryMember,
       personal: boolean,
+      linkId?: string,
     ): Effect.Effect<LinkedServerSyncError | null> =>
       Effect.promise(async (signal) => {
         const calls = driverCalls(signal);
         const local = (target: LinkedMemoryMember) => target.environmentId === selfEnvironmentId;
+        let stopped = false;
+        const still =
+          linkId === undefined ? undefined : personalPassHolds(deps, selfMember, linkId);
+        const holds = async (page?: LinkedMemoryExport) => {
+          if (stopped || still === undefined) return !stopped;
+          const otherLink = page !== undefined && page.logicalProjectId !== linkId;
+          if (otherLink || !(await run(still, { signal }).catch(() => false)))
+            stopped = (calls.fail("unlinked"), true);
+          return !stopped;
+        };
         const driver: LinkedMemoryDriver = {
-          exportMemory: (target, options) => {
+          exportMemory: async (target, options) => {
+            if (stopped) return null;
             const request = { projectId: target.projectId, ...options };
-            return calls.settle(
+            const page = await calls.settle(
               local(target)
                 ? deps.memory.memoryExport(request)
                 : peers.memoryExport(
@@ -471,8 +485,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                     { personal },
                   ),
             );
+            // This seat's page is checked once read: one read after leaving never goes out.
+            return page !== null && local(target) && !(await holds(page)) ? null : page;
           },
-          mergeMemory: (target, from, page) => {
+          mergeMemory: async (target, from, page) => {
+            if (!(await holds())) return false;
             const request = { projectId: target.projectId, peer: from, export: page };
             return calls
               .settle(
@@ -836,6 +853,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           label: (input.labels.get(member.environmentId) ?? "Machine").slice(0, 200),
         };
         const personal = isPersonalAssistantProject(project);
+        // The link this personal pass began on; a memory pass stops once it is no longer it.
+        const passLink = personal ? identityId : undefined;
         const readsOnly = input.follow || kinds.length === 0;
         const theirs = yield* peers
           .linkedDigest(member.environmentId, ref, { personal })
@@ -886,7 +905,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           // An older machine still answers the memory paths: memory moves, the rest stays the app's.
           const memory =
             error === "outdated" && kinds.includes("memory") && allowed
-              ? yield* syncMemory(selfMember, peerMember, personal)
+              ? yield* syncMemory(selfMember, peerMember, personal, passLink)
               : error;
           // A pair that only reads lists has no kind to show, but still backs off (`tick`).
           if (readsOnly) return [{ kind: "supersede" as const, error }];
@@ -1113,7 +1132,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           )
             outcomes.push({ kind: "memory", error: null });
           else {
-            const error = yield* syncMemory(selfMember, peerMember, personal);
+            const error = yield* syncMemory(selfMember, peerMember, personal, passLink);
             outcomes.push({ kind: "memory", error });
             yield* settled("memory", error);
           }

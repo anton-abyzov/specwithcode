@@ -671,7 +671,7 @@ describe("PercySharedSetting", () => {
     expect(toggle().props["aria-checked"]).toBe(false);
   });
 
-  it("lists each machine's state in plain words, the routine runner and when memory was in step", async () => {
+  it("lists each machine's state in plain words, the routine runner and when each machine was last checked", async () => {
     mocks.shared = { enabled: true, machines: ["laptop", "desktop", "tower"] };
     mocks.environments = [
       environment("studio", "Studio"),
@@ -759,7 +759,14 @@ describe("PercySharedSetting", () => {
       far: "Off",
     });
     expect(text(one({ "data-share-machine": "laptop" }))).toContain("Runs the shared routines");
-    expect(text(one({ "data-share-machine": "laptop" }))).toContain("Memory in step just now");
+    // The exchange time is the last check with that machine, never a claim that memory matches.
+    expect(text(one({ "data-share-machine": "laptop" }))).toContain(
+      "Last checked with Laptop just now",
+    );
+    expect(text(one({ "data-share-machine": "studio" }))).toContain(
+      "Last checked with your other machines just now",
+    );
+    expect(text(renderer.root)).not.toContain("Memory in step");
     expect(text(one({ "data-share-machine": "studio" }))).toContain("(this machine)");
     // Desktop answers this window: its switch can be turned on from here. Far does not.
     expect(

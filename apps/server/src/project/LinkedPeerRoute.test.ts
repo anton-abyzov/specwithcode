@@ -290,7 +290,7 @@ describe("LinkedPeerReceiver", () => {
             accounts: { kind: "all" },
           } as unknown as EffectiveWorkGrant,
           runtimeCeiling: "full-access",
-          cloudUserId: "user_anton_123",
+          cloudUserId: "user_owner_123",
         };
         // Without a local CloudLink in context, localCloudUserId is null -> refused
         const withoutCloud = yield* onM3((receiver) => receiver.digest(ownCaller, ref));

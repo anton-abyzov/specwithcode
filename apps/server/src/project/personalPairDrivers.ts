@@ -7,7 +7,7 @@
  *
  * @module personalPairDrivers
  */
-import type { EnvironmentId, Project } from "@specweave-studio/contracts";
+import type { EnvironmentId, Project, ProjectId } from "@specweave-studio/contracts";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { drivesPair, type PairReach, pairDriver } from "@specweave-studio/shared/linkedPairSync";
 import * as Effect from "effect/Effect";
@@ -51,4 +51,33 @@ export const personalPairRoles = (
     const roles = new Map<string, PersonalPairRole>();
     for (const peer of peers) roles.set(peer, personalPairRole(self, peer, yield* reach(peer)));
     return roles;
+  });
+
+/**
+ * Whether a personal memory pass begun on link `logicalProjectId` may still
+ * move this seat's memory (1448 D-12): the owner's switch is still on here,
+ * and the seat is still a member of that same link. Read again after each
+ * outbound page and before each send, so memory written after Percy was
+ * turned off, or after the seat left, never leaves this machine.
+ */
+export const personalPassHolds = (
+  deps: {
+    readonly selfEnvironmentId: EnvironmentId;
+    readonly listProjects: Effect.Effect<ReadonlyArray<Project>>;
+    readonly personalSwitchOn?: Effect.Effect<boolean> | undefined;
+  },
+  self: { readonly projectId: ProjectId },
+  logicalProjectId: string,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    if (deps.personalSwitchOn !== undefined && !(yield* deps.personalSwitchOn)) return false;
+    const project = (yield* deps.listProjects).find((entry) => entry.id === self.projectId);
+    const identity = project?.workspaceSettings?.logicalProject;
+    return (
+      identity?.id === logicalProjectId &&
+      identity.members.some(
+        (member) =>
+          member.environmentId === deps.selfEnvironmentId && member.projectId === self.projectId,
+      )
+    );
   });

@@ -471,10 +471,16 @@ export function PercySharedSetting() {
                           </span>
                         ) : null}
                         {row.lastSyncedAt ? (
+                          // The share exchange's time; it never says memory matches.
                           <span className="text-muted-foreground" data-share-synced>
-                            {tx("Memory in step {when}", {
-                              when: formatRelativeTimeLabel(row.lastSyncedAt),
-                            })}
+                            {row.own
+                              ? tx("Last checked with your other machines {when}", {
+                                  when: formatRelativeTimeLabel(row.lastSyncedAt),
+                                })
+                              : tx("Last checked with {machine} {when}", {
+                                  machine: row.label,
+                                  when: formatRelativeTimeLabel(row.lastSyncedAt),
+                                })}
                           </span>
                         ) : null}
                         {row.action === "turn-on" ? (

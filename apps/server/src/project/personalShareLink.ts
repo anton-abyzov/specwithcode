@@ -32,6 +32,7 @@ import { memoryContentHash } from "./LinkedMemoryHistory.ts";
 import { MEMORY_INDEX_NAME } from "./linkedMemoryMerge.ts";
 import { containsMemorySecret, localOnlyMemorySet } from "./memorySecretScan.ts";
 import {
+  type AutoMergeLocalOnly,
   type AutoMergeServices,
   autoMergeJoiningSeat,
   forgetPreLinkTombstones,
@@ -217,6 +218,36 @@ export const ensureSeriesCopies = (
     return { saved: true as const, databaseCopy, restorePoint: point.path };
   });
 
+/**
+ * The seat's "Keep on this machine" list read from the store each time, not
+ * from the project the join began with: the owner may change it while the
+ * join saves its copies. `keep` adds names on the current revision, and reads
+ * again when the owner's own change lands first.
+ */
+const localOnlyOf = (services: ShareLinkServices, project: Project): AutoMergeLocalOnly => ({
+  read: reload(services, project).pipe(
+    Effect.map((current) => localOnlyMemorySet(current.workspaceSettings)),
+  ),
+  keep: (names) =>
+    Effect.gen(function* () {
+      const current = yield* reload(services, project);
+      const settings = current.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const kept = localOnlyMemorySet(settings);
+      const added = names.filter((name) => !kept.has(name));
+      if (added.length === 0) return;
+      yield* services.projects
+        .update({
+          projectId: project.id,
+          commandId: CommandId.make(`percy-join-keep-local:${project.id}:${settings.revision}`),
+          workspaceSettings: {
+            expectedRevision: settings.revision,
+            localOnlyMemoryFiles: [...kept, ...added],
+          },
+        })
+        .pipe(Effect.mapError(failed("merge")));
+    }).pipe(Effect.retry({ times: 2 })),
+});
+
 /** The link's shared settings onto this seat, with the link's name; nothing else changes. */
 const takeLinkSettings = (
   services: ShareLinkServices,
@@ -363,7 +394,8 @@ export const joinLink = (
       link: { files: input.peer.memory.files, index: input.peer.memory.index },
       machineLabel: input.machineLabel,
       environmentId: input.selfEnvironmentId,
-      localOnly: localOnlyMemorySet(input.project.workspaceSettings),
+      // Read again on each attempt, after the copies: never the list the join began with.
+      localOnly: localOnlyOf(services, input.project),
     }).pipe(Effect.mapError(failed("merge")));
     yield* takeLinkSettings(
       services,

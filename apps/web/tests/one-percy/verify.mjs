@@ -150,7 +150,7 @@ const checks = {
       if (states[id] !== state) fail(`${id} reads "${states[id]}", not "${state}"`);
     const laptop = squash(await page.locator('[data-share-machine="laptop"]').innerText());
     if (!laptop.includes("Runs the shared routines")) fail(`Laptop row: ${laptop}`);
-    if (!laptop.includes("Memory in step")) fail(`Laptop row: ${laptop}`);
+    if (!laptop.includes("Last checked with Laptop")) fail(`Laptop row: ${laptop}`);
     if ((await page.locator('[data-share-machine="desktop"] [data-share-turn-on]').count()) !== 1)
       fail("Desktop offers no Turn on");
     // The switch is on: the merge is what the button undoes.

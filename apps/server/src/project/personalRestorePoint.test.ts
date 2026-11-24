@@ -16,6 +16,7 @@ import {
 } from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -79,35 +80,48 @@ const makeMachine = Effect.gen(function* () {
   };
   const updates: Array<Patch> = [];
   let settingsMovedOn = false;
+  /** Runs once inside the next settings write: a chat writing memory in the middle of an undo. */
+  let duringUpdate: Effect.Effect<unknown, unknown> | undefined;
+  /** The memory file whose next write stops the restore, as a machine that shuts down. */
+  let stopAtWriteOf: string | undefined;
   const refuse = (error: {
     readonly _tag: string;
   }): Effect.Effect<Project, { readonly _tag: string }> => Effect.fail(error);
   const update = (input: Patch) =>
     Effect.suspend(() => {
-      const settings = project.workspaceSettings!;
-      if (
-        settingsMovedOn ||
-        (input.workspaceSettings !== undefined &&
-          input.workspaceSettings.expectedRevision !== settings.revision)
-      )
-        return refuse({ _tag: "ProjectRequestDeniedError" });
-      // As the real service: a repository folder that is gone is not approved again.
-      if (
-        input.workspaceSettings?.environment?.repositories.some(
-          (repository: { localPath: string | null }) => repository.localPath === GONE_FOLDER,
-        )
-      )
-        return refuse({ _tag: "ProjectEnvironmentError" });
-      updates.push(input);
-      const { expectedRevision: _ignored, ...patch } = input.workspaceSettings ?? {};
-      project = {
-        ...project,
-        title: input.title ?? project.title,
-        projectIcon: input.projectIcon !== undefined ? input.projectIcon : project.projectIcon,
-        workspaceSettings: { ...settings, ...patch, revision: settings.revision + 1 },
-      };
-      return Effect.succeed(project);
-    });
+      const hook = duringUpdate ?? Effect.void;
+      duringUpdate = undefined;
+      return hook;
+    }).pipe(
+      Effect.orDie,
+      Effect.andThen(
+        Effect.suspend(() => {
+          const settings = project.workspaceSettings!;
+          if (
+            settingsMovedOn ||
+            (input.workspaceSettings !== undefined &&
+              input.workspaceSettings.expectedRevision !== settings.revision)
+          )
+            return refuse({ _tag: "ProjectRequestDeniedError" });
+          // As the real service: a repository folder that is gone is not approved again.
+          if (
+            input.workspaceSettings?.environment?.repositories.some(
+              (repository: { localPath: string | null }) => repository.localPath === GONE_FOLDER,
+            )
+          )
+            return refuse({ _tag: "ProjectEnvironmentError" });
+          updates.push(input);
+          const { expectedRevision: _ignored, ...patch } = input.workspaceSettings ?? {};
+          project = {
+            ...project,
+            title: input.title ?? project.title,
+            projectIcon: input.projectIcon !== undefined ? input.projectIcon : project.projectIcon,
+            workspaceSettings: { ...settings, ...patch, revision: settings.revision + 1 },
+          };
+          return Effect.succeed(project);
+        }),
+      ),
+    );
   const projects = {
     getById: (id: ProjectId) =>
       Effect.sync(() =>
@@ -124,7 +138,22 @@ const makeMachine = Effect.gen(function* () {
   const workspace = Workspace.layer.pipe(
     Layer.provideMerge(Layer.merge(storage, LinkedMemoryHistory.layerMemory)),
   );
+  // The restore point service writes memory through this one; the test reads the real store.
+  const stopping = Layer.effect(
+    Workspace.ProjectWorkspaceService,
+    Effect.gen(function* () {
+      const real = yield* Workspace.ProjectWorkspaceService;
+      return Workspace.ProjectWorkspaceService.of({
+        ...real,
+        writeMemory: (input) =>
+          input.name === stopAtWriteOf
+            ? Effect.die("the machine stopped in the middle of the undo")
+            : real.writeMemory(input),
+      });
+    }),
+  );
   const layer = restorePointLayer.pipe(
+    Layer.provide(stopping),
     Layer.provideMerge(
       Layer.mergeAll(
         workspace,
@@ -232,6 +261,14 @@ const makeMachine = Effect.gen(function* () {
     change: (next: (project: Project) => Project) => {
       project = next(project);
     },
+    /** Runs `effect` once, inside the next settings write. */
+    duringUpdate: (effect: Effect.Effect<unknown, unknown>) => {
+      duringUpdate = effect;
+    },
+    /** The next writes of `name` stop the restore; undefined lets them through again. */
+    stopAtWriteOf: (name: string | undefined) => {
+      stopAtWriteOf = name;
+    },
     /** Every settings write from now on is refused as a revision conflict. */
     moveSettingsOn: () => {
       settingsMovedOn = true;
@@ -277,6 +314,26 @@ const changeEverything = (machine: Machine) =>
       },
     }));
   });
+
+/** Whether `content` is in this machine's memory or in one of its saved points. */
+const keptSomewhere = (machine: Machine, name: string, content: string) =>
+  Effect.gen(function* () {
+    if ((yield* machine.memoryOf(PERCY))[name] === content) return true;
+    return pointFiles(machine).some((file) =>
+      JSON.parse(NodeFS.readFileSync(NodePath.join(machine.backups, file), "utf8")).memory.some(
+        (entry: Patch) => entry.name === name && entry.content === content,
+      ),
+    );
+  });
+
+/** The memory a saved point holds, by name. */
+const memoryIn = (path: string): Record<string, string> =>
+  Object.fromEntries(
+    JSON.parse(NodeFS.readFileSync(path, "utf8")).memory.map((entry: Patch) => [
+      entry.name,
+      entry.content,
+    ]),
+  );
 
 const pointFiles = (machine: Machine) =>
   NodeFS.existsSync(machine.backups) ? NodeFS.readdirSync(machine.backups).toSorted() : [];
@@ -657,6 +714,96 @@ describe("PersonalRestorePoint.restore", () => {
         assert.instanceOf(error, PersonalRestoreStorageError);
         assert.strictEqual(error.stage, "restore-settings");
         assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memory);
+      }),
+    ),
+  );
+});
+
+describe("PersonalRestorePoint.restore while memory is written", () => {
+  for (const [what, name] of [
+    ["a new file the point does not have", "late.md"],
+    ["a file the point rewrites", "work.md"],
+  ] as const)
+    it.effect(`never removes ${what}, written by a chat after the state before was saved`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const machine = yield* makeMachine;
+          yield* seed(machine);
+          yield* machine.points.capture(PERCY, "before-link");
+          yield* changeEverything(machine);
+          const memoryMerged = yield* machine.memoryOf(PERCY);
+          const late = "written by a chat during the undo";
+          // After the "before-undo" point is saved, before the undo reads the files it replaces.
+          machine.duringUpdate(machine.write(name, late));
+          const error = yield* Effect.flip(machine.points.restore(PERCY));
+          assert.instanceOf(error, PersonalRestoreStorageError);
+          assert.strictEqual(error.stage, "restore-memory");
+          assert.strictEqual(error.name, name);
+          // No memory file was removed or replaced, and the chat's write stands.
+          assert.deepStrictEqual(yield* machine.memoryOf(PERCY), { ...memoryMerged, [name]: late });
+          assert.isTrue(yield* keptSomewhere(machine, name, late));
+        }),
+      ),
+    );
+
+  it.effect("a retry after such a write keeps it in the state saved before", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const machine = yield* makeMachine;
+        yield* seed(machine);
+        const memoryBefore = yield* machine.memoryOf(PERCY);
+        const point = yield* machine.points.capture(PERCY, "before-link");
+        yield* changeEverything(machine);
+        const memoryMerged = yield* machine.memoryOf(PERCY);
+        const assistantMerged = machine.assistant();
+        const late = "written by a chat during the undo";
+        machine.duringUpdate(machine.write("late.md", late));
+        // The settings were put back before the write was found; memory was not.
+        yield* Effect.flip(machine.points.restore(PERCY));
+
+        const retried = yield* machine.points.restore(PERCY, point.id);
+        assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memoryBefore);
+        // The copy Settings offers holds the merge as it was, settings too, and the late write.
+        const saved = JSON.parse(NodeFS.readFileSync(retried.savedBefore.path, "utf8"));
+        assert.deepStrictEqual(memoryIn(retried.savedBefore.path), {
+          ...memoryMerged,
+          "late.md": late,
+        });
+        assert.strictEqual(saved.assistant.title, assistantMerged.title);
+        assert.strictEqual(saved.assistant.instructions, assistantMerged.instructions);
+        assert.deepStrictEqual(saved.assistant.repositories, assistantMerged.repositories);
+        assert.deepStrictEqual(saved.assistant.localOnlyMemoryFiles, assistantMerged.localOnly);
+      }),
+    ),
+  );
+
+  it.effect("a retry of an undo that stopped midway keeps the whole state before it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const machine = yield* makeMachine;
+        yield* seed(machine);
+        const memoryBefore = yield* machine.memoryOf(PERCY);
+        const point = yield* machine.points.capture(PERCY, "before-link");
+        yield* changeEverything(machine);
+        const memoryMerged = yield* machine.memoryOf(PERCY);
+
+        // Stops after forgetting work.md and before writing it again.
+        machine.stopAtWriteOf("work.md");
+        const stopped = yield* Effect.exit(machine.points.restore(PERCY));
+        assert.isTrue(Exit.isFailure(stopped));
+        assert.notProperty(yield* machine.memoryOf(PERCY), "work.md");
+
+        machine.stopAtWriteOf(undefined);
+        const retried = yield* machine.points.restore(PERCY, point.id);
+        assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memoryBefore);
+        // The newest "before-undo" copy is what Settings offers to put back: the whole merge.
+        const newest = (yield* machine.points.list(PERCY)).find(
+          (saved) => saved.reason === "before-undo",
+        );
+        assert.deepStrictEqual(newest, retried.savedBefore);
+        assert.deepStrictEqual(memoryIn(newest!.path), memoryMerged);
+        yield* machine.points.restore(PERCY, newest!.id);
+        assert.deepStrictEqual(yield* machine.memoryOf(PERCY), memoryMerged);
       }),
     ),
   );

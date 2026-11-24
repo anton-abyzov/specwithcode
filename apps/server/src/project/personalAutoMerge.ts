@@ -272,7 +272,15 @@ export class PersonalAutoMergeError extends Schema.TaggedError<PersonalAutoMerge
   "PersonalAutoMergeError",
   {
     projectId: Schema.String,
-    stage: Schema.Literals(["read", "index", "base", "rename", "tombstones"]),
+    stage: Schema.Literals([
+      "read",
+      "index",
+      "base",
+      "rename",
+      "tombstones",
+      "local_only",
+      "keep_local",
+    ]),
     /** The memory file the stage was working on. */
     name: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -290,6 +298,10 @@ export class PersonalAutoMergeError extends Schema.TaggedError<PersonalAutoMerge
         return `Could not rename memory file ${this.name ?? ""} for the merge.`;
       case "tombstones":
         return "Could not clear the deletions made before the link.";
+      case "local_only":
+        return `Memory file ${this.name ?? ""} was kept on this machine during the merge; it tries again.`;
+      case "keep_local":
+        return `Could not keep renamed memory file ${this.name ?? ""} on this machine.`;
     }
   }
 }
@@ -304,6 +316,22 @@ export interface AutoMergeServices {
     "saveVersion" | "modify"
   >;
 }
+
+/**
+ * The seat's "Keep on this machine" list as it is now, read again before the
+ * merge plans and writes, and a way to add names to it. A file kept here never
+ * enters the merge; one kept here while it was renamed keeps the flag under
+ * its new name.
+ */
+export interface AutoMergeLocalOnly {
+  readonly read: Effect.Effect<ReadonlySet<string>, Error>;
+  readonly keep: (names: ReadonlyArray<string>) => Effect.Effect<void, Error>;
+}
+
+const fixedLocalOnly = (names: ReadonlySet<string>): AutoMergeLocalOnly => ({
+  read: Effect.succeed(names),
+  keep: () => Effect.void,
+});
 
 export interface AutoMergeApplied {
   /** `MEMORY.md` was rewritten by this call. */
@@ -341,6 +369,12 @@ const withMergeBase = (
  * `indexRevision` is the revision of `MEMORY.md` the plan was built from (null
  * for none). Given, the index is written only over that revision, so an edit
  * made since the plan read it fails the write instead of being replaced.
+ *
+ * `localOnly`, given, is read again before the first write: a planned file
+ * kept on this machine since the plan fails the apply (stage `local_only`)
+ * before anything is written, so the caller plans again without it. After the
+ * renames it is read once more, and a renamed file kept here meanwhile has its
+ * flag added under the new name before the call returns.
  */
 export const applyAutoMerge = (
   services: AutoMergeServices,
@@ -348,6 +382,7 @@ export const applyAutoMerge = (
     readonly projectId: ProjectId;
     readonly plan: AutoMergePlan;
     readonly indexRevision?: number | null;
+    readonly localOnly?: AutoMergeLocalOnly;
   },
 ): Effect.Effect<AutoMergeApplied, PersonalAutoMergeError> =>
   Effect.gen(function* () {
@@ -365,6 +400,22 @@ export const applyAutoMerge = (
         (file) => [file.name, file],
       ),
     );
+    const localOnly = input.localOnly;
+    if (localOnly !== undefined) {
+      const kept = yield* localOnly.read.pipe(Effect.mapError(failed("read")));
+      const touched = [
+        ...(plan.index === null ? [] : [MEMORY_INDEX_NAME]),
+        ...plan.renames.flatMap((rename) => [rename.from, rename.to]),
+      ];
+      const flagged = touched.find((name) => kept.has(name));
+      if (flagged !== undefined)
+        return yield* new PersonalAutoMergeError({
+          projectId,
+          stage: "local_only",
+          name: flagged,
+          cause: "kept on this machine since the merge was planned",
+        });
+    }
 
     let indexWritten = false;
     if (plan.index !== null) {
@@ -408,14 +459,26 @@ export const applyAutoMerge = (
         .pipe(Effect.mapError(failed("rename", rename.from)));
       renamed.push(rename);
     }
+    if (localOnly !== undefined && renamed.length > 0) {
+      const kept = yield* localOnly.read.pipe(Effect.mapError(failed("read")));
+      const carried = renamed
+        .filter((rename) => kept.has(rename.from) && !kept.has(rename.to))
+        .map((rename) => rename.to);
+      if (carried.length > 0)
+        yield* localOnly.keep(carried).pipe(Effect.mapError(failed("keep_local", carried[0])));
+    }
     return { indexWritten, renamed };
   });
 
 const isWorkspaceError = Schema.is(ProjectWorkspaceError);
 
-/** The index changed after the plan read it: plan again from what it is now. */
-const isStaleIndex = (error: PersonalAutoMergeError) =>
-  error.stage === "index" && isWorkspaceError(error.cause) && error.cause.code === "conflict";
+/**
+ * The index changed after the plan read it, or a planned file was kept on this
+ * machine since: plan again from what it is now.
+ */
+const isStalePlan = (error: PersonalAutoMergeError) =>
+  error.stage === "local_only" ||
+  (error.stage === "index" && isWorkspaceError(error.cause) && error.cause.code === "conflict");
 
 /** Attempts at a plan whose index is still current; a busy index fails the join, which retries. */
 const AUTO_MERGE_ATTEMPTS = 3;
@@ -452,8 +515,10 @@ export const forgetPreLinkTombstones = (
  * Reads the joining seat's memory, plans the merge against the link and
  * applies it, then forgets this seat's deletions of files the link holds.
  * When `MEMORY.md` changed between the read and the write, it reads and plans
- * again, so the edit is part of the union. `localOnly` is the seat's "Keep on this machine" list
- * (`localOnlyMemorySet`); secret-flagged files are found here.
+ * again, so the edit is part of the union. `localOnly` is the seat's "Keep on
+ * this machine" list (`localOnlyMemorySet`), read again on every attempt right
+ * before it plans, so a file kept here while the join saved its copies stays
+ * out of the merge; secret-flagged files are found here.
  */
 export const autoMergeJoiningSeat = (
   services: AutoMergeServices,
@@ -462,10 +527,11 @@ export const autoMergeJoiningSeat = (
     readonly link: AutoMergeLink;
     readonly machineLabel: string;
     readonly environmentId: string;
-    readonly localOnly: ReadonlySet<string>;
+    readonly localOnly: ReadonlySet<string> | AutoMergeLocalOnly;
   },
 ): Effect.Effect<AutoMergeApplied & { readonly plan: AutoMergePlan }, PersonalAutoMergeError> =>
   Effect.gen(function* () {
+    const localOnly = "keep" in input.localOnly ? input.localOnly : fixedLocalOnly(input.localOnly);
     const attempt = Effect.gen(function* () {
       const files = yield* services.workspace
         .readMemoryFiles({ projectId: input.projectId })
@@ -475,6 +541,12 @@ export const autoMergeJoiningSeat = (
               new PersonalAutoMergeError({ projectId: input.projectId, stage: "read", cause }),
           ),
         );
+      const kept = yield* localOnly.read.pipe(
+        Effect.mapError(
+          (cause) =>
+            new PersonalAutoMergeError({ projectId: input.projectId, stage: "read", cause }),
+        ),
+      );
       const plan = planAutoMerge({
         link: input.link,
         seat: {
@@ -486,7 +558,7 @@ export const autoMergeJoiningSeat = (
           machineLabel: input.machineLabel,
           environmentId: input.environmentId,
           unshared: new Set([
-            ...input.localOnly,
+            ...kept,
             ...files.filter((file) => containsMemorySecret(file.content)).map((file) => file.name),
           ]),
         },
@@ -496,12 +568,13 @@ export const autoMergeJoiningSeat = (
         projectId: input.projectId,
         plan,
         indexRevision,
+        localOnly,
       });
       return { ...applied, plan };
     });
     let result = yield* Effect.result(attempt);
     for (let tries = 1; tries < AUTO_MERGE_ATTEMPTS; tries += 1) {
-      if (Result.isSuccess(result) || !isStaleIndex(result.failure)) break;
+      if (Result.isSuccess(result) || !isStalePlan(result.failure)) break;
       result = yield* Effect.result(attempt);
     }
     if (Result.isFailure(result)) return yield* result.failure;
