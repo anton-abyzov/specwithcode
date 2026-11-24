@@ -237,12 +237,31 @@ it.skipIf(process.platform === "win32")(
     for (const platform of ["darwin", "linux"] as const) {
       const gone = Path.join(base, `gone-${platform}`);
       await FSP.mkdir(gone);
-      const refused = await pinSourceRoot(gone, platform, undefined, () =>
-        FSP.rm(gone, { recursive: true }),
-      ).catch((cause: unknown) => cause);
+      const refused = await pinSourceRoot(gone, platform, undefined, {
+        afterStat: () => FSP.rm(gone, { recursive: true }),
+      }).catch((cause: unknown) => cause);
       expect(refused).not.toBeInstanceOf(CaptureFilesystemRefused);
       expect((refused as Error).message).toMatch(/changed after it was measured/);
     }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "refuses, without the live fallback, when the anchored lookup fails for another reason",
+  async () => {
+    const lookUp = () => Promise.reject(Object.assign(new Error("I/O error"), { code: "EIO" }));
+    for (const platform of ["darwin", "linux"] as const) {
+      const refused = await pinSourceRoot(source, platform, undefined, { lookUp }).catch(
+        (cause: unknown) => cause,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      expect(refused).not.toBeInstanceOf(CaptureFilesystemRefused);
+    }
+    // A lookup that does not exist while the root is there is an unsupported filesystem.
+    const missing = () => Promise.reject(Object.assign(new Error("absent"), { code: "ENOENT" }));
+    await expect(
+      pinSourceRoot(source, "darwin", undefined, { lookUp: missing }),
+    ).rejects.toBeInstanceOf(CaptureFilesystemRefused);
   },
 );
 
