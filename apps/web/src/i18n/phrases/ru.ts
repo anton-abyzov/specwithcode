@@ -6033,4 +6033,35 @@ export const ru: PhraseCatalog = {
     "Каждое устройство показывает свой код там, где {machine} значится как ожидающая одобрения. На iPhone смотрите вверху экрана или в чате на {machine}.",
   "Later hides it in every window of this machine.":
     "«Позже» скрывает его во всех окнах этой машины.",
+  // Quick guides on Overview.
+  "Plan an increment": "Запланируйте инкремент",
+  "Open your project's Board and select Set up SpecWeave if needed. Ask the coordinator to plan one feature. The increment records what to build, how to check it, and the tasks.":
+    "Откройте доску проекта и настройте SpecWeave, если нужно. Попросите координатора спланировать одну функцию. Инкремент хранит цель, критерии проверки и задачи.",
+  "Follow it on the Board": "Следите за работой на доске",
+  "Open the increment card to read its spec and see tasks move as agents work. Check the acceptance criteria to see what has been verified.":
+    "Откройте карточку, чтобы прочитать спецификацию и увидеть ход задач. Критерии приёмки покажут, что проверено.",
+  "Read the evidence": "Прочитайте результаты проверок",
+  "Before shipping, open the finished card and read its test evidence and any review findings.":
+    "Перед выпуском откройте завершённую карточку и прочитайте результаты тестов и замечания ревью.",
+  Artifacts: "Артефакты",
+  "Create an artifact": "Создайте артефакт",
+  "Artifacts are project outputs such as reports, spreadsheets, documents, and whiteboards. Ask an agent to make one, or use New on the Artifacts shelf.":
+    "Артефакты хранят результаты проекта: отчёты, таблицы, документы и доски. Попросите агента сделать артефакт или выберите «Создать» в разделе «Артефакты».",
+  "Open it from Artifacts": "Откройте в разделе «Артефакты»",
+  "Open the project's Artifacts shelf and select the file. You can also open an artifact from the card an agent shares in a thread.":
+    "Выберите файл в разделе «Артефакты» проекта или откройте карточку, которой агент поделился в треде.",
+  "Edit where supported": "Отредактируйте в редакторе",
+  "Edit sheets, documents, and whiteboards in their own editors. Use Save when the editor shows it. For a preview-only file, edit the source or ask the agent to revise it.":
+    "Таблицы, документы и доски открываются в своих редакторах. Нажмите «Сохранить», если есть такая кнопка. Если доступен только просмотр, измените исходник или попросите агента исправить файл.",
+  "Multiple machines": "Несколько машин",
+  "Join a machine": "Подключите машину",
+  "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
+    "На новой машине войдите в Connect и выберите машину, к которой хотите подключиться. На выбранной машине введите код с новой. На новой машине проверьте доступ и нажмите «Разрешить».",
+  "Sync project files": "Синхронизируйте файлы проекта",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "В меню машин проекта выберите {sync}, чтобы обновить копии, или {add}, если на целевой машине нет проекта. Проверьте изменения перед подтверждением.",
+  "Hand off unfinished work": "Передайте незавершённую работу",
+  "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
+    "На исходной машине откройте передачу командой /away. Выберите целевую машину, проверьте треды и подтвердите. Следите за ходом передачи в её окне.",
+  "Quick guides": "Краткие руководства",
 };

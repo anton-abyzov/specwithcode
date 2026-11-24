@@ -6044,4 +6044,35 @@ export const ja: PhraseCatalog = {
     "各デバイスは、{machine} が承認待ちと表示されている場所にコードを表示します。iPhone では画面上部、または {machine} のチャットを確認してください。",
   "Later hides it in every window of this machine.":
     "「あとで」を押すと、このマシンのすべてのウィンドウで非表示になります。",
+  // Quick guides on Overview.
+  "Plan an increment": "インクリメントを計画する",
+  "Open your project's Board and select Set up SpecWeave if needed. Ask the coordinator to plan one feature. The increment records what to build, how to check it, and the tasks.":
+    "プロジェクトのボードを開き、必要に応じて SpecWeave を設定します。コーディネーターに機能の計画を依頼します。インクリメントには目標、確認基準、タスクが記録されます。",
+  "Follow it on the Board": "ボードで進捗を追う",
+  "Open the increment card to read its spec and see tasks move as agents work. Check the acceptance criteria to see what has been verified.":
+    "カードを開いて仕様とタスクの進捗を確認します。検証済みの内容は受け入れ基準で確認できます。",
+  "Read the evidence": "検証結果を読む",
+  "Before shipping, open the finished card and read its test evidence and any review findings.":
+    "リリース前に完了したカードを開き、テスト結果とレビューの指摘を読みます。",
+  Artifacts: "成果物",
+  "Create an artifact": "成果物を作成する",
+  "Artifacts are project outputs such as reports, spreadsheets, documents, and whiteboards. Ask an agent to make one, or use New on the Artifacts shelf.":
+    "成果物にはレポート、表計算、文書、ホワイトボードなどがあります。エージェントに依頼するか、「成果物」で「新規」を選びます。",
+  "Open it from Artifacts": "成果物から開く",
+  "Open the project's Artifacts shelf and select the file. You can also open an artifact from the card an agent shares in a thread.":
+    "プロジェクトの「成果物」でファイルを選びます。エージェントがスレッドに共有したカードからも開けます。",
+  "Edit where supported": "対応するエディターで編集する",
+  "Edit sheets, documents, and whiteboards in their own editors. Use Save when the editor shows it. For a preview-only file, edit the source or ask the agent to revise it.":
+    "表計算、文書、ホワイトボードは専用エディターで編集できます。「保存」があれば選びます。プレビューのみのファイルは元のファイルを編集するか、エージェントに修正を依頼します。",
+  "Multiple machines": "複数のマシン",
+  "Join a machine": "マシンを接続する",
+  "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
+    "新しいマシンで Connect にサインインし、接続先を選びます。接続先で、新しいマシンに表示されたコードを入力します。新しいマシンでアクセス権を確認して許可します。",
+  "Sync project files": "プロジェクトファイルを同期する",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "プロジェクトのマシンメニューで、既存のコピーは{sync}、プロジェクトがない場合は{add}を選びます。変更を確認してから確定します。",
+  "Hand off unfinished work": "未完了の作業を引き継ぐ",
+  "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
+    "移動元で /away を使って引き継ぎを開きます。移動先と対象スレッドを確認して確定します。進捗は引き継ぎ画面で追えます。",
+  "Quick guides": "クイックガイド",
 };
