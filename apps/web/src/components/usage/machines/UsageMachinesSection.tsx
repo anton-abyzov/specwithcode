@@ -21,6 +21,7 @@ import { useMachineIdentities } from "../../../studio/machineIdentity";
 import { UsageMachines } from "./UsageMachines";
 import { readMachineReportCache, saveMachineReports } from "./machineReportCache";
 import { type SharePeriod, VIEWER_TIME_ZONE, reportRange } from "./machineShareView";
+import { keptCoversStart } from "./keptReport";
 
 type Answer =
   | { readonly kind: "report"; readonly report: UsageMachineReport }
@@ -188,14 +189,14 @@ export function UsageMachinesSection({
           .filter((provider) => provider.auth.status === "authenticated")
           .map((provider) => usageAccountKey(provider)),
         answer: answer === undefined ? null : answer.kind === "report" ? answer.report : "failed",
-        // A kept report stands in only when it covers the shown days (the page range, or up to
-        // today for the reset window), and never while this range is still being read.
+        // A kept report stands in only when it starts by the first shown day and reaches into the
+        // shown days (its tail may be stale: the merge flags reports built before the period ended),
+        // and never while this range is still being read.
         kept: (() => {
           const kept = cache[machineId]?.report ?? null;
           if (kept === null || (answers === null && asked.has(machineId))) return null;
-          const shownSince = followReset ? kept.sinceDay : pageRange.sinceDay;
-          const shownUntil = followReset ? range.untilDay : pageRange.untilDay;
-          return kept.sinceDay <= shownSince && kept.untilDay >= shownUntil ? kept : null;
+          if (followReset) return kept;
+          return keptCoversStart(kept, pageRange.sinceDay) ? kept : null;
         })(),
         summary: summaries.get(machineId) ?? null,
       });
