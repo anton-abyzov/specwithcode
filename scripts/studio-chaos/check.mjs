@@ -35,14 +35,17 @@ const sourceOf = (run) =>
 const label = (key) => key.replace("\u0000", "/");
 const ms = (iso) => (iso ? Date.parse(iso) : Number.NaN);
 /**
- * Timeline order: by time; within one run its start comes before its end;
- * between runs at the same moment, ends come before starts (a stop is in force
- * for a start in the same millisecond), then by ordinal.
+ * Timeline order, a total order so the verdict never depends on projection
+ * order: by time, then by run ordinal (a fallback always follows the run it
+ * continues), then by thread, then a run's start before its own end.
  */
 function byTime(x, y) {
-  if (x.at !== y.at) return x.at - y.at;
-  if (x.run === y.run) return y.order - x.order;
-  return x.order - y.order || x.run.ordinal - y.run.ordinal;
+  return (
+    x.at - y.at ||
+    x.run.ordinal - y.run.ordinal ||
+    String(x.run.threadId ?? "").localeCompare(String(y.run.threadId ?? "")) ||
+    y.order - x.order
+  );
 }
 
 /** The server's automatic limit fallback: `limit-fallback:<thread>:[hop-N:]<run>`. */

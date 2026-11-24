@@ -19,10 +19,15 @@ const child = NodeChildProcess.spawn(command, args, { stdio: "inherit" });
 const endGroup = () => process.kill(0, "SIGKILL");
 child.once("exit", endGroup);
 child.once("error", endGroup);
-process.once("SIGHUP", endGroup);
+// Handlers stay installed (`on`, not `once`): a repeated signal must never fall
+// through to the default action and leave the group behind.
+let stopping = false;
+process.on("SIGHUP", endGroup);
 for (const signal of ["SIGTERM", "SIGINT"])
-  process.once(signal, () => {
+  process.on(signal, () => {
     if (child.exitCode !== null || child.signalCode !== null) return endGroup();
+    if (stopping) return;
+    stopping = true;
     child.kill("SIGTERM");
     setTimeout(() => child.kill("SIGKILL"), 15_000).unref();
   });

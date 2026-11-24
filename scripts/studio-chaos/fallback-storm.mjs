@@ -114,10 +114,13 @@ let t0 = null;
 const elapsed = () => (t0 === null ? 0 : Date.now() - t0);
 /** Workers the rig asked each thread to launch; the checker holds the server to it. */
 const expectations = { workers: {} };
-const cleanUp = async () => {
-  await S.stopServer(server);
-  if (!args.keep) NodeFS.rmSync(scratch, { recursive: true, force: true });
-};
+/** One cleanup, however many signals and the finally block ask for it. */
+let cleaning = null;
+const cleanUp = () =>
+  (cleaning ??= (async () => {
+    await S.stopServer(server);
+    if (!args.keep) NodeFS.rmSync(scratch, { recursive: true, force: true });
+  })());
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
   process.once(signal, () => {
     receipt.error = `stopped by ${signal}`;

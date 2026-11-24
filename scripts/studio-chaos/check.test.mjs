@@ -441,3 +441,30 @@ NodeTest.test("a fallback that starts and ends in the same millisecond is still 
   const result = check(collect([view({ runs, turnItems: [limitItem(1), limitItem(2)] })]));
   NodeAssert.deepEqual(result.violations, []);
 });
+
+// Review round 5.
+
+NodeTest.test("tied timestamps give the same verdict in any projection order", () => {
+  const runs = [
+    { ...run(1, "a", "failed", "m1", 5), completedAt: at(5) },
+    { ...run(2, "b", "failed", fallbackOf(1), 5), completedAt: at(5) },
+    {
+      ...run(3, "c", "completed", `${LIMIT_FALLBACK_PREFIX}${T}:hop-1:${runId(1)}`, 5),
+      completedAt: at(5),
+    },
+  ];
+  const items = [limitItem(1), limitItem(2)];
+  const orders = [
+    [0, 1, 2],
+    [2, 1, 0],
+    [1, 2, 0],
+    [2, 0, 1],
+  ];
+  const verdicts = orders.map((order) =>
+    JSON.stringify(
+      check(collect([view({ runs: order.map((i) => runs[i]), turnItems: items })])).violations,
+    ),
+  );
+  NodeAssert.equal(new Set(verdicts).size, 1);
+  NodeAssert.equal(verdicts[0], "[]");
+});

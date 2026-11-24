@@ -257,6 +257,7 @@ export async function stopServer(server, { kill = false } = {}) {
   const child = server?.child;
   if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise((done) => child.once("exit", done));
+  // Signalled once: the supervisor's handlers are idempotent, and a second stop waits here.
   child.kill(kill ? "SIGHUP" : "SIGTERM");
   // The supervisor gives the server 15 s; past 25 s it is stuck, and only it is killed.
   const timer = setTimeout(() => child.kill("SIGKILL"), 25_000);
