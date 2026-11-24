@@ -192,7 +192,7 @@ describe("handoff between two machines", () => {
       fixture.activeRunId = "run-1";
       const failure = yield* handOff(moves).pipe(Effect.flip);
       expect(failure.code).toBe("invalid");
-      expect(failure.message).toContain("private to its machine");
+      expect(failure.message).toContain("stays on the machine it was started on");
       const machine = yield* moves.handOffMachine({
         destinationEnvironmentId: minis,
         reason: "manual",

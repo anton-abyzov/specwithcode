@@ -380,7 +380,7 @@ it.effect("never sends a personal assistant's words to another machine", () => {
       message: "Here is the household budget",
     });
     expect(refused).toMatchObject({ code: "invalid_request" });
-    expect(String(refused.message)).toContain("private to its machine");
+    expect(String(refused.message)).toContain("stays on the machine it was started on");
     expect(proxied.map((entry) => entry.tool)).not.toContain("studio_thread_send");
   });
 });

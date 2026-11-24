@@ -1,8 +1,10 @@
 /**
- * A machine has one personal assistant, private to it: its context, history,
- * memory and routines never leave the machine, and no other machine's work
- * reaches them. Projects of every other kind may be linked, handed off and
- * copied as before.
+ * The personal assistant (Percy) belongs to its owner's SpecWithCode Connect
+ * account (1448): it is the same assistant on each machine where the owner
+ * turned "Use my Percy on this machine" on, and those machines keep its memory
+ * and settings in step. A chat stays on the machine it was started on, and no
+ * other project, person or work grant reaches the assistant. Projects of every
+ * other kind may be linked, handed off and copied as before.
  */
 export interface PersonalAssistantCandidate {
   readonly id?: string | undefined;
@@ -50,6 +52,10 @@ export function machineAssistantOf<P extends PersonalAssistantCandidate>(
   return chosen;
 }
 
-/** The words every refusal uses, so the user hears one rule. */
+/**
+ * The words every refusal uses, so the user hears one rule: whose Percy it is,
+ * and that a Percy chat stays where it started (Away, hand off, thread move,
+ * limit handoff and remote launch all refuse with it).
+ */
 export const PERSONAL_ASSISTANT_PRIVATE_MESSAGE =
-  "A personal assistant is private to its machine: its topics, memory and routines never move, copy or sync to another machine, and other machines' work cannot reach them.";
+  "Percy belongs to your SpecWithCode Connect account and is the same on each machine where you turned it on. A Percy chat stays on the machine it was started on: it is not handed off, moved or started from another machine, and other projects' work cannot reach it.";

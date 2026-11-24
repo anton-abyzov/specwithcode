@@ -165,7 +165,7 @@ describe("HandoffMode", () => {
         .setProjectMode({ projectId, mode: "on" })
         .pipe(Effect.flip);
       expect(projectMode).toMatchObject({ code: "invalid" });
-      expect(projectMode.message).toContain("private to its machine");
+      expect(projectMode.message).toContain("stays on the machine it was started on");
       const threadMode = yield* handoff.setThreadMode({ threadId, mode: "on" }).pipe(Effect.flip);
       expect(threadMode).toMatchObject({ code: "invalid" });
       // Turning it off stays allowed.
