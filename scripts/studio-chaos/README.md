@@ -18,7 +18,7 @@ The server starts from `apps/server/dist/bin.mjs` when it is built, else from `a
 | 3    | `stalled`  | The run was still busy at the time cap (`--cap-ms`).                            |
 | 2    | `error`    | The rig itself failed (startup, RPC); see `receipt.error`.                      |
 
-The receipt records the seed, the applied fault schedule and the replay command. The same seed gives the same schedule, but timing on a loaded machine can still move a race, so replay a red seed more than once.
+The receipt records the seed, the planned and applied fault schedule and the replay command. The same seed gives the same planned schedule, timed from the first message. Where a fault lands against the agents' prompts can still move with machine load, so replay a red seed more than once.
 
 ## Scenarios
 
@@ -27,11 +27,11 @@ The receipt records the seed, the applied fault schedule and the replay command.
 
 ## Rules
 
-| Rule                     | Broken when                                                                                                                                                                                                       |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runs-once`              | A message completes twice, ends with no answer and nothing in the timeline saying why, or runs out of dispatch order. Also broken when the agents answered a different number of turns than the server completed. |
-| `result-delivered`       | A worker ended but its delivery is not `delivered`, `acknowledged` or `disposed`. Also broken when its stored result lost its agent's answer, or the launcher's agent was never told the task ended.              |
-| `no-return-before-reset` | An automatic fallback goes back to a source before that source's limit resets (60 minutes when the stop names no reset), or one limit stop starts two fallbacks.                                                  |
+| Rule                     | Broken when                                                                                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs-once`              | A message completes twice, ends with no answer and nothing in the timeline saying why, or runs out of dispatch order. Also broken when the agents answered a different number of turns than the server completed.                                                         |
+| `result-delivered`       | A worker ended but its delivery is not `delivered`, `acknowledged` or `disposed`. Also broken when its stored result lost its agent's answer, or the launcher's agent was never told the task ended.                                                                      |
+| `no-return-before-reset` | An automatic fallback, in any thread, goes back to a source (instance and model) before that source's limit resets (60 minutes when the stop names no reset) and no run started after the stop has completed there. Also broken when one limit stop starts two fallbacks. |
 
 A message that the person's next message overtook after a visible limit stop is a note, not a violation.
 

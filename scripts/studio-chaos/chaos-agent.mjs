@@ -206,22 +206,31 @@ async function prompt(id, params) {
       const release = args?.clientRequestId ? claimCall(args.clientRequestId) : () => {};
       if (release === null) continue;
       const endpoint = sessions.get(sessionId);
-      outcome = endpoint
-        ? await mcpCall(endpoint, name, args)
-        : { status: 0, body: "no studio-code MCP server was given to this session" };
-      const failed = outcome.status !== 200 || outcome.body?.result?.isError === true;
-      if (failed) release();
+      try {
+        outcome = endpoint
+          ? await mcpCall(endpoint, name, args)
+          : { status: 0, body: "no studio-code MCP server was given to this session" };
+      } catch (error) {
+        release();
+        throw error;
+      }
+      // A JSON-RPC error answers 200 too; only a result that is not an error counts.
+      const ok =
+        outcome.status === 200 &&
+        outcome.body?.result !== undefined &&
+        outcome.body.result?.isError !== true;
+      if (!ok) release();
       calls.push({
         name,
         status: outcome.status,
-        error: failed
-          ? String(
+        error: ok
+          ? false
+          : String(
               outcome.body?.result?.content?.[0]?.text ??
                 outcome.body?.error?.message ??
                 outcome.body ??
                 "failed",
-            ).slice(0, 300)
-          : false,
+            ).slice(0, 300),
       });
     } catch (error) {
       calls.push({ status: 0, error: String(error?.message ?? error) });

@@ -333,3 +333,59 @@ NodeTest.test("1460's hop ids still count as one fallback per stop", () => {
   const result = check(collect([view({ runs, turnItems: [limitItem(1), limitItem(2)] })]));
   NodeAssert.deepEqual(result.violations, []);
 });
+
+// Review round 2.
+
+NodeTest.test("a worker left pending while its launcher is idle is a violation", () => {
+  const runs = [run(1, "a", "completed", "m1")];
+  const stranded = worker({ status: "pending", completionDelivery: { state: "pending" } });
+  const result = check({
+    threads: [view({ runs, subagents: [stranded] })],
+    turns: answered(runs),
+    dispatched: [],
+    expectations: { workers: { [T]: 1 } },
+  });
+  NodeAssert.deepEqual(rules(result), ["result-delivered"]);
+  NodeAssert.match(result.violations[0].detail, /still pending while its launcher is idle/);
+});
+
+NodeTest.test("a fallback requested before the stop completed is not a return", () => {
+  const stop = { ...run(1, "a", "failed", "m1", 0), completedAt: at(20) };
+  const other = "chaos-other";
+  const early = {
+    ...run(5, "a", "completed", `${LIMIT_FALLBACK_PREFIX}${other}:run:x`, 10),
+    id: `run:thread:${other}:ordinal:5`,
+  };
+  const result = check(
+    collect([
+      view({ runs: [stop], turnItems: [limitItem(1)] }),
+      { ...view({ runs: [early] }), thread: { id: other } },
+    ]),
+  );
+  // The other thread's fallback has no stop of its own (a separate rule); it is no return to a.
+  NodeAssert.ok(!result.violations.some((v) => /went back/.test(v.detail)));
+});
+
+NodeTest.test("a run that started before the stop does not end its hold", () => {
+  const other = "chaos-other";
+  const longRun = {
+    ...run(7, "a", "completed", "o1", 0),
+    id: `run:thread:${other}:ordinal:7`,
+    startedAt: at(0),
+    completedAt: at(30),
+  };
+  const runs = [
+    { ...run(1, "a", "failed", "m1", 5), startedAt: at(5), completedAt: at(6) },
+    run(2, "b", "failed", fallbackOf(1), 10),
+    run(3, "a", "failed", `${LIMIT_FALLBACK_PREFIX}${T}:hop-1:${runId(1)}`, 40),
+  ];
+  const result = check(
+    collect([
+      view({ runs, turnItems: [limitItem(1), limitItem(2), limitItem(3)] }),
+      { ...view({ runs: [longRun] }), thread: { id: other } },
+    ]),
+  );
+  NodeAssert.ok(
+    result.violations.some((v) => /fallback run 3 went back to a\/chaos/.test(v.detail)),
+  );
+});

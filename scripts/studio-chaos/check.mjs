@@ -235,6 +235,19 @@ function checkResultDelivered(view, collected, violations) {
   const launched = (view.subagents ?? []).filter(
     (child) => child.origin === "app_owned" && /^CHAOS-RESULT /m.test(child.prompt ?? ""),
   ).length;
+  if (wanted !== undefined && !busy)
+    for (const child of view.subagents ?? [])
+      if (
+        child.origin === "app_owned" &&
+        /^CHAOS-RESULT /m.test(child.prompt ?? "") &&
+        !ENDED_CHILD.has(child.status)
+      )
+        violations.push({
+          rule: "result-delivered",
+          threadId,
+          runId: null,
+          detail: `worker ${child.childThreadId ?? child.id} is still ${child.status} while its launcher is idle`,
+        });
   if (wanted !== undefined && !busy && launched !== wanted)
     violations.push({
       rule: "result-delivered",
@@ -260,37 +273,49 @@ function checkResultDelivered(view, collected, violations) {
  * ends its holds. Per thread, each limit stop may start one automatic fallback.
  */
 function checkNoReturn(collected, holdMs, violations) {
-  const all = collected.threads
-    .flatMap((view) => view.runs.map((run) => ({ view, run })))
-    .sort((x, y) => ms(x.run.requestedAt) - ms(y.run.requestedAt) || x.run.ordinal - y.run.ordinal);
+  // One timeline over every thread: a start is checked against the holds in
+  // force at that moment, a hold begins when its stop completes, and a run
+  // ends the source's holds only if it started after the stop and completed.
+  const events = [];
+  for (const view of collected.threads)
+    for (const run of view.runs) {
+      events.push({ at: ms(run.requestedAt), order: 1, kind: "start", view, run });
+      const end = ms(run.completedAt);
+      if (!Number.isFinite(end)) continue;
+      if (limitFailureOf(view, run)) events.push({ at: end, order: 0, kind: "stop", view, run });
+      else if (run.status === "completed")
+        events.push({ at: end, order: 0, kind: "room", view, run });
+    }
+  events.sort((x, y) => x.at - y.at || x.order - y.order || x.run.ordinal - y.run.ordinal);
   const holds = new Map();
-  for (const { view, run } of all) {
+  for (const { at, kind, view, run } of events) {
     const source = sourceOf(run);
-    const startedAt = ms(run.requestedAt);
-    const held = isAutomatic(run)
-      ? (holds.get(source) ?? []).find((hold) => startedAt < hold.until)
-      : undefined;
-    if (held)
-      violations.push({
-        rule: "no-return-before-reset",
-        threadId: view.thread.id,
-        runId: run.id,
-        detail: `fallback run ${run.ordinal} went back to ${label(source)} ${Math.round((startedAt - held.stoppedAt) / 1000)} s after run ${held.ordinal}${held.threadId === view.thread.id ? "" : ` of thread ${held.threadId}`} stopped there on a limit`,
-      });
-    if (run.status === "completed") holds.delete(source);
-    const failure = limitFailureOf(view, run);
-    if (failure) {
-      const stoppedAt = ms(run.completedAt ?? run.requestedAt);
-      const reset = ms(failure.resetAt);
+    if (kind === "stop") {
+      const reset = ms(limitFailureOf(view, run).resetAt);
       holds.set(source, [
         ...(holds.get(source) ?? []),
         {
           threadId: view.thread.id,
           ordinal: run.ordinal,
-          stoppedAt,
-          until: Number.isFinite(reset) ? reset : stoppedAt + holdMs,
+          stoppedAt: at,
+          until: Number.isFinite(reset) ? reset : at + holdMs,
         },
       ]);
+    } else if (kind === "room") {
+      const started = ms(run.startedAt ?? run.requestedAt);
+      holds.set(
+        source,
+        (holds.get(source) ?? []).filter((hold) => !(started > hold.stoppedAt)),
+      );
+    } else if (isAutomatic(run)) {
+      const held = (holds.get(source) ?? []).find((hold) => at < hold.until);
+      if (held)
+        violations.push({
+          rule: "no-return-before-reset",
+          threadId: view.thread.id,
+          runId: run.id,
+          detail: `fallback run ${run.ordinal} went back to ${label(source)} ${Math.round((at - held.stoppedAt) / 1000)} s after run ${held.ordinal}${held.threadId === view.thread.id ? "" : ` of thread ${held.threadId}`} stopped there on a limit`,
+        });
     }
   }
   for (const view of collected.threads) {

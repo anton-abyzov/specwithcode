@@ -116,7 +116,6 @@ const elapsed = () => (t0 === null ? 0 : Date.now() - t0);
 const expectations = { workers: {} };
 const cleanUp = async () => {
   await S.stopServer(server);
-  S.stopStragglers(scratch);
   if (!args.keep) NodeFS.rmSync(scratch, { recursive: true, force: true });
 };
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])

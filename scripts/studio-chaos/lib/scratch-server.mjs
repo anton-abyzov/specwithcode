@@ -241,40 +241,61 @@ async function signInBootstrap(home, child, origin, logFile) {
   return server;
 }
 
-/**
- * Ends any process still running from this rig's own scratch folder (agents a
- * killed server left behind). The folder is unique to the run, so nothing
- * else matches it.
- */
-export function stopStragglers(dir) {
-  let listed = "";
+function processTable() {
+  let table = "";
   try {
-    listed = NodeChildProcess.execFileSync("/usr/bin/pgrep", ["-f", dir], { encoding: "utf8" });
+    table = NodeChildProcess.execFileSync("/bin/ps", ["-A", "-o", "pid=,ppid="], {
+      encoding: "utf8",
+    });
   } catch {
     return [];
   }
-  const pids = listed
-    .split("\n")
-    .map(Number)
-    .filter((pid) => pid > 0 && pid !== process.pid);
-  for (const pid of pids)
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Already gone.
+  const parents = new Map();
+  for (const line of table.split("\n")) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number);
+    if (child > 0) parents.set(child, parent);
+  }
+  return parents;
+}
+
+/** Every live descendant of `pid` (the server's agents and their children), from `ps`. */
+export function descendantsOf(pid) {
+  const children = new Map();
+  for (const [child, parent] of processTable())
+    children.set(parent, [...(children.get(parent) ?? []), child]);
+  const found = [];
+  const queue = [pid];
+  while (queue.length > 0)
+    for (const child of children.get(queue.shift()) ?? []) {
+      found.push(child);
+      queue.push(child);
     }
-  return pids;
+  return found;
 }
 
 /** Stops the server this rig started (its own PID only); SIGKILL when `kill`. */
 export async function stopServer(server, { kill = false } = {}) {
   const child = server?.child;
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  // The tree is read before the server goes, while its agents are still its children.
+  const tree = descendantsOf(child.pid);
   const exited = new Promise((done) => child.once("exit", done));
   child.kill(kill ? "SIGKILL" : "SIGTERM");
   const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
   await exited;
   clearTimeout(timer);
+  // Only a PID that is still in the tree or was orphaned to init: a reused PID is left alone.
+  const now = processTable();
+  const owned = new Set([child.pid, ...tree]);
+  for (const pid of tree) {
+    const parent = now.get(pid);
+    if (parent === undefined || !(parent === 1 || owned.has(parent))) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone with the server.
+    }
+  }
 }
 
 export async function request(server, path, data) {
