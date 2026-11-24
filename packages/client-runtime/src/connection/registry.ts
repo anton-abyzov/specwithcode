@@ -1385,7 +1385,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
-  // Typed here: `createServiceScope` calls `setCompatibility`, so inferring it would be circular.
+  // Typed here: `createServiceScope` calls `setCompatibility`, so inferring either is circular.
   const {
     setEnabled,
     setCompatibility,
@@ -1396,7 +1396,8 @@ export const make = Effect.gen(function* () {
     platformEnvironmentIds,
     registrations,
     getEntry,
-    createServiceScope,
+    createServiceScope: (entry: ConnectionCatalogEntry): Effect.Effect<unknown> =>
+      createServiceScope(entry),
     disconnectSsh,
   });
 
