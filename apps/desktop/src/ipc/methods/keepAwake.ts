@@ -18,6 +18,7 @@ const KeepAwakeReport = Schema.Struct({
   onBattery: Schema.optional(KeepAwakeOnBattery),
   batteryFloorPercent: Schema.optional(KeepAwakeBatteryFloorPercent),
   batteryLevel: Schema.optional(Schema.NullOr(Schema.Number)),
+  charging: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 const KeepAwakeState = Schema.Struct({ holding: Schema.Boolean, onBattery: Schema.Boolean });
 
@@ -134,10 +135,14 @@ export const installKeepAwake = Effect.fn("desktop.ipc.installKeepAwake")(functi
             const contents = Electron.webContents.fromId(senderId);
             if (contents === undefined) return controller.state();
             watched.add(senderId);
-            contents.once("destroyed", () => {
+            const forget = () => {
               watched.delete(senderId);
               controller.release(senderId);
-            });
+            };
+            contents.once("destroyed", forget);
+            // A crashed window is not destroyed; its report must not keep the machine awake.
+            // A reloaded window reports again and is watched afresh.
+            contents.once("render-process-gone", forget);
           }
           return controller.set(senderId, report);
         }),

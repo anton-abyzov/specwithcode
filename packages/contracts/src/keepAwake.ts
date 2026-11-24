@@ -51,6 +51,8 @@ export interface DesktopKeepAwakeReport {
   readonly onBattery?: KeepAwakeOnBattery;
   readonly batteryFloorPercent?: number;
   readonly batteryLevel?: number | null;
+  /** Whether the window sees the battery charging; informational, the power source is read by the desktop app. */
+  readonly charging?: boolean | null;
 }
 
 /** What the desktop app answers: whether it holds the machine awake, and on what power. */
