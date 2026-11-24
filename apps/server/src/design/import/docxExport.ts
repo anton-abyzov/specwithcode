@@ -918,7 +918,10 @@ export async function buildDocx(
   entries.set("word/_rels/document.xml.rels", encoder.encode(relsXml([...keptRels, ...ctx.newRels])));
 
   if (options.base === undefined) {
-    entries.set("docProps/core.xml", encoder.encode(corePart(options.title, options.now ?? new Date())));
+    // The writer is plain code, not Effect: the caller may pass the time, otherwise it is now.
+    // @effect-diagnostics-next-line globalDate:off
+    const now = options.now ?? new Date();
+    entries.set("docProps/core.xml", encoder.encode(corePart(options.title, now)));
     entries.set("docProps/app.xml", encoder.encode(APP_PART));
     entries.set(
       "_rels/.rels",

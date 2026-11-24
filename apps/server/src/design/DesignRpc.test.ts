@@ -409,7 +409,7 @@ it.effect("refuses a document save from a session without file write access (145
   withFixture(
     Effect.gen(function* () {
       const reader = yield* clientFor("one-time-token", [AuthFilesystemReadScope]);
-      const path = `${process.cwd()}/never-written-${Date.now()}.docx`;
+      const path = `${process.cwd()}/never-written-by-a-reader.docx`;
       const refused = yield* reader[WS_METHODS.designDocumentSave]({
         path,
         document: { blocks: [] },
