@@ -987,6 +987,20 @@ import SWCWire
     #expect(output.aide?.machineOnline == true)
   }
 
+  @Test func aDepartedSeatCannotClaimTheLinkedConversation() throws {
+    var machines = try fleet()
+    machines[2].snapshot?.projects[0] = try assistant(desktop, members: [studio, laptop, desktop], routineOwner: true)
+
+    let output = ShellSummaries.build(machines)
+    let linked = try #require(output.aide)
+    #expect(linked.ref == studio)
+    #expect(linked.members.map(\.ref) == [studio, laptop])
+    #expect(output.aideSeats.map(\.ref) == [studio, desktop])
+    #expect(output.aideSeats.last?.aideRowSubtitle == "not joined")
+    #expect(output.threadsByProject[desktop]?.map(\.ref.threadId) == ["d-own"])
+    #expect(output.threadsByProject[studio]?.contains { $0.ref.environmentId == desktop.environmentId } == false)
+  }
+
   @Test func aReadOnlyRunnerYieldsToAnOnlineWritableSeat() throws {
     var machines = try fleet(runner: studio)
     machines[0].canOperate = false
