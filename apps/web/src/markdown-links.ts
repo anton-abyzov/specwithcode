@@ -702,7 +702,8 @@ export function pathListLines(code: string, language = ""): string[] | null {
 
 const FENCED_BLOCK_PATTERN =
   /(?:^|\n) {0,3}(`{3,}|~{3,})([^\n`]*)\n([\s\S]*?)\n {0,3}\1[ \t]*(?=\n|$)/g;
-const UNFENCED_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
+// A fence opens and closes at the start of a line; ``` inside a sentence is inline code.
+const UNFENCED_SEGMENT_PATTERN = /((?:^|\n) {0,3}```[\s\S]*?(?:\n {0,3}```[^\n]*(?=\n|$)|$))/;
 
 /** The paths of every fenced path list in a message, in order. */
 export function fencedPathListLines(text: string): string[] {
@@ -720,12 +721,15 @@ export function fencedPathListLines(text: string): string[] {
  * backslash before a backtick outside code (\\`) opens nothing, while inside
  * code it is a plain character (`C:\\`); a blank line ends the paragraph.
  */
+const ASCII_PUNCTUATION = /^[!-/:-@[-`{-~]$/;
+
 export function inlineCodeSpans(text: string): string[] {
   const spans: string[] = [];
   let index = 0;
   while (index < text.length) {
     const char = text[index]!;
-    if (char === "\\" && text[index + 1] === "`") {
+    // Outside code a backslash escapes the punctuation after it (`\\` too).
+    if (char === "\\" && ASCII_PUNCTUATION.test(text[index + 1] ?? "")) {
       index += 2;
       continue;
     }

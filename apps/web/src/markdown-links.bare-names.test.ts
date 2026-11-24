@@ -42,5 +42,14 @@ describe("inline code spans", () => {
     // A blank line ends the paragraph: the opener in the first one stays text.
     expect(inlineCodeSpans("Open `a\n\nb` later `c.md`.")).toEqual([" later "]);
     expect(inlineCodeSpans("Fence ``a `b` c`` done.")).toEqual(["a `b` c"]);
+    expect(inlineCodeSpans("Slash \\\\`README.md`.")).toEqual(["README.md"]);
+  });
+});
+
+describe("file reference spans", () => {
+  it("reads ``` inside a sentence as inline code, not a fence", async () => {
+    const { fileReferenceSpans } = await import("./markdown-links");
+    expect(fileReferenceSpans("See ```README.md``` here.")).toEqual(["README.md"]);
+    expect(fileReferenceSpans("Run:\n```\n`a.md`\n```\nthen `b.md`.")).toEqual(["b.md"]);
   });
 });

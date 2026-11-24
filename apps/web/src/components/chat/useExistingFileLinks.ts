@@ -28,15 +28,63 @@ type Settled =
   /** Shorthand, settled file by file; a real file under the written name wins. */
   | { readonly expansions: ReadonlyArray<SettledPath> };
 
+type FolderEntries = ReadonlyArray<{ readonly path: string; readonly kind: EntryKind }>;
+type SearchResult = {
+  readonly entries: ReadonlyArray<{ readonly path: string }>;
+  readonly truncated: boolean;
+};
+
+/**
+ * One pass of host reads. Each folder is listed and each search run once per
+ * pass. A folder or search this app read before is read fresh: the app keeps
+ * listings for a while, and a file may have been made or deleted since.
+ */
+interface HostReads {
+  list(folder: string): Promise<FolderEntries | null>;
+  search(root: string, query: string): Promise<SearchResult | null>;
+}
+
+const READ_BEFORE_LIMIT = 2000;
+const readBefore = new Set<string>();
+
+function hostReads(environmentId: EnvironmentId): HostReads {
+  const pending = new Map<string, Promise<unknown>>();
+  const once = <A>(key: string, read: (refresh: boolean) => Promise<A>): Promise<A> => {
+    const known = pending.get(key);
+    if (known) return known as Promise<A>;
+    const refresh = readBefore.has(key);
+    readBefore.delete(key);
+    readBefore.add(key);
+    if (readBefore.size > READ_BEFORE_LIMIT) readBefore.delete(readBefore.values().next().value!);
+    const promise = read(refresh);
+    pending.set(key, promise);
+    return promise;
+  };
+  return {
+    list: (folder) =>
+      once(`${environmentId}\u0000list\u0000${folder}`, (refresh) =>
+        folderEntriesOnHost(environmentId, folder, refresh),
+      ),
+    search: (root, query) =>
+      once(`${environmentId}\u0000search\u0000${root}\u0000${query}`, async (refresh) => {
+        const result = await executeAtomQuery(
+          appAtomRegistry,
+          projectEnvironment.searchEntries({
+            environmentId,
+            input: { cwd: root, query, limit: SEARCH_LIMIT },
+          }),
+          { reportFailure: false, reportDefect: false, ...(refresh ? { refresh: true } : {}) },
+        );
+        return result?._tag === "Success" ? result.value : null;
+      }),
+  };
+}
+
 /** What the host has at `path`, read from its parent folder's listing. */
-async function entryKindOnHost(
-  environmentId: EnvironmentId,
-  path: string,
-  refresh = false,
-): Promise<EntryKind | null> {
+async function entryKindOnHost(reads: HostReads, path: string): Promise<EntryKind | null> {
   const split = parentAndName(path);
   if (!split) return null;
-  const entries = await folderEntriesOnHost(environmentId, split.parent, refresh);
+  const entries = await reads.list(split.parent);
   return entries?.find((entry) => entry.path === split.name)?.kind ?? null;
 }
 
@@ -45,7 +93,7 @@ export async function folderEntriesOnHost(
   environmentId: EnvironmentId,
   folder: string,
   refresh = false,
-): Promise<ReadonlyArray<{ readonly path: string; readonly kind: EntryKind }> | null> {
+): Promise<FolderEntries | null> {
   const result = await executeAtomQuery(
     appAtomRegistry,
     projectEnvironment.listEntries({ environmentId, input: { cwd: folder, directoryPath: "" } }),
@@ -95,23 +143,15 @@ export function uniqueSearchMatch(
  * `apps/web/src/components/studio/CoordinatorConversation.tsx`.
  */
 async function searchOnHost(
-  environmentId: EnvironmentId,
+  reads: HostReads,
   search: NonNullable<MarkdownFileLinkMeta["search"]>,
-  refresh = false,
 ): Promise<string | null> {
   const name = search.path.split("/").at(-1) ?? search.path;
   if (name.length === 0) return null;
   for (const root of search.roots) {
-    const result = await executeAtomQuery(
-      appAtomRegistry,
-      projectEnvironment.searchEntries({
-        environmentId,
-        input: { cwd: root, query: name, limit: SEARCH_LIMIT },
-      }),
-      { reportFailure: false, reportDefect: false, ...(refresh ? { refresh: true } : {}) },
-    );
-    if (result?._tag !== "Success") continue;
-    const match = uniqueSearchMatch(result.value.entries, result.value.truncated, search.path);
+    const result = await reads.search(root, name);
+    if (result === null) continue;
+    const match = uniqueSearchMatch(result.entries, result.truncated, search.path);
     if (match !== null) return `${root}/${match}`;
   }
   return null;
@@ -141,6 +181,7 @@ function rememberSettled(key: string, settled: Settled): void {
 /** For tests: forget what the hosts said. */
 export function clearSettledFileLinkCache(): void {
   settledCache.clear();
+  readBefore.clear();
 }
 
 /**
@@ -178,22 +219,16 @@ export function useExistingFileLinks<Key>(
     if (environmentId === null || unsettled.length === 0) return;
     // Every link is asked again: a file deleted since still loses its chip.
     let active = true;
-    // A link this machine answered before is read fresh: the listing it came
-    // from may be cached, and the file may be gone since.
-    const askedBefore = (meta: MarkdownFileLinkMeta) =>
-      settledCache.has(settledCacheKey(environmentId, meta));
-    const settleOne = async (
-      meta: MarkdownFileLinkMeta,
-      refresh = askedBefore(meta),
-    ): Promise<SettledPath> => {
+    const reads = hostReads(environmentId);
+    const settleOne = async (meta: MarkdownFileLinkMeta): Promise<SettledPath> => {
       const candidates = meta.candidates ?? [meta.filePath];
       for (const candidate of candidates) {
-        const kind = await entryKindOnHost(environmentId, candidate, refresh);
+        const kind = await entryKindOnHost(reads, candidate);
         if (kind === null || (meta.directory && kind !== "directory")) continue;
         return { path: candidate, kind };
       }
       if (meta.search && !meta.directory) {
-        const found = await searchOnHost(environmentId, meta.search, refresh).catch(() => null);
+        const found = await searchOnHost(reads, meta.search).catch(() => null);
         if (found !== null) return { path: found, kind: "file" };
       }
       return { unresolved: candidates };
@@ -208,7 +243,7 @@ export function useExistingFileLinks<Key>(
       for (const [key, meta] of unsettled) {
         if (meta.expansions || meta.glob) {
           // A file really named `a{1,2}.md` or `shot-*.png` is that file.
-          const literal = await entryKindOnHost(environmentId, meta.filePath, askedBefore(meta));
+          const literal = await entryKindOnHost(reads, meta.filePath);
           if (literal === "file") {
             settle(key, meta, { path: meta.filePath, kind: literal });
             continue;
@@ -217,13 +252,13 @@ export function useExistingFileLinks<Key>(
         if (meta.expansions) {
           const expansions: SettledPath[] = [];
           for (const expansion of meta.expansions) {
-            expansions.push(await settleOne(expansion, askedBefore(meta)));
+            expansions.push(await settleOne(expansion));
           }
           settle(key, meta, { expansions });
           continue;
         }
         if (meta.glob) {
-          settle(key, meta, await settleGlob(environmentId, meta, askedBefore(meta)));
+          settle(key, meta, await settleGlob(reads, meta));
           continue;
         }
         settle(key, meta, await settleOne(meta));
@@ -296,15 +331,11 @@ const MAX_GLOB_MATCHES = 32;
  * in. None, or more than a report would mean, leaves no links: the pattern is
  * never a file of its own.
  */
-async function settleGlob(
-  environmentId: EnvironmentId,
-  meta: MarkdownFileLinkMeta,
-  refresh = false,
-): Promise<Settled> {
+async function settleGlob(reads: HostReads, meta: MarkdownFileLinkMeta): Promise<Settled> {
   for (const candidate of meta.candidates ?? [meta.filePath]) {
     const glob = basenameGlob(candidate);
     if (glob === null) continue;
-    const entries = await folderEntriesOnHost(environmentId, glob.folder, refresh);
+    const entries = await reads.list(glob.folder);
     const matches = (entries ?? [])
       .filter((entry) => entry.kind === "file" && !entry.path.includes("/"))
       .filter((entry) => matchesFileNamePattern(entry.path, glob.pattern))
