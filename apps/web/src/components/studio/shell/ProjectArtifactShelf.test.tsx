@@ -43,6 +43,7 @@ vi.mock("../../files/projectFilesQueryState", () => ({
     },
 }));
 vi.mock("../../office/newSheetEntry", () => ({ useNewSheetEntry: () => runtime.sheetEntry }));
+vi.mock("./newDocumentEntry", () => ({ useNewDocumentEntry: () => null }));
 vi.mock("./Tip", () => ({ Tip: ({ children }: { children: unknown }) => children }));
 
 import { artifactPreviewCache, artifactPreviewKey } from "../../../studio/artifactPreview";

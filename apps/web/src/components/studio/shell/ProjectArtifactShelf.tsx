@@ -71,7 +71,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/
 import { useNewSheetEntry } from "../../office/newSheetEntry";
 import { type ArtifactNewEntry, ArtifactNewMenu } from "./ArtifactNewMenu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
-import { NewArtifactMenu, useCanCreateDocument } from "./NewArtifactMenu";
+import { useNewDocumentEntry } from "./newDocumentEntry";
 import { Tip } from "./Tip";
 
 const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
@@ -640,6 +640,7 @@ export function ProjectArtifactShelf(props: {
   // Each kind that can be made here adds its entry to the New menu.
   const newEntries = [
     useNewSheetEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot, taken }),
+    useNewDocumentEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
   ].filter((entry): entry is ArtifactNewEntry => entry !== null);
   const newMenu = (
     <ArtifactNewMenu entries={newEntries} onCreated={(created) => opener.openPath(created.path, created.title)} />
