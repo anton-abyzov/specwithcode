@@ -240,7 +240,7 @@ export function UsageDeliveredSection({
       >
         <Stat
           label="Tied to increments"
-          value={deliveredCostText(view.attributed)}
+          value={view.overlaps.length > 0 ? "—" : deliveredCostText(view.attributed)}
           sub={
             view.overlaps.length > 0
               ? "May count shared transcript folders twice: see below"
@@ -260,19 +260,28 @@ export function UsageDeliveredSection({
           sub={`across ${view.incrementsWithTasksDone} ${view.incrementsWithTasksDone === 1 ? "increment" : "increments"}`}
         />
         <Stat
-          label="Median per delivered increment"
+          label="Median per priced delivery"
           value={
-            view.medianDeliveredUsd === null
+            view.medianDeliveredUsd === null || view.overlaps.length > 0
               ? "—"
               : `${view.medianPartial ? "≥ " : ""}${formatUsd(view.medianDeliveredUsd)}`
           }
-          sub={
-            view.highest === null
-              ? "no delivered increment recorded cost"
-              : `highest ${deliveredCostText(view.highest.cost)} (${view.highest.number})`
-          }
+          sub={[
+            view.highest === null || view.overlaps.length > 0
+              ? "no priced delivery to compare"
+              : `highest ${deliveredCostText(view.highest.cost)} (${view.highest.number})`,
+            ...(view.unpricedDelivered > 0
+              ? [`${view.unpricedDelivered} without a price left out`]
+              : []),
+          ].join(" · ")}
         />
       </section>
+      {view.overlaps.length > 0 ? (
+        <p className="text-xs text-warning-foreground" role="status">
+          Some machines read the same transcript folders, so the costs below can count that use
+          twice. Select one of them in the machine filter for exact figures.
+        </p>
+      ) : null}
       <DeliveredTable
         view={view}
         formatDay={formatDeliveredDay}
@@ -327,7 +336,10 @@ export function UsageDeliveredSection({
           <p>
             Counted once:{" "}
             {view.duplicates
-              .map(([left, right]) => `${right} reads the same folders as ${left}`)
+              .map(
+                ([left, right]) =>
+                  `${right} reads the same folders as ${left}, so only ${left}'s figures are shown`,
+              )
               .join("; ")}
             .
           </p>

@@ -119,7 +119,10 @@ export function UsageMachinesSection({
         )
           .then((result): readonly [string, Answer] => [
             environmentId,
-            result?._tag === "Success"
+            // Only an answer for exactly this range counts as live.
+            result?._tag === "Success" &&
+            result.value.sinceDay === range.sinceDay &&
+            result.value.untilDay === range.untilDay
               ? { kind: "report", report: result.value }
               : { kind: "failed" },
           ])

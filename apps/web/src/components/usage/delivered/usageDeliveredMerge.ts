@@ -87,6 +87,8 @@ export interface DeliveredView {
   readonly medianDeliveredUsd: number | null;
   /** Some priced delivered increment also has unpriced use, so the median is a lower bound. */
   readonly medianPartial: boolean;
+  /** Delivered increments with no priced use, left out of the median and highest. */
+  readonly unpricedDelivered: number;
   /** Machines skipped because they read exactly the folders another machine read (the same machine twice). */
   readonly duplicates: readonly (readonly [string, string])[];
   readonly highest: MergedIncrement | null;
@@ -365,6 +367,7 @@ export function mergeDelivered(
     incrementsWithTasksDone: increments.filter((increment) => increment.tasks.doneInRange > 0)
       .length,
     medianDeliveredUsd: median(priced.map((increment) => increment.cost.costUsd)),
+    unpricedDelivered: delivered.length - priced.length,
     medianPartial: priced.some((increment) => increment.cost.unpricedRecords > 0),
     highest,
     missing,

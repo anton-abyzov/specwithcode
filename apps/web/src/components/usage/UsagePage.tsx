@@ -463,6 +463,23 @@ export function UsagePage({
     return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
   }, []);
 
+  // A rolled-forward window can drop the pinned day or hour, whichever tab refreshed it.
+  const applyRolledWindow = (nextWindow: typeof window) => {
+    setWindowSelection({ range, window: nextWindow });
+    const pinned = filters.period;
+    if (
+      pinned !== null &&
+      (pinned.kind === "day"
+        ? pinned.day < nextWindow.sinceDay || pinned.day > nextWindow.untilDay
+        : nextWindow.sinceTime === undefined ||
+          nextWindow.untilTime === undefined ||
+          !enumerateHourStarts(nextWindow.sinceTime, nextWindow.untilTime).includes(
+            pinned.hourStart,
+          ))
+    ) {
+      setFilters((current) => ({ ...current, period: null }));
+    }
+  };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
 
@@ -470,8 +487,13 @@ export function UsagePage({
       if (showingMachines || showingDelivered) {
         // A preset rolls forward: after midnight, Refresh reads the new days.
         const rolled = usageRangeWindow(range);
-        if (rolled.sinceDay !== window.sinceDay || rolled.untilDay !== window.untilDay) {
-          setWindowSelection({ range, window: rolled });
+        if (
+          rolled.sinceDay !== window.sinceDay ||
+          rolled.untilDay !== window.untilDay ||
+          rolled.sinceTime !== window.sinceTime ||
+          rolled.untilTime !== window.untilTime
+        ) {
+          applyRolledWindow(rolled);
         }
         setLimitsNow(Date.now());
         setMachinesRefreshKey((key) => key + 1);
@@ -491,21 +513,7 @@ export function UsagePage({
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      setWindowSelection({ range, window: nextWindow });
-      // A refreshed rolling window can drop the pinned day or hour.
-      const pinned = filters.period;
-      if (
-        pinned !== null &&
-        (pinned.kind === "day"
-          ? pinned.day < nextWindow.sinceDay || pinned.day > nextWindow.untilDay
-          : nextWindow.sinceTime === undefined ||
-            nextWindow.untilTime === undefined ||
-            !enumerateHourStarts(nextWindow.sinceTime, nextWindow.untilTime).includes(
-              pinned.hourStart,
-            ))
-      ) {
-        setFilters((current) => ({ ...current, period: null }));
-      }
+      applyRolledWindow(nextWindow);
     }
     refreshingRef.current = true;
     setIsRefreshing(true);

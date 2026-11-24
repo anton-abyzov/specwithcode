@@ -258,6 +258,8 @@ describe("mergeDelivered", () => {
     );
     expect(view.deliveredCount).toBe(2);
     expect(view.medianDeliveredUsd).toBe(80);
+    expect(view.unpricedDelivered).toBe(1);
+    expect(view.medianPartial).toBe(false);
     expect(view.highest?.incrementId).toBe("0003-priced");
   });
 

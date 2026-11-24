@@ -40,10 +40,10 @@ export function deliveredReportMarkdown(input: {
     `Range: ${input.rangeLabel}. Filters: ${input.filters.length === 0 ? "none" : input.filters.join("; ")}.`,
     "API-equivalent estimate, not a bill.",
     "",
-    `- Tied to increments: ${deliveredCostText(view.attributed)}${share}`,
+    `- Tied to increments: ${view.overlaps.length > 0 ? "— (machines share transcript folders)" : `${deliveredCostText(view.attributed)}${share}`}`,
     `- Delivered (closed or merged in range): ${view.deliveredCount}`,
     `- Tasks done: ${view.tasksDone} across ${view.incrementsWithTasksDone} increments`,
-    `- Median per delivered increment: ${view.medianDeliveredUsd === null ? "—" : `${view.medianPartial ? "≥ " : ""}${formatUsd(view.medianDeliveredUsd)}`}`,
+    `- Median per priced delivery${view.unpricedDelivered > 0 ? ` (${view.unpricedDelivered} without a price left out)` : ""}: ${view.medianDeliveredUsd === null || view.overlaps.length > 0 ? "—" : `${view.medianPartial ? "≥ " : ""}${formatUsd(view.medianDeliveredUsd)}`}`,
     "",
     line([
       "Increment",
@@ -107,7 +107,7 @@ export function deliveredReportMarkdown(input: {
   if (view.duplicates.length > 0) {
     lines.push(
       "",
-      `Counted once: ${view.duplicates.map(([left, right]) => `${right} reads the same folders as ${left}`).join("; ")}.`,
+      `Counted once: ${view.duplicates.map(([left, right]) => `${right} reads the same folders as ${left}, so only ${left}'s figures are shown`).join("; ")}.`,
     );
   }
   if (view.missing.length > 0) {
