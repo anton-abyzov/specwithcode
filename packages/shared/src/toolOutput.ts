@@ -162,26 +162,26 @@ function clipFailureMessage(text: string): string | undefined {
 }
 
 /**
- * The reason a failed call gave: an MCP failure's `message`, an error's text,
- * or the first text block, without a provider's leading "Error:".
+ * The sentence a studio-code tool refused or failed with: the `message` of an
+ * `OrchestratorMcpFailure`, which the app wrote for the user. Claude reports
+ * it as "Error: " and the failure's JSON. Any other tool's error text is a
+ * result body and stays behind.
  */
-function readFailureMessage(value: unknown, depth = 0): string | undefined {
+function readStudioFailureMessage(value: unknown, depth = 0): string | undefined {
   if (depth > MAX_ENVELOPE_DEPTH) return undefined;
   if (typeof value === "string") {
-    const text = value.slice(0, MAX_PARSED_BYTES).trim().replace(/^Error:\s*/u, "");
-    if (text.startsWith("{") || text.startsWith("[")) {
-      try {
-        const nested = readFailureMessage(JSON.parse(text), depth + 1);
-        if (nested !== undefined) return nested;
-      } catch {
-        // Not JSON after all: the text itself is the reason.
-      }
+    if (value.length > MAX_PARSED_BYTES) return undefined;
+    const text = value.trim().replace(/^Error:\s*/u, "");
+    if (!text.startsWith("{") && !text.startsWith("[")) return undefined;
+    try {
+      return readStudioFailureMessage(JSON.parse(text), depth + 1);
+    } catch {
+      return undefined;
     }
-    return clipFailureMessage(text);
   }
   if (Array.isArray(value)) {
     for (const block of value.slice(0, MAX_CONTENT_BLOCKS)) {
-      const nested = readFailureMessage(
+      const nested = readStudioFailureMessage(
         Predicate.isObject(block) ? (block.text ?? block) : block,
         depth + 1,
       );
@@ -190,17 +190,17 @@ function readFailureMessage(value: unknown, depth = 0): string | undefined {
     return undefined;
   }
   if (!Predicate.isObject(value)) return undefined;
-  if (typeof value.message === "string") return clipFailureMessage(value.message);
-  if (typeof value.error === "string") return clipFailureMessage(value.error);
-  if (Predicate.isObject(value.error)) return readFailureMessage(value.error, depth + 1);
-  const content = value.content ?? value.structuredContent;
-  return content === undefined ? undefined : readFailureMessage(content, depth + 1);
+  if (value._tag === "OrchestratorMcpFailure") {
+    return typeof value.message === "string" ? clipFailureMessage(value.message) : undefined;
+  }
+  const content = value.structuredContent ?? value.content;
+  return content === undefined ? undefined : readStudioFailureMessage(content, depth + 1);
 }
 
 /**
  * Keeps only IDs, failure metadata and an advisor consult's status for grouped tool summaries.
  * A call that failed (by its result, or `failed` for one the provider marked failed) also keeps
- * a short reason, so a client that never reads the full output can still say why.
+ * a studio-code failure's sentence, so a client that never reads the full output can still say why.
  */
 export function compactDynamicToolOutput(
   value: unknown,
@@ -214,7 +214,7 @@ export function compactDynamicToolOutput(
   const result = readResult(value, budget);
   const failed = result.failed || options.failed === true;
   const output: CompactToolOutput = failed ? { isError: true } : {};
-  const message = failed ? readFailureMessage(value) : undefined;
+  const message = failed ? readStudioFailureMessage(value) : undefined;
   if (message !== undefined) output.message = message;
   const data = budget.exceeded ? undefined : result.data;
   if (data !== undefined) {

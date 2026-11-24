@@ -11,7 +11,7 @@ import {
 } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
-  it("keeps a failed call's short reason and drops the rest", () => {
+  it("keeps a failed studio-code call's sentence and drops the rest", () => {
     const refusal = {
       _tag: "OrchestratorMcpFailure",
       code: "machine_unreachable",
@@ -27,18 +27,23 @@ describe("compactDynamicToolOutput", () => {
         content: [{ type: "text", text: JSON.stringify(refusal) }],
       }),
     ).toEqual({ isError: true, message: "m4 is unavailable right now." });
-    expect(
-      compactDynamicToolOutput("Error: Could not change whether the pull request is watched.", {
-        failed: true,
-      }),
-    ).toEqual({
-      isError: true,
-      message: "Could not change whether the pull request is watched.",
-    });
-    const long = compactDynamicToolOutput(`Error: ${"x".repeat(5_000)}`, { failed: true });
+    const long = compactDynamicToolOutput(
+      `Error: ${JSON.stringify({ ...refusal, message: "x".repeat(5_000) })}`,
+      { failed: true },
+    );
     expect(long?.message).toHaveLength(400);
     expect(long?.message?.endsWith("…")).toBe(true);
-    expect(compactDynamicToolOutput("", { failed: true })).toEqual({ isError: true });
+  });
+
+  it("keeps no text from a failure that is not a studio-code one", () => {
+    for (const value of [
+      "Error: PRIVATE_BODY",
+      'Error: {"message":"PRIVATE_BODY"}',
+      { isError: true, content: [{ type: "text", text: "PRIVATE_BODY" }] },
+      "",
+    ]) {
+      expect(compactDynamicToolOutput(value, { failed: true })).toEqual({ isError: true });
+    }
   });
 
   it("keeps no reason for a call that did not fail", () => {
