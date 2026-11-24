@@ -184,9 +184,21 @@
       "types": "./src/htmlRender.ts",
       "import": "./src/htmlRender.ts"
     },
+    "./boardReports": {
+      "types": "./src/boardReports.ts",
+      "import": "./src/boardReports.ts"
+    },
+    "./officeDocument": {
+      "types": "./src/officeDocument/index.ts",
+      "import": "./src/officeDocument/index.ts"
+    },
     "./officeSheet": {
       "types": "./src/officeSheet/index.ts",
       "import": "./src/officeSheet/index.ts"
+    },
+    "./officeWhiteboard": {
+      "types": "./src/officeWhiteboard.ts",
+      "import": "./src/officeWhiteboard.ts"
     },
     "./favicon": {
       "types": "./src/favicon.ts",
@@ -555,6 +567,10 @@
     "./usageOutsideEstimate": {
       "types": "./src/usageOutsideEstimate.ts",
       "import": "./src/usageOutsideEstimate.ts"
+    },
+    "./usageRange": {
+      "types": "./src/usageRange.ts",
+      "import": "./src/usageRange.ts"
     },
     "./usageFormat": {
       "types": "./src/usageFormat.ts",

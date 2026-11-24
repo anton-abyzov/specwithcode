@@ -123,6 +123,90 @@ try {
       receipt.checks.push({ theme, scene: "popup-wrong-code", ok: true });
       await page.close();
     }
+    // "Where is the code?" (1447): the steps fit what the waiting device says it is, and
+    // the code box, Allow and Deny stay. With the machine keeping Later, the pop-up says so.
+    for (const where of [
+      {
+        app: "new",
+        name: "new",
+        size: [1280, 800],
+        place: "phone-top",
+        steps: [
+          "Open SpecWithCode on iPhone Duo.",
+          "The code for m4 is at the top of the screen, under “Allow this phone”.",
+          "Check that it also shows ID BJ96.",
+        ],
+      },
+      {
+        app: "old",
+        name: "old",
+        size: [1280, 800],
+        place: "phone-chat",
+        later: true,
+        steps: [
+          "On iPhone Duo, open a chat on m4 in SpecWithCode. The code is there.",
+          "No code there? Update SpecWithCode on iPhone Duo, then open it again.",
+          "Check that it also shows ID BJ96.",
+        ],
+      },
+      {
+        app: "mac",
+        name: "mac",
+        size: [1280, 800],
+        place: "window",
+        steps: [
+          "Open SpecWithCode on MacBook.",
+          "The code for m4 is on a card in the app, and in Settings > Machines under “Waiting to join”.",
+          "Check that it also shows ID BJ96.",
+        ],
+      },
+      {
+        app: "new",
+        name: "new-phone-width",
+        size: [390, 844],
+        place: "phone-top",
+        steps: [
+          "Open SpecWithCode on iPhone Duo.",
+          "The code for m4 is at the top of the screen, under “Allow this phone”.",
+          "Check that it also shows ID BJ96.",
+        ],
+      },
+    ]) {
+      const { page, errors } = await open(
+        `scene=where&app=${where.app}${where.later ? "&later=machine" : ""}`,
+        theme,
+        where.size,
+      );
+      const prompt = page.locator("[data-device-approval-prompt]");
+      await prompt.waitFor();
+      const block = prompt.locator("[data-device-approval-where]");
+      assert.equal(await block.getAttribute("data-device-approval-where"), where.place);
+      assert.equal(await block.locator("p").first().textContent(), "Where is the code?");
+      assert.deepEqual(await block.locator("li").allTextContents(), where.steps);
+      assert.equal(await prompt.getByRole("textbox").count(), 1);
+      assert.equal(await prompt.getByRole("button", { name: "Allow", exact: true }).count(), 1);
+      assert.equal(await prompt.locator("[data-device-deny]").count(), 1);
+      const text = await prompt.textContent();
+      if (where.later) assert.ok(text.includes("Later hides it in every window of this machine."));
+      else assert.doesNotMatch(text, /Later hides it/);
+      if (where.size[0] === 390) {
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        );
+        assert.ok(overflow <= 0, `no horizontal scroll (${overflow}px)`);
+      }
+      await block.scrollIntoViewIfNeeded();
+      await shot(page, `where-${where.name}-${theme}.png`);
+      assert.deepEqual(errors, []);
+      receipt.checks.push({
+        theme,
+        scene: `where-${where.name}`,
+        width: where.size[0],
+        place: where.place,
+        ok: true,
+      });
+      await page.close();
+    }
     // Two phones of one name (1406): the typed code allows the phone that shows it,
     // the pop-up names it and keeps the other one listed.
     {

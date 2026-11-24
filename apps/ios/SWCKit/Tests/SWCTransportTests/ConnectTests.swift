@@ -199,6 +199,8 @@ enum RelayFixture {
 
     let exchange = try #require(fake.requests(path: "/v1/client/dpop-token").first)
     #expect(exchange.httpMethod == "POST")
+    // The relay's machine routes see the app version too (1447 AC-05).
+    #expect(fake.requests.allSatisfy { $0.value(forHTTPHeaderField: "User-Agent") == PhoneUserAgent.current })
     #expect(exchange.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded")
     #expect(exchange.value(forHTTPHeaderField: "Authorization") == nil)
     let form = RelayFixture.form(exchange)

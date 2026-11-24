@@ -113,6 +113,20 @@ export const connectDevices = {
         ),
       ),
     ),
+  /** Puts waiting devices off on the machine itself, for all its windows (1447). */
+  later: (environmentId: EnvironmentId, requests: ReadonlyArray<string>) =>
+    run(
+      connectionAtomRuntime.atom(
+        options(preparedFor(environmentId), "later").pipe(
+          Effect.flatMap((base) =>
+            executeAuthenticatedEnvironmentHttpRequest({
+              ...base,
+              request: ({ client, headers }) => client.later({ headers, payload: { requests } }),
+            }),
+          ),
+        ),
+      ),
+    ),
   repair: (environmentId: EnvironmentId) =>
     run(
       connectionAtomRuntime.atom(

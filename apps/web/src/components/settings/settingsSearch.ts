@@ -537,6 +537,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "keep-awake-battery",
+    title: "Keep awake on battery",
+    to: "/settings/general",
+    searchTerms: ["battery drain power adapter unplugged laptop sleep hand off"],
+    desktopOnly: true,
+  },
+  {
     id: "what-you-can-do",
     title: "Show What you can do",
     to: "/settings/general",

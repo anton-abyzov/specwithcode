@@ -1,7 +1,8 @@
 /**
- * Native read-only previews for host Office files:
- * - `.xlsx` via `design.previewWorkbook` -> canonical `SheetView` (tabs, formulas,
- *   formatting, sorting, column resize/hide, CSV/TSV/HTML/Markdown export).
+ * Native previews for host Office files:
+ * - `.xlsx` via `design.previewWorkbook` -> the Sheet editor (tabs, formulas,
+ *   formatting, sorting, column resize/hide, .xlsx/.csv/HTML/Markdown export), saving
+ *   back to the same file through `design.saveWorkbook` (`HostWorkbookEditor`).
  * - `.docx` via `design.previewDocument` -> structured React AST (`DocxPreviewBlock[]`)
  *   with zero raw HTML (`dangerouslySetInnerHTML` is never used), fragment-only `#anchor`
  *   links, bounded raster images, and explicit unsupported-feature disclosure.
@@ -14,14 +15,17 @@ import type {
   DocxPreviewRun,
   EnvironmentId,
 } from "@specweave-studio/contracts";
+import { AuthFilesystemWriteScope } from "@specweave-studio/contracts";
 import type { MouseEvent, ReactNode } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentScope } from "~/state/session";
 import { design } from "~/studio/design";
 
-import { SheetView } from "../office/SheetView";
+import { HostDocumentEditor } from "../office/document/HostDocumentEditor";
+import { HostWorkbookEditor } from "../office/HostWorkbookEditor";
 import { FilePreviewCard } from "./DeckPreview";
 
 /** Why an Office file has no preview, from the server's refusal. */
@@ -296,7 +300,7 @@ export function DocxDocumentView(props: {
   );
 }
 
-/** A host `.xlsx` workbook rendered through `SheetView`, or a card on refusal. */
+/** A host `.xlsx` workbook opened in `HostWorkbookEditor`, or a card on refusal. */
 export function HostWorkbookPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly path: string;
@@ -326,17 +330,15 @@ export function HostWorkbookPreview(props: {
   }
   if (workbook.data) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col" data-xlsx-preview={props.name}>
-        <div
-          className="shrink-0 border-b bg-muted/30 px-4 py-1.5 text-muted-foreground text-xs"
-          role="status"
-        >
-          {workbookSummary(workbook.data)}
-        </div>
-        <div className="min-h-0 flex-1">
-          <SheetView text={workbook.data.sheetJson} mode={resolvedTheme} />
-        </div>
-      </div>
+      <HostWorkbookEditor
+        environmentId={props.environmentId}
+        path={props.path}
+        name={props.name}
+        preview={workbook.data}
+        summary={workbookSummary(workbook.data)}
+        mode={resolvedTheme === "dark" ? "dark" : "light"}
+        onReload={workbook.refresh}
+      />
     );
   }
   if (workbook.error !== null) {
@@ -357,8 +359,10 @@ export function HostDocumentPreview(props: {
 }) {
   const capabilities = useServerConfigs().get(props.environmentId)?.environment.capabilities;
   const supported = capabilities?.officeDocumentPreview === true;
+  const editing = capabilities?.officeDocumentEditing === true;
+  const canWrite = useEnvironmentScope(props.environmentId, AuthFilesystemWriteScope);
   const doc = useEnvironmentQuery(
-    supported
+    supported && !editing
       ? design.previewDocument({ environmentId: props.environmentId, input: { path: props.path } })
       : null,
   );
@@ -374,6 +378,16 @@ export function HostDocumentPreview(props: {
   if (!supported) {
     return card(
       "This machine's SpecWithCode is too old to preview Word documents. Update it to read them here.",
+    );
+  }
+  if (editing) {
+    return (
+      <HostDocumentEditor
+        environmentId={props.environmentId}
+        path={props.path}
+        name={props.name}
+        canWrite={canWrite}
+      />
     );
   }
   if (doc.data) {

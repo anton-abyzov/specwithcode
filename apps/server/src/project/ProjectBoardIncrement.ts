@@ -18,6 +18,11 @@
 import * as NodeFSP from "node:fs/promises";
 
 import {
+  BOARD_REPORT_GROUPS,
+  boardReportGroup,
+  type BoardReportGroup,
+} from "@specweave-studio/shared/boardReports";
+import {
   PROJECT_BOARD_PROBLEM_CHARS,
   PROJECT_BOARD_REPORTS,
   type ProjectBoardBlocker,
@@ -43,6 +48,12 @@ const REASON_CHARS = 300;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
 /** The review records incrementReview.ts opens without a root bound of its own. */
 const REVIEW_FILE = /^review(-[A-Za-z0-9._-]+)?\.md$/u;
+/**
+ * Subfolders of `reports/` (one level, beyond `reviews/`) are all read, a few
+ * at a time, so no report is dropped before ranking; the 30-file limit applies
+ * after it.
+ */
+const REPORT_FOLDER_READS = 16;
 
 function inside(root: string, candidate: string): boolean {
   const relative = NodePath.relative(root, candidate);
@@ -79,6 +90,8 @@ interface Entry {
   readonly mtimeMs: number;
   /** A regular file itself, not a link to one. */
   readonly file: boolean;
+  /** A folder itself, not a link to one. */
+  readonly dir: boolean;
 }
 
 /**
@@ -108,6 +121,7 @@ async function listEntries(dir: string, realFolder: string): Promise<Entry[] | "
         stamp: seen === null ? "-" : `${seen.mtimeMs}:${seen.size}`,
         mtimeMs: own.mtimeMs,
         file: own.isFile(),
+        dir: own.isDirectory(),
       };
     }),
   );
@@ -123,7 +137,57 @@ async function stamp(file: string): Promise<string> {
 }
 
 const listingStamp = (entries: ReadonlyArray<Entry>) =>
-  entries.map((entry) => `${entry.name}:${entry.file ? "f" : "o"}:${entry.stamp}`).join("/");
+  entries
+    .map((entry) => `${entry.name}:${entry.file ? "f" : entry.dir ? "d" : "o"}:${entry.stamp}`)
+    .join("/");
+
+/** One file under `reports/`, by its path inside it (`parity.md`, `screens/a.png`). */
+interface ReportFile {
+  readonly relative: string;
+  readonly mtimeMs: number;
+}
+
+/**
+ * The files of `reports/` and of its plain subfolders, one level down. A
+ * subfolder other than `reviews/` that leads out of the increment is skipped,
+ * not refused: only the review reader follows links there.
+ */
+async function reportTree(
+  reportsDir: string,
+  realFolder: string,
+  top: ReadonlyArray<Entry>,
+  reviews: ReadonlyArray<Entry>,
+): Promise<{ files: ReportFile[]; stamp: string }> {
+  const plain = (entries: ReadonlyArray<Entry>, prefix: string) =>
+    entries
+      .filter((entry) => entry.file && !entry.name.startsWith("."))
+      .map((entry) => ({ relative: `${prefix}${entry.name}`, mtimeMs: entry.mtimeMs }));
+  const folders = top.filter(
+    (entry) => entry.dir && !entry.name.startsWith(".") && entry.name !== "reviews",
+  );
+  // A linked `reviews/` still counts for the review reader, but its files are
+  // not listed: only real folders are.
+  const realReviews = top.some((entry) => entry.name === "reviews" && entry.dir);
+  const listed: Array<{ name: string; entries: Entry[] }> = [];
+  for (let start = 0; start < folders.length; start += REPORT_FOLDER_READS) {
+    listed.push(
+      ...(await Promise.all(
+        folders.slice(start, start + REPORT_FOLDER_READS).map(async (entry) => {
+          const inner = await listEntries(NodePath.join(reportsDir, entry.name), realFolder);
+          return { name: entry.name, entries: inner === "outside" ? [] : inner };
+        }),
+      )),
+    );
+  }
+  return {
+    files: [
+      ...plain(top, ""),
+      ...(realReviews ? plain(reviews, "reviews/") : []),
+      ...listed.flatMap((folder) => plain(folder.entries, `${folder.name}/`)),
+    ],
+    stamp: listed.map((folder) => `${folder.name}=${listingStamp(folder.entries)}`).join(";"),
+  };
+}
 
 /**
  * The mtime and size of every file an answer depends on: the increment's own
@@ -135,7 +199,7 @@ async function signatureOf(
   folder: string,
   realFolder: string,
   realRoot: string,
-): Promise<{ signature: string; reports: Entry[]; configOutside: boolean } | "outside"> {
+): Promise<{ signature: string; reports: ReportFile[]; configOutside: boolean } | "outside"> {
   // The review reader opens the project config with no root bound of its own.
   // A config linked out of the planning root is a setup some projects have, so
   // the increment still answers, without the review that config would shape.
@@ -159,9 +223,10 @@ async function signatureOf(
     listEntries(NodePath.join(reportsDir, "reviews"), realFolder),
   ]);
   if (reports === "outside" || reviews === "outside") return "outside";
+  const tree = await reportTree(reportsDir, realFolder, reports, reviews);
   return {
-    signature: [...stamps, listingStamp(reports), listingStamp(reviews)].join("|"),
-    reports,
+    signature: [...stamps, listingStamp(reports), listingStamp(reviews), tree.stamp].join("|"),
+    reports: tree.files,
     configOutside,
   };
 }
@@ -302,6 +367,10 @@ export async function readProjectBoardIncrement(
       : await listEntries(NodePath.join(own, "reports", "reviews"), ownReal);
   const projectReviews = listedReviews === "outside" ? [] : listedReviews;
   const projectContained = listed !== "outside" && listedReviews !== "outside";
+  const projectTree =
+    own === null || ownReal === null
+      ? { files: [], stamp: "" }
+      : await reportTree(NodePath.join(own, "reports"), ownReal, projectReports, projectReviews);
   // Whether the project folder's report folders are links: the review reader
   // skips linked ones in another copy, so a change here changes the answer.
   const linkedDirs =
@@ -315,7 +384,7 @@ export async function readProjectBoardIncrement(
             ),
           )
         ).join("");
-  const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}|${linkedDirs}`;
+  const signature = `${signed.signature}|${listingStamp(projectReports)}|${listingStamp(projectReviews)}|${projectTree.stamp}|${linkedDirs}`;
   const cached = cache.get(key);
   if (cached !== undefined && cached.signature === signature && input.now <= cached.expiresAt) {
     // The card is read on every call: its reviews and source have their own caches.
@@ -362,25 +431,36 @@ export async function readProjectBoardIncrement(
       at: task.changedAt ?? null,
       ...(task.leased === undefined ? {} : { leased: task.leased }),
     }));
-  const newestFiles = (entries: ReadonlyArray<Entry>, from: string) =>
-    entries
-      .filter((entry) => entry.file && !entry.name.startsWith("."))
-      .toSorted(
-        (left, right) => right.mtimeMs - left.mtimeMs || left.name.localeCompare(right.name),
-      )
-      .map((entry): ProjectBoardReport => ({
-        path: NodePath.join(from, "reports", entry.name),
-        name: entry.name,
-      }));
-  const ownReports = newestFiles(reports, folder);
+  // Real reports before reviews, screens and task evidence, newest first in
+  // each group, the copy's own before the project folder's; evidence never
+  // crowds a report out of the limit.
+  const fromFolder = (files: ReadonlyArray<ReportFile>, from: string, own: boolean) =>
+    files.map((file) => ({
+      ...file,
+      own,
+      path: NodePath.join(from, "reports", ...file.relative.split("/")),
+      group: boardReportGroup(file.relative) satisfies BoardReportGroup,
+    }));
+  const held = new Set(reports.map((file) => file.relative));
   const reportFiles = [
-    ...ownReports,
+    ...fromFolder(reports, folder, true),
     ...(own === null
       ? []
-      : newestFiles(projectReports, own).filter(
-          (report) => !ownReports.some((held) => held.name === report.name),
+      : fromFolder(
+          projectTree.files.filter((file) => !held.has(file.relative)),
+          own,
+          false,
         )),
-  ].slice(0, PROJECT_BOARD_REPORTS);
+  ]
+    .toSorted(
+      (left, right) =>
+        BOARD_REPORT_GROUPS.indexOf(left.group) - BOARD_REPORT_GROUPS.indexOf(right.group) ||
+        Number(right.own) - Number(left.own) ||
+        right.mtimeMs - left.mtimeMs ||
+        left.relative.localeCompare(right.relative),
+    )
+    .slice(0, PROJECT_BOARD_REPORTS)
+    .map((file): ProjectBoardReport => ({ path: file.path, name: file.relative }));
   const value: ProjectBoardIncrement = {
     card,
     problem: problemText(spec),

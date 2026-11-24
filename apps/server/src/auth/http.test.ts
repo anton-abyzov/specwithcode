@@ -821,10 +821,22 @@ it.effect("revoking a Connect phone ends its other sessions and removes it from 
     );
     const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
     const sessions = Context.get(authContext, SessionStore.SessionStore);
-    const management = yield* auth.issueSession({
+    // This machine's owner, as the startup link makes one.
+    const startup = yield* auth.createPairingLink({
+      subject: EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
       scopes: ["access:read", "access:write"],
-      label: "Management token",
     });
+    const ownerToken = yield* auth.exchangeBootstrapCredentialForAccessToken(
+      startup.credential,
+      undefined,
+      { deviceType: "desktop" },
+    );
+    const management = {
+      token: ownerToken.access_token,
+      sessionId: (yield* auth.listSessions()).find(
+        (session) => session.subject === EnvironmentAuth.INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT,
+      )!.sessionId,
+    };
     const phone = {
       subject: "cloud-connect",
       scopes: ["orchestration:read"],

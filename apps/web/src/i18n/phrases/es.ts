@@ -6046,4 +6046,58 @@ export const es: PhraseCatalog = {
     "SpecWithCode lee los archivos de configuración de cada herramienta en {machine}. No puede saber si un servidor tiene la sesión iniciada o está en marcha.",
   "Scanned {when}.": "Analizado: {when}.",
   "No MCP servers yet.": "Aún no hay servidores MCP.",
+  "Where is the code?": "¿Dónde está el código?",
+  "Open SpecWithCode on {device}.": "Abre SpecWithCode en {device}.",
+  "The code for {machine} is at the top of the screen, under “Allow this phone”.":
+    "El código para {machine} está en la parte superior de la pantalla, bajo «Allow this phone».",
+  "Check that it also shows ID {id}.": "Comprueba que también muestre ID {id}.",
+  "On {device}, open a chat on {machine} in SpecWithCode. The code is there.":
+    "En {device}, abre un chat de {machine} en SpecWithCode. El código está ahí.",
+  "No code there? Update SpecWithCode on {device}, then open it again.":
+    "¿No hay código? Actualiza SpecWithCode en {device} y vuelve a abrirlo.",
+  "Open SpecWithCode on the device that is asking.":
+    "Abre SpecWithCode en el dispositivo que pide acceso.",
+  "On the device that is asking, open a chat on {machine} in SpecWithCode. The code is there.":
+    "En el dispositivo que pide acceso, abre un chat de {machine} en SpecWithCode. El código está ahí.",
+  "No code there? Update SpecWithCode on that device, then open it again.":
+    "¿No hay código? Actualiza SpecWithCode en ese dispositivo y vuelve a abrirlo.",
+  "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.":
+    "El código para {machine} está en una tarjeta de la app y en Ajustes > Máquinas, en «Esperando para unirse».",
+  "The code is shown where it lists {machine} as waiting for approval.":
+    "El código aparece donde {machine} figura como en espera de aprobación.",
+  "Each device shows its code where it lists {machine} as waiting for approval. On an iPhone, look at the top of the screen or in a chat on {machine}.":
+    "Cada dispositivo muestra su código donde {machine} figura como en espera de aprobación. En un iPhone, mira en la parte superior de la pantalla o en un chat de {machine}.",
+  "Later hides it in every window of this machine.":
+    "«Más tarde» lo oculta en todas las ventanas de esta máquina.",
+  // Quick guides on Overview.
+  "Plan an increment": "Planifica un incremento",
+  "Open your project's Board and select Set up SpecWeave if needed. Ask the coordinator to plan one feature. The increment records what to build, how to check it, and the tasks.":
+    "Abre el tablero del proyecto y configura SpecWeave si hace falta. Pide al coordinador que planifique una función. El incremento recoge el objetivo, los criterios y las tareas.",
+  "Follow it on the Board": "Sigue el avance en el tablero",
+  "Open the increment card to read its spec and see tasks move as agents work. Check the acceptance criteria to see what has been verified.":
+    "Abre la tarjeta para ver la especificación y el avance. Consulta los criterios de aceptación para saber qué se ha verificado.",
+  "Read the evidence": "Revisa las pruebas",
+  "Before shipping, open the finished card and read its test evidence and any review findings.":
+    "Antes de publicar, abre la tarjeta terminada y lee los resultados de las pruebas y los comentarios de revisión.",
+  Artifacts: "Artefactos",
+  "Create an artifact": "Crea un artefacto",
+  "Artifacts are project outputs such as reports, spreadsheets, documents, and whiteboards. Ask an agent to make one, or use New on the Artifacts shelf.":
+    "Los artefactos son resultados del proyecto, como informes, hojas de cálculo, documentos y pizarras. Pídeselo a un agente o usa Nuevo en Artefactos.",
+  "Open it from Artifacts": "Ábrelo desde Artefactos",
+  "Open the project's Artifacts shelf and select the file. You can also open an artifact from the card an agent shares in a thread.":
+    "Selecciona el archivo en Artefactos del proyecto o ábrelo desde la tarjeta que comparte el agente en un hilo.",
+  "Edit where supported": "Edita cuando sea posible",
+  "Edit sheets, documents, and whiteboards in their own editors. Use Save when the editor shows it. For a preview-only file, edit the source or ask the agent to revise it.":
+    "Edita hojas, documentos y pizarras en sus editores. Pulsa Guardar si aparece. Si solo hay vista previa, cambia el archivo fuente o pide al agente que lo revise.",
+  "Multiple machines": "Varios equipos",
+  "Join a machine": "Vincula un equipo",
+  "On the new machine, sign in to Connect and choose a machine to join. On the joined machine, enter the code shown on the new one. On the new machine, review access and select Allow.":
+    "En el equipo nuevo, inicia sesión en Connect y elige a qué equipo unirte. Introduce allí el código que muestra el nuevo. En el nuevo, revisa el acceso y pulsa Permitir.",
+  "Sync project files": "Sincroniza los archivos",
+  "In the project's machine menu, choose {sync} to update copies on linked machines, or {add} if the project is missing on the destination. Review the changes before confirming.":
+    "En el menú de equipos del proyecto, usa {sync} para actualizar copias o {add} si falta el proyecto en el destino. Revisa los cambios antes de confirmar.",
+  "Hand off unfinished work": "Transfiere el trabajo pendiente",
+  "On the source machine, open Hand off with /away. Choose the destination and review the threads before confirming. Follow their progress in the handoff view.":
+    "En el equipo de origen, abre la transferencia con /away. Elige el destino y revisa los hilos antes de confirmar. Sigue su progreso en la ventana de transferencia.",
+  "Quick guides": "Guías rápidas",
 };

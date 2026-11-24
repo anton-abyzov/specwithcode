@@ -14,6 +14,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case connectWelcome = "connect-welcome"
   /// Like `default`, but every opened chat is mid-run with one queued message.
   case running
+  /// Like `default`, but every opened chat streams one long reply, for
+  /// checks of what stays put while the transcript keeps changing.
+  case streaming
   /// One project linked across M4 and Minis; one thread lives on M4 and runs
   /// on Minis.
   case fleet
@@ -49,8 +52,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Like `default`, with Team rules: a limit on the Office Mac, a broken rules
   /// file on the build box, and the travel laptop refusing phones.
   case teamRules = "team-rules"
-  /// Every machine is waiting for its owner to allow this phone (1408):
-  /// nothing loaded yet, or saved messages with `approvalSaved`.
+  /// Machines waiting for their owner to allow this phone (1408). `approval`
+  /// keeps the Office Mac allowed, so its chats work under the "Allow this
+  /// phone" block (1447); with `approvalSaved` every machine waits and its
+  /// chats show saved messages.
   case approval
   case approvalSaved = "approval-saved"
   /// One Percy for linked machines (1448): Studio and Laptop hold linked
@@ -58,6 +63,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case onePercy = "one-percy"
   /// `one-percy` with Laptop offline: its chats wait for it.
   case onePercyAway = "one-percy-away"
+  /// The Office Mac has two devices waiting and this phone may allow them; the
+  /// build box answers like an older server, which has no such list.
+  case allowDevice = "allow-device"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
   var isOnePercy: Bool { self == .onePercy || self == .onePercyAway }
@@ -97,6 +105,8 @@ public final class FixtureEngine: AppEngine {
   public let aideEnabled: Bool
   /// The Connect account's phones in the `connect` scenario.
   private var phones: [ConnectPhone] = []
+  /// Devices waiting on the Office Mac in the `allowDevice` scenario.
+  private var waitingDevices: [WaitingDevice] = []
 
   public init(scenario: FixtureScenario = .default, aideEnabled: Bool = true) {
     self.scenario = scenario
@@ -231,9 +241,13 @@ public final class FixtureEngine: AppEngine {
       model.connect = ConnectState(methods: [.apple, .github], user: FixtureSample.connectUser)
       phones = FixtureSample.phones(now: now)
     }
+    if scenario == .allowDevice { waitingDevices = FixtureSample.waitingDevices(now: now) }
     if scenario == .approval || scenario == .approvalSaved {
       let codes = ["6X9SF6", "K7QX2M", "U63FZA", "5F5646"]
       for i in model.machines.indices {
+        // `approval` keeps the Office Mac allowed, so a chat there shows the
+        // "Allow this phone" block over working messages (1447).
+        if scenario == .approval, model.machines[i].id == FixtureSample.studio { continue }
         model.machines[i].status = .offline
         model.machines[i].deviceApprovalCode = codes[i % codes.count]
         // The travel laptop shows a code remembered from before it went quiet.
@@ -259,6 +273,35 @@ public final class FixtureEngine: AppEngine {
       }
     }
     recompute()
+  }
+
+  public func allowDeviceListing(machineId: String) async -> AllowDeviceListing {
+    guard scenario == .allowDevice, machineId == FixtureSample.studio else { return .unavailable }
+    return .ready(waitingDevices)
+  }
+
+  /// No code is stored here. What was typed picks the state to show by its
+  /// first letter: W wrong, X expired, S this phone's, P paused, N offline.
+  public func allowDevice(code: String, machineId: String) async -> AllowDeviceOutcome {
+    guard scenario == .allowDevice, machineId == FixtureSample.studio else { return .noLongerAllowed }
+    try? await Task.sleep(for: latency)
+    switch code.first {
+    case "W": return .wrongCode
+    case "X":
+      waitingDevices = []
+      return .expired
+    case "S": return .ownCode
+    case "P": return .paused
+    case "N":
+      if let index = model?.machines.firstIndex(where: { $0.id == machineId }) {
+        model?.machines[index].status = .offline
+      }
+      return .unreachable
+    default:
+      guard !waitingDevices.isEmpty else { return .expired }
+      let device = waitingDevices.removeFirst()
+      return .allowed(name: device.label, shortId: device.shortId)
+    }
   }
 
   public func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess {
@@ -390,6 +433,10 @@ public final class FixtureEngine: AppEngine {
         }
         transcripts[target, default: []].append(row("t", .tool(title: "Running npm test", detail: "vitest run --reporter dot", symbol: "terminal", status: .running)))
       }
+    }
+    if scenario == .streaming, replies[target] == nil, !running.contains(target) {
+      running.insert(target)
+      startReply((1...900).map { "tick \($0)" }.joined(separator: " "), in: target)
     }
     if case let .thread(ref) = target { updateThread(ref) { $0.isUnread = false } }
     refresh(target)
@@ -671,8 +718,9 @@ public final class FixtureEngine: AppEngine {
     let machine = model.machine(target.environmentId)
     let online = machine?.status.isOnline ?? false
     session.rows = rows
-    session.isLoaded = scenario != .offlineRecovery && scenario != .approval
-    if scenario == .offlineRecovery || scenario == .approval { session.rows = [] }
+    let blank = scenario == .offlineRecovery || (scenario == .approval && machine?.deviceApprovalCode != nil)
+    session.isLoaded = !blank
+    if blank { session.rows = [] }
     session.isRunning = running.contains(target)
     session.queuedCount = queued[target] ?? 0
     session.plan = Self.plan(in: rows, running: running.contains(target))
@@ -1000,19 +1048,38 @@ private enum FixtureSample {
     ProviderOptionDescriptor(id: "fastMode", label: "Fast Mode", kind: .boolean),
   ]
 
-  /// The models a fixture thread can switch to: two Claude Code models and a
-  /// Codex model that takes no options.
-  static let modelChoices: [ModelChoice] = [
-    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-opus-5-5", name: "Opus 5.5", descriptors: claudeOptions),
-    ModelChoice(instanceId: "claudeAgent", provider: "Claude Code", slug: "claude-sonnet-5-5", name: "Sonnet 5.5", descriptors: claudeOptions),
-    ModelChoice(instanceId: "codex", provider: "Codex", slug: "gpt-5.5", name: "GPT-5.5"),
-  ]
+  /// The models a fixture thread can switch to: a machine with many
+  /// providers, several of them serving the same model. Only Claude Code's
+  /// models take options.
+  static let modelChoices: [ModelChoice] = {
+    func models(_ instanceId: String, _ provider: String, _ brand: String?, _ list: [(String, String)], descriptors: [ProviderOptionDescriptor] = []) -> [ModelChoice] {
+      list.map { ModelChoice(instanceId: instanceId, provider: provider, brand: brand, slug: $0.0, name: $0.1, descriptors: descriptors) }
+    }
+    return models("claudeAgent", "Claude Code", "claude", [("claude-fable-5-2", "Fable 5.2"), ("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5")], descriptors: claudeOptions)
+      + models("codex", "Codex", "openai", [("gpt-5.5", "GPT-5.5"), ("gpt-6.2-sol", "GPT-6.2 Sol"), ("gpt-6-astra", "GPT-6 Astra"), ("gpt-6-luna", "GPT-6 Luna")])
+      + models("muse", "Muse Code", "meta", [("muse-wonder-full-1.0", "Wonder Full 1.0"), ("muse-wonder-1.0", "Wonder 1.0")])
+      + models("cursor", "Cursor", "cursor", [("claude-opus-5-5", "Claude Opus 5.5"), ("claude-fable-5-2", "Claude Fable 5.2"), ("gemini-4-carbon", "Gemini 4 Carbon"), ("gpt-6.2-sol", "GPT-6.2 Sol"), ("grok-4.7", "Grok 4.7")])
+      + models("grok", "Grok", "grok", [("grok-4.7", "Grok 4.7"), ("grok-4.7-fast", "Grok 4.7 Fast")])
+      + models("acpRegistry_copilot", "Copilot Enterprise", "copilot", [("claude-opus-5-5", "Claude Opus 5.5"), ("claude-opus-5", "Claude Opus 5"), ("claude-sonnet-5-5", "Claude Sonnet 5.5"), ("gemini-4-neon", "Gemini 4 Neon"), ("gemini-4-carbon", "Gemini 4 Carbon"), ("gpt-6.2-sol", "GPT-6.2 Sol"), ("gpt-6-mini", "GPT-6 mini")])
+      + models("acpRegistry_copilot_personal", "Copilot personal", "copilot", [("claude-sonnet-5-5", "Claude Sonnet 5.5"), ("gpt-6.1-sol", "GPT-6.1 Sol"), ("gpt-6-mini", "GPT-6 mini")])
+      + models("acpRegistry_deepseek", "DeepSeek Harness (Experimental)", "deepseek", [("deepseek-v4", "DeepSeek V4"), ("deepseek-r2", "DeepSeek R2")])
+      + models("devin", "Devin", nil, [("devin-claude-opus-5-5", "Claude Opus 5.5"), ("devin-gpt-6.2-sol", "GPT-6.2 Sol")])
+      + models("gemini", "Gemini CLI (Vertex AI)", "gemini", [("gemini-4-carbon", "Gemini 4 Carbon"), ("gemini-4-neon", "Gemini 4 Neon"), ("gemini-4-flash", "Gemini 4 Flash")])
+      + models("opencode", "OpenCode Go", "opencode", [("kimi-k3", "Kimi K3"), ("qwen-4-coder", "Qwen 4 Coder")])
+  }()
 
   static let studio = "env-studio-mac"
   static let buildBox = "env-build-box"
   static let travel = "env-travel-laptop"
 
   static let specweave = ProjectRef(environmentId: studio, projectId: "specweave")
+
+  static func waitingDevices(now: Date) -> [WaitingDevice] {
+    [
+      WaitingDevice(id: "request-tablet", label: "Spare iPad", shortId: "K3PX", expiresAt: now.addingTimeInterval(240)),
+      WaitingDevice(id: "request-laptop", label: "Work laptop", shortId: "9TQM", expiresAt: now.addingTimeInterval(180)),
+    ]
+  }
 
   static let connectUser = ConnectUser(id: "user_fixture", displayName: "Anton", email: "anton@example.com")
 

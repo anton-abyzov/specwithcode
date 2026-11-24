@@ -56,6 +56,7 @@ private struct AppScreens: View {
     // screens below it start under it.
     VStack(spacing: 0) {
       if sampleData.isActive { SampleDataBar(onExit: sampleData.exit) }
+      ApprovalCodesBlock(placement: .screen)
       screens
     }
     .sheet(item: $router.sheet) { sheet in
@@ -198,6 +199,16 @@ private struct SheetHost: View {
 
   var body: some View {
     let appearance = (router.appearanceOverride ?? model.appearance).rawValue
+    // The block sits above the sheet's own header, which draws into the top
+    // safe area, so an inset would cover its close button.
+    VStack(spacing: 0) {
+      ApprovalCodesBlock(placement: .sheet).weaveTheme(appearance: appearance)
+      sheetContent(appearance: appearance)
+    }
+    .weaveToast(Binding(get: { router.toast }, set: { router.toast = $0 }))
+  }
+
+  @ViewBuilder private func sheetContent(appearance: String) -> some View {
     Group {
       switch sheet {
       case .globalSettings:
@@ -208,7 +219,6 @@ private struct SheetHost: View {
         ThreadInfoSheet(thread: thread).weaveSheetStyle(appearance: appearance, detents: [.medium, .large])
       }
     }
-    .weaveToast(Binding(get: { router.toast }, set: { router.toast = $0 }))
   }
 }
 

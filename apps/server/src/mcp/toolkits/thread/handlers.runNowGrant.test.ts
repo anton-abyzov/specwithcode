@@ -186,7 +186,7 @@ describe("run_scheduled_task_now on a routine the grant did not make", () => {
       const owners = yield* runNow("owners");
       expect(owners.result).toMatchObject({
         code: "outside_grant_scope",
-        message: `Routine "owners" was set up on this machine, so M4MAX's work can't run it. Ask the user here to run it, or schedule a new routine.`,
+        message: `Routine "owners" was set up on this machine, so M4MAX's work can't run it. Ask the user here to run it, or schedule a new routine. Do not retry this call.`,
       });
       expect(owners.started).toEqual([]);
       const others = yield* runNow("others");

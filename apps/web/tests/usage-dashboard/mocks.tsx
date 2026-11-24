@@ -8,6 +8,7 @@ import {
 import { mergeUsage } from "@specweave-studio/shared/usageMerge";
 import { useMemo } from "react";
 import { enumerateHourStarts } from "@specweave-studio/shared/usageFormat";
+import { deliveredFixtureReport } from "./deliveredFixture";
 const id = EnvironmentId.make("dashboard-fixture");
 const now = Date.now();
 const params = new URLSearchParams(location.search);
@@ -47,7 +48,10 @@ export const environmentPresentations = {
         {
           entry: { target: { label: "Fixture machine" } },
           connection: { phase: "connected" },
-          serverConfig: { providers },
+          serverConfig: {
+            providers,
+            environment: { capabilities: { usageDeliveredReport: true } },
+          },
         },
       ],
     ]),
@@ -55,7 +59,18 @@ export const environmentPresentations = {
 };
 export const primaryServerKeybindingsAtom = Atom.make([]);
 export const serverEnvironment = { refreshProviders: Symbol(), updateSettings: Symbol() };
-export const useAtomCommand = () => async () => {};
+export const usageDeliveredReport = Symbol("usageDeliveredReport");
+export const useAtomCommand = (command?: unknown) =>
+  command === usageDeliveredReport
+    ? async ({ input }: { input: { sinceDay: string; untilDay: string; timeZone: string } }) => ({
+        _tag: "Success",
+        // Answers for exactly the asked range, as a real server does.
+        value: { ...deliveredFixtureReport(), ...input },
+      })
+    : async () => {};
+export const useMachineIdentities = () => (_id: string, label?: string) => ({
+  name: label ?? "Fixture machine",
+});
 export const isElectron = false;
 export const SidebarInset = ({ children, className, ...props }: any) => (
   <main {...props} className={`relative flex min-w-0 w-full flex-1 flex-col ${className ?? ""}`}>
@@ -222,3 +237,33 @@ export function useUsage(window: any) {
     };
   }, [window]);
 }
+export const SidebarContent = ({ children, className }: any) => (
+  <div className={className}>{children}</div>
+);
+export const SidebarGroup = ({ children, className }: any) => (
+  <div className={className}>{children}</div>
+);
+export const SidebarMenu = ({ children, className }: any) => (
+  <ul className={className}>{children}</ul>
+);
+export const SidebarMenuItem = ({ children, className }: any) => (
+  <li className={className}>{children}</li>
+);
+export const SidebarMenuButton = ({ children, isActive, className, ...props }: any) => (
+  <button type="button" data-active={isActive || undefined} className={className} {...props}>
+    {children}
+  </button>
+);
+export const ResetCredits = () => null;
+export const useParams = () => ({});
+export const environmentServerConfigsAtom = Atom.make(new Map());
+export const environmentSummaries = {
+  environmentIdsAtom: Atom.make([]),
+  identitiesAtom: Atom.make(new Map()),
+  pullRequestsSupportedAtom: Atom.make(false),
+  machineByIdAtom: Atom.make(new Map()),
+  connectedEnvironmentIdsAtom: Atom.make([]),
+};
+export const awaitEnvironmentScope = async () => true;
+export const useEnvironmentPresentation = () => null;
+export const usePreparedConnection = () => null;

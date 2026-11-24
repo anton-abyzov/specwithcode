@@ -353,6 +353,52 @@ describe("RPC scope middleware", () => {
   );
 });
 
+describe("Delivered report authorization (1456)", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.usageDeliveredReport> =>
+        tag !== WS_METHODS.usageDeliveredReport,
+    ),
+  );
+
+  it.effect.each([
+    {
+      scopes: [AuthOrchestrationReadScope, AuthDiagnosticsReadScope],
+      missing: AuthFilesystemReadScope,
+    },
+    {
+      scopes: [AuthOrchestrationReadScope, AuthFilesystemReadScope],
+      missing: AuthDiagnosticsReadScope,
+    },
+  ])(
+    "refuses the Delivered report without $missing before its handler runs",
+    ({ scopes, missing }) =>
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.usageDeliveredReport, () =>
+                Effect.sync(() => handled.push("delivered")).pipe(Effect.andThen(Effect.never)),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+        );
+        expect(
+          yield* client[WS_METHODS.usageDeliveredReport]({
+            sinceDay: "2026-11-01",
+            untilDay: "2026-11-07",
+            timeZone: "UTC",
+          } as never).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "EnvironmentAuthorizationError", requiredPermission: missing });
+        expect(handled).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+});
+
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
@@ -1002,4 +1048,46 @@ describe("local Terminal.app handoff authorization", () => {
       }),
     ).toBe(false);
   });
+});
+
+describe("workbook save and import authorization (1451)", () => {
+  const tested = [WS_METHODS.designSaveWorkbook, WS_METHODS.designImportWorkbook] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+
+  it("needs file write to save a workbook and file read to import one", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.designSaveWorkbook)).toBe(AuthFilesystemWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.designImportWorkbook)).toBe(AuthFilesystemReadScope);
+  });
+
+  it.effect("refuses a save without file write before its handler runs", () =>
+    Effect.gen(function* () {
+      const invoked = { count: 0 };
+      const handler = () =>
+        Effect.sync(() => {
+          invoked.count += 1;
+        }).pipe(Effect.andThen(Effect.never));
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.designSaveWorkbook, handler),
+            group.toLayerHandler(WS_METHODS.designImportWorkbook, handler),
+            RpcAuthorization.layer([AuthOrchestrationReadScope, AuthFilesystemReadScope]),
+          ),
+        ),
+      );
+      expect(
+        yield* client[WS_METHODS.designSaveWorkbook]({
+          path: "/tmp/budget.xlsx",
+          sheetJson: "{}",
+          expectedRevision: "abc",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFilesystemWriteScope });
+      expect(invoked.count).toBe(0);
+    }).pipe(Effect.scoped),
+  );
 });

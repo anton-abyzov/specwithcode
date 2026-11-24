@@ -5,6 +5,7 @@
  * Follows the same `readableHostFile` path guard and size bounds as `DeckPreview`,
  * and binds the sensitive-path identity check directly to the opened handle.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import {
@@ -36,7 +37,7 @@ const HOST_READ_OPEN_FLAGS =
  * handle, binding the opened object's `dev:ino` identity to the sensitive-path
  * guard before reading under a hard byte ceiling.
  */
-const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) =>
+export const readBoundedHostFile = (filePath: string, maxBytes: number, label: string) =>
   Effect.scoped(
     Effect.gen(function* () {
       const guard = yield* sensitivePathGuardSnapshot;
@@ -119,8 +120,10 @@ export const previewWorkbook = (input: DesignPreviewWorkbookInput) =>
     if (file === null) return yield* notFound();
     const bytes = yield* readBoundedHostFile(file, DEFAULT_OOXML_LIMITS.fileBytes, "workbook");
     const title = path.basename(input.path, path.extname(input.path)) || "Workbook";
+    // The revision lets the editor write the file back only over what it read.
+    const revision = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
     return yield* Effect.tryPromise({
-      try: () => readXlsxWorkbook(bytes, title),
+      try: async () => ({ ...(await readXlsxWorkbook(bytes, title)), revision }),
       catch: (error) =>
         error instanceof OoxmlPreviewError
           ? new DesignError({ code: error.code, detail: error.message })

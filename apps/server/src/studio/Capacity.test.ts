@@ -484,7 +484,7 @@ describe("native session admission", () => {
         refreshIds,
       ),
     ).resolves.toBeUndefined();
-    expect(refreshIds).toEqual(["codex"]);
+    expect(refreshIds).toEqual(["codex:fresh"]);
     await expect(run(start(), raw, [native])).rejects.toThrow(/no remaining permitted usage/);
   });
   it("admits fresh native existing credits with no optional companion", async () => {
@@ -767,7 +767,87 @@ describe("native session admission", () => {
     await expect(
       run(effect, null, [denied], settings, true, true, [allowed], checks),
     ).resolves.toBeUndefined();
-    expect(checks).toEqual(["codex"]);
+    expect(checks).toEqual(["codex:fresh"]);
+  });
+  it("reads a cached denial past the probe cache, once a minute per instance", async () => {
+    // A limit lifted by bought credits shows only in a new probe; the cached
+    // one kept refusing every message for five minutes.
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe()),
+      denied = fundedProvider(now - 1000),
+      allowed = provider("codex", "codex", now);
+    Object.assign(allowed.usageLimits!, {
+      ordinaryUsageAllowed: true,
+      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    });
+    const checks: string[] = [];
+    const atNow = Clock.clockWith((clock) =>
+      start().pipe(
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          currentTimeMillis: Effect.succeed(now),
+          currentTimeMillisUnsafe: () => now,
+        }),
+      ),
+    );
+    await expect(
+      run(Effect.andThen(atNow, atNow), null, [denied], settings, true, true, [allowed], checks),
+    ).resolves.toBeUndefined();
+    expect(checks).toEqual(["codex:fresh", "codex"]);
+  });
+  it("admits a Claude Fable start once a fresh read shows its spent weekly lifted", async () => {
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+    const base = provider("claudeAgent", "claudeAgent", now);
+    const fable = (usedPercent: number) => ({
+      id: "seven_day_fable",
+      kind: "weekly" as const,
+      label: "Weekly · Fable",
+      modelScope: "Fable",
+      usedPercent,
+      resetsAt: iso(now + 90 * 3600000),
+    });
+    const denied = {
+      ...base,
+      usageLimits: {
+        ...base.usageLimits!,
+        ordinaryUsageAllowed: false,
+        nativeAllowanceObservedAt: iso(now - 1000),
+        nativeDenialObservedAt: iso(now - 1000),
+        nativeDenialResetsAt: fable(100).resetsAt,
+        windows: [fable(100)],
+      },
+    };
+    const lifted = {
+      ...base,
+      usageLimits: {
+        ...base.usageLimits!,
+        checkedAt: iso(now),
+        ordinaryUsageAllowed: true,
+        nativeAllowanceObservedAt: iso(now),
+        windows: [fable(0)],
+      },
+    };
+    const checks: string[] = [];
+    const effect = Clock.clockWith((clock) =>
+      Effect.flatMap(Capacity.Capacity, (capacity) =>
+        capacity.assertNativeStart(
+          ProviderInstanceId.make("claudeAgent"),
+          "/workspace",
+          undefined,
+          "claude-fable-5-2",
+        ),
+      ).pipe(
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          currentTimeMillis: Effect.succeed(now),
+          currentTimeMillisUnsafe: () => now,
+        }),
+      ),
+    );
+    await expect(
+      run(effect, null, [denied], settings, true, true, [lifted], checks),
+    ).resolves.toBeUndefined();
+    expect(checks).toEqual(["claudeAgent:fresh"]);
   });
   it("keeps a current denial structured after its bounded refresh", async () => {
     const denied = fundedProvider(DateTime.toEpochMillis(DateTime.nowUnsafe())),
@@ -778,7 +858,7 @@ describe("native session admission", () => {
       _tag: "ProviderSetupError",
       usageLimit: { resetAt: denied.usageLimits.windows[0]!.resetsAt },
     });
-    expect(checks).toEqual(["codex"]);
+    expect(checks).toEqual(["codex:fresh"]);
   });
   it("does not clear a cached denial with a failed or incomplete refresh", async () => {
     const now = DateTime.toEpochMillis(DateTime.nowUnsafe()),
@@ -802,7 +882,7 @@ describe("native session admission", () => {
       await expect(
         run(start(), null, [denied], settings, true, true, [next], checks),
       ).rejects.toThrow(/status check failed|permission could not be verified/);
-      expect(checks).toEqual(["codex"]);
+      expect(checks).toEqual(["codex:fresh"]);
     }
   });
   it("rejects effective custom routes even when native account and quota are fresh", async () => {

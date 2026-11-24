@@ -108,7 +108,7 @@ public enum TranscriptFolding {
     let foldRow = TranscriptRow(id: id, kind: .fold(
       label: running ? "Working" : "Worked",
       summary: summary(of: steps),
-      failures: steps.count { if case .tool(_, _, _, .failed) = $0.kind { true } else { false } },
+      failures: steps.count(where: \.isFailedTool),
       expanded: expanded,
       running: running
     ))
@@ -131,9 +131,11 @@ public enum TranscriptFolding {
   }
 
   /// Folded steps on a turn still in progress (running, or waiting on you):
-  /// notes, failed steps and requests stay; each run of two or more steps
-  /// folds into one row, and the run the turn is still working on is the live
-  /// row. The rule is docs/transcript-detail.md.
+  /// notes and requests stay; each run of two or more steps folds into one
+  /// row, and the run the turn is still working on is the live row. A failed
+  /// step stays on its own only while it is the turn's latest row: once the
+  /// agent has moved on, it folds with the steps around it and the fold
+  /// counts it. The rule is docs/transcript-detail.md.
   static func foldStepRuns(_ segment: [TranscriptRow], running: Bool, expandedFolds: Set<String>) -> [TranscriptRow] {
     var result: [TranscriptRow] = []
     var run: [TranscriptRow] = []
@@ -150,14 +152,15 @@ public enum TranscriptFolding {
       result.append(TranscriptRow(id: id, kind: .fold(
         label: live ? "Working" : "Worked",
         summary: summary(of: run),
-        failures: 0,
+        failures: run.count(where: \.isFailedTool),
         expanded: expanded,
         running: live
       )))
       if expanded { result += run }
     }
-    for row in segment {
-      if row.isFoldableStep {
+    for (index, row) in segment.enumerated() {
+      let latest = index == segment.count - 1
+      if row.isFoldableStep || (row.isFailedTool && !latest) {
         run.append(row)
       } else {
         flush(trailing: false)
@@ -209,6 +212,7 @@ extension TranscriptRow {
     default: false
     }
   }
+  var isFailedTool: Bool { if case .tool(_, _, _, .failed) = kind { true } else { false } }
   /// An approval, question or access request still waiting for the person.
   var awaitsAnswer: Bool {
     switch kind {

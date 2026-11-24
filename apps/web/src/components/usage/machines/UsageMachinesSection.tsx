@@ -21,6 +21,7 @@ import { useMachineIdentities } from "../../../studio/machineIdentity";
 import { UsageMachines } from "./UsageMachines";
 import { readMachineReportCache, saveMachineReports } from "./machineReportCache";
 import { type SharePeriod, VIEWER_TIME_ZONE, reportRange } from "./machineShareView";
+import { keptCoversStart } from "./keptReport";
 
 type Answer =
   | { readonly kind: "report"; readonly report: UsageMachineReport }
@@ -36,6 +37,9 @@ export function UsageMachinesSection({
   usage,
   refreshKey,
   now,
+  range: pageRange,
+  rangeLabel,
+  drivers,
 }: {
   /** Null selects every machine. */
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
@@ -43,11 +47,25 @@ export function UsageMachinesSection({
   readonly usage: readonly EnvironmentUsageStatus[];
   readonly refreshKey: number;
   readonly now: number;
+  /** The page range (1456); Machines reads it unless the reset window is picked. */
+  readonly range: { readonly sinceDay: string; readonly untilDay: string };
+  readonly rangeLabel: string;
+  readonly drivers: ReadonlySet<string>;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const identities = useMachineIdentities();
-  const [period, setPeriod] = useState<SharePeriod>({ kind: "days", days: 7 });
-  const [answers, setAnswers] = useState<ReadonlyMap<string, Answer> | null>(null);
+  const [followReset, setFollowReset] = useState(false);
+  const period = useMemo<SharePeriod>(
+    () =>
+      followReset
+        ? { kind: "reset" }
+        : { kind: "custom", sinceDay: pageRange.sinceDay, untilDay: pageRange.untilDay },
+    [followReset, pageRange.sinceDay, pageRange.untilDay],
+  );
+  const [read, setRead] = useState<{
+    readonly rangeKey: string;
+    readonly answers: ReadonlyMap<string, Answer>;
+  } | null>(null);
   const [histories, setHistories] = useState<ReadonlyArray<ReadonlyArray<UsageLimitHistorySeries>>>(
     [],
   );
@@ -73,6 +91,9 @@ export function UsageMachinesSection({
   );
   const permitted = useEnvironmentsWithScope(requested, AuthDiagnosticsReadScope);
   const range = reportRange(period, now, VIEWER_TIME_ZONE);
+  // Answers only stand for the range they were read for; a new range shows loading until its own arrive.
+  const rangeKey = `${range.sinceDay}|${range.untilDay}`;
+  const answers = read?.rangeKey === rangeKey ? read.answers : null;
   // Only machines that can answer are asked; the key changes when one joins or leaves.
   const askKey = machineIds
     .filter((id) => {
@@ -105,7 +126,10 @@ export function UsageMachinesSection({
         )
           .then((result): readonly [string, Answer] => [
             environmentId,
-            result?._tag === "Success"
+            // Only an answer for exactly this range counts as live.
+            result?._tag === "Success" &&
+            result.value.sinceDay === range.sinceDay &&
+            result.value.untilDay === range.untilDay
               ? { kind: "report", report: result.value }
               : { kind: "failed" },
           ])
@@ -114,7 +138,7 @@ export function UsageMachinesSection({
     ).then((entries) => {
       if (cancelled) return;
       const next = new Map(entries);
-      setAnswers(next);
+      setRead({ rangeKey: `${range.sinceDay}|${range.untilDay}`, answers: next });
       saveMachineReports(
         new Map(
           entries.flatMap(([id, answer]) =>
@@ -165,11 +189,32 @@ export function UsageMachinesSection({
           .filter((provider) => provider.auth.status === "authenticated")
           .map((provider) => usageAccountKey(provider)),
         answer: answer === undefined ? null : answer.kind === "report" ? answer.report : "failed",
-        kept: cache[machineId]?.report ?? null,
+        // A kept report stands in only when it starts by the first shown day and reaches into the
+        // shown days (its tail may be stale: the merge flags reports built before the period ended),
+        // and never while this range is still being read.
+        kept: (() => {
+          const kept = cache[machineId]?.report ?? null;
+          if (kept === null || (answers === null && asked.has(machineId))) return null;
+          if (followReset) return kept;
+          return keptCoversStart(kept, pageRange.sinceDay) ? kept : null;
+        })(),
         summary: summaries.get(machineId) ?? null,
       });
     });
-  }, [machineIds, presentations, identities, answers, permitted, usage, now]);
+  }, [
+    machineIds,
+    presentations,
+    identities,
+    answers,
+    permitted,
+    usage,
+    now,
+    asked,
+    range.untilDay,
+    followReset,
+    pageRange.sinceDay,
+    pageRange.untilDay,
+  ]);
 
   const scopedWindowIds = useMemo(() => {
     const ids = new Set<string>();
@@ -191,7 +236,9 @@ export function UsageMachinesSection({
       identityOf={identities}
       now={now}
       period={period}
-      onPeriodChange={setPeriod}
+      pageRangeLabel={rangeLabel}
+      onFollowResetChange={setFollowReset}
+      drivers={drivers}
       loading={asked.size > 0 && answers === null}
     />
   );

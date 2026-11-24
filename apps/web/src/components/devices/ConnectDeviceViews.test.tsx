@@ -9,9 +9,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  codePlace,
+  codeSteps,
   connectDeviceIdLabel,
   connectDeviceTitle,
+  hasOwnDeviceName,
   laterKey,
+  laterKeys,
   requestsToPrompt,
 } from "../../studio/connectDevices.logic";
 import { DeviceApprovalPrompt, DeviceWaitingList } from "./ConnectDeviceViews";
@@ -419,5 +423,155 @@ describe("a typed code reads in capitals (1416)", () => {
     expect(codeBox().value).toBe("P4R-T9W");
     await allow();
     expect(log).toEqual(["approve request-b"]);
+  });
+});
+
+describe("where the code is (1447)", () => {
+  const where = () => prompt()!.querySelector<HTMLElement>("[data-device-approval-where]")!;
+  const steps = () => [...where().querySelectorAll("li")].map((step) => step.textContent);
+
+  it("sends the owner to the top of the screen on an iPhone app that shows it there", async () => {
+    await open([{ ...first, label: "iPhone Duo", app: "SpecWithCode 0.1.9" }]);
+    expect(where().dataset.deviceApprovalWhere).toBe("phone-top");
+    expect(where().textContent).toContain("Where is the code?");
+    expect(steps()).toEqual([
+      "Open SpecWithCode on iPhone Duo.",
+      "The code for m4 is at the top of the screen, under “Allow this phone”.",
+      "Check that it also shows ID TSKR.",
+    ]);
+  });
+
+  it("never tells an iPhone that reports a new enough version to update", () => {
+    for (const app of [
+      "SpecWithCode 0.1.9",
+      "SpecWithCode 0.1.10",
+      "SpecWithCode 0.2.0",
+      "SpecWithCode 1.0.0",
+    ]) {
+      expect(codePlace({ ...first, app }), app).toBe("phone-top");
+      expect(codeSteps({ ...first, app }, "m4").join(" ")).not.toContain("Update");
+    }
+  });
+
+  it("points an iPhone that reports no version, or an older one, at a chat and at an update", async () => {
+    for (const app of ["SpecWithCode", "SpecWithCode 0.1.8"])
+      expect(codePlace({ ...first, app }), app).toBe("phone-chat");
+    // A browser on an iPhone, and an iPad, get the general steps.
+    for (const app of ["Safari", "Chrome"])
+      expect(codePlace({ ...first, app }), app).toBe("unknown");
+    expect(codePlace({ ...first, deviceType: "tablet", app: "SpecWithCode 0.1.9" })).toBe(
+      "unknown",
+    );
+    const { app: _app, ...noApp } = first;
+    expect(codePlace(noApp)).toBe("phone-chat");
+    await open([first]);
+    expect(steps()).toEqual([
+      "On iPhone, open a chat on m4 in SpecWithCode. The code is there.",
+      "No code there? Update SpecWithCode on iPhone, then open it again.",
+      "Check that it also shows ID TSKR.",
+    ]);
+    // The code box, Deny and Later stay.
+    expect(codeBox()).not.toBeNull();
+    expect(button("Deny")).toBeDefined();
+    expect(button("Later")).toBeDefined();
+  });
+
+  it("names the waiting card for a desktop app and stays general for anything else", () => {
+    const mac = {
+      ...first,
+      deviceType: "desktop",
+      system: "macOS",
+      app: "SpecWithCode 1.0.407",
+      label: "MacBook",
+    };
+    expect(codePlace(mac)).toBe("window");
+    expect(codeSteps(mac, "m4")).toEqual([
+      "Open SpecWithCode on MacBook.",
+      "The code for m4 is on a card in the app, and in Settings > Machines under “Waiting to join”.",
+      "Check that it also shows ID TSKR.",
+    ]);
+    // A name cannot reorder or break a step.
+    expect(codeSteps({ ...mac, label: "Mac\u202e\nBook" }, "m4")[0]).toBe(
+      "Open SpecWithCode on MacBook.",
+    );
+    const { shortId: _shortId, ...unnamed } = first;
+    const android = { ...unnamed, system: "Android", app: "SpecWithCode 0.1.9" };
+    expect(codePlace(android)).toBe("unknown");
+    expect(codeSteps(android, "m4")).toEqual([
+      "Open SpecWithCode on iPhone.",
+      "The code is shown where it lists m4 as waiting for approval.",
+    ]);
+  });
+
+  it("names no device in the steps when the asking device gave no name of its own", () => {
+    const unnamed = { ...first, named: false };
+    const { app: _app, ...noVersion } = unnamed;
+    const cases = [
+      [
+        { ...unnamed, app: "SpecWithCode 0.1.9" },
+        [
+          "Open SpecWithCode on the device that is asking.",
+          "The code for m4 is at the top of the screen, under “Allow this phone”.",
+        ],
+      ],
+      [
+        noVersion,
+        [
+          "On the device that is asking, open a chat on m4 in SpecWithCode. The code is there.",
+          "No code there? Update SpecWithCode on that device, then open it again.",
+        ],
+      ],
+      [
+        { ...unnamed, deviceType: "desktop", system: "macOS", app: "SpecWithCode 1.0.407" },
+        [
+          "Open SpecWithCode on the device that is asking.",
+          "The code for m4 is on a card in the app, and in Settings > Machines under “Waiting to join”.",
+        ],
+      ],
+    ] as const;
+    for (const [request, expected] of cases) {
+      expect(hasOwnDeviceName(request)).toBe(false);
+      const shown = codeSteps(request, "m4");
+      expect(shown).toEqual([...expected, "Check that it also shows ID TSKR."]);
+      for (const step of shown) expect(step).not.toMatch(/on An? /);
+    }
+    // A label every window used to share, and an empty one, are no name either.
+    for (const label of ["SpecWithCode Mobile", "  "])
+      expect(codeSteps({ ...first, label, app: "SpecWithCode 0.1.9" }, "m4")[0]).toBe(
+        "Open SpecWithCode on the device that is asking.",
+      );
+    // A device that gave its own name is still named.
+    expect(hasOwnDeviceName(first)).toBe(true);
+    expect(codeSteps({ ...first, app: "SpecWithCode 0.1.9" }, "m4")[0]).toBe(
+      "Open SpecWithCode on iPhone.",
+    );
+    expect(codeSteps(first, "m4")).toEqual([
+      "On iPhone, open a chat on m4 in SpecWithCode. The code is there.",
+      "No code there? Update SpecWithCode on iPhone, then open it again.",
+      "Check that it also shows ID TSKR.",
+    ]);
+  });
+
+  it("gives one general line when several devices wait", async () => {
+    await open([first, second]);
+    expect(where().dataset.deviceApprovalWhere).toBe("several");
+    expect(steps()).toEqual([]);
+    expect(where().textContent).toContain(
+      "On an iPhone, look at the top of the screen or in a chat on m4.",
+    );
+  });
+});
+
+describe("Later kept by the machine (1447)", () => {
+  it("takes the machine's word alone when it keeps Later, and the window's when it keeps none", () => {
+    const local = new Set([laterKey(first)]);
+    expect(laterKeys(local, undefined)).toBe(local);
+    // The machine keeps Later and lists nothing: the window's old copy hides nothing.
+    expect(requestsToPrompt([first, second], laterKeys(local, []))).toEqual([first, second]);
+    const both = laterKeys(local, ["reference-of-request-a", "reference-of-request-b"]);
+    expect(requestsToPrompt([first, second], both)).toEqual([]);
+    // The machine's list hides by device reference only, never by short ID or request.
+    const twin = phone("request-z", "9229", first.askedAt);
+    expect(requestsToPrompt([twin], both)).toEqual([twin]);
   });
 });

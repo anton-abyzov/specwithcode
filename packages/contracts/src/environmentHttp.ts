@@ -72,6 +72,7 @@ import {
   ConnectDevicesDenyResult,
   ConnectDevicesDone,
   ConnectDevicesEmptyInput,
+  ConnectDevicesLaterInput,
   ConnectDevicesListInput,
   ConnectDevicesRemoveInput,
   ConnectDevicesRemoveResult,
@@ -819,7 +820,7 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("revokeOtherClients", "/api/auth/clients/revoke-others", {
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
-      error: EnvironmentScopedOperationErrors,
+      error: EnvironmentSessionRevokeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
@@ -1616,6 +1617,14 @@ class EnvironmentConnectDevicesHttpApi extends HttpApiGroup.make("connectDevices
       "repair",
       "/api/auth/connect-devices/repair",
       ConnectDevicesEmptyInput,
+      ConnectDevicesDone,
+    ),
+  )
+  .add(
+    connectDevicesEndpoint(
+      "later",
+      "/api/auth/connect-devices/later",
+      ConnectDevicesLaterInput,
       ConnectDevicesDone,
     ),
   ) {}

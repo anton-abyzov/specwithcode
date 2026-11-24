@@ -25,6 +25,8 @@ public struct URLSessionHTTPTransport: HTTPTransport {
   }
 
   public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    var request = request
+    request.setPhoneUserAgent()
     let (data, response) = try await session.data(for: request)
     guard let http = response as? HTTPURLResponse else {
       throw TransportError.invalidResponse("Not an HTTP response")
@@ -255,6 +257,7 @@ public struct MachineHTTP: Sendable {
     guard let url = components.url else { throw TransportError.invalidAddress(base.absoluteString) }
     var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout.timeInterval)
     request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setPhoneUserAgent()
     return request
   }
 

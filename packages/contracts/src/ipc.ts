@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import type { DesktopKeepAwakeReport, DesktopKeepAwakeState } from "./keepAwake.ts";
 import type {
   ComputerUseAction,
   ComputerUseActionResult,
@@ -1250,8 +1251,23 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    * file. Absent on desktop builds predating it.
    */
   startFileDrag?: (path: string) => Promise<boolean>;
-  /** Holds off idle system sleep while `active`; absent on desktop builds predating it. */
-  setKeepAwake?: (state: { active: boolean }) => Promise<void>;
+  /**
+   * Prints a document page (HTML the app built, pictures as data URLs) to PDF
+   * in a hidden window that runs no script, then asks where to save it.
+   * Resolves the saved path, or null when the person cancels. Absent on
+   * desktop builds predating the Word editor.
+   */
+  printDocumentPdf?: (input: {
+    readonly html: string;
+    readonly name: string;
+    readonly pageSize?: "A4" | "Letter";
+  }) => Promise<{ readonly path: string | null }>;
+  /**
+   * Holds off idle system sleep while `active` and the battery choice allows it
+   * (1457). Answers whether it holds and whether the machine is on battery;
+   * builds before 1457 answer nothing. Absent on desktop builds predating it.
+   */
+  setKeepAwake?: (state: DesktopKeepAwakeReport) => Promise<DesktopKeepAwakeState | void>;
   /**
    * Performs one computer-use action on this machine's desktop for an agent.
    * Rejects with a message written for the agent. Absent on desktop builds

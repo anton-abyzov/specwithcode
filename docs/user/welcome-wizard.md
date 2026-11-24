@@ -164,3 +164,10 @@ Everything setup offers is also somewhere else:
 - **Projects:** add or import a project from the sidebar at any time.
 
 Setup does not remind you about anything you skipped.
+
+## Quick guides
+
+After setup, open **Quick guides** on **Overview** for three illustrated cards:
+plan and verify an increment with SpecWeave, open and edit project artifacts, or
+join a machine, sync project files and hand off unfinished work. You can reopen
+the cards at any time.

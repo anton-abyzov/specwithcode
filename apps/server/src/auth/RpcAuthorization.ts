@@ -102,6 +102,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.designExport]: AuthFilesystemReadScope,
   [WS_METHODS.designPreviewDeck]: AuthFilesystemReadScope,
   [WS_METHODS.designPreviewWorkbook]: AuthFilesystemReadScope,
+  [WS_METHODS.designImportWorkbook]: AuthFilesystemReadScope,
+  [WS_METHODS.designSaveWorkbook]: AuthFilesystemWriteScope,
   [WS_METHODS.designPreviewDocument]: AuthFilesystemReadScope,
   [WS_METHODS.designWatch]: AuthFilesystemReadScope,
   [WS_METHODS.projectsKnowledgeSearch]: AuthFilesystemReadScope,
@@ -187,6 +189,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.usageLimitsResets]: AuthOrchestrationReadScope,
   // The same transcripts the usage summary reads, grouped by account (1357).
   [WS_METHODS.usageMachineReport]: AuthDiagnosticsReadScope,
+  // The same costs tied to SpecWeave increments (1456); filesystem:read is also required, below.
+  [WS_METHODS.usageDeliveredReport]: AuthDiagnosticsReadScope,
   // Team usage (0898): what this machine shares with a team, and whether it does.
   [WS_METHODS.teamUsageStatus]: AuthSettingsWriteScope,
   [WS_METHODS.teamUsageUpdate]: AuthSettingsWriteScope,
@@ -345,6 +349,10 @@ const requiredScopesForRpcCall = (
 ): ReadonlyArray<AuthEnvironmentScope> => {
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
+  }
+  // Costs (diagnostics) beside increment titles, tasks and merges, which the increment RPCs keep behind filesystem:read.
+  if (method === WS_METHODS.usageDeliveredReport) {
+    return [AuthDiagnosticsReadScope, AuthFilesystemReadScope];
   }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);

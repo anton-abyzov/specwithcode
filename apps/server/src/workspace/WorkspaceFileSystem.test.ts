@@ -838,9 +838,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const created = yield* fileSystem
             .readFileString(path.join(cwd, "actual", "note.txt"))
             .pipe(Effect.orDie);
-          const rootNote = yield* fileSystem
-            .exists(path.join(cwd, "note.txt"))
-            .pipe(Effect.orDie);
+          const rootNote = yield* fileSystem.exists(path.join(cwd, "note.txt")).pipe(Effect.orDie);
           expect(created).toBe("first\n");
           expect(rootNote).toBe(false);
 
@@ -990,6 +988,64 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("creates a whiteboard in a new folder and refuses a stale whiteboard save", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = ".specweave/artifacts/flow.excalidraw";
+        const initial = '{"type":"excalidraw","version":2,"elements":[],"appState":{},"files":{}}';
+        yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: initial });
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        expect(read.contents).toBe(initial);
+        const edited = initial.replace("[]", '[{"id":"a","type":"rectangle"}]');
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents: edited,
+          expectedRevision: sheetContentRevision(read.contents),
+        });
+        const stale = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath,
+            contents: initial,
+            expectedRevision: sheetContentRevision(read.contents),
+          })
+          .pipe(Effect.flip);
+        expect(String(stale.cause)).toContain("Conflict:");
+        expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toBe(edited);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a whiteboard that a symlinked folder would put outside the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outsideDir = yield* makeTempDir;
+          yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"), { recursive: true });
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, ".specweave", "artifacts"));
+
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/away.excalidraw",
+              contents: '{"type":"excalidraw","version":2,"elements":[]}',
+            })
+            .pipe(Effect.flip);
+
+          expect(String("cause" in refused ? refused.cause : refused)).toContain(
+            "leads outside the project",
+          );
+          expect(yield* fileSystem.exists(path.join(outsideDir, "away.excalidraw"))).toBe(false);
+        }),
+    );
+
     it.effect("saves a sheet with a byte order mark at the revision its editor read", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -999,7 +1055,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const initial = `\uFEFF{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":10}}]}`;
         yield* writeTextFile(cwd, "marked.sheet.json", initial);
 
-        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath: "marked.sheet.json" });
+        const read = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "marked.sheet.json",
+        });
         yield* workspaceFileSystem.writeFile({
           cwd,
           relativePath: "marked.sheet.json",
@@ -1045,7 +1104,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const repaired = `{"v":1,"kind":"sheet","title":"Budget","tabs":[{"name":"Main","cells":{"A1":1}}]}`;
-        for (const relativePath of ["broken.sheet.json", ".specweave/artifacts/broken.sheet.json"]) {
+        for (const relativePath of [
+          "broken.sheet.json",
+          ".specweave/artifacts/broken.sheet.json",
+        ]) {
           yield* writeTextFile(cwd, relativePath, `{"v":1,"kind":`);
           yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: repaired });
           expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toContain('"A1"');

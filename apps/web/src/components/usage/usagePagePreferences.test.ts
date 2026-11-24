@@ -35,6 +35,21 @@ describe("Usage page preferences", () => {
     }
   });
 
+  it("round-trips the Delivered tab with a custom range", () => {
+    const saved = {
+      metric: "delivered",
+      windowDays: 30,
+      customRange: { sinceDay: "2026-11-01", untilDay: "2026-11-15" },
+    } as const;
+    saveUsagePagePreferences(saved);
+    expect(readUsagePagePreferences()).toEqual(saved);
+  });
+
+  it("still reads a save from before custom ranges", () => {
+    values.set(key, '{"metric":"machines","windowDays":7}');
+    expect(readUsagePagePreferences()).toEqual({ metric: "machines", windowDays: 7 });
+  });
+
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',

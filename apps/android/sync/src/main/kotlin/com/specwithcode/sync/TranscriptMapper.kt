@@ -300,8 +300,10 @@ object TranscriptMapper {
 }
 
 /**
- * Human-facing activity titles. The exact provider tool name stays in the detail, including
- * for unknown tools. Success is never inferred from text.
+ * Human-facing activity titles. The tool's name stays in the detail, including for unknown
+ * tools: a SpecWithCode tool by its own name, any other by the exact provider name. A failure's
+ * reason comes first, so a row that is not opened shows the reason. Success is never inferred
+ * from text.
  */
 class ToolPresentation(name: String, output: JsonElement?, itemFailed: Boolean = false) {
     val title: String
@@ -327,11 +329,22 @@ class ToolPresentation(name: String, output: JsonElement?, itemFailed: Boolean =
             failure = if (output is JsonPrimitive && output.isString) output.content else WireJson.encodeToString(JsonElement.serializer(), output)
         }
         failed = itemFailed || failure != null
-        detail = failure?.let { "$it\nTool: $name" } ?: "Tool: $name"
+        val toolLine = TOOL_LINE_PREFIX + disclosedName(name, key)
+        detail = failure?.let { "$it\n$toolLine" } ?: toolLine
     }
 
-    private companion object {
-        val names = mapOf(
+    companion object {
+        const val TOOL_LINE_PREFIX = "Tool: "
+        private val studioServers = listOf("studio-code", "studio_code", "studiocode", "studio")
+
+        /**
+         * `mcp__studio-code__studio_thread_launch` and `studio-code.studio_thread_launch` read
+         * `studio_thread_launch`; another server's tool keeps its full name.
+         */
+        fun disclosedName(name: String, key: String): String =
+            if (studioServers.any { name == "mcp__${it}__$key" || name == "$it.$key" }) key else name
+
+        private val names = mapOf(
             "studio_thread_list" to "Find conversations",
             "studio_thread_read" to "Read conversation",
             "studio_thread_send" to "Send to conversation",

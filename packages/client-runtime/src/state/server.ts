@@ -1177,7 +1177,12 @@ export function createServerEnvironmentAtoms<R, E>(
     usageMachineReport: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:usage:machine-report",
       tag: WS_METHODS.usageMachineReport,
-      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+      // One read per machine and range: a rolled-forward range never joins yesterday's pending read.
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}|${input.sinceDay}|${input.untilDay}|${input.timeZone}`,
+      },
     }),
     /** Closed quota periods per account: what each window had used when it reset. */
     usageResetLedger: createEnvironmentRpcCommand(runtime, {

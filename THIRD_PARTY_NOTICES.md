@@ -37,3 +37,7 @@ With the user's consent, the app downloads these on first use. They are not dist
 - the OpenAI Whisper `small` model in ggml form (MIT License), from `huggingface.co/ggerganov/whisper.cpp`;
 - [Piper](https://github.com/rhasspy/piper) 2023.11.14-2 (MIT License), whose archive includes eSpeak NG (GPL-3.0-or-later) and ONNX Runtime (MIT License);
 - the Piper voice `en_US-lessac-medium`, from `huggingface.co/rhasspy/piper-voices`, under the terms in its model card.
+
+## Whiteboards
+
+The whiteboard editor embeds [Excalidraw](https://github.com/excalidraw/excalidraw) `@excalidraw/excalidraw` 0.18.1 (MIT License, Copyright (c) 2020 Excalidraw), with its bundled fonts served from the app, and the [Radix UI primitives](https://github.com/radix-ui/primitives) it depends on (MIT License, Copyright (c) 2022 WorkOS). Each license text is in its repository's `LICENSE` file; the full list of bundled packages and their notices is in Settings, under open source licenses.

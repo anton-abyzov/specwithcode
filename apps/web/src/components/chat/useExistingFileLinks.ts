@@ -65,9 +65,29 @@ function needsHostCheck(meta: MarkdownFileLinkMeta): boolean {
 const SEARCH_LIMIT = 50;
 
 /**
+ * The one entry a search names for `path`: the entry whose path ends with what
+ * the message wrote. Two or more (`spec.md` sits in every increment), or a
+ * result cut short, names none: opening a same-named file from elsewhere is
+ * worse than saying the file was not found.
+ */
+export function uniqueSearchMatch(
+  entries: ReadonlyArray<{ readonly path: string }>,
+  truncated: boolean,
+  path: string,
+): string | null {
+  const matches = new Set(
+    entries
+      .map((entry) => entry.path)
+      .filter((entryPath) => entryPath === path || entryPath.endsWith(`/${path}`)),
+  );
+  if (matches.size !== 1 || truncated) return null;
+  return [...matches][0]!;
+}
+
+/**
  * A file the message named by a path the candidates do not hold, found by
- * name in the roots it may live under: the match whose path ends with what
- * the message wrote, the shortest first. `CoordinatorConversation.tsx` finds
+ * name in the roots it may live under, only when one file there matches.
+ * `CoordinatorConversation.tsx` finds
  * `apps/web/src/components/studio/CoordinatorConversation.tsx`.
  */
 async function searchOnHost(
@@ -86,10 +106,8 @@ async function searchOnHost(
       { reportFailure: false, reportDefect: false },
     );
     if (result?._tag !== "Success") continue;
-    const match = result.value.entries
-      .filter((entry) => entry.path === search.path || entry.path.endsWith(`/${search.path}`))
-      .toSorted((left, right) => left.path.length - right.path.length)[0];
-    if (match) return `${root}/${match.path}`;
+    const match = uniqueSearchMatch(result.value.entries, result.value.truncated, search.path);
+    if (match !== null) return `${root}/${match}`;
   }
   return null;
 }

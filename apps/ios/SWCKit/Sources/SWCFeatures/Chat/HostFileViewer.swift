@@ -158,6 +158,7 @@ struct HostFileViewer: View {
     // One byte past the limit tells a cut file from one that just fits.
     var request = URLRequest(url: url)
     request.setValue("bytes=0-\(limit)", forHTTPHeaderField: "Range")
+    request.setValue(PhoneAgent.userAgent, forHTTPHeaderField: "User-Agent")
     let (data, response) = try await session.data(for: request)
     guard let http = response as? HTTPURLResponse else { throw HostFileError.missing }
     // An empty file has no byte 0 to send, so a range request for it is unsatisfiable.
@@ -200,6 +201,7 @@ private struct HostFileWebView: UIViewRepresentable {
   func makeUIView(context: Context) -> WKWebView {
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .nonPersistent()
+    configuration.applicationNameForUserAgent = PhoneAgent.productToken
     configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
     configuration.allowsInlineMediaPlayback = true
     let view = WKWebView(frame: .zero, configuration: configuration)

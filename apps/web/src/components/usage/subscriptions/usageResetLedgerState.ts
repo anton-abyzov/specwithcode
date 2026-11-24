@@ -57,6 +57,13 @@ export interface UsageResetLedgerView {
   readonly periods: readonly UsageResetPeriod[];
   /** Accounts each machine is following, closed period or not; may repeat across machines. */
   readonly openAccounts: readonly UsageResetLedgerAccount[];
+  /** Machines whose ledger was read and merged. */
+  readonly counted: readonly EnvironmentId[];
+  /** Machines asked for that added nothing, and why. */
+  readonly skipped: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly reason: "no permission" | "could not read";
+  }[];
 }
 
 interface Ledger {
@@ -99,26 +106,37 @@ export function useUsageResetLedger(
     let cancelled = false;
     const ids = environmentsKey === "" ? [] : (environmentsKey.split("\n") as EnvironmentId[]);
     void Promise.all(
-      ids.map((environmentId): Promise<Ledger> =>
+      ids.map((environmentId): Promise<Ledger | null> =>
         Promise.resolve(read({ environmentId, input: { sinceDays } }))
           .then((result) =>
             result?._tag === "Success"
               ? { periods: result.value.periods, accounts: result.value.openAccounts ?? [] }
-              : NO_LEDGER,
+              : null,
           )
-          .catch(() => NO_LEDGER),
+          .catch(() => null),
       ),
-    ).then((ledgers) => {
+    ).then((answers) => {
       if (cancelled) return;
+      const ledgers = answers.map((ledger) => ledger ?? NO_LEDGER);
+      const asked = new Set(ids);
       setView({
         periods: mergeLedgers(ledgers.map((ledger) => ledger.periods)),
         openAccounts: ledgers.flatMap((ledger) => ledger.accounts),
+        counted: ids.filter((_, index) => answers[index] !== null),
+        skipped: [
+          ...ids.flatMap((environmentId, index) =>
+            answers[index] === null ? [{ environmentId, reason: "could not read" as const }] : [],
+          ),
+          ...requested
+            .filter(({ environmentId }) => !asked.has(environmentId))
+            .map(({ environmentId }) => ({ environmentId, reason: "no permission" as const })),
+        ],
       });
     });
     return () => {
       cancelled = true;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- refreshKey re-reads on refresh.
-  }, [environmentsKey, read, refreshKey, sinceDays]);
+  }, [environmentsKey, read, refreshKey, sinceDays, requested]);
   return view;
 }

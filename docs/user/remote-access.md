@@ -118,6 +118,43 @@ machine only answers requests from its own page opened at an IP address,
 `localhost`, a single-word or `.local` name, a Tailscale name, or an address
 configured as trusted. Revoke a device later under **Settings → Machines**.
 
+### Who can approve a device
+
+Approvals are per machine. A device waiting on a machine shows a six-character
+code, and only these can type it there:
+
+- The SpecWithCode app on that machine.
+- On a machine without the app, a browser signed in with the startup link that
+  machine's service printed.
+- A device that machine already approved. On an approved iPhone, open the
+  machine's page and use **Allow a device**: it lists who is waiting, and you type
+  the code the other device shows. The phone is never sent that code.
+
+Anything started from a command line cannot approve, deny, remove or repair
+devices, even with `access:write`: pairing tokens exchanged for a session,
+`auth session issue`, the local CLI credential, MCP clients and coordinators.
+They can still read the list. This stops an agent with a shell from letting a
+device in through SpecWithCode's commands, but it is not a security boundary
+against a process running as your own OS user, which can read and change this
+machine's secrets, and on a machine without the app can read the service log.
+Run untrusted agents under a separate user or in a sandbox.
+
+**A machine with no desktop app** still has a way in. Once the app has been set
+up on a machine, the startup link stops being an owner there; if you later remove
+the app for good, delete `<userdata>/secrets/desktop-owner-verifier.bin` to bring
+this route back. When no approved device is left:
+
+1. On that machine, run `specwithcode service restart`.
+2. Run `specwithcode service status` to find the service log, and copy the new
+   `Pairing URL` from it.
+3. Within 5 minutes, open that URL in a browser, over Tailscale, your LAN or an
+   SSH tunnel. A phone's browser works.
+
+That browser holds a 30-day owner session and can approve, deny, remove and
+repair devices under **Settings → Machines**. Restarting the service briefly
+interrupts running work. After that, any approved device can do everyday
+approvals.
+
 ### Reach one machine several ways
 
 A machine can have more than one route: LAN, Tailscale, a public URL, SSH, or

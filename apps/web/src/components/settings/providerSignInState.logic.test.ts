@@ -84,4 +84,54 @@ describe("provider sign-in state", () => {
     // An older server sends no flag.
     expect(resolve(provider("unknown"), auth("failed")).retryable).toBe(true);
   });
+
+  it("names a provider's refusal of a signed-in account instead of not signed in", () => {
+    const refusedMessage = "Google accepted the sign-in, but no longer serves Gemini CLI.";
+    expect(
+      resolve(
+        provider("unauthenticated"),
+        auth("failed", {
+          message: refusedMessage,
+          retryable: false,
+          refusal: "personal_account_unsupported",
+        }),
+      ),
+    ).toMatchObject({
+      kind: "refused",
+      signedIn: false,
+      installed: true,
+      retryable: false,
+      refusal: "personal_account_unsupported",
+      failureMessage: refusedMessage,
+    });
+    // The status check alone reports it too, with its own message.
+    expect(
+      resolveProviderSignInState({
+        provider: {
+          installed: true,
+          auth: { status: "unauthenticated", refusal: "personal_account_unsupported" },
+          message: refusedMessage,
+        },
+        auth: auth("idle"),
+        queryError: null,
+      }),
+    ).toMatchObject({ kind: "refused", failureMessage: refusedMessage });
+    // A verified sign-in or a running one wins over an old refusal.
+    expect(
+      resolveProviderSignInState({
+        provider: {
+          installed: true,
+          auth: { status: "authenticated", refusal: "personal_account_unsupported" },
+        },
+        auth: auth("idle"),
+        queryError: null,
+      }).kind,
+    ).toBe("ready");
+    expect(
+      resolve(
+        provider("unauthenticated"),
+        auth("waiting", { refusal: "personal_account_unsupported" }),
+      ).kind,
+    ).toBe("waiting");
+  });
 });

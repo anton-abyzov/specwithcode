@@ -6,9 +6,16 @@ import { ShellFixture } from "./shell";
 const dark = new URLSearchParams(location.search).get("theme") !== "light";
 document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
+const query = new URLSearchParams(location.search);
 localStorage.setItem(
   "studio:usage-page-preferences:v1",
-  JSON.stringify({ metric: "cost", windowDays: 30 }),
+  JSON.stringify({
+    metric: query.get("metric") ?? "cost",
+    windowDays: 30,
+    ...(query.get("since") && query.get("until")
+      ? { customRange: { sinceDay: query.get("since"), untilDay: query.get("until") } }
+      : {}),
+  }),
 );
 const shell = new URLSearchParams(location.search).get("shell");
 if (shell === "before") {

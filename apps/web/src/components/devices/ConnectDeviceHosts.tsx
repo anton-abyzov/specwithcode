@@ -19,6 +19,7 @@ import {
   connectDeviceTitle,
   connectDevices,
   laterKey,
+  laterKeys,
   makeSeenNotices,
   noticeMessage,
   requestsToPrompt,
@@ -55,7 +56,6 @@ const takeFreshNotices = makeSeenNotices(appStorage);
 /** Later, kept across restarts so the pop-up does not come back for a device put off (1416). */
 const laterStore = makeLaterStore(appStorage);
 const NO_LATER: ReadonlySet<string> = new Set();
-
 /** "New device approved on m4 by Anton's MacBook", once per notice on this device. */
 function announceNotices(environmentId: EnvironmentId, notices: ConnectDevicesSnapshot["notices"]) {
   for (const notice of takeFreshNotices(environmentId, notices))
@@ -95,21 +95,24 @@ export function useConnectDevices(
   const error = current(failure);
   const generation = useRef(0);
 
-  const refresh = useCallback(async () => {
-    if (environmentId === null || !enabled) return;
+  /** Reads the list again; answers with it only when this read is the one now shown. */
+  const refresh = useCallback(async (): Promise<ConnectDevicesSnapshot | null> => {
+    if (environmentId === null || !enabled) return null;
     const mine = ++generation.current;
     try {
       const next = await connectDevices.list(environmentId);
-      if (mine !== generation.current) return;
+      if (mine !== generation.current) return null;
       setLoaded({ environmentId, value: next });
       setFailure(null);
       announceNotices(environmentId, next.notices);
+      return next;
     } catch (cause) {
-      if (mine !== generation.current) return;
+      if (mine !== generation.current) return null;
       setFailure({
         environmentId,
         value: cause instanceof Error ? cause.message : txNow("Could not reach this machine."),
       });
+      return null;
     }
   }, [environmentId, enabled]);
 
@@ -158,7 +161,7 @@ const failed = (title: string, cause: unknown) =>
 export function useConnectDevicesActions(
   environmentId: EnvironmentId,
   machine: string,
-  refresh: () => Promise<void>,
+  refresh: () => Promise<unknown>,
   /** Told which device a typed code allowed, so the pop-up can name it (1406). */
   onApproved?: (device: ConnectDevice) => void,
 ): ConnectDevicesListActions {
@@ -243,16 +246,22 @@ export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
   const { snapshot, refresh } = useConnectDevices(environmentId, supported);
-  // What Later put off on this machine, read from storage on each render, so a
-  // restart keeps it and an entry past its 30 days lets the pop-up back.
+  // What Later put off on this machine. A machine that keeps Later is the only
+  // word on it; for one that keeps none, this window's storage is read on each
+  // render, so a restart keeps it and an entry past its 30 days lets the pop-up back.
   const [, setLaterVersion] = useState(0);
-  const later = environmentId === null ? NO_LATER : laterStore.keys(environmentId);
+  const later =
+    environmentId === null ? NO_LATER : laterKeys(laterStore.keys(environmentId), snapshot?.later);
+  // The requests this window closed while their machine is told, by request, so
+  // the pop-up closes at once. Held in memory only, and a request is never
+  // reused: nothing here can hide a request the device makes later.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(NO_LATER);
   // Devices allowed while this pop-up is open, so it can say which one a code let in.
   const [allowed, setAllowed] = useState<ReadonlyArray<ConnectDevice>>([]);
   const requests =
     environmentId === null || snapshot === null || !snapshot.canApprove
       ? []
-      : requestsToPrompt(snapshot.pending, later);
+      : requestsToPrompt(snapshot.pending, later).filter((request) => !closed.has(request.id));
   const open = requests.length > 0;
   // A closed pop-up forgets whom it allowed, so the next one starts clean.
   if (!open && allowed.length > 0) setAllowed([]);
@@ -267,9 +276,20 @@ export function DeviceApprovalPromptHost() {
       onApproved={(device) =>
         setAllowed((current) => [...current.filter((entry) => entry.key !== device.key), device])
       }
+      laterOnMachine={snapshot.later !== undefined}
       onLater={() => {
-        laterStore.add(environmentId, requests.map(laterKey));
-        setLaterVersion((version) => version + 1);
+        const ids = requests.map((request) => request.id);
+        setClosed((current) => new Set([...current, ...ids]));
+        if (snapshot.later === undefined) {
+          // A machine that keeps no Later: this window keeps it across restarts.
+          laterStore.add(environmentId, requests.map(laterKey));
+          setLaterVersion((version) => version + 1);
+          return;
+        }
+        // The machine keeps it, for every window, and ends it when the device is
+        // settled. If it cannot be told, the pop-up stays closed in this window
+        // for this request only.
+        void connectDevices.later(environmentId, ids).then(refresh, () => undefined);
       }}
     />
   );
@@ -281,14 +301,16 @@ function DeviceApprovalPromptForMachine({
   refresh,
   requests,
   allowed,
+  laterOnMachine,
   onApproved,
   onLater,
 }: {
   environmentId: EnvironmentId;
   snapshot: ConnectDevicesSnapshot;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<ConnectDevicesSnapshot | null>;
   requests: ConnectDevicesSnapshot["pending"];
   allowed: ReadonlyArray<ConnectDevice>;
+  laterOnMachine: boolean;
   onApproved: (device: ConnectDevice) => void;
   onLater: () => void;
 }) {
@@ -304,6 +326,7 @@ function DeviceApprovalPromptForMachine({
       hubName={hubName}
       requests={requests}
       allowed={allowed}
+      laterOnMachine={laterOnMachine}
       onApprove={actions.onApprove}
       onDeny={actions.onDeny}
       onLater={onLater}

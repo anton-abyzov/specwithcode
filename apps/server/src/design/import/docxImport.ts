@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   DESIGN_DECK_PREVIEW_IMAGE_BYTES,
+  DOCUMENT_LIMITS,
   type DesignPreviewDocumentResult,
   type DocxPreviewBlock,
   type DocxPreviewRun,
@@ -41,6 +42,28 @@ const IMAGE_MIME_BY_EXT: Readonly<Record<string, { readonly mime: string; readon
 };
 
 const HEX_COLOR_RE = /^[0-9A-Fa-f]{6}$/;
+/** Links an editing read keeps; anything else (javascript:, file:, data:) stays stripped. */
+const SAFE_HREF_RE = /^(https?:\/\/|mailto:)[^\s<>"]{1,2040}$/i;
+const EMU_PER_PIXEL = 9525;
+
+type InlineImage = {
+  readonly asset: string;
+  readonly alt?: string;
+  readonly width?: number;
+  readonly height?: number;
+};
+
+/** Pixel size of a drawing from its `wp:extent`, when it gives one. */
+function drawingSize(drawing: XmlElement): { width?: number; height?: number } {
+  const extent = findDescendants(drawing, "extent")[0];
+  if (!extent) return {};
+  const cx = Number(attrLocal(extent, "cx"));
+  const cy = Number(attrLocal(extent, "cy"));
+  if (!Number.isFinite(cx) || !Number.isFinite(cy) || cx <= 0 || cy <= 0) return {};
+  const width = Math.min(20_000, Math.max(1, Math.round(cx / EMU_PER_PIXEL)));
+  const height = Math.min(20_000, Math.max(1, Math.round(cy / EMU_PER_PIXEL)));
+  return { width, height };
+}
 const MONO_FONT_RE = /(courier|consolas|menlo|monaco|fira\s*code|jetbrains|source\s*code|mono)/i;
 
 function findChild(el: XmlElement | undefined, local: string): XmlElement | undefined {
@@ -82,14 +105,17 @@ interface ParsedStyles {
   readonly headingLevel: ReadonlyMap<string, 1 | 2 | 3 | 4 | 5 | 6>;
   /** The list a paragraph style puts its paragraphs in ("List Bullet"), by style id. */
   readonly listNumId: ReadonlyMap<string, string>;
+  /** Paragraph styles that are a block quote or code, by style id. */
+  readonly blockStyle: ReadonlyMap<string, "quote" | "code">;
 }
 
 function readWordStyles(archive: OoxmlArchive): ParsedStyles {
   const headingLevel = new Map<string, 1 | 2 | 3 | 4 | 5 | 6>();
   const listNumId = new Map<string, string>();
+  const blockStyle = new Map<string, "quote" | "code">();
   const basedOn = new Map<string, string>();
   const root = archive.readXml("word/styles.xml");
-  if (!root) return { headingLevel, listNumId };
+  if (!root) return { headingLevel, listNumId, blockStyle };
 
   for (const style of findChildren(root, "style")) {
     const styleId = attrLocal(style, "styleId");
@@ -100,6 +126,10 @@ function readWordStyles(archive: OoxmlArchive): ParsedStyles {
     const styleNumId = findChild(findChild(pPr, "numPr"), "numId");
     const styleNumVal = styleNumId ? attrLocal(styleNumId, "val") : undefined;
     if (styleNumVal) listNumId.set(styleId, styleNumVal);
+    if (/^(intense\s*)?quote$/i.test(nameVal)) blockStyle.set(styleId, "quote");
+    else if (/^(code(\s*block)?|source\s*code|html\s*preformatted|preformatted\s*text)$/i.test(nameVal)) {
+      blockStyle.set(styleId, "code");
+    }
     const parent = findChild(style, "basedOn");
     const parentId = parent ? attrLocal(parent, "val") : undefined;
     if (parentId) basedOn.set(styleId, parentId);
@@ -128,7 +158,7 @@ function readWordStyles(archive: OoxmlArchive): ParsedStyles {
       if (inherited !== undefined) listNumId.set(styleId, inherited);
     }
   }
-  return { headingLevel, listNumId };
+  return { headingLevel, listNumId, blockStyle };
 }
 
 /** Returns a set of `numId` strings that are ordered (decimal/roman/letter) lists. */
@@ -215,8 +245,9 @@ function parseRunElement(
   runEl: XmlElement,
   anchor: string | undefined,
   imageCollector: ImageCollector,
-  inlineImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  inlineImages: Array<InlineImage>,
   unsupported: Set<string>,
+  href?: string,
 ): DocxPreviewRun | null {
   const rPr = findChild(runEl, "rPr");
   const bold = isOn(findChild(rPr, "b"));
@@ -249,6 +280,7 @@ function parseRunElement(
       }
       const docPr = findDescendants(kid, "docPr")[0];
       const alt = docPr ? attrLocal(docPr, "descr") ?? attrLocal(docPr, "name") : undefined;
+      const size = drawingSize(kid);
       const blips = findDescendants(kid, "blip");
       for (const blip of blips) {
         if (inlineImages.length >= 200) {
@@ -259,16 +291,15 @@ function parseRunElement(
         if (!embedId) continue;
         const asset = imageCollector.addFromRel(embedId);
         if (asset) {
-          inlineImages.push({ asset, ...(alt ? { alt } : {}) });
+          inlineImages.push({ asset, ...(alt ? { alt } : {}), ...size });
         }
       }
     }
   }
 
   if (text.length === 0) return null;
-  const clamped = text.length > MAX_RUN_CHARS ? `${text.slice(0, MAX_RUN_CHARS - 1)}…` : text;
   return {
-    text: clamped,
+    text,
     ...(bold ? { bold: true } : {}),
     ...(italic ? { italic: true } : {}),
     ...(underline ? { underline: true } : {}),
@@ -276,6 +307,7 @@ function parseRunElement(
     ...(code ? { code: true } : {}),
     ...(color ? { color } : {}),
     ...(anchor ? { anchor } : {}),
+    ...(href ? { href } : {}),
   };
 }
 
@@ -309,7 +341,7 @@ function extractNestedTableRuns(
   tblEl: XmlElement,
   rels: ReadonlyMap<string, OoxmlRelationship>,
   imageCollector: ImageCollector,
-  cellImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  cellImages: Array<InlineImage>,
   unsupported: Set<string>,
   depth = 1,
 ): DocxPreviewRun[] {
@@ -349,8 +381,9 @@ function extractParagraphRuns(
   pEl: XmlElement,
   rels: ReadonlyMap<string, OoxmlRelationship>,
   imageCollector: ImageCollector,
-  inlineImages: Array<{ readonly asset: string; readonly alt?: string }>,
+  inlineImages: Array<InlineImage>,
   unsupported: Set<string>,
+  editing = false,
 ): { readonly runs: DocxPreviewRun[]; readonly bookmarks: string[] } {
   const runs: DocxPreviewRun[] = [];
   const bookmarks: string[] = [];
@@ -370,12 +403,27 @@ function extractParagraphRuns(
     } else if (name === "hyperlink") {
       const anchor = attrLocal(kid, "anchor");
       const relId = attrLocal(kid, "id");
+      let href: string | undefined;
       if (!anchor && relId) {
         const rel = rels.get(relId);
-        if (rel?.external) unsupported.add("External links (stripped for safety)");
+        if (rel?.external && editing && SAFE_HREF_RE.test(rel.target)) href = rel.target;
+        else if (rel?.external) unsupported.add("External links (stripped for safety)");
       }
       for (const rKid of findChildren(kid, "r")) {
-        const parsed = parseRunElement(rKid, anchor, imageCollector, inlineImages, unsupported);
+        const parsed = parseRunElement(
+          rKid,
+          anchor,
+          imageCollector,
+          inlineImages,
+          unsupported,
+          href,
+        );
+        if (parsed) runs.push(parsed);
+      }
+    } else if (name === "fldSimple" && editing) {
+      // A simple field's shown text (a date, a page number) stays as text.
+      for (const rKid of findChildren(kid, "r")) {
+        const parsed = parseRunElement(rKid, undefined, imageCollector, inlineImages, unsupported);
         if (parsed) runs.push(parsed);
       }
     } else if (name === "ins" || name === "del") {
@@ -391,7 +439,21 @@ function extractParagraphRuns(
     }
   }
 
-  return { runs, bookmarks };
+  // A run longer than one run may hold goes on as several, so no text is cut.
+  const split = runs.flatMap((run) => {
+    if (run.text.length <= MAX_RUN_CHARS) return [run];
+    const parts: DocxPreviewRun[] = [];
+    for (let at = 0; at < run.text.length; ) {
+      let end = Math.min(run.text.length, at + MAX_RUN_CHARS);
+      // Never between the two halves of one character.
+      const last = run.text.charCodeAt(end - 1);
+      if (end < run.text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+      parts.push({ ...run, text: run.text.slice(at, end) });
+      at = end;
+    }
+    return parts;
+  });
+  return { runs: split, bookmarks };
 }
 
 /**
@@ -435,7 +497,19 @@ function resolveAnchors(
 /**
  * Parses a `.docx` binary into a `DesignPreviewDocumentResult`.
  */
-export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreviewDocumentResult> {
+export async function readDocxDocument(
+  bytes: Uint8Array,
+  options: {
+    /**
+     * Read for the editor: keep safe external links (`href`), list levels and
+     * picture sizes. A preview leaves external links out.
+     */
+    readonly forEditing?: boolean;
+  } = {},
+): Promise<DesignPreviewDocumentResult> {
+  const editing = options.forEditing === true;
+  // The editor holds as many blocks as its model allows; the preview shows fewer.
+  const maxBlocks = editing ? DOCUMENT_LIMITS.blocks : MAX_BLOCKS;
   const archive = await openOoxmlArchive(bytes, DEFAULT_OOXML_LIMITS);
   assertNoMacros(archive);
 
@@ -465,21 +539,34 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
   const shownAs = new Map<string, string>();
   let looseBookmarks: string[] = [];
   let truncated = false;
-  let activeList: { ordered: boolean; items: Array<{ readonly runs: DocxPreviewRun[] }> } | null = null;
+  let activeList: {
+    ordered: boolean;
+    numId: string;
+    items: Array<{ readonly runs: DocxPreviewRun[]; readonly level?: number }>;
+  } | null = null;
 
+  /** Adds a block while the limit allows; past it the rest is reported as cut, never squeezed in. */
+  const push = (block: DocxPreviewBlock) => {
+    if (blocks.length >= maxBlocks) {
+      truncated = true;
+      return;
+    }
+    blocks.push(block);
+  };
   const flushList = () => {
     if (activeList && activeList.items.length > 0) {
-      blocks.push({ type: "list", ordered: activeList.ordered, items: activeList.items });
+      push({ type: "list", ordered: activeList.ordered, items: activeList.items });
     }
     activeList = null;
   };
 
   for (const childEl of unwrapSdtChildren(body.children, unsupported)) {
-    if (blocks.length >= MAX_BLOCKS) {
+    const name = localName(childEl);
+    // Only content past the limit is cut; the section properties after it are not content.
+    if (blocks.length >= maxBlocks && (name === "p" || name === "tbl")) {
       truncated = true;
       break;
     }
-    const name = localName(childEl);
 
     if (name === "bookmarkStart") {
       // A bookmark between paragraphs marks the paragraph after it.
@@ -507,6 +594,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       }
       const numPr = findChild(pPr, "numPr");
       const numIdEl = findChild(numPr, "numId");
+      const ilvlEl = findChild(numPr, "ilvl");
+      const ilvl = ilvlEl ? Number(attrLocal(ilvlEl, "val")) : 0;
+      const listLevel = Number.isInteger(ilvl) && ilvl > 0 && ilvl <= 8 ? ilvl : 0;
       const numId =
         (numIdEl ? attrLocal(numIdEl, "val") : undefined) ??
         (styleId ? styles.listNumId.get(styleId) : undefined);
@@ -521,13 +611,14 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       const pBdr = findChild(pPr, "pBdr");
       const hasBottomRule = pBdr !== undefined && findChild(pBdr, "bottom") !== undefined;
 
-      const inlineImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
+      const inlineImages: Array<InlineImage> = [];
       const { runs, bookmarks } = extractParagraphRuns(
         childEl,
         rels,
         imageCollector,
         inlineImages,
         unsupported,
+        editing,
       );
       const names = [...looseBookmarks, ...bookmarks];
       const listed = numId !== undefined && numId !== "0" && headingLevel === undefined;
@@ -538,38 +629,45 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
         for (const other of names) if (!shownAs.has(other)) shownAs.set(other, bookmarkId);
       }
 
-      if (runs.length === 0 && inlineImages.length === 0) {
+      if (runs.length === 0 && inlineImages.length === 0 && (hasBottomRule || !editing)) {
         if (hasBottomRule) {
           flushList();
-          blocks.push({ type: "divider" });
+          push({ type: "divider" });
         }
         continue;
       }
+      // The editor keeps empty paragraphs and list items: a person typed them.
+      const keep = runs.length > 0 || (editing && inlineImages.length === 0);
 
       if (numId && numId !== "0" && headingLevel === undefined) {
         const ordered = orderedNumIds.has(numId);
-        if (!activeList || activeList.ordered !== ordered) {
+        // Two lists side by side are two lists: each keeps its own numbering when saved.
+        if (!activeList || activeList.ordered !== ordered || (editing && activeList.numId !== numId)) {
           flushList();
-          activeList = { ordered, items: [] };
+          activeList = { ordered, numId, items: [] };
         }
-        if (runs.length > 0) {
-          activeList.items.push({ runs });
+        if (keep) {
+          activeList.items.push({ runs, ...(listLevel > 0 ? { level: listLevel } : {}) });
         }
       } else {
         flushList();
-        if (runs.length > 0) {
+        if (keep) {
           if (headingLevel !== undefined) {
-            blocks.push({
+            push({
               type: "heading",
               level: headingLevel,
               ...(bookmarkId ? { id: bookmarkId } : {}),
+              ...(align ? { align } : {}),
               runs,
             });
           } else {
-            blocks.push({
+            const blockStyle =
+              editing && styleId ? styles.blockStyle.get(styleId) : undefined;
+            push({
               type: "paragraph",
               ...(bookmarkId ? { id: bookmarkId } : {}),
               ...(align ? { align } : {}),
+              ...(blockStyle ? { style: blockStyle } : {}),
               runs,
             });
           }
@@ -577,15 +675,19 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
       }
 
       for (const img of inlineImages) {
-        if (blocks.length >= MAX_BLOCKS) {
+        if (blocks.length >= maxBlocks) {
           truncated = true;
           break;
         }
         flushList();
-        blocks.push({
+        push({
           type: "image",
           asset: img.asset,
           ...(img.alt ? { alt: img.alt } : {}),
+          ...(img.width !== undefined && img.height !== undefined
+            ? { width: img.width, height: img.height }
+            : {}),
+          ...(align ? { align } : {}),
         });
       }
     } else if (name === "tbl") {
@@ -600,7 +702,9 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
           break;
         }
         const trPr = findChild(tr, "trPr");
-        const isHeaderRow = findChild(trPr, "tblHeader") !== undefined || rows.length === 0;
+        // A preview shows the first row as a header; the editor only the rows Word repeats.
+        const isHeaderRow =
+          findChild(trPr, "tblHeader") !== undefined || (!editing && rows.length === 0);
         const cells: Array<{ readonly header?: boolean; readonly runs: DocxPreviewRun[] }> = [];
         for (const tc of unwrapSdtChildren(tr.children, unsupported).filter((el) => localName(el) === "tc")) {
           if (cells.length >= MAX_TABLE_COLS) {
@@ -608,7 +712,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
             break;
           }
           const cellRuns: DocxPreviewRun[] = [];
-          const cellImages: Array<{ readonly asset: string; readonly alt?: string }> = [];
+          const cellImages: Array<InlineImage> = [];
           for (const tcKid of unwrapSdtChildren(tc.children, unsupported)) {
             const tcKidName = localName(tcKid);
             if (tcKidName === "p") {
@@ -618,6 +722,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
                 imageCollector,
                 cellImages,
                 unsupported,
+                editing,
               );
               if (cellRuns.length > 0 && runs.length > 0) {
                 cellRuns.push({ text: "\n" });
@@ -648,7 +753,7 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<DesignPreview
         if (cells.length > 0) rows.push({ cells });
       }
       if (rows.length > 0) {
-        blocks.push({ type: "table", rows });
+        push({ type: "table", rows });
       }
     }
   }

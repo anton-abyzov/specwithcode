@@ -74,6 +74,11 @@ final class AppRouter {
   /// The model the router belongs to, read for the default landing when a
   /// thread opened over it is saved.
   @ObservationIgnored weak var model: AppModel?
+  /// Where the "Allow this phone" block keeps its Hide (1447). In memory
+  /// until the app's live engine swaps in the one on disk.
+  @ObservationIgnored var approvalHides = ApprovalBlockHideStore(defaults: nil)
+  /// `-SWCApprovalBlock hidden|confirm`, applied once the block first shows, for screenshots.
+  @ObservationIgnored var approvalLaunchState: ApprovalLaunchState?
   /// The chat a cold start opens again once the model can back it. Any
   /// navigation, link or launch route before then wins.
   var pendingRestore: LastOpened?
@@ -169,6 +174,9 @@ final class AppRouter {
   var optionDrafts: [ChatTarget: [ModelOption]] = [:]
   /// A model picked in each chat's composer, sent with its next message.
   var modelDrafts: [ChatTarget: ModelSelection] = [:]
+  /// The models picked in each chat lately, newest first, for their names
+  /// and logos once the machine stops listing them.
+  var pickedModels: [ChatTarget: [ModelChoice]] = [:]
   /// A model each chat sent that its thread does not run on yet (a queued
   /// message switches it when its run starts), so later messages keep it.
   var sentModels: [ChatTarget: SentModel] = [:]

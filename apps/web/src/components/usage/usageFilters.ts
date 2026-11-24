@@ -1,6 +1,8 @@
-import type { UsageBucket, UsageProviderKind } from "@specweave-studio/contracts";
+import type { UsageBucket } from "@specweave-studio/contracts";
 import { costCoverage } from "@specweave-studio/shared/usageMerge";
 import { formatUsd } from "@specweave-studio/shared/usageFormat";
+
+import { driverOfUsageKind, keepsDriver } from "./usageScope";
 
 /** A day (`YYYY-MM-DD`) or an hour (UTC start instant) pinned from the chart. */
 export type UsagePinnedPeriod =
@@ -8,34 +10,45 @@ export type UsagePinnedPeriod =
   | { readonly kind: "hour"; readonly hourStart: string };
 
 export interface UsageFilters {
-  /** Empty means every provider. */
-  readonly providers: ReadonlySet<UsageProviderKind>;
+  /** Driver kinds (`claudeAgent`, `codex`, `copilot`, ...); empty means every provider. */
+  readonly drivers: ReadonlySet<string>;
+  /** Project titles; empty means every project. Only Delivered and Machines apply it. */
+  readonly projects: ReadonlySet<string>;
   readonly period: UsagePinnedPeriod | null;
   readonly modelQuery: string;
 }
 
 export const NO_USAGE_FILTERS: UsageFilters = {
-  providers: new Set(),
+  drivers: new Set(),
+  projects: new Set(),
   period: null,
   modelQuery: "",
 };
 
 export function hasUsageFilters(filters: UsageFilters): boolean {
-  return filters.providers.size > 0 || filters.period !== null || filters.modelQuery.trim() !== "";
+  return (
+    filters.drivers.size > 0 ||
+    filters.projects.size > 0 ||
+    filters.period !== null ||
+    filters.modelQuery.trim() !== ""
+  );
 }
 
 /**
- * Narrows the merge to the selected providers and, with `includePeriod`, the
- * pinned period. Undefined when nothing narrows, so the full merge is reused.
+ * Narrows the merge to the selected providers and models and, with
+ * `includePeriod`, the pinned period. Undefined when nothing narrows, so the
+ * full merge is reused.
  */
 export function usageBucketFilter(
   filters: UsageFilters,
   includePeriod: boolean,
 ): ((bucket: UsageBucket) => boolean) | undefined {
   const period = includePeriod ? filters.period : null;
-  if (filters.providers.size === 0 && period === null) return undefined;
+  const query = filters.modelQuery.trim();
+  if (filters.drivers.size === 0 && period === null && query === "") return undefined;
   return (bucket) =>
-    (filters.providers.size === 0 || filters.providers.has(bucket.provider)) &&
+    keepsDriver(filters.drivers, driverOfUsageKind(bucket.provider)) &&
+    (query === "" || matchesModelQuery(bucket.model, query)) &&
     (period === null ||
       (period.kind === "day" ? bucket.day === period.day : bucket.hourStart === period.hourStart));
 }
@@ -44,11 +57,11 @@ export function usageBucketFilter(
  * The first click on a provider isolates it; later clicks add or remove one.
  * Removing the last selected provider, or selecting all of them, shows all.
  */
-export function toggleUsageProvider(
-  selected: ReadonlySet<UsageProviderKind>,
-  provider: UsageProviderKind,
-  available: readonly UsageProviderKind[],
-): ReadonlySet<UsageProviderKind> {
+export function toggleUsageProvider<T extends string>(
+  selected: ReadonlySet<T>,
+  provider: T,
+  available: readonly T[],
+): ReadonlySet<T> {
   const next = new Set(selected);
   if (next.has(provider)) next.delete(provider);
   else next.add(provider);

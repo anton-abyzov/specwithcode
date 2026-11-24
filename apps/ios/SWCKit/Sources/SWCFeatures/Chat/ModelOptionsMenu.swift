@@ -3,48 +3,85 @@ import Weave
 import SWCSync
 import SWCWire
 
-/// The composer's options chip: the thread's model and its options in a line
-/// ("Opus 5.5 · High · Ultracode"), opening the same choices as the desktop's
-/// options menu: the model, its options and access. The model and its options
-/// apply from the next message.
-struct ModelOptionsMenu: View {
+/// The composer's model chip, in two parts inside one capsule. The model's
+/// name opens the model picker; the options beside it ("High · Ultracode")
+/// open the same choices as the desktop's options menu: the model's options
+/// and access. Both apply from the next message.
+///
+/// Equal inputs skip the body: a menu rebuilt while it is open loses its
+/// scroll position, and the chat around this chip redraws as a reply streams.
+struct ModelOptionsMenu: View, Equatable {
   let model: String
+  /// The logo of the provider that serves the model, when it has one.
+  var brand: String?
   let traits: ModelTraits?
   let runtimeMode: RuntimeModeChoice?
-  /// The models the thread can switch to, and the one checked.
-  var models: [ModelChoice] = []
-  var selectedModelId: String?
+  /// Whether the thread has another model to switch to.
+  var canChooseModel = false
   /// A model or options chosen here and not sent yet.
   let hasPendingChanges: Bool
+  /// The unsent change is another model: its dot sits beside the model's name.
+  var hasPendingModel = false
   let onSet: (String, ModelOption.Value) -> Void
-  var onModel: (ModelChoice) -> Void = { _ in }
+  var onChooseModel: () -> Void = {}
   let onAccess: (RuntimeModeChoice) -> Void
 
+  nonisolated static func == (a: ModelOptionsMenu, b: ModelOptionsMenu) -> Bool {
+    a.model == b.model && a.brand == b.brand && a.traits == b.traits && a.runtimeMode == b.runtimeMode
+      && a.canChooseModel == b.canChooseModel && a.hasPendingChanges == b.hasPendingChanges
+      && a.hasPendingModel == b.hasPendingModel
+  }
+
+  private var hasOptions: Bool { traits?.isEmpty == false || runtimeMode != nil }
+  private var summary: String { traits?.summary ?? "" }
+
   var body: some View {
-    Menu {
-      if models.count > 1 {
-        Section {
-          Menu {
-            let groups = ModelChoice.grouped(models)
-            if groups.count == 1, let only = groups.first {
-              modelButtons(only.models)
-            } else {
-              ForEach(groups, id: \.instanceId) { group in
-                Menu {
-                  modelButtons(group.models)
-                } label: {
-                  Text(group.provider)
-                  if let picked = group.models.first(where: { $0.id == selectedModelId }) { Text(picked.name) }
-                }
-              }
-            }
-          } label: {
-            Text("Model")
+    HStack(spacing: 0) {
+      if canChooseModel {
+        Button(action: onChooseModel) {
+          HStack(spacing: WeaveSpacing.s1) {
+            if let brand { ProviderMark(brand, size: 14) }
             Text(model)
+              .lineLimit(1)
+              .truncationMode(.middle)
+            if hasPendingModel || !hasOptions { pendingDot }
+            Image(systemName: "chevron.down")
+              .font(.system(size: 9, weight: .semibold))
           }
-          .accessibilityIdentifier("chat.model-picker")
+          .padding(.leading, WeaveSpacing.s3)
+          .padding(.trailing, hasOptions ? WeaveSpacing.s2 : WeaveSpacing.s3)
+          .frame(minHeight: WeaveSize.minTap)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("Model, \(model)")
+        .accessibilityHint("Shows the models this thread can switch to")
+        .accessibilityIdentifier("chat.model-picker")
+        if hasOptions {
+          Rectangle()
+            .fill(Color.weave.muted.opacity(0.35))
+            .frame(width: WeaveSize.hairline, height: 16)
+            .accessibilityHidden(true)
         }
       }
+      if hasOptions { optionsMenu }
+    }
+    .font(.weave(.caption, weight: .medium))
+    .foregroundStyle(Color.weave.muted)
+    .frame(height: 32)
+    .weaveGlass(in: Capsule(), interactive: true)
+    .frame(minHeight: WeaveSize.minTap)
+  }
+
+  @ViewBuilder private var pendingDot: some View {
+    if hasPendingChanges {
+      Circle().fill(Color.weave.iris).frame(width: 6, height: 6)
+        .accessibilityHidden(true)
+    }
+  }
+
+  private var optionsMenu: some View {
+    Menu {
       if let traits, !traits.isEmpty {
         Section(model) {
           ForEach(traits.controls) { control in
@@ -81,58 +118,40 @@ struct ModelOptionsMenu: View {
           .pickerStyle(.menu)
         }
       }
-      if traits?.isEmpty == false || models.count > 1 {
+      if traits?.isEmpty == false {
         Section {
-          Text(models.count > 1 ? "Model and options apply from your next message." : "Model options apply from your next message.")
+          Text("Model options apply from your next message.")
         }
       }
     } label: {
       HStack(spacing: WeaveSpacing.s1) {
         Image(systemName: "slider.horizontal.3")
           .font(.system(size: 12, weight: .semibold))
-        Text(label)
-          .lineLimit(1)
-          .truncationMode(.middle)
-        if hasPendingChanges {
-          Circle().fill(Color.weave.iris).frame(width: 6, height: 6)
-            .accessibilityHidden(true)
+        if !canChooseModel || !summary.isEmpty {
+          Text(canChooseModel ? summary : label)
+            .lineLimit(1)
+            .truncationMode(canChooseModel ? .tail : .middle)
         }
-        Image(systemName: "chevron.up.chevron.down")
-          .font(.system(size: 9, weight: .semibold))
+        if !(canChooseModel && hasPendingModel) { pendingDot }
+        if !canChooseModel {
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.system(size: 9, weight: .semibold))
+        }
       }
-      .font(.weave(.caption, weight: .medium))
-      .foregroundStyle(Color.weave.muted)
-      .padding(.horizontal, WeaveSpacing.s3)
-      .frame(minHeight: 32)
-      .weaveGlass(in: Capsule(), interactive: true)
-      .contentShape(Capsule())
+      .padding(.leading, canChooseModel ? WeaveSpacing.s2 : WeaveSpacing.s3)
+      .padding(.trailing, WeaveSpacing.s3)
       .frame(minHeight: WeaveSize.minTap)
+      .contentShape(Rectangle())
     }
     .menuIndicator(.hidden)
     .menuOrder(.fixed)
     .buttonStyle(.plain)
     .accessibilityLabel("Model options, \(label)")
-    .accessibilityHint(hasPendingChanges ? "Changes apply from your next message" : "Shows the model, reasoning, Ultracode, fast mode and access")
+    .accessibilityHint(hasPendingChanges ? "Changes apply from your next message" : "Shows reasoning, Ultracode, fast mode and access")
     .accessibilityIdentifier("chat.model-options")
   }
 
-  @ViewBuilder
-  private func modelButtons(_ choices: [ModelChoice]) -> some View {
-    ForEach(choices) { choice in
-      Button {
-        onModel(choice)
-      } label: {
-        if choice.id == selectedModelId {
-          Label(choice.name, systemImage: "checkmark")
-        } else {
-          Text(choice.name)
-        }
-      }
-    }
-  }
-
   private var label: String {
-    let summary = traits?.summary ?? ""
-    return summary.isEmpty ? model : "\(model) · \(summary)"
+    summary.isEmpty ? model : "\(model) · \(summary)"
   }
 }

@@ -50,18 +50,26 @@ export function standInDeviceName(device: Pick<DeviceFacts, "kind" | "deviceType
 }
 
 /**
+ * Whether the device gave itself a name: not an empty label, not the label
+ * every Connect window used to share (1327), not a reserved one.
+ */
+export function hasOwnDeviceName(device: Pick<DeviceFacts, "label" | "named">) {
+  const label = device.label.trim();
+  return (
+    device.named !== false &&
+    label.length > 0 &&
+    !SHARED_LABELS.has(label) &&
+    !isReservedDeviceName(label)
+  );
+}
+
+/**
  * The name the device gave itself, or a translated stand-in ("A Mac"). Never
  * the label every Connect window used to share (1327). A hint for the owner:
  * the typed code is what approves.
  */
 export function connectDeviceName(device: DeviceFacts, tx: TranslatePhrase = englishPhrase) {
-  const label = device.label.trim();
-  const own =
-    device.named !== false &&
-    label.length > 0 &&
-    !SHARED_LABELS.has(label) &&
-    !isReservedDeviceName(label);
-  return own ? label : tx(standInDeviceName(device));
+  return hasOwnDeviceName(device) ? device.label.trim() : tx(standInDeviceName(device));
 }
 
 /** "ID 7K3Q", or nothing for a machine that sends no short ID yet (1406). */
@@ -87,6 +95,119 @@ export function connectDeviceTitle(
   return id ? `${name} · ${id}` : name;
 }
 
+/** The first iPhone app that shows every waiting machine's code at the top of each screen (1447). */
+export const IPHONE_CODE_BLOCK_VERSION = "0.1.9";
+
+const APP_VERSION = /^SpecWithCode (\d+)\.(\d+)\.(\d+)$/;
+
+const versionAtLeast = (app: string | undefined, least: string): boolean => {
+  const have = APP_VERSION.exec(app?.trim() ?? "");
+  if (have === null) return false;
+  const want = least.split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const part = Number(have[index + 1]);
+    if (part !== want[index]) return part > want[index]!;
+  }
+  return true;
+};
+
+/**
+ * Where a waiting device shows its code, from what it says about itself (1447):
+ * `phone-top` an iPhone app new enough to show it on every screen; `phone-chat`
+ * an iPhone app that says no version, which shows it only inside a chat on the
+ * waiting machine, if at all; `window` a desktop app or browser, on its waiting
+ * card; `unknown` anything else. A hint for the owner only: the device's word
+ * picks which help text shows and never approves anything.
+ */
+export type CodePlace = "phone-top" | "phone-chat" | "window" | "unknown";
+
+export function codePlace(
+  device: Pick<ConnectDeviceRequest, "kind" | "deviceType" | "system" | "app">,
+): CodePlace {
+  const deviceType = device.deviceType ?? (device.kind === "phone" ? "mobile" : undefined);
+  const handheld = deviceType === "mobile" || deviceType === "tablet";
+  if (device.system === "iOS" && handheld) {
+    // A browser on an iPhone has no chat to open and no app to update.
+    const app = device.app?.trim() ?? "";
+    if (app !== "" && !/^SpecWithCode\b/.test(app)) return "unknown";
+    // "Allow this phone" is the iPhone's wording; an iPad gets the general steps.
+    if (deviceType === "tablet") return "unknown";
+    return versionAtLeast(app, IPHONE_CODE_BLOCK_VERSION) ? "phone-top" : "phone-chat";
+  }
+  if (handheld) return "unknown";
+  return device.system === "macOS" || device.system === "Windows" || device.system === "Linux"
+    ? "window"
+    : "unknown";
+}
+
+/** Control and text-direction characters, which have no place in a step. */
+const STEP_UNSAFE = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
+/**
+ * The steps that lead the owner to the code on the asking device, in order.
+ * The phone's own labels stay in English: its app shows them in English. A
+ * device that gave no name is "the device that is asking": its stand-in ("An
+ * iPhone") does not read as a name inside a sentence.
+ */
+export function codeSteps(
+  request: Pick<
+    ConnectDeviceRequest,
+    "kind" | "deviceType" | "system" | "app" | "label" | "named" | "shortId"
+  >,
+  machine: string,
+  tx: TranslatePhrase = englishPhrase,
+): ReadonlyArray<string> {
+  // The device chose its own name: keep it from reordering or breaking the steps.
+  const device = hasOwnDeviceName(request) ? request.label.trim().replace(STEP_UNSAFE, "") : "";
+  const named = device.trim() !== "";
+  const open = named
+    ? tx("Open SpecWithCode on {device}.", { device })
+    : tx("Open SpecWithCode on the device that is asking.");
+  const id = request.shortId?.trim();
+  const check = id ? [tx("Check that it also shows ID {id}.", { id })] : [];
+  switch (codePlace(request)) {
+    case "phone-top":
+      return [
+        open,
+        tx("The code for {machine} is at the top of the screen, under “Allow this phone”.", {
+          machine,
+        }),
+        ...check,
+      ];
+    case "phone-chat":
+      return [
+        named
+          ? tx("On {device}, open a chat on {machine} in SpecWithCode. The code is there.", {
+              device,
+              machine,
+            })
+          : tx(
+              "On the device that is asking, open a chat on {machine} in SpecWithCode. The code is there.",
+              { machine },
+            ),
+        named
+          ? tx("No code there? Update SpecWithCode on {device}, then open it again.", { device })
+          : tx("No code there? Update SpecWithCode on that device, then open it again."),
+        ...check,
+      ];
+    case "window":
+      return [
+        open,
+        tx(
+          "The code for {machine} is on a card in the app, and in Settings > Machines under “Waiting to join”.",
+          { machine },
+        ),
+        ...check,
+      ];
+    default:
+      return [
+        open,
+        tx("The code is shown where it lists {machine} as waiting for approval.", { machine }),
+        ...check,
+      ];
+  }
+}
+
 /**
  * What Later remembers a hidden request by: the device, not the request, so the
  * same device asking again after its request ran out stays hidden. Never the
@@ -107,6 +228,20 @@ export function requestsToPrompt(
   later: ReadonlySet<string>,
 ): ReadonlyArray<ConnectDeviceRequest> {
   return pending.filter((request) => !later.has(laterKey(request)));
+}
+
+/**
+ * Every device put off on a machine (1447). A machine that keeps Later (`later`
+ * on its list) is the only word on it: it ends Later when the device is
+ * allowed, denied or removed, which a window's own copy could outlive. A
+ * machine that keeps none leaves the window's own Later as before.
+ */
+export function laterKeys(
+  local: ReadonlySet<string>,
+  machine: ReadonlyArray<string> | undefined,
+): ReadonlySet<string> {
+  if (machine === undefined) return local;
+  return new Set(machine.map((device) => `device:${device}`));
 }
 
 /** "macOS · SpecWithCode 1.0.338 · First seen November 17, 2026": what tells devices apart. */

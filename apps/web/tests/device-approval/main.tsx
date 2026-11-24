@@ -83,6 +83,37 @@ const twoPhones: ReadonlyArray<ConnectDeviceRequest & { readonly code: string }>
   },
 ];
 
+/**
+ * One waiting device for "Where is the code?" (1447): ?app=new is an iPhone app
+ * that shows the code at the top, ?app=old one that shows it in a chat, and
+ * ?app=mac a desktop app.
+ */
+function whereRequest(app: string | null): ConnectDeviceRequest {
+  const asked = {
+    id: "request-where",
+    kind: "connect" as const,
+    named: true,
+    shortId: "BJ96",
+    askedAt: "2026-11-13T23:10:00.000Z",
+    expiresAt: "2026-11-13T23:20:00.000Z",
+  };
+  if (app === "mac")
+    return {
+      ...asked,
+      label: "MacBook",
+      deviceType: "desktop",
+      system: "macOS",
+      app: "SpecWithCode",
+    };
+  return {
+    ...asked,
+    label: "iPhone Duo",
+    deviceType: "mobile",
+    system: "iOS",
+    app: app === "old" ? "SpecWithCode" : "SpecWithCode 0.1.9",
+  };
+}
+
 /** The pop-up over a machine with two phones waiting: a typed code allows the phone that shows it. */
 function TwoPhones({ note }: { note: (line: string) => void }) {
   const [pending, setPending] = useState(twoPhones);
@@ -431,6 +462,25 @@ function Fixture() {
           <div className="fixture-thread">Weekly release notes</div>
         </div>
         <TwoPhones note={note} />
+        {fixtureLog}
+      </div>
+    );
+  if (scene === "where")
+    return (
+      <div className="fixture-shell">
+        <div className="fixture-bar">SpecWithCode · m4</div>
+        <div className="fixture-page">
+          <div className="fixture-thread">Ship the device approval pop-up</div>
+          <div className="fixture-thread">Weekly release notes</div>
+        </div>
+        <DeviceApprovalPrompt
+          machine="m4"
+          requests={[whereRequest(params.get("app"))]}
+          laterOnMachine={params.get("later") === "machine"}
+          onApprove={actions.onApprove}
+          onDeny={actions.onDeny}
+          onLater={() => note("later")}
+        />
         {fixtureLog}
       </div>
     );

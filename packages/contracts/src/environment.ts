@@ -198,6 +198,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   designDeckPreview: Schema.optionalKey(Schema.Boolean),
   /** Accepts `design.previewWorkbook` and `design.previewDocument` (host .xlsx and .docx read-only previews). */
   officeDocumentPreview: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `design.documentOpen`, `documentSave` and `documentBuild` (the Word editor); older servers omit it. */
+  officeDocumentEditing: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `design.saveWorkbook` (write a .xlsx back) and `design.importWorkbook` (read uploaded .xlsx bytes). */
+  officeWorkbookEdit: Schema.optionalKey(Schema.Boolean),
   /** Accepts `designSystem.create`, `apply` and the `designSystem.file*` methods; older servers omit it. */
   designSystemEditing: Schema.optionalKey(Schema.Boolean),
   /** Threads add_comment replies by parentId; older servers omit it and clients hide Reply. */
@@ -214,6 +218,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Answers `usage.machineReport`: recorded usage per subscription account (1357).
       Older servers omit it and are read through their usage summary instead. */
   usageMachineReport: Schema.optionalKey(Schema.Boolean),
+  /** Answers `usage.deliveredReport` (1456). */
+  usageDeliveredReport: Schema.optionalKey(Schema.Boolean),
   /** A new Connect device or linked phone needs one approval on this machine
       (1327). Absent on older servers, which let any signed-in device in. */
   deviceApproval: Schema.optionalKey(Schema.Boolean),
