@@ -411,11 +411,11 @@ export const applyAutoMerge = (
     return { indexWritten, renamed };
   });
 
+const isWorkspaceError = Schema.is(ProjectWorkspaceError);
+
 /** The index changed after the plan read it: plan again from what it is now. */
 const isStaleIndex = (error: PersonalAutoMergeError) =>
-  error.stage === "index" &&
-  error.cause instanceof ProjectWorkspaceError &&
-  error.cause.code === "conflict";
+  error.stage === "index" && isWorkspaceError(error.cause) && error.cause.code === "conflict";
 
 /** Attempts at a plan whose index is still current; a busy index fails the join, which retries. */
 const AUTO_MERGE_ATTEMPTS = 3;
