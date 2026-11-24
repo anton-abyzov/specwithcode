@@ -42,6 +42,9 @@ import { localOnlyMemorySet } from "./memorySecretScan.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 
+/** Where the Percy copies are kept, under the state folder; `percy on` and `undo` name it. */
+export const PERSONAL_LINK_BACKUP_SEGMENTS = ["backups", "personal-link"] as const;
+
 export const PersonalRestorePointReason = Schema.Literals(["before-link", "before-undo"]);
 export type PersonalRestorePointReason = typeof PersonalRestorePointReason.Type;
 
@@ -255,7 +258,7 @@ const make = Effect.gen(function* () {
   const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
   // One capture or restore at a time, so save times only move forward.
   const lock = yield* Semaphore.make(1);
-  const directory = path.join(config.stateDir, "backups", "personal-link");
+  const directory = path.join(config.stateDir, ...PERSONAL_LINK_BACKUP_SEGMENTS);
   const fileOf = (id: string) => path.join(directory, `${id}${FILE_SUFFIX}`);
 
   const summaryOf = (point: PointFile): PersonalRestorePointSummary => ({

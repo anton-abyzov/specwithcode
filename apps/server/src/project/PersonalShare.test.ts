@@ -36,6 +36,7 @@ import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 import { personalLinkIdForAccount } from "./personalLinkId.ts";
 import { PersonalLinkSnapshot } from "./personalLinkSnapshot.ts";
 import * as PersonalLinkService from "./PersonalLinkService.ts";
+import * as PersonalRestorePoint from "./personalRestorePoint.ts";
 import * as PersonalShare from "./PersonalShare.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
@@ -96,6 +97,7 @@ interface HarnessOptions {
   readonly aideEnabled?: boolean;
   readonly shared?: PersonalAssistantShared;
   readonly peerStates?: ReadonlyMap<EnvironmentId, PersonalShare.PersonalSharePeerState>;
+  readonly points?: ReadonlyArray<PersonalRestorePoint.PersonalRestorePointSummary>;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -103,6 +105,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const created: Array<{ readonly name: string; readonly kind: string | undefined }> = [];
   const writes: Array<PersonalAssistantShared> = [];
   const ownership: string[] = [];
+  const points = options.points ?? [];
+  /** Each restore, with whether the seat was still linked and the switch on at that moment. */
+  const restores: Array<{
+    readonly projectId: ProjectId;
+    readonly id: string | undefined;
+    readonly linked: boolean;
+    readonly enabled: boolean;
+  }> = [];
+  const switchNow = () => writes.at(-1) ?? options.shared ?? { enabled: false, machines: [] };
 
   const environmentLayer = Layer.succeed(ServerEnvironment.ServerEnvironment, {
     getEnvironmentId: Effect.succeed(laptop),
@@ -228,18 +239,32 @@ const makeHarness = (options: HarnessOptions = {}) => {
         cloudLayer,
         fleetLayer,
         linkLayer,
-        ...(options.peerStates === undefined
-          ? []
-          : [
-              Layer.succeed(PersonalShare.PersonalSharePeers, {
-                states: Effect.succeed(options.peerStates),
-              }),
-            ]),
+        Layer.succeed(PersonalShare.PersonalSharePeers, {
+          states: Effect.succeed(
+            options.peerStates ?? new Map<EnvironmentId, PersonalShare.PersonalSharePeerState>(),
+          ),
+        }),
+        Layer.succeed(PersonalRestorePoint.PersonalRestorePoint, {
+          capture: () => Effect.die("no capture in these tests"),
+          list: () => Effect.succeed(points),
+          restore: (projectId: ProjectId, id?: string) =>
+            Effect.sync(() => {
+              restores.push({
+                projectId,
+                id,
+                linked:
+                  (store.get(projectId)?.workspaceSettings?.logicalProject?.members.length ?? 0) >
+                  1,
+                enabled: switchNow().enabled,
+              });
+              return {} as never;
+            }),
+        } as unknown as PersonalRestorePoint.PersonalRestorePoint["Service"]),
       ),
     ),
   );
 
-  return { layer, store, created, writes, ownership };
+  return { layer, store, created, writes, ownership, restores };
 };
 
 const storedSwitch = Effect.gen(function* () {
@@ -533,6 +558,94 @@ describe("PersonalShare.setShared off", () => {
 });
 
 describe("PersonalShare.undo", () => {
+  const savedPoints: ReadonlyArray<PersonalRestorePoint.PersonalRestorePointSummary> = [
+    {
+      id: "20261124T110000000Z-undo",
+      savedAt: "2026-11-24T11:00:00.000Z",
+      reason: "before-undo",
+      memoryFileCount: 3,
+      path: "/scratch/backups/personal-link/20261124T110000000Z-undo.percy.json",
+    },
+    {
+      id: "20261124T100000000Z-link",
+      savedAt: "2026-11-24T10:00:00.000Z",
+      reason: "before-link",
+      memoryFileCount: 2,
+      path: "/scratch/backups/personal-link/20261124T100000000Z-link.percy.json",
+    },
+  ];
+
+  it.effect("status lists the saved copies, newest first, without a path", () => {
+    const harness = makeHarness({ projects: [personalProject(percyLaptop)], points: savedPoints });
+    return Effect.gen(function* () {
+      const status = yield* (yield* PersonalShare.PersonalShare).status;
+      assert.deepStrictEqual(status.restorePoints, [
+        {
+          id: "20261124T110000000Z-undo",
+          savedAt: "2026-11-24T11:00:00.000Z",
+          reason: "before-undo",
+          memoryFileCount: 3,
+        },
+        {
+          id: "20261124T100000000Z-link",
+          savedAt: "2026-11-24T10:00:00.000Z",
+          reason: "before-link",
+          memoryFileCount: 2,
+        },
+      ]);
+      assert.notInclude(JSON.stringify(status), "/scratch");
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect(
+    "turns the switch off, leaves the link, then restores the newest before-link copy",
+    () => {
+      const harness = makeHarness({
+        projects: [
+          personalProject(percyLaptop, [
+            {
+              environmentId: laptop,
+              projectId: percyLaptop,
+              coordinatorThreadId: ThreadId.make("t-l"),
+            },
+            {
+              environmentId: desktop,
+              projectId: ProjectId.make("percy-desktop"),
+              coordinatorThreadId: ThreadId.make("t-d"),
+            },
+          ]),
+        ],
+        shared: { enabled: true, machines: [desktop], enabledAt: "2026-11-24T09:00:00.000Z" },
+        points: savedPoints,
+      });
+      return Effect.gen(function* () {
+        const status = yield* (yield* PersonalShare.PersonalShare).undo({});
+        assert.deepStrictEqual(harness.restores, [
+          { projectId: percyLaptop, id: "20261124T100000000Z-link", linked: false, enabled: false },
+        ]);
+        assert.deepStrictEqual(harness.ownership, ["unlink"]);
+        assert.deepStrictEqual(yield* storedSwitch, { enabled: false, machines: [desktop] });
+        assert.strictEqual(status.enabled, false);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect("restores the copy it is given, and refuses one this machine does not have", () => {
+    const harness = makeHarness({ projects: [personalProject(percyLaptop)], points: savedPoints });
+    return Effect.gen(function* () {
+      const share = yield* PersonalShare.PersonalShare;
+      const refused = yield* share.undo({ restorePointId: "elsewhere" }).pipe(Effect.flip);
+      assert.strictEqual(refused.code, "no_restore_point");
+      assert.deepStrictEqual(harness.restores, []);
+      assert.deepStrictEqual(harness.writes, []);
+      yield* share.undo({ restorePointId: "20261124T110000000Z-undo" });
+      assert.deepStrictEqual(
+        harness.restores.map((entry) => entry.id),
+        ["20261124T110000000Z-undo"],
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("refuses in plain words while this machine has no restore point", () => {
     const harness = makeHarness({ projects: [personalProject(percyLaptop)] });
     return Effect.gen(function* () {

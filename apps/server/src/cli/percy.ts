@@ -25,6 +25,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag } from "effect/cli";
@@ -34,6 +35,7 @@ import type { RpcClientError } from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
+import { PERSONAL_LINK_BACKUP_SEGMENTS } from "../project/personalRestorePoint.ts";
 import { type FleetTarget, readFleetConfig } from "../studioFleet.ts";
 import { invokedCliName } from "./cliName.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -270,13 +272,23 @@ const withService = <A>(
   run: (input: {
     readonly url: string;
     readonly baseDir: string;
+    /** Where the running service keeps this machine's copies of its Percy. */
+    readonly copies: string;
   }) => Effect.Effect<A, PercyCommandError>,
 ) =>
   Effect.gen(function* () {
     const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel);
     const url = yield* serviceSocket(config);
-    return yield* run({ url, baseDir: config.baseDir });
+    const path = yield* Path.Path;
+    const copies = path.join(config.stateDir, ...PERSONAL_LINK_BACKUP_SEGMENTS);
+    return yield* run({ url, baseDir: config.baseDir, copies });
   });
+
+/** Where the copies are, in the words `percy on` and `percy undo` print. */
+export const copiesLine = (copies: string, after: "on" | "undo", name = cliName()) =>
+  after === "on"
+    ? `Before this machine first links, it saves a copy of its Percy in ${copies}. \`${name} percy undo\` goes back to it.`
+    : `The copy it went back to, and the state from just before this undo, are in ${copies}.`;
 
 const fleetMachines = (baseDir: string) =>
   Effect.tryPromise({
@@ -330,7 +342,7 @@ const onCommand = Command.make("on", {
     "Use your Percy on this machine. Needs SpecWithCode Connect; makes this machine's assistant when it has none.",
   ),
   Command.withHandler((flags) =>
-    withService(flags, ({ url, baseDir }) =>
+    withService(flags, ({ url, baseDir, copies }) =>
       Effect.gen(function* () {
         const machines =
           flags.with.length === 0
@@ -343,14 +355,15 @@ const onCommand = Command.make("on", {
           ...(flags.start ? { start: true } : {}),
           ...(name === undefined || name === "" ? {} : { name }),
         };
-        return yield* callService(url, (client) =>
+        const status = yield* callService(url, (client) =>
           client[WS_METHODS.personalLinkSetShared](payload),
         );
+        return { status, copies };
       }),
     ).pipe(
-      Effect.flatMap((status) =>
+      Effect.flatMap(({ status, copies }) =>
         Console.log(
-          `${formatPercyStatus(status, { json: false })}\nMachines link by themselves once each one's switch is on and names the other.`,
+          `${formatPercyStatus(status, { json: false })}\nMachines link by themselves once each one's switch is on and names the other.\n${copiesLine(copies, "on")}`,
         ),
       ),
     ),
@@ -387,17 +400,17 @@ const undoCommand = Command.make("undo", {
     "Put this machine's Percy back to a saved copy: memory and settings only, never chats. The current state is saved first.",
   ),
   Command.withHandler((flags) =>
-    withService(flags, ({ url }) => {
+    withService(flags, ({ url, copies }) => {
       const restorePointId = Option.getOrUndefined(flags.restorePoint)?.trim();
       return callService(url, (client) =>
         client[WS_METHODS.personalLinkUndo](
           restorePointId === undefined || restorePointId === "" ? {} : { restorePointId },
         ),
-      );
+      ).pipe(Effect.map((status) => ({ status, copies })));
     }).pipe(
-      Effect.flatMap((status) =>
+      Effect.flatMap(({ status, copies }) =>
         Console.log(
-          `This machine's Percy is back to the saved copy.\n${formatPercyStatus(status, { json: false })}`,
+          `This machine's Percy is back to the saved copy.\n${formatPercyStatus(status, { json: false })}\n${copiesLine(copies, "undo")}`,
         ),
       ),
     ),

@@ -21,6 +21,7 @@ import {
   type PersonalLinkUndoInput,
   type PersonalShareMachine,
   type PersonalShareMachineState,
+  type PersonalShareRestorePoint,
   type PersonalShareStatus,
   type Project,
   type ServerSettings as ServerSettingsValue,
@@ -32,7 +33,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 
 import * as CloudLink from "../cloud/CloudLink.ts";
@@ -43,6 +43,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 import { personalLinkIdForAccount } from "./personalLinkId.ts";
 import * as PersonalLinkService from "./PersonalLinkService.ts";
+import * as PersonalRestorePoint from "./personalRestorePoint.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 /** Said when the switch is turned on on a machine that is not linked to Connect. */
@@ -95,6 +96,9 @@ export class PersonalShare extends Context.Service<
   }
 >()("specweave-studio/project/PersonalShare") {}
 
+const NO_RESTORE_POINT_MESSAGE =
+  "This machine has no saved copy of Percy to go back to. Nothing was changed.";
+
 const refuse = (code: PersonalLinkError["code"], message: string, detail?: string) =>
   new PersonalLinkError({ code, message, ...(detail === undefined ? {} : { detail }) });
 
@@ -120,7 +124,8 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const cloudLink = yield* CloudLink.CloudLink;
   const fleet = yield* FleetTargets.FleetTargets;
-  const peers = yield* Effect.serviceOption(PersonalSharePeers);
+  const peers = yield* PersonalSharePeers;
+  const restorePoints = yield* PersonalRestorePoint.PersonalRestorePoint;
   // One change at a time, so two windows turning the switch never interleave.
   const changes = yield* Semaphore.make(1);
 
@@ -159,6 +164,22 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /** The saved copies of this machine's assistant, newest first; never a path. */
+  const restorePointsOf = (assistant: Project | undefined) =>
+    assistant === undefined
+      ? Effect.succeed([])
+      : restorePoints.list(assistant.id).pipe(
+          Effect.map((points) =>
+            points.map((point): PersonalShareRestorePoint => ({
+              id: point.id,
+              savedAt: point.savedAt,
+              reason: point.reason,
+              memoryFileCount: point.memoryFileCount,
+            })),
+          ),
+          Effect.orElseSucceed((): ReadonlyArray<PersonalShareRestorePoint> => []),
+        );
+
   const status: PersonalShare["Service"]["status"] = Effect.gen(function* () {
     const descriptor = yield* environment.getDescriptor;
     const self = descriptor.environmentId;
@@ -169,9 +190,7 @@ const make = Effect.gen(function* () {
     const identity = assistant?.workspaceSettings?.logicalProject;
     const linked = identity !== undefined && identity.members.length > 1;
     const members = linked ? identity.members : [];
-    const peerStates = Option.isSome(peers)
-      ? yield* peers.value.states
-      : new Map<EnvironmentId, PersonalSharePeerState>();
+    const peerStates = yield* peers.states;
     const label = yield* labelOf(current);
     const joined = new Set(members.map((member) => member.environmentId));
     const listed = confirmedMachines([...shared.machines, ...joined, ...peerStates.keys()], self);
@@ -199,8 +218,7 @@ const make = Effect.gen(function* () {
       routineOwner: assistant?.workspaceSettings?.coordinatorBinding?.routineOwner ?? true,
       start: shared.start ?? false,
       machines,
-      // Filled from the restore points of personalRestorePoint.ts (T-15) once T-14 wires them.
-      restorePoints: [],
+      restorePoints: yield* restorePointsOf(assistant),
       refusal:
         cloudUserId === null ? "not_connected" : current.aideEnabled ? null : "assistant_off",
     };
@@ -295,14 +313,52 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const undo: PersonalShare["Service"]["undo"] = () =>
-    // T-14 wires the restore here: personalRestorePoint.ts (T-15) saves the current
-    // state, puts the chosen point back, then the switch goes off and the seat leaves.
-    Effect.fail(
-      refuse(
-        "no_restore_point",
-        "This machine has no saved copy of Percy to go back to. Nothing was changed.",
-      ),
+  /**
+   * Puts this machine's Percy back to a saved copy (D-16): the newest one
+   * saved before a link, or the one named. The switch goes off first, so
+   * nothing links this seat again, then the seat leaves the link, then the
+   * copy is restored; the state just before is saved as a "before-undo" point.
+   */
+  const undo: PersonalShare["Service"]["undo"] = (input) =>
+    changes.withPermits(1)(
+      Effect.gen(function* () {
+        const assistant = yield* readAssistant;
+        const points =
+          assistant === undefined
+            ? []
+            : yield* restorePoints
+                .list(assistant.id)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    refuse("storage_failed", cause.message, cause.message.slice(0, 500)),
+                  ),
+                );
+        const chosen =
+          input.restorePointId === undefined
+            ? points.find((point) => point.reason === "before-link")
+            : points.find((point) => point.id === input.restorePointId);
+        if (assistant === undefined || chosen === undefined)
+          return yield* refuse(
+            "no_restore_point",
+            input.restorePointId === undefined
+              ? NO_RESTORE_POINT_MESSAGE
+              : "That saved copy of Percy is not on this machine. Nothing was changed.",
+          );
+        const current = yield* readSettings;
+        const { enabledAt: _on, ...stored } = current.personalAssistantShared;
+        yield* store(current.personalAssistantShared, { ...stored, enabled: false });
+        yield* leaveLink;
+        yield* restorePoints
+          .restore(assistant.id, chosen.id)
+          .pipe(
+            Effect.mapError((cause) =>
+              cause._tag === "PersonalRestorePointMissingError"
+                ? refuse("no_restore_point", cause.message)
+                : refuse("storage_failed", cause.message),
+            ),
+          );
+        return yield* status;
+      }),
     );
 
   return PersonalShare.of({ status, setShared, undo });

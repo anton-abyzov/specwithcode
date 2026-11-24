@@ -345,7 +345,12 @@ const startService = (baseDir: string, answers: Answers = {}) =>
       // and the test clock would record 1970.
       state: { ...state, startedAt: DateTime.formatIso(DateTime.nowUnsafe()) },
     });
-    return { seen, stop: Scope.close(scope, Exit.void) };
+    return {
+      seen,
+      stop: Scope.close(scope, Exit.void),
+      // Where the service of this home keeps the Percy copies.
+      copies: NodePath.join(config.stateDir, "backups", "personal-link"),
+    };
   });
 
 const temporaryHome = () =>
@@ -396,6 +401,10 @@ describe("specwithcode percy", () => {
         assert.include(printed, "Link: ...76543210");
         assert.include(printed, `- Desktop (${desktop}): joined.`);
         assert.include(printed, "Machines link by themselves");
+        assert.include(
+          printed,
+          `Before this machine first links, it saves a copy of its Percy in ${service.copies}.`,
+        );
 
         // Without --with the confirmed machines are left as they are.
         yield* runCli(["percy", "on", "--base-dir", baseDir]);
@@ -489,6 +498,10 @@ describe("specwithcode percy", () => {
 
         yield* runCli(["percy", "undo", "--base-dir", baseDir]);
         assert.deepStrictEqual(service.seen.undo, [{}]);
+        assert.include(
+          (yield* TestConsole.logLines).join("\n"),
+          `The copy it went back to, and the state from just before this undo, are in ${service.copies}.`,
+        );
         yield* service.stop;
       }).pipe(Effect.provide(layerCliRuntime)),
     60_000,
