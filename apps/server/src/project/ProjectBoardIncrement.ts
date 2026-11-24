@@ -49,11 +49,10 @@ const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
 /** The review records incrementReview.ts opens without a root bound of its own. */
 const REVIEW_FILE = /^review(-[A-Za-z0-9._-]+)?\.md$/u;
 /**
- * Subfolders of `reports/` read (one level), beyond `reviews/`: as many as a
- * remote copy can hold files, so none is dropped before ranking; the 30-file
- * limit applies after it. Read a few at a time.
+ * Subfolders of `reports/` (one level, beyond `reviews/`) are all read, a few
+ * at a time, so no report is dropped before ranking; the 30-file limit applies
+ * after it.
  */
-const REPORT_SUBFOLDERS = 400;
 const REPORT_FOLDER_READS = 16;
 
 function inside(root: string, candidate: string): boolean {
@@ -163,9 +162,9 @@ async function reportTree(
     entries
       .filter((entry) => entry.file && !entry.name.startsWith("."))
       .map((entry) => ({ relative: `${prefix}${entry.name}`, mtimeMs: entry.mtimeMs }));
-  const folders = top
-    .filter((entry) => entry.dir && !entry.name.startsWith(".") && entry.name !== "reviews")
-    .slice(0, REPORT_SUBFOLDERS);
+  const folders = top.filter(
+    (entry) => entry.dir && !entry.name.startsWith(".") && entry.name !== "reviews",
+  );
   // A linked `reviews/` still counts for the review reader, but its files are
   // not listed: only real folders are.
   const realReviews = top.some((entry) => entry.name === "reviews" && entry.dir);

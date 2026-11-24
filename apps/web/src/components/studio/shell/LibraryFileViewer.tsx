@@ -86,11 +86,13 @@ export function libraryAssetResource(
   const absolute = path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
   if (kind !== "html") return exact;
   if (!absolute) return exact;
-  // Compared with forward slashes, and without case on a Windows drive path.
+  // Compared with forward slashes, and without ASCII case on a Windows drive
+  // path. Only A-Z is folded so every offset found in the folded string is
+  // the same offset in the original (full lowercasing can change length: "İ").
   const windows = /^[A-Za-z]:/.test(path) || path.startsWith("\\\\");
   const comparable = (value: string) => {
     const slashed = value.replaceAll("\\", "/");
-    return windows ? slashed.toLowerCase() : slashed;
+    return windows ? slashed.replace(/[A-Z]/g, (letter) => letter.toLowerCase()) : slashed;
   };
   const target = comparable(path);
   const root = comparable(workspaceRoot).replace(/\/+$/, "");

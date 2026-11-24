@@ -229,6 +229,26 @@ it("roots a Board copy's page at the copy, and a Windows page at its workspace",
     cwd: "C:\\Work\\App",
     path: "docs/r.html",
   });
+  // A non-ASCII capital that lowercases to a longer string ("İ") must not
+  // shift the cut: offsets come from the original path.
+  expect(
+    libraryAssetResource("C:\\Users\\İpek\\App", "c:\\users\\İpek\\app\\docs\\r.html", "html"),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Users\\İpek\\App",
+    path: "docs/r.html",
+  });
+  expect(
+    libraryAssetResource(
+      "C:\\Work",
+      "C:\\Users\\İpek\\copy\\.specweave\\increments\\1-a\\reports\\r.html",
+      "html",
+    ),
+  ).toEqual({
+    _tag: "draft-workspace-file",
+    cwd: "C:\\Users\\İpek\\copy",
+    path: ".specweave/increments/1-a/reports/r.html",
+  });
   // A video stays on the exact-file path the server serves.
   expect(libraryAssetResource(ROOT, `${ROOT}/clip.mp4`, "video").path).toBe(`${ROOT}/clip.mp4`);
 });

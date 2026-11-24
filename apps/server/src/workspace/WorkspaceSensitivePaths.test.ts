@@ -275,6 +275,26 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         NodeFS.mkdirSync(NodePath.dirname(sibling), { recursive: true });
         NodeFS.linkSync(draft, sibling);
         yield* expectRefused(sibling);
+        // And under a custom base that is not named .specwithcode: its own
+        // spec opens, a hard link planted beside it does not.
+        const customCopy = NodePath.join(
+          homeDir,
+          "apps",
+          "sw-custom",
+          "userdata",
+          "board-copies",
+          "h",
+          "c",
+          ".specweave",
+          "increments",
+          "1-a",
+        );
+        const customSpec = write(NodePath.join(customCopy, "spec.md"), "# Custom\n");
+        expect((yield* read(customSpec)).contents).toBe("# Custom\n");
+        const customLinked = NodePath.join(customCopy, "reports", "draft.md");
+        NodeFS.mkdirSync(NodePath.dirname(customLinked), { recursive: true });
+        NodeFS.linkSync(draft, customLinked);
+        yield* expectRefused(customLinked);
       }),
     );
 

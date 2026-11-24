@@ -544,8 +544,8 @@ describe("readProjectBoardIncrement", () => {
     const root = await project();
     const folder = await increment(root, "0017-many-folders");
     const reports = NodePath.join(folder, "reports");
-    for (let index = 0; index < 70; index += 1) {
-      await NodeFSP.mkdir(NodePath.join(reports, `a-${String(index).padStart(2, "0")}`), {
+    for (let index = 0; index < 420; index += 1) {
+      await NodeFSP.mkdir(NodePath.join(reports, `a-${String(index).padStart(3, "0")}`), {
         recursive: true,
       });
     }

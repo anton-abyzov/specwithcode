@@ -228,8 +228,11 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
     : null;
   const sections = viewThreadSections(threads, allThreads);
   const summary = problemSummary(detail?.problem ?? null);
-  const specPath = card?.specPath ?? null;
-  const source = card?.source ?? null;
+  // The spec and its copy come from the detail when it has landed: it was read
+  // with the report list, so a report's provenance never uses an older card.
+  const copyCard = detail?.card ?? card;
+  const specPath = copyCard?.specPath ?? null;
+  const source = copyCard?.source ?? null;
   const sourceLine =
     source === null
       ? null
@@ -246,7 +249,7 @@ export function BoardIncrementView(props: BoardIncrementViewProps) {
     const comparable = (value: string) => {
       const slashed = value.replaceAll("\\", "/");
       return /^[A-Za-z]:/.test(slashed) || slashed.startsWith("//")
-        ? slashed.toLowerCase()
+        ? slashed.replace(/[A-Z]/g, (letter) => letter.toLowerCase())
         : slashed;
     };
     const folder = comparable(specPath).replace(/\/spec\.md$/u, "/");

@@ -860,6 +860,20 @@ describe("BoardIncrementView", () => {
       );
     });
 
+    it("names a report's copy from the detail, not an older Board card", async () => {
+      const stale = makeCard({ source: { kind: "worktree", name: "old-copy" } });
+      const copySpec = "/copies/new/.specweave/increments/0042-login/spec.md";
+      const fresh = makeCard({
+        specPath: copySpec,
+        source: { kind: "worktree", name: "new-copy" },
+      });
+      const report = "/copies/new/.specweave/increments/0042-login/reports/parity.md";
+      runtime.reply = detail(fresh, { reports: [{ path: report, name: "parity.md" }] });
+      await render({ card: stale });
+      await click(byText("Reports"));
+      expect(wheres[0]!(report)).toBe("From worktree new-copy");
+    });
+
     it("offers to plan an increment that has no spec", async () => {
       const card = makeCard({ specPath: null, tasks: { total: 0, done: 0 } });
       runtime.reply = detail(card, { problem: null });

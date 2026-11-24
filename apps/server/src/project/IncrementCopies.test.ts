@@ -337,6 +337,28 @@ describe("the newest copy of an increment", () => {
     );
   });
 
+  it("stops listing a worktree's reviews once its reviews/ becomes a link", async () => {
+    const id = "0001-relinked-lane";
+    const root = await repository("board-copies-project-", roots);
+    const first = commitAll(root, "first");
+    const lane = await worktree(root, "relink-lane", first, roots);
+    const folder = await writeIncrement(lane, id, { title: "Relinked", tasks: 1 });
+    const reports = NodePath.join(folder, "reports");
+    await NodeFSP.mkdir(NodePath.join(reports, "reviews"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(reports, "parity.md"), "# Parity");
+    await NodeFSP.writeFile(NodePath.join(reports, "reviews", "review-a.md"), "Verdict: ship");
+    const read = async () => {
+      const view = await readProjectBoardIncrement(root, { incrementId: id, now: NOW });
+      if (view === null || view === "invalid") throw new Error("expected an increment");
+      expect(view.card.source).toEqual({ kind: "worktree", name: "relink-lane" });
+      return view.reports.map((report) => report.name);
+    };
+    expect(await read()).toEqual(["parity.md", "reviews/review-a.md"]);
+    await NodeFSP.rename(NodePath.join(reports, "reviews"), NodePath.join(folder, "kept"));
+    await NodeFSP.symlink(NodePath.join(folder, "kept"), NodePath.join(reports, "reviews"));
+    expect(await read()).toEqual(["parity.md"]);
+  });
+
   it("writes nothing in the project folder or a worktree, and ignores inherited Git variables", async () => {
     const { root, first, cacheDir } = await behindProject(async (at) => {
       await writeIncrement(at, "0002-remote", { tasks: 1, ledger: [] });
