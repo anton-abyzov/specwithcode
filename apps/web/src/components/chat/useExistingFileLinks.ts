@@ -168,29 +168,17 @@ async function searchOnHost(
 }
 
 /**
- * What each machine said about a link, so a message that mounts again (a
- * scroll, a thread switch) shows its confirmed chips at once instead of
- * code first. The host is still asked again on every mount, so a file made
- * or deleted since shows as it is now.
+ * A link as asked of one machine. Answers are kept by it, never by the span,
+ * so a span that now resolves elsewhere never shows the old answer. Nothing
+ * outlives the message: each mount asks the host again, and a bare name stays
+ * code until the host answers, so a deleted file never shows a chip.
  */
-const SETTLED_CACHE_LIMIT = 2000;
-const settledCache = new Map<string, Settled>();
-
 function settledCacheKey(environmentId: EnvironmentId, meta: MarkdownFileLinkMeta): string {
   return `${environmentId}\u0000${JSON.stringify(meta)}`;
 }
 
-function rememberSettled(key: string, settled: Settled): void {
-  settledCache.delete(key);
-  settledCache.set(key, settled);
-  if (settledCache.size > SETTLED_CACHE_LIMIT) {
-    settledCache.delete(settledCache.keys().next().value!);
-  }
-}
-
 /** For tests: forget what the hosts said. */
 export function clearSettledFileLinkCache(): void {
-  settledCache.clear();
   inFlightReads.clear();
 }
 
@@ -213,13 +201,13 @@ export function useExistingFileLinks<Key>(
     () => [...metaByKey].filter(([, meta]) => needsHostCheck(meta)),
     [metaByKey],
   );
-  // This machine's answers, or what it said before until it answers again.
+  // This machine's answers for the links the message names now.
   const found = useMemo(() => {
     const known = new Map<Key, Settled>();
     if (environmentId === null) return known;
     for (const [key, meta] of unsettled) {
       const cacheKey = settledCacheKey(environmentId, meta);
-      const settled = answered.get(cacheKey) ?? settledCache.get(cacheKey);
+      const settled = answered.get(cacheKey);
       if (settled) known.set(key, settled);
     }
     return known;
@@ -248,7 +236,6 @@ export function useExistingFileLinks<Key>(
       const settle = (_key: Key, meta: MarkdownFileLinkMeta, settled: Settled) => {
         const cacheKey = settledCacheKey(environmentId, meta);
         next.set(cacheKey, settled);
-        rememberSettled(cacheKey, settled);
       };
       for (const [key, meta] of unsettled) {
         if (meta.expansions || meta.glob) {

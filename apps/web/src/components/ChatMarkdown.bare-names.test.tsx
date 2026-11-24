@@ -230,21 +230,21 @@ it("asks the thread's own machine", async () => {
   expect(state.environments).not.toContain("bare-environment");
 });
 
-it("shows a confirmed name at once on the next mount and checks a missing one again", async () => {
+it("waits for the machine on every mount, and links a file made since", async () => {
   await render("See `README.md` and `llms.txt`.");
   await act(async () => renderer?.unmount());
-  state.listEntries.mockReset();
-  later();
+  state.existing.delete(`${CWD}/README.md`);
   state.existing.add(`${CWD}/llms.txt`);
-  // The first render, before the machine answers again.
+  later();
+  // The first render, before the machine answers: nothing links yet.
   act(() => {
     renderer = create(
       <ChatMarkdown cwd={CWD} threadRef={threadRef} text="See `README.md` and `llms.txt`." />,
     );
   });
-  expect(linkNamed("README.md")).toBeDefined();
-  expect(linkNamed("llms.txt")).toBeUndefined();
+  expect(links()).toHaveLength(0);
   await act(async () => {});
+  expect(linkNamed("README.md")).toBeUndefined();
   expect(linkNamed("llms.txt")?.props.href).toBe(`${CWD}/llms.txt`);
 });
 
