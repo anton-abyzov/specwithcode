@@ -61,6 +61,8 @@ export type SyncFailureKind =
   | "unreadable"
   /** The window may no longer sync this pair: the line is the menu's own reason. */
   | "blocked"
+  /** No answer within the window's backstop: its calls were stopped. */
+  | "no-answer"
   | "failed";
 
 export interface SyncFailure {
@@ -98,6 +100,25 @@ export const isUnknownSyncCall = (cause: unknown): boolean => {
 };
 
 /** Why one machine could not take part, in the order the causes are told apart. */
+/**
+ * How long the window waits for one machine's check (1469 D-02). A machine that has not
+ * answered by then is said as not answering, and the calls made to it are stopped.
+ */
+export const SYNC_CHECK_BACKSTOP_MS = 3 * 60_000;
+/** A machine still fetching after this long shows how long it has taken. */
+export const SYNC_CHECK_SLOW_MS = 10_000;
+
+/** A machine that did not answer the check within the backstop. */
+export function syncNoAnswer(machine: string): SyncFailure {
+  return {
+    kind: "no-answer",
+    line: {
+      text: "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.",
+      values: { machine, minutes: String(SYNC_CHECK_BACKSTOP_MS / 60_000) },
+    },
+  };
+}
+
 export function syncFailure(cause: unknown, machine: string): SyncFailure {
   if (isUnknownSyncCall(cause))
     return {

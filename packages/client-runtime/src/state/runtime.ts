@@ -108,6 +108,12 @@ export type AtomCommandFailure<R> = R extends AtomCommandResult<infer _A, infer 
 
 export interface AtomCommandOptions {
   readonly label?: string;
+  /**
+   * Aborting stops the call: its effect is interrupted, so an RPC tells its server to stop.
+   * Only a command that runs each call on its own (`parallel`, the default) is stopped; in a
+   * shared lane the call is another caller's too, and aborting does nothing.
+   */
+  readonly signal?: AbortSignal;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
 }
@@ -119,7 +125,11 @@ export interface AtomCommandReporter {
 
 export interface AtomCommand<W, A, E> {
   readonly label: string;
-  readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
+  readonly run: (
+    registry: AtomRegistry.AtomRegistry,
+    input: W,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<AtomCommandResult<A, E>>;
 }
 
 export type AtomCommandConcurrency<W> =
@@ -320,7 +330,9 @@ export async function runAtomCommand<W, A, E>(
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
-  const result = await settleAtomCommandResult(() => command.run(registry, input));
+  const result = await settleAtomCommandResult(() =>
+    command.run(registry, input, options.signal ? { signal: options.signal } : undefined),
+  );
   reportAtomCommandResult(result, { ...options, label: options.label ?? command.label }, reporter);
   return result;
 }
@@ -419,15 +431,22 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
   return {
     label: options.label,
-    run: (registry, input) =>
-      settleAtomCommandResult(() =>
+    run: (registry, input, call) => {
+      // A shared lane's call belongs to every caller in it: one of them cannot stop it.
+      const signal = concurrency.mode === "parallel" ? call?.signal : undefined;
+      return settleAtomCommandResult(() =>
         scheduler.schedule(registry, concurrency, input, () => {
           const atom = runtime
             .atom(options.execute(input, registry))
             .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          return executeAtomQuery(registry, atom, {
+            reportDefect: false,
+            reportFailure: false,
+            ...(signal ? { signal } : {}),
+          });
         }),
-      ),
+      );
+    },
   };
 }
 

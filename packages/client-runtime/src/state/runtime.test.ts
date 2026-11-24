@@ -1081,6 +1081,58 @@ describe("runtime command runner", () => {
     registry.dispose();
   });
 
+  it("interrupts the command's own effect when its caller aborts (1469)", async () => {
+    const started = Latch.makeUnsafe();
+    const stopped = Latch.makeUnsafe();
+    const runtime = Atom.runtime(Layer.empty);
+    const command = createRuntimeCommand(runtime, {
+      label: "test.abortable",
+      execute: () =>
+        started.open.pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => stopped.open),
+        ),
+    });
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+
+    const result = runAtomCommand(
+      registry,
+      command,
+      undefined,
+      { reportFailure: false, signal: controller.signal },
+      { warn: vi.fn(), error: vi.fn() },
+    );
+    await Effect.runPromise(started.await);
+    controller.abort();
+
+    const settled = await result;
+    expect(settled._tag).toBe("Failure");
+    if (settled._tag === "Failure") expect(Cause.hasInterruptsOnly(settled.cause)).toBe(true);
+    // The effect itself was stopped, not only the wait for it: an RPC sends its interrupt.
+    await Effect.runPromise(stopped.await);
+    registry.dispose();
+  });
+
+  it("leaves a shared lane's call running when one caller aborts", async () => {
+    const release = Latch.makeUnsafe();
+    const runtime = Atom.runtime(Layer.empty);
+    const command = createRuntimeCommand(runtime, {
+      label: "test.shared",
+      concurrency: { mode: "singleFlight", key: () => "one" },
+      execute: () => release.await.pipe(Effect.as("done")),
+    });
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+    const first = command.run(registry, undefined, { signal: controller.signal });
+    const second = command.run(registry, undefined);
+    controller.abort();
+    release.openUnsafe();
+    expect(await first).toMatchObject({ _tag: "Success", value: "done" });
+    expect(await second).toMatchObject({ _tag: "Success", value: "done" });
+    registry.dispose();
+  });
+
   it("correlates parallel invocation results", async () => {
     const firstLatch = Latch.makeUnsafe();
     const secondLatch = Latch.makeUnsafe();

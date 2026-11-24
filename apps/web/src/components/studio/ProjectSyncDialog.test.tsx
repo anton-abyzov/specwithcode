@@ -1088,3 +1088,136 @@ it("lists extras that could not be read, or branches it could not judge, and nev
   await click("[data-sync-run]");
   expect(document.querySelector("h2")?.textContent).not.toContain("in sync");
 });
+
+/**
+ * A fetch that answers only when the test says so, and records the signal it was given
+ * (1469). An aborted call answers as an interrupted one would.
+ */
+function heldFetch(api: ProjectSyncApi) {
+  const signals = new Map<string, AbortSignal>();
+  const answers = new Map<string, () => void>();
+  api.fetch = vi.fn<ProjectSyncApi["fetch"]>(
+    (on, signal) =>
+      new Promise((resolve) => {
+        signals.set(on.label, signal!);
+        signal?.addEventListener("abort", () => resolve({ ok: false, cause: "interrupted" }));
+        answers.set(on.label, () => resolve({ ok: true, value: fetched(facts(".")) }));
+      }),
+  );
+  return {
+    signals,
+    answer: (label: string) => act(async () => answers.get(label)!()),
+  };
+}
+const sideLine = (side: "a" | "b") =>
+  document.querySelector(`[data-sync-check-side="${side}"]`)?.textContent ?? "";
+const sideState = (side: "a" | "b") =>
+  document.querySelector(`[data-sync-check-side="${side}"]`)?.getAttribute("data-sync-check-state");
+
+it("shows each machine's check on its own line, and how long a slow one has taken (AC-04)", async () => {
+  vi.useFakeTimers();
+  try {
+    const { api } = scripted({ fetch: {} });
+    const held = heldFetch(api);
+    await render(api);
+    expect(stage()).toBe("checking");
+    expect(sideLine("a")).toBe("Laptop E: fetching…");
+    expect(sideLine("b")).toBe("Rack F: fetching…");
+    await held.answer("Laptop E");
+    expect(sideState("a")).toBe("done");
+    expect(sideLine("a")).toBe("Laptop E: fetched");
+    await act(async () => vi.advanceTimersByTime(12_000));
+    expect(sideLine("b")).toBe("Rack F: still fetching after 12 s…");
+    // The screen reader hears the stage once, not a ticking count.
+    expect(document.querySelector("[data-sync-live]")?.textContent).toBe(
+      "Fetching on Laptop E and Rack F…",
+    );
+    await held.answer("Rack F");
+    expect(stage()).toBe("plan");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says a machine that does not answer within the backstop, stops it, and keeps the other (AC-05)", async () => {
+  vi.useFakeTimers();
+  try {
+    const { api } = scripted({ fetch: {} });
+    const held = heldFetch(api);
+    await render(api);
+    await held.answer("Laptop E");
+    await act(async () => vi.advanceTimersByTime(3 * 60_000));
+    expect(stage()).toBe("failed");
+    expect(held.signals.get("Rack F")?.aborted).toBe(true);
+    expect(held.signals.get("Laptop E")?.aborted).toBe(false);
+    expect(document.querySelector('[data-sync-failure="no-answer"]')?.textContent).toBe(
+      "Rack F did not answer within 3 minutes, so its check was stopped. Check again when it is less busy.",
+    );
+    expect(sideLine("a")).toBe("Laptop E: fetched");
+    expect(sideLine("b")).toBe("Rack F: not answering");
+    expect(button("[data-sync-again]")).not.toBeNull();
+    expect(api.run).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("stops both machines' calls on Cancel (AC-06)", async () => {
+  const onClose = vi.fn<() => void>();
+  const { api } = scripted({ fetch: {} });
+  const held = heldFetch(api);
+  await render(api, [target(RACK_F)], { onClose });
+  expect(held.signals.get("Laptop E")?.aborted).toBe(false);
+  await click("[data-sync-cancel]");
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(held.signals.get("Laptop E")?.aborted).toBe(true);
+  expect(held.signals.get("Rack F")?.aborted).toBe(true);
+  expect(api.inventory).not.toHaveBeenCalled();
+});
+
+it("keeps its check through StrictMode's second mount, and stops it when closed (AC-06)", async () => {
+  vi.useFakeTimers();
+  try {
+    const { api } = scripted({ fetch: {} });
+    const held = heldFetch(api);
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <ProjectSyncDialog
+            projectTitle="Atlas"
+            shown={LAPTOP_E}
+            targets={[target(RACK_F)]}
+            onClose={vi.fn()}
+            onCompare={vi.fn()}
+            api={api}
+          />
+        </StrictMode>,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTime(1_000));
+    expect(held.signals.get("Rack F")?.aborted).toBe(false);
+    await act(async () => root.render(<></>));
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(held.signals.get("Laptop E")?.aborted).toBe(true);
+    expect(held.signals.get("Rack F")?.aborted).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("says a machine whose folder is past the scan limits syncs its top repository only (1469)", async () => {
+  const { api } = scripted({
+    fetch: {
+      "Laptop E": fetched(facts(".")),
+      "Rack F": { ...fetched(facts(".")), scanLimited: true },
+    },
+  });
+  await render(api);
+  expect(stage()).toBe("plan");
+  expect(document.querySelector("[data-project-sync]")?.textContent).toContain(
+    "Only the top repository of Rack F is listed: its folder is past the scan limits, so the repositories inside it are skipped.",
+  );
+  expect(document.querySelector("[data-project-sync]")?.textContent).not.toContain(
+    "Only the top repository of Laptop E",
+  );
+});

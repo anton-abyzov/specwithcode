@@ -39,6 +39,9 @@ import {
   syncResultRows,
   syncResultTitle,
   syncRunInput,
+  syncNoAnswer,
+  SYNC_CHECK_BACKSTOP_MS,
+  SYNC_CHECK_SLOW_MS,
   type ExtraResultLine,
   type StepLine,
   type SyncExtras,
@@ -87,10 +90,24 @@ interface SideResult {
   readonly extrasOutcome: "unknown" | "not-sent" | null;
 }
 
+/** Where one machine's check is: fetching, then done, failed or not answering. */
+type SideProgress = "fetching" | "done" | "failed" | "no-answer";
+
+interface Progress {
+  readonly sides: Readonly<Record<SyncSide, SideProgress>>;
+  /** When the check started, for how long a slow machine has taken. */
+  readonly since: number;
+}
+
 type Stage =
   | { readonly kind: "pick" }
-  | { readonly kind: "checking" }
-  | { readonly kind: "failed"; readonly failures: readonly SyncFailure[] }
+  | { readonly kind: "checking"; readonly progress: Progress }
+  | {
+      readonly kind: "failed";
+      readonly failures: readonly SyncFailure[];
+      /** Set when a check ended this way: what each machine did, so one that answered stays shown. */
+      readonly progress?: Progress;
+    }
   | { readonly kind: "plan"; readonly checked: Checked }
   | { readonly kind: "running"; readonly checked: Checked; readonly step: "git" | "extras" }
   | {
@@ -562,6 +579,63 @@ function ExtraResults({
   );
 }
 
+/** Each machine of a check on its own line, so a slow one is told apart from the other. */
+function CheckProgress({
+  names,
+  progress,
+  now,
+}: {
+  names: Readonly<Record<SyncSide, string>>;
+  progress: Progress;
+  now: number;
+}) {
+  const tx = useTx();
+  const seconds = Math.max(0, Math.floor((now - progress.since) / 1000));
+  return (
+    <ul className="flex flex-col gap-1.5 text-sm" data-sync-check-progress="">
+      {SIDES.map((side) => {
+        const state = progress.sides[side];
+        const machine = names[side];
+        return (
+          <li
+            key={side}
+            className={cn(
+              "flex items-center gap-2",
+              state === "fetching" || state === "done"
+                ? "text-muted-foreground"
+                : "text-destructive-foreground",
+            )}
+            data-sync-check-side={side}
+            data-sync-check-state={state}
+          >
+            {state === "fetching" ? (
+              <Spinner size="sm" tone="muted" />
+            ) : state === "done" ? (
+              <CheckIcon aria-hidden className="size-4 shrink-0 text-success-foreground" />
+            ) : (
+              <MinusIcon aria-hidden className="size-4 shrink-0" />
+            )}
+            <span className="min-w-0 wrap-anywhere">
+              {state === "done"
+                ? tx("{machine}: fetched", { machine })
+                : state === "failed"
+                  ? tx("{machine}: did not finish", { machine })
+                  : state === "no-answer"
+                    ? tx("{machine}: not answering", { machine })
+                    : now - progress.since >= SYNC_CHECK_SLOW_MS
+                      ? tx("{machine}: still fetching after {seconds} s…", {
+                          machine,
+                          seconds: String(seconds),
+                        })
+                      : tx("{machine}: fetching…", { machine })}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /**
  * "Sync…": brings a project that is on two machines up to date through Git. Each machine
  * fetches from its own remote and fast-forwards, and a missing repository is cloned. The
@@ -602,7 +676,24 @@ export function ProjectSyncDialog({
   // The machine picked stays named when it leaves the list: the dialog then says why it stopped.
   const [picked, setPicked] = useState<SyncMachine | undefined>(live?.machine);
   const target = live?.machine ?? (targetKey ? picked : undefined);
-  const [stage, setStage] = useState<Stage>({ kind: targetKey ? "checking" : "pick" });
+  const [stage, setStage] = useState<Stage>(() =>
+    targetKey
+      ? {
+          kind: "checking",
+          progress: { sides: { a: "fetching", b: "fetching" }, since: Date.now() },
+        }
+      : { kind: "pick" },
+  );
+  // The calls of the check under way: Cancel, a closed dialog and a new check stop them.
+  const checkCalls = useRef<AbortController | null>(null);
+  // Ticks while checking, for how long a slow machine has taken.
+  const [now, setNow] = useState(() => Date.now());
+  const checking = stage.kind === "checking";
+  useEffect(() => {
+    if (!checking) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [checking]);
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
   const [anyway, setAnyway] = useState<ReadonlySet<string>>(new Set());
   // A later check or a closed dialog makes an earlier answer stale.
@@ -614,8 +705,18 @@ export function ProjectSyncDialog({
     alive.current = true;
     return () => {
       alive.current = false;
+      // Closed: the calls stop on both machines. A development build's second mount comes
+      // straight back, and its check goes on.
+      const calls = checkCalls.current;
+      setTimeout(() => {
+        if (!alive.current) calls?.abort();
+      }, 0);
     };
   }, []);
+  const cancel = () => {
+    checkCalls.current?.abort();
+    onClose();
+  };
 
   const names = { a: shown.label, b: target?.label ?? "" };
   // Sync is a decision about two machines: what the menu knows of either one right now
@@ -648,32 +749,73 @@ export function ProjectSyncDialog({
   const check = useCallback(
     async (other: SyncMachine) => {
       const id = (run.current += 1);
+      checkCalls.current?.abort();
       setTicked(new Set());
       setAnyway(new Set());
       if (gate.current) {
         setStage({ kind: "failed", failures: [stopped(gate.current)] });
         return;
       }
-      setStage({ kind: "checking" });
+      const calls = new AbortController();
+      checkCalls.current = calls;
+      const since = Date.now();
+      setStage({ kind: "checking", progress: { sides: { a: "fetching", b: "fetching" }, since } });
+      const mark = (side: SyncSide, state: SideProgress) => {
+        if (id !== run.current || !alive.current) return;
+        setStage((last) =>
+          last.kind === "checking"
+            ? {
+                kind: "checking",
+                progress: { ...last.progress, sides: { ...last.progress.sides, [side]: state } },
+              }
+            : last,
+        );
+      };
+      const finals: Record<SyncSide, SideProgress> = { a: "fetching", b: "fetching" };
       const read = await Promise.all(
         SIDES.map(async (side) => {
           const machine = machineOf(side, other);
-          const fetched = await api.fetch(machine);
-          if (!fetched.ok) return { failure: syncFailure(fetched.cause, machine.label) };
-          // A check that was replaced or closed asks for nothing more.
-          if (id !== run.current || !alive.current)
-            return { failure: stopped(gate.current ?? { text: "Not sent." }) };
-          // After the fetch, so "not pushed" is judged against what the remote has now.
-          const inventory = await api.inventory(machine, fetched.value.fetchId);
-          return { fetched: fetched.value, inventory, machine };
+          // Each machine has its own backstop: one that does not answer is stopped alone.
+          const own = new AbortController();
+          const stop = () => own.abort();
+          calls.signal.addEventListener("abort", stop);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const backstop = new Promise<"no-answer">((resolve) => {
+            timer = setTimeout(() => {
+              own.abort();
+              resolve("no-answer");
+            }, SYNC_CHECK_BACKSTOP_MS);
+          });
+          const answer = async () => {
+            const fetched = await api.fetch(machine, own.signal);
+            if (!fetched.ok) return { failure: syncFailure(fetched.cause, machine.label) };
+            // A check that was replaced or closed asks for nothing more.
+            if (id !== run.current || !alive.current)
+              return { failure: stopped(gate.current ?? { text: "Not sent." }) };
+            // After the fetch, so "not pushed" is judged against what the remote has now.
+            const inventory = await api.inventory(machine, fetched.value.fetchId, own.signal);
+            return { fetched: fetched.value, inventory, machine };
+          };
+          try {
+            const result = await Promise.race([answer(), backstop]);
+            finals[side] =
+              result === "no-answer" ? "no-answer" : "failure" in result ? "failed" : "done";
+            mark(side, finals[side]);
+            return result === "no-answer" ? { failure: syncNoAnswer(machine.label) } : result;
+          } finally {
+            clearTimeout(timer);
+            calls.signal.removeEventListener("abort", stop);
+          }
         }),
       );
+      if (checkCalls.current === calls) checkCalls.current = null;
       if (id !== run.current || !alive.current) return;
       const [a, b] = read;
       if (!a || !b || "failure" in a || "failure" in b) {
         setStage({
           kind: "failed",
           failures: read.flatMap((item) => ("failure" in item ? [item.failure] : [])),
+          progress: { sides: finals, since },
         });
         return;
       }
@@ -718,6 +860,8 @@ export function ProjectSyncDialog({
     if (running.current !== null && halted.current?.id !== running.current)
       halted.current = { id: running.current, line };
     if (!planning.current) return;
+    // A check under way is dropped: its calls stop on both machines.
+    checkCalls.current?.abort();
     run.current += 1;
     setTicked(new Set());
     setAnyway(new Set());
@@ -957,7 +1101,7 @@ export function ProjectSyncDialog({
     ) : null;
 
   return (
-    <Dialog open onOpenChange={(next) => !next && stage.kind !== "running" && onClose()}>
+    <Dialog open onOpenChange={(next) => !next && stage.kind !== "running" && cancel()}>
       <DialogPopup
         showCloseButton={stage.kind !== "running"}
         className="w-full sm:max-w-2xl"
@@ -1018,13 +1162,13 @@ export function ProjectSyncDialog({
             </div>
           ) : null}
           {stage.kind === "checking" ? (
-            <p className="flex items-center gap-2 text-muted-foreground text-sm">
-              <Spinner size="sm" tone="muted" />
-              {tx("Fetching on {source} and {machine}…", { source: names.a, machine: names.b })}
-            </p>
+            <CheckProgress names={names} progress={stage.progress} now={now} />
           ) : null}
           {stage.kind === "failed" ? (
             <div className="flex flex-col gap-2" data-sync-failures="">
+              {stage.progress ? (
+                <CheckProgress names={names} progress={stage.progress} now={now} />
+              ) : null}
               {stage.failures.map((failure) => (
                 <Notice key={failure.line.text + (failure.line.values?.machine ?? "")} role="alert">
                   <span data-sync-failure={failure.kind}>
@@ -1136,7 +1280,12 @@ export function ProjectSyncDialog({
             </>
           ) : (
             <>
-              <Button variant="outline" disabled={stage.kind === "running"} onClick={onClose}>
+              <Button
+                variant="outline"
+                data-sync-cancel=""
+                disabled={stage.kind === "running"}
+                onClick={cancel}
+              >
                 {tx("Cancel")}
               </Button>
               {stage.kind === "failed" ? (

@@ -29,9 +29,14 @@ import {
   PROJECT_SYNC_MAX_REPOSITORIES,
 } from "@specweave-studio/contracts";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -79,6 +84,20 @@ export type { SyncContext, SyncGit, SyncRepository } from "./projectSyncGit.ts";
 export { fastForwardRepository } from "./projectSyncMove.ts";
 
 const CLONE_MS = 30 * 60_000;
+
+/**
+ * How long Sync waits for the repository walk of a project folder (1469 D-01). A walk that
+ * takes longer ends as a scan-limited one: the root repository alone. Sync calls that hold
+ * the project's lock then hold it for at most this plus their Git work.
+ */
+export const SYNC_SCAN_BUDGET = Duration.seconds(20);
+/** A finished walk is reused for this long by the next Sync call on the same folder. */
+export const SYNC_SCAN_REUSE = Duration.seconds(5);
+
+interface Scanned {
+  readonly paths: ReadonlyArray<string>;
+  readonly scanLimited: boolean;
+}
 const PARALLEL = 4;
 
 /** The staging folders of the clones under way in this server, by absolute path. */
@@ -598,6 +617,76 @@ const make = Effect.gen(function* () {
 
   const attempt = untilGitEnds;
 
+  /**
+   * The repositories under a real project folder. A tree the scan cannot finish in its
+   * budget or at all (past its limits, a link to a folder, a nested folder whose Git data
+   * is broken) lists its root alone, marked as such: today's fallback of a Git sync move.
+   * The root itself must be a repository.
+   */
+  const scan = Effect.fn("ProjectSync.scan")(function* (root: string, budget: Duration.Duration) {
+    const found = yield* handoffGit
+      .discover({ workspaceRoot: root })
+      .pipe(
+        Effect.timeoutOption(budget),
+        Effect.catchTags({ HandoffGitError: () => Effect.succeedNone }),
+      );
+    if (Option.isSome(found)) return { paths: found.value, scanLimited: false };
+    const isRepository = yield* attempt(async () => {
+      const top = await read(defaultGit, root, ["rev-parse", "--show-toplevel"]);
+      const real = top.ok ? await NodeFSP.realpath(top.text).catch(() => null) : null;
+      return real === root;
+    });
+    if (!isRepository)
+      return yield* failed("The project folder is not a Git repository.", "invalid");
+    return { paths: ["."] as ReadonlyArray<string>, scanLimited: true };
+  });
+
+  /**
+   * One walk per real folder: Sync calls that come while one runs (status, fetch,
+   * inventory, run, from either window) wait for it, and one that finished a moment ago is
+   * reused. The walk runs on its own, so a caller that is stopped (a cancelled fetch under
+   * the project's lock) leaves at once; the walk itself ends within its budget. A failed
+   * walk is not kept, and a run forgets the folder's walk, since a clone adds a repository.
+   */
+  const scans = new Map<
+    string,
+    { readonly done: Deferred.Deferred<Scanned, ProjectSyncError>; settledAt: number | null }
+  >();
+  const sharedScan = Effect.fn("ProjectSync.sharedScan")(function* (root: string) {
+    const now = yield* Clock.currentTimeMillis;
+    const existing = scans.get(root);
+    if (
+      existing &&
+      (existing.settledAt === null || now - existing.settledAt < Duration.toMillis(SYNC_SCAN_REUSE))
+    )
+      return yield* Deferred.await(existing.done);
+    const entry = {
+      done: yield* Deferred.make<Scanned, ProjectSyncError>(),
+      settledAt: null as number | null,
+    };
+    scans.set(root, entry);
+    yield* scan(root, SYNC_SCAN_BUDGET).pipe(
+      Effect.exit,
+      Effect.flatMap((exit) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((at) => {
+            if (scans.get(root) === entry) {
+              if (Exit.isSuccess(exit)) entry.settledAt = at;
+              else scans.delete(root);
+            }
+            return Deferred.done(entry.done, exit);
+          }),
+        ),
+      ),
+      Effect.forkDetach,
+    );
+    return yield* Deferred.await(entry.done);
+  });
+  const forgetScan = (root: string) =>
+    Effect.sync(() => {
+      scans.delete(root);
+    });
+
   const repositories = Effect.fn("ProjectSync.repositories")(function* (projectId: ProjectId) {
     const snapshot = yield* projects.snapshot.pipe(
       Effect.mapError(() => failed("Could not read this machine's projects.")),
@@ -608,26 +697,7 @@ const make = Effect.gen(function* () {
     if (isPersonalAssistantProject(project))
       return yield* failed("A personal project is not synced between machines.", "personal");
     const root = yield* attempt(() => NodeFSP.realpath(project.workspaceRoot));
-    // A tree the scan cannot finish (past its limits, a link to a folder, a nested folder
-    // whose Git data is broken) lists its root alone, marked as such: today's fallback of a
-    // Git sync move. The root itself must be a repository.
-    const scanned = yield* handoffGit.discover({ workspaceRoot: root }).pipe(
-      Effect.map((paths) => ({ paths, scanLimited: false })),
-      Effect.catchTags({
-        HandoffGitError: () =>
-          attempt(async () => {
-            const top = await read(defaultGit, root, ["rev-parse", "--show-toplevel"]);
-            const real = top.ok ? await NodeFSP.realpath(top.text).catch(() => null) : null;
-            return real === root;
-          }).pipe(
-            Effect.flatMap((isRepository) =>
-              isRepository
-                ? Effect.succeed({ paths: ["."] as ReadonlyArray<string>, scanLimited: true })
-                : Effect.fail(failed("The project folder is not a Git repository.", "invalid")),
-            ),
-          ),
-      }),
-    );
+    const scanned = yield* sharedScan(root);
     return {
       root,
       repositories: yield* attempt(() => syncRepositories(defaultGit, root, scanned.paths)),
@@ -734,87 +804,96 @@ const make = Effect.gen(function* () {
     run: (input) =>
       admission.withLock(
         input.projectId,
-        Effect.gen(function* () {
-          const found = yield* repositories(input.projectId);
-          const out: Array<ProjectSyncStepResult> = [];
-          // The fetch the window names, when it is this project's and still kept, looked
-          // up on every read. Nothing else is gone by: without it no checkout moves.
-          const record = () => keptFetch(input.projectId, input.fetchId);
-          // What a clone that never finished left behind goes first, under the lock: no
-          // clone of this project is under way now. A folder that stays is said so.
-          const { failed: kept, live } = yield* attempt(async () =>
-            sweepCloneLeftovers(found.root, [
-              ...found.cloneStaging,
-              ...(await cloneStagingBeside(
-                found.root,
-                input.clone.map((wanted) => wanted.path),
-              )),
-            ]),
-          ).pipe(Effect.uninterruptible);
-          for (const path of kept)
-            out.push({
-              path: path.slice(0, 1024),
-              action: "none",
-              reason: "refused",
-              branch: null,
-              otherBranch: null,
-              ahead: 0,
-              behind: 0,
-              uncommitted: 0,
-              inUseBy: null,
-              remote: null,
-              detail:
-                "A clone that was stopped left this folder behind, and it could not be removed.",
-              moved: 0,
-              downgraded: false,
-            });
-          for (const path of live)
-            out.push({
-              path: path.slice(0, 1024),
-              action: "none",
-              reason: "refused",
-              branch: null,
-              otherBranch: null,
-              ahead: 0,
-              behind: 0,
-              uncommitted: 0,
-              inUseBy: null,
-              remote: null,
-              detail:
-                "Another SpecWithCode process may still be cloning into this folder, so it was left alone.",
-              moved: 0,
-              downgraded: false,
-            });
-          // A move is never cut short once Git holds its locks. A cancelled call ends
-          // between two repositories.
-          for (const wanted of input.fastForward) {
-            out.push(
-              ...(yield* attempt(() =>
-                runSync(syncContext({ record }), found.root, found.repositories, {
-                  fastForward: [wanted],
-                  clone: [],
-                }),
-              )),
-            );
-          }
-          // A cancelled clone is stopped and its folder removed before the lock is released.
-          for (const wanted of input.clone) {
-            out.push(
-              ...(yield* stoppedWhenCancelled((signal) =>
-                runSync(syncContext({ record }, signal), found.root, found.repositories, {
-                  fastForward: [],
-                  clone: [wanted],
-                }),
-              )),
-            );
-          }
-          return { repositories: out };
-        }),
+        (() => {
+          let ranIn: string | null = null;
+          return Effect.gen(function* () {
+            const found = yield* repositories(input.projectId);
+            ranIn = found.root;
+            const out: Array<ProjectSyncStepResult> = [];
+            // The fetch the window names, when it is this project's and still kept, looked
+            // up on every read. Nothing else is gone by: without it no checkout moves.
+            const record = () => keptFetch(input.projectId, input.fetchId);
+            // What a clone that never finished left behind goes first, under the lock: no
+            // clone of this project is under way now. A folder that stays is said so.
+            const { failed: kept, live } = yield* attempt(async () =>
+              sweepCloneLeftovers(found.root, [
+                ...found.cloneStaging,
+                ...(await cloneStagingBeside(
+                  found.root,
+                  input.clone.map((wanted) => wanted.path),
+                )),
+              ]),
+            ).pipe(Effect.uninterruptible);
+            for (const path of kept)
+              out.push({
+                path: path.slice(0, 1024),
+                action: "none",
+                reason: "refused",
+                branch: null,
+                otherBranch: null,
+                ahead: 0,
+                behind: 0,
+                uncommitted: 0,
+                inUseBy: null,
+                remote: null,
+                detail:
+                  "A clone that was stopped left this folder behind, and it could not be removed.",
+                moved: 0,
+                downgraded: false,
+              });
+            for (const path of live)
+              out.push({
+                path: path.slice(0, 1024),
+                action: "none",
+                reason: "refused",
+                branch: null,
+                otherBranch: null,
+                ahead: 0,
+                behind: 0,
+                uncommitted: 0,
+                inUseBy: null,
+                remote: null,
+                detail:
+                  "Another SpecWithCode process may still be cloning into this folder, so it was left alone.",
+                moved: 0,
+                downgraded: false,
+              });
+            // A move is never cut short once Git holds its locks. A cancelled call ends
+            // between two repositories.
+            for (const wanted of input.fastForward) {
+              out.push(
+                ...(yield* attempt(() =>
+                  runSync(syncContext({ record }), found.root, found.repositories, {
+                    fastForward: [wanted],
+                    clone: [],
+                  }),
+                )),
+              );
+            }
+            // A cancelled clone is stopped and its folder removed before the lock is released.
+            for (const wanted of input.clone) {
+              out.push(
+                ...(yield* stoppedWhenCancelled((signal) =>
+                  runSync(syncContext({ record }, signal), found.root, found.repositories, {
+                    fastForward: [],
+                    clone: [wanted],
+                  }),
+                )),
+              );
+            }
+            return { repositories: out };
+          }).pipe(
+            // What a run cloned is listed by the next walk, not by one from before it.
+            Effect.ensuring(Effect.suspend(() => (ranIn ? forgetScan(ranIn) : Effect.void))),
+          );
+        })(),
       ),
   });
 });
 
-export const layer = Layer.effect(ProjectSync, make).pipe(
+/** Over services the caller gives: its project lock, the repository walk, the projects. */
+export const layerOnServices = Layer.effect(ProjectSync, make);
+export const layer = layerOnServices.pipe(
   Layer.provide(ProjectAdmission.layer),
   Layer.provide(HandoffGit.layer.pipe(Layer.provide(ProcessRunner.layer))),
 );

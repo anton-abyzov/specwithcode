@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - one typed directory read per folder in the repository walk.
+import * as NodeFSP from "node:fs/promises";
+
 import { stringifyJson } from "../json.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -253,7 +256,13 @@ const make = Effect.gen(function* () {
       const current = pending.shift()!;
       if (++directories > MAX_DIRECTORIES || current.depth > MAX_DEPTH)
         return yield* blocked(stage, "scan-limit");
-      const names = (yield* io(fs.readDirectory(current.absolute), stage)).sort();
+      // One read per folder, with each entry's type: only links need a stat of their own.
+      const listed = yield* io(
+        Effect.tryPromise(() => NodeFSP.readdir(current.absolute, { withFileTypes: true })),
+        stage,
+      );
+      const types = new Map(listed.map((entry) => [entry.name, entry]));
+      const names = [...types.keys()].sort();
       entries += names.length;
       if (entries > MAX_ENTRIES) return yield* blocked(stage, "scan-limit");
       if (names.includes(".git")) {
@@ -268,8 +277,13 @@ const make = Effect.gen(function* () {
       for (const name of names) {
         if (EXCLUDED.has(name)) continue;
         const child = path.join(current.absolute, name);
-        const link = yield* fs.readLink(child).pipe(Effect.option);
-        if (link._tag === "Some") {
+        const type = types.get(name)!;
+        // Windows types every reparse point as a link (a cloud-synced folder too): only one
+        // that reads as a link is one, as before.
+        if (
+          type.isSymbolicLink() &&
+          (yield* fs.readLink(child).pipe(Effect.option))._tag === "Some"
+        ) {
           // Never follow links. A link exposing a repository is an ambiguous
           // machine identity, while ordinary tracked file links are preserved.
           const target = yield* fs.stat(child).pipe(Effect.option);
@@ -277,7 +291,11 @@ const make = Effect.gen(function* () {
             return yield* blocked(stage, "unsafe-path");
           continue;
         }
-        if ((yield* io(fs.stat(child), stage)).type === "Directory")
+        if (
+          type.isSymbolicLink()
+            ? (yield* io(fs.stat(child), stage)).type === "Directory"
+            : type.isDirectory()
+        )
           pending.push({ absolute: child, depth: current.depth + 1 });
       }
     }

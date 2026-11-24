@@ -322,4 +322,11 @@ export const syncDe: PhraseCatalog = {
   "Over SpecWithCode Connect": "Über SpecWithCode Connect",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "Teilweise über dein lokales Netzwerk, der Rest über SpecWithCode Connect",
+  "{machine}: fetching…": "{machine}: wird abgerufen…",
+  "{machine}: still fetching after {seconds} s…": "{machine}: ruft nach {seconds} s noch ab…",
+  "{machine}: fetched": "{machine}: abgerufen",
+  "{machine}: did not finish": "{machine}: nicht abgeschlossen",
+  "{machine}: not answering": "{machine}: antwortet nicht",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine} hat nicht innerhalb von {minutes} Minuten geantwortet, daher wurde die Prüfung dort beendet. Prüfe erneut, wenn der Rechner weniger ausgelastet ist.",
 };

@@ -320,4 +320,11 @@ export const syncJa: PhraseCatalog = {
   "Over SpecWithCode Connect": "SpecWithCode Connect 経由",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "一部はローカルネットワーク経由、残りは SpecWithCode Connect 経由",
+  "{machine}: fetching…": "{machine}: 取得中…",
+  "{machine}: still fetching after {seconds} s…": "{machine}: {seconds} 秒経過、まだ取得中…",
+  "{machine}: fetched": "{machine}: 取得済み",
+  "{machine}: did not finish": "{machine}: 完了しませんでした",
+  "{machine}: not answering": "{machine}: 応答なし",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine} が {minutes} 分以内に応答しなかったため、確認を停止しました。負荷が下がってから再確認してください。",
 };

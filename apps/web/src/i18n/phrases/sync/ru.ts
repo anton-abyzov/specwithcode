@@ -313,4 +313,12 @@ export const syncRu: PhraseCatalog = {
   "Over SpecWithCode Connect": "Через SpecWithCode Connect",
   "Partly over your local network, the rest over SpecWithCode Connect":
     "Частично по локальной сети, остальное через SpecWithCode Connect",
+  "{machine}: fetching…": "{machine}: получение…",
+  "{machine}: still fetching after {seconds} s…":
+    "{machine}: всё ещё получает, прошло {seconds} с…",
+  "{machine}: fetched": "{machine}: получено",
+  "{machine}: did not finish": "{machine}: не завершил",
+  "{machine}: not answering": "{machine}: не отвечает",
+  "{machine} did not answer within {minutes} minutes, so its check was stopped. Check again when it is less busy.":
+    "{machine} не ответил за {minutes} мин., поэтому его проверка остановлена. Проверьте снова, когда он будет меньше загружен.",
 };
