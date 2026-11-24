@@ -13,7 +13,12 @@ import {
   sourceFilesystemAdmission,
   admitAncestorDevices,
 } from "./sourceCaptureFilesystem.ts";
-import { pinSourceRoot, reachedFromRoot, type RootAnchor } from "./sourceCaptureAnchor.ts";
+import {
+  linkFromRoot,
+  pinSourceRoot,
+  reachedFromRoot,
+  type RootAnchor,
+} from "./sourceCaptureAnchor.ts";
 import {
   MAX_CONTENT_PROBE_BYTES,
   capturedContentIsSecret,
@@ -317,12 +322,22 @@ export async function captureSourceFiles(input: {
   await FSP.rm(Path.join(input.root, "index.json"), { force: true });
   const anchors = new Map<string, RootAnchor>();
   const closeAnchors = () => Promise.all([...anchors.values()].map((anchor) => anchor.close()));
+  const links = input.entries.filter((entry) => entry.type === "symlink");
   try {
-    for (const root of new Set(files.map(input.sourceRoot)))
+    for (const root of new Set([...files, ...links].map(input.sourceRoot)))
       anchors.set(
         root,
         await pinSourceRoot(root, process.platform, input.scannedRoots?.get(root)),
       );
+    // The scan walked paths: a tree swapped in while it walked, and put back since, could
+    // have named a link the pinned tree does not hold. Links travel as named, so check them.
+    for (const link of links) {
+      const held = await linkFromRoot(anchors.get(input.sourceRoot(link))!, link.path);
+      if (held !== undefined && held !== link.target)
+        throw new Error(
+          `${link.path} changed after this folder was measured. Try a new comparison.`,
+        );
+    }
   } catch (cause) {
     await closeAnchors();
     throw cause;

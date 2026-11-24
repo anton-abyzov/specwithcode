@@ -15,6 +15,7 @@
 import * as FS from "node:fs";
 import * as FSP from "node:fs/promises";
 import * as Path from "node:path";
+import { linkTargetOnWire } from "./paths.ts";
 import { CaptureFilesystemRefused } from "./sourceCaptureFilesystem.ts";
 
 export interface RootAnchor {
@@ -74,4 +75,19 @@ export async function reachedFromRoot(
     () => null,
   );
   return named !== null && named.dev === opened.dev && named.ino === opened.ino;
+}
+
+/**
+ * The link target `relative` holds, looked up from the pinned root: null when it is no
+ * link there, undefined where no anchored lookup exists.
+ */
+export async function linkFromRoot(
+  anchor: RootAnchor,
+  relative: string,
+): Promise<string | null | undefined> {
+  if (anchor.base === null) return undefined;
+  const named = Path.posix.join(anchor.base, relative);
+  const stat = await FSP.lstat(named).catch(() => null);
+  if (!stat?.isSymbolicLink()) return null;
+  return FSP.readlink(named).then(linkTargetOnWire, () => null);
 }
