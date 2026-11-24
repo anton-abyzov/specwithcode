@@ -990,6 +990,37 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("creates a whiteboard in a new folder and refuses a stale whiteboard save", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = ".specweave/artifacts/flow.excalidraw";
+        const initial = '{"type":"excalidraw","version":2,"elements":[],"appState":{},"files":{}}';
+        yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: initial });
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        expect(read.contents).toBe(initial);
+        const edited = initial.replace("[]", '[{"id":"a","type":"rectangle"}]');
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents: edited,
+          expectedRevision: sheetContentRevision(read.contents),
+        });
+        const stale = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath,
+            contents: initial,
+            expectedRevision: sheetContentRevision(read.contents),
+          })
+          .pipe(Effect.flip);
+        expect(String(stale.cause)).toContain("Conflict:");
+        expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toBe(edited);
+      }),
+    );
+
     it.effect("saves a sheet with a byte order mark at the revision its editor read", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
