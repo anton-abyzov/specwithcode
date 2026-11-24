@@ -271,6 +271,28 @@ export function editorChecks({ mod }) {
       await press(page, "Mod+d");
       expect("filled", (await saved(page)).tabs[0].cells.C3, "=B3*2");
     },
+    "Export .csv writes the tab's computed values": async (page) => {
+      await page.locator("[data-sheet-export-csv]").click();
+      await page.waitForFunction(() => window.sheetExport !== undefined);
+      const file = await page.evaluate(() => window.sheetExport);
+      expect("name", file.name, "editor-check-data.csv");
+      expect("csv", Buffer.from(file.base64, "base64").toString("utf8"), "\uFEFFItem,Cost\r\nTea,4\r\nCake,6\r\nTotal,10\r\n");
+    },
+    "Export .xlsx writes a workbook with formulas and their values": async (page) => {
+      await page.locator("[data-sheet-export-xlsx]").click();
+      await page.waitForFunction(() => window.sheetExport !== undefined);
+      const file = await page.evaluate(() => window.sheetExport);
+      expect("name", file.name, "editor-check.xlsx");
+      const { default: JSZip } = await import("jszip");
+      const zip = await JSZip.loadAsync(Buffer.from(file.base64, "base64"));
+      const sheet1 = await zip.file("xl/worksheets/sheet1.xml").async("string");
+      const sheet2 = await zip.file("xl/worksheets/sheet2.xml").async("string");
+      if (!sheet1.includes("<f>SUM(B2:B3)</f><v>10</v>")) throw new Error("no SUM with its value");
+      if (!sheet2.includes("<f>Data!B4</f><v>10</v>")) throw new Error("no cross-tab formula");
+      if (!(await zip.file("xl/workbook.xml").async("string")).includes('fullCalcOnLoad="1"')) {
+        throw new Error("no recalculation on load");
+      }
+    },
     "Cmd/Ctrl+/ opens the shortcuts list and Esc closes it": async (page) => {
       await pick(page, "A1");
       await press(page, "Mod+Slash");

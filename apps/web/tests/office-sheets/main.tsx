@@ -32,6 +32,7 @@ declare global {
   interface Window {
     sheetSaved?: string;
     sheetSaves?: number;
+    sheetExport?: { name: string; base64: string };
   }
 }
 
@@ -71,6 +72,13 @@ function EditSheet(): ReactNode {
         window.sheetSaves = (window.sheetSaves ?? 0) + 1;
         setText(contents);
         return true;
+      }}
+      onExportFile={(blob, name) => {
+        void blob.arrayBuffer().then((bytes) => {
+          let binary = "";
+          for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
+          window.sheetExport = { name, base64: btoa(binary) };
+        });
       }}
     />
   );
