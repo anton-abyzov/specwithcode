@@ -173,7 +173,7 @@ export const layer = HttpApiBuilder.group(
         Effect.gen(function* () {
           // Hides a pop-up only; still for whoever may answer it, never a waiting device.
           yield* requireApprover;
-          yield* trust.later(payload.devices).pipe(Effect.mapError(storageFailure));
+          yield* trust.later(payload.requests).pipe(Effect.mapError(storageFailure));
           return { done: true };
         }),
       )

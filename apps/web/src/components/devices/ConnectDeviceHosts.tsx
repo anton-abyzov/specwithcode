@@ -289,9 +289,7 @@ export function DeviceApprovalPromptHost() {
         // The machine keeps it, for every window, and ends it when the device is
         // settled. If it cannot be told, the pop-up stays closed in this window
         // for this request only.
-        const devices = requests.flatMap((request) => (request.device ? [request.device] : []));
-        if (devices.length > 0)
-          void connectDevices.later(environmentId, devices).then(refresh, () => undefined);
+        void connectDevices.later(environmentId, ids).then(refresh, () => undefined);
       }}
     />
   );

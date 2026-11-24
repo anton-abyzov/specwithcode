@@ -124,14 +124,18 @@ export const ConnectDevicesRemoveResult = Schema.Struct({
   endedSessions: Schema.Number,
 });
 
-/** Device references (`ConnectDeviceRequest.device`) of waiting devices to put off. */
+/**
+ * The requests (`ConnectDeviceRequest.id`) the owner put off. By request, not by
+ * device: a click on a request that is gone by the time it arrives puts nothing
+ * off, so it can never hide a request the device made afterwards.
+ */
 export const ConnectDevicesLaterInput = exact(
   Schema.Struct({
-    devices: Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(
+    requests: Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(
       Schema.isMaxLength(20),
     ),
   }),
-  ["devices"],
+  ["requests"],
 );
 
 export const ConnectDevicesEmptyInput = exact(Schema.Struct({}), []);

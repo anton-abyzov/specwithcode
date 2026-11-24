@@ -481,7 +481,7 @@ export interface ConnectDeviceTrustShape {
    * closed for them in every window. Only devices waiting now are kept; answers
    * how many were. Changes no access.
    */
-  readonly later: (devices: ReadonlyArray<string>) => Effect.Effect<number, DeviceTrustError>;
+  readonly later: (requests: ReadonlyArray<string>) => Effect.Effect<number, DeviceTrustError>;
   /** Forgets one device; the caller ends its sessions. Answers the removed record. */
   readonly remove: (key: string) => Effect.Effect<DeviceRecord | null, DeviceTrustError>;
   readonly confirmReview: Effect.Effect<void, DeviceTrustError>;
@@ -1128,11 +1128,18 @@ export const makeWith = (options: MakeOptions = {}) =>
         ] as const;
       });
 
-    const later: ConnectDeviceTrustShape["later"] = (devices) =>
+    const later: ConnectDeviceTrustShape["later"] = (requests) =>
       modify((file, now) => {
-        // Only a device waiting now can be put off, so the list holds nothing made up.
-        const waiting = new Set(file.pending.map((entry) => deviceReferenceOfKey(entry.key)));
-        const adding = [...new Set(devices)].filter((device) => waiting.has(device));
+        // Only a request waiting now can be put off: one that was answered or ran
+        // out since the owner saw it puts nothing off, whatever its device asks next.
+        const asked = new Set(requests);
+        const adding = [
+          ...new Set(
+            file.pending
+              .filter((entry) => asked.has(entry.id))
+              .map((entry) => deviceReferenceOfKey(entry.key)),
+          ),
+        ];
         if (adding.length === 0) return [0, undefined] as const;
         const at = isoOf(now);
         return [

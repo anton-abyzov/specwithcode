@@ -909,12 +909,12 @@ it.effect("Later is kept by the machine for 30 days and changes no access (1447)
       const [phone, other] = (yield* trust.snapshot).pending;
       expect((yield* trust.snapshot).later).toEqual([]);
 
-      // Only a device waiting now is kept; a made-up reference is dropped.
-      expect(yield* trust.later([phone!.device, "not-a-waiting-device", phone!.device])).toBe(1);
+      // Only a request waiting now is kept; a made-up id, or a device reference, is dropped.
+      expect(yield* trust.later([phone!.id, "not-a-waiting-request", phone!.id])).toBe(1);
       expect((yield* trust.snapshot).later).toEqual([phone!.device]);
-      expect(yield* trust.later(["not-a-waiting-device"])).toBe(0);
+      expect(yield* trust.later(["not-a-waiting-request", phone!.device])).toBe(0);
 
-      expect(yield* trust.later([other!.device])).toBe(1);
+      expect(yield* trust.later([other!.id])).toBe(1);
       expect((yield* trust.snapshot).later).toEqual([phone!.device, other!.device]);
 
       // Put off, the device still waits, is still listed, and still needs its own code.
@@ -959,15 +959,27 @@ it.effect("Later is kept by the machine for 30 days and changes no access (1447)
       expect((yield* trust.snapshot).later).toEqual([]);
 
       // Put off again, then let in and removed: Remove leaves nothing behind either.
+      const pendingOf = (device: string) =>
+        trust.snapshot.pipe(
+          Effect.map((listed) => listed.pending.find((request) => request.device === device)!),
+        );
       const waiting = refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
-      expect(yield* trust.later([phone!.device])).toBe(1);
+      const seen = yield* pendingOf(phone!.device);
+      expect(yield* trust.later([seen.id])).toBe(1);
       yield* trust.approve({ code: waiting, approvedBy: "this machine", approverKey: null });
       yield* trust.remove(`jkt:${KEY_TSKR}`);
       expect((yield* trust.snapshot).later).toEqual([]);
 
-      // Left alone, the machine keeps Later for 30 days, as a window did, then forgets it.
+      // A Later that arrives late, for the request the owner saw, puts nothing off:
+      // the device asked again since, under a request the owner never saw.
       refusedCode(yield* trust.check(connect(KEY_TSKR, "iPhone Duo")));
-      expect(yield* trust.later([phone!.device])).toBe(1);
+      const unseen = yield* pendingOf(phone!.device);
+      expect(unseen.id).not.toBe(seen.id);
+      expect(yield* trust.later([seen.id])).toBe(0);
+      expect((yield* trust.snapshot).later).toEqual([]);
+
+      // Left alone, the machine keeps Later for 30 days, as a window did, then forgets it.
+      expect(yield* trust.later([unseen.id])).toBe(1);
       yield* TestClock.adjust("29 days");
       expect((yield* trust.snapshot).later).toEqual([phone!.device]);
       yield* TestClock.adjust("2 days");
