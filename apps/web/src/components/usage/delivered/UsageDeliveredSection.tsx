@@ -1,7 +1,7 @@
 import { AuthDiagnosticsReadScope, type EnvironmentId } from "@specweave-studio/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { formatPercent, formatUsd } from "@specweave-studio/shared/usageFormat";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 
 import { environmentPresentations } from "../../../state/presentation";
 import { useEnvironmentsWithScope } from "../../../state/session";
@@ -114,7 +114,12 @@ export function UsageDeliveredSection({
     reportFailure: false,
     reportDefect: false,
   });
-  const [answers, setAnswers] = useState<ReadonlyMap<string, DeliveredAnswer> | null>(null);
+  const [read, setRead] = useState<{
+    readonly key: string;
+    readonly answers: ReadonlyMap<string, DeliveredAnswer>;
+  } | null>(null);
+  // The command's identity may change between renders; a read starts only when its inputs do.
+  const ask = useEffectEvent((input: Parameters<typeof readReport>[0]) => readReport(input));
   const [copied, setCopied] = useState(false);
 
   const machineIds = useMemo(
@@ -137,15 +142,16 @@ export function UsageDeliveredSection({
     return "ask";
   };
   const askKey = machineIds.filter((id) => status(id) === "ask").join("\n");
+  const readKey = `${askKey}|${range.sinceDay}|${range.untilDay}|${range.timeZone}|${refreshKey}`;
+  const answers = read?.answers ?? null;
 
   useEffect(() => {
     let cancelled = false;
-    setAnswers(null);
     const ids = askKey === "" ? [] : (askKey.split("\n") as EnvironmentId[]);
     void Promise.all(
       ids.map((environmentId): Promise<readonly [string, DeliveredAnswer]> =>
         Promise.resolve(
-          readReport({
+          ask({
             environmentId,
             input: {
               sinceDay: range.sinceDay as never,
@@ -163,13 +169,13 @@ export function UsageDeliveredSection({
           .catch((): readonly [string, DeliveredAnswer] => [environmentId, { kind: "failed" }]),
       ),
     ).then((entries) => {
-      if (!cancelled) setAnswers(new Map(entries));
+      if (!cancelled) setRead({ key: readKey, answers: new Map(entries) });
     });
     return () => {
       cancelled = true;
     };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- refreshKey re-reads on refresh.
-  }, [askKey, range.sinceDay, range.untilDay, range.timeZone, readReport, refreshKey]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- readKey holds every input, refreshKey included.
+  }, [readKey]);
 
   const view = useMemo(
     () =>
@@ -195,7 +201,7 @@ export function UsageDeliveredSection({
     onProjectsChange(projectKey === "" ? [] : projectKey.split("\n"));
   }, [projectKey, onProjectsChange]);
 
-  if (askKey !== "" && answers === null) {
+  if (askKey !== "" && read?.key !== readKey) {
     return (
       <div className="flex flex-col gap-4" aria-busy>
         <div className="grid gap-3 md:grid-cols-4">
@@ -214,28 +220,6 @@ export function UsageDeliveredSection({
       : "";
   return (
     <div className="flex min-w-0 flex-col gap-5" data-usage-delivered>
-      <div className="flex items-center justify-end">
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={view.answered.length === 0}
-          onClick={() => {
-            void navigator.clipboard
-              ?.writeText(
-                deliveredReportMarkdown({
-                  view,
-                  rangeLabel,
-                  filters: filterLabels,
-                  formatDay: formatDeliveredDay,
-                }),
-              )
-              .then(() => setCopied(true))
-              .catch(() => setCopied(false));
-          }}
-        >
-          {copied ? "Copied as Markdown" : "Copy report"}
-        </Button>
-      </div>
       <section
         className="grid gap-3 md:grid-cols-[1.3fr_1fr_1fr_1fr]"
         aria-label="Delivered summary"
@@ -267,7 +251,32 @@ export function UsageDeliveredSection({
           }
         />
       </section>
-      <DeliveredTable view={view} formatDay={formatDeliveredDay} />
+      <DeliveredTable
+        view={view}
+        formatDay={formatDeliveredDay}
+        action={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={view.answered.length === 0}
+            onClick={() => {
+              void navigator.clipboard
+                ?.writeText(
+                  deliveredReportMarkdown({
+                    view,
+                    rangeLabel,
+                    filters: filterLabels,
+                    formatDay: formatDeliveredDay,
+                  }),
+                )
+                .then(() => setCopied(true))
+                .catch(() => setCopied(false));
+            }}
+          >
+            {copied ? "Copied as Markdown" : "Copy report"}
+          </Button>
+        }
+      />
       <footer className="flex flex-col gap-1 text-xs text-muted-foreground">
         <p>
           How costs are tied: a thread counts toward one increment, linked by hand, by claim,

@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { cn } from "../../../lib/utils";
 import { driverLabel } from "../usageScope";
@@ -113,9 +113,12 @@ function GroupRow({
 export function DeliveredTable({
   view,
   formatDay,
+  action,
 }: {
   readonly view: DeliveredView;
   readonly formatDay: (iso: string) => string;
+  /** Shown beside the heading, such as Copy report. */
+  readonly action?: ReactNode;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
@@ -128,7 +131,10 @@ export function DeliveredTable({
     .join(" · ");
   return (
     <section className="flex flex-col gap-2" aria-label="Increments">
-      <h2 className="text-sm font-medium text-foreground">Increments</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-foreground">Increments</h2>
+        {action}
+      </div>
       <table className="w-full table-fixed text-sm">
         <colgroup>
           <col className="w-[38%]" />

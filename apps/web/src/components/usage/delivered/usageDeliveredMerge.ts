@@ -174,7 +174,11 @@ function groupOf(
     cost,
     byModel,
     threads,
-    threadCount: parts.reduce((sum, { group }) => sum + group.threadCount, 0),
+    // Narrowed, only the named threads are known to match; none match when nothing is left.
+    threadCount:
+      narrowsModels(filters) && cost.records === 0
+        ? 0
+        : parts.reduce((sum, { group }) => sum + group.threadCount, 0),
   };
 }
 
