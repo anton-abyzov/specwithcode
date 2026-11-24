@@ -1021,6 +1021,33 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a whiteboard that a symlinked folder would put outside the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outsideDir = yield* makeTempDir;
+          yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"), { recursive: true });
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, ".specweave", "artifacts"));
+
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/away.excalidraw",
+              contents: '{"type":"excalidraw","version":2,"elements":[]}',
+            })
+            .pipe(Effect.flip);
+
+          expect(String("cause" in refused ? refused.cause : refused)).toContain(
+            "leads outside the project",
+          );
+          expect(yield* fileSystem.exists(path.join(outsideDir, "away.excalidraw"))).toBe(false);
+        }),
+    );
+
     it.effect("saves a sheet with a byte order mark at the revision its editor read", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

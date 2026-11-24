@@ -792,6 +792,15 @@ export const make = Effect.gen(function* () {
           // The sheet writer renames over the file, which Windows refuses while
           // the scan still holds it open.
           if (existing.kind === "text") await existing.handle.close();
+          // A whiteboard stays inside the project, also through a symlinked
+          // folder: the editor opens only files that resolve inside it.
+          if (isWhiteboardPath(target.relativePath)) {
+            const realRoot = await NodeFSP.realpath(input.cwd);
+            const inside = NodePath.relative(realRoot, destination);
+            if (inside.startsWith("..") || NodePath.isAbsolute(inside)) {
+              throw new Error(`${target.relativePath} leads outside the project.`);
+            }
+          }
           // A new whiteboard may be the first file in its folder.
           if (existing.kind === "missing") {
             await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
