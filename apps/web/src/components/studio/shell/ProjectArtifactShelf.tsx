@@ -68,6 +68,7 @@ import {
 import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
+import { SheetShelfActions } from "../../office/SheetShelfActions";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import { NewArtifactMenu, useCanCreateDocument } from "./NewArtifactMenu";
 import { Tip } from "./Tip";
@@ -654,6 +655,29 @@ export function ProjectArtifactShelf(props: {
         </h3>
         <span className="sws-library-spacer" />
         <NewArtifactMenu environmentId={props.environmentId} workspaceRoot={props.workspaceRoot} />
+        <SheetShelfActions
+          environmentId={props.environmentId}
+          workspaceRoot={props.workspaceRoot}
+          taken={new Set(props.artifacts.flatMap((item) => (item.path === null ? [] : [item.path])))}
+          onOpen={(path, title) =>
+            opener.open({
+              id: `file:${path}`,
+              kind: "sheet",
+              source: "output",
+              title,
+              updatedAt: Date.now(),
+              path,
+              root: null,
+              url: null,
+              byteLength: null,
+              thread: null,
+              increment: null,
+              design: null,
+              missing: false,
+              pinned: false,
+            })
+          }
+        />
         {open && shown.length >= 2 ? (
           <>
             <button
