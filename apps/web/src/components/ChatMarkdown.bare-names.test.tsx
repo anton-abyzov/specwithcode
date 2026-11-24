@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   environments: [] as string[],
   refreshes: [] as boolean[],
   reads: [] as string[],
+  indexed: new Set<string>(),
 }));
 vi.mock("./ui/toast", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ui/toast")>();
@@ -94,7 +95,7 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal)
       // The file index: every file under the root whose name is the query.
       return AsyncResult.success({
         truncated: false,
-        entries: [...state.existing]
+        entries: [...new Set([...state.existing, ...state.indexed])]
           .filter(
             (path) => path.startsWith(prefix) && path.split("/").at(-1) === request.input.query,
           )
@@ -160,6 +161,7 @@ beforeEach(() => {
   state.environments = [];
   state.refreshes = [];
   state.reads = [];
+  state.indexed = new Set();
   state.existing = new Set([CWD, `${CWD}/README.md`, `${CWD}/apps/web/src/app.ts`]);
 });
 afterEach(async () => {
@@ -313,4 +315,11 @@ it("drops a chip when the file goes between two reads that mount together", asyn
   await act(async () => {});
   expect(second.root.findAllByType("a")).toHaveLength(0);
   await act(async () => second.unmount());
+});
+
+it("does not trust a search index that still lists a deleted file", async () => {
+  state.existing.delete(`${CWD}/apps/web/src/app.ts`);
+  state.indexed.add(`${CWD}/apps/web/src/app.ts`);
+  await render("The bug is at `app.ts:12`.");
+  expect(links()).toHaveLength(0);
 });

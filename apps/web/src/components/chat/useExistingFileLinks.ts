@@ -227,7 +227,10 @@ export function useExistingFileLinks<Key>(
       }
       if (meta.search && !meta.directory) {
         const found = await searchOnHost(reads, meta.search).catch(() => null);
-        if (found !== null) return { path: found, kind: "file" };
+        // The search index can lag the disk: the match must still be there.
+        if (found !== null && (await entryKindOnHost(reads, found)) === "file") {
+          return { path: found, kind: "file" };
+        }
       }
       return { unresolved: candidates };
     };
