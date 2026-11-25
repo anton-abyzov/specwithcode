@@ -626,7 +626,11 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   }),
 );
 
+// Live document sessions (1480): one registry for the windows' calls and the agents' sheet tools.
+const layerDocumentSession = DocumentSession.layer.pipe(Layer.provide(layerWorkspaceFileSystem));
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(layerDocumentSession),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(ProviderEventIngestor.layerFailureReports),
@@ -805,11 +809,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(HandoffTransferStore.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
-  // Live document sessions (1480): one registry for the windows' calls and the agents' sheet tools.
-  DocumentSessionRpc.layerRpcHandlers.pipe(
-    Layer.provideMerge(DocumentSession.layer),
-    Layer.provide(layerWorkspaceFileSystem),
-  ),
+  DocumentSessionRpc.layerRpcHandlers.pipe(Layer.provideMerge(layerDocumentSession)),
   // Project sync (1390): its handlers, and the receiver the peer route lands extras with.
   ProjectSyncRpc.layerRpcHandlers.pipe(
     Layer.provideMerge(ExtrasReceiver.layer),

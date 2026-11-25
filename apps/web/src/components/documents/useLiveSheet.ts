@@ -94,6 +94,10 @@ export function useLiveSheet(input: {
     reloaded: tx(
       "The sheet was opened again from its file. An edit that was still on its way may be missing.",
     ),
+    recovered: tx(
+      "The sheet was opened again from its file. Your changes to a tab the file no longer has are in a new tab marked recovered.",
+    ),
+    recoveredTab: tx("recovered"),
   };
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -145,6 +149,12 @@ export function useLiveSheet(input: {
         },
         get reloaded() {
           return messagesRef.current.reloaded;
+        },
+        get recovered() {
+          return messagesRef.current.recovered;
+        },
+        get recoveredTab() {
+          return messagesRef.current.recoveredTab;
         },
       },
     );

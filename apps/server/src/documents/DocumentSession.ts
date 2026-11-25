@@ -376,6 +376,26 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
+  /**
+   * Whether the path the session was opened by still leads to its file. A link
+   * on the way pointed somewhere else since would have the next read or write
+   * land in another file.
+   */
+  const bound = (session: Session, relativePath: string = session.relativePath) =>
+    Effect.promise(() => fileIdentity(NodePath.resolve(session.cwd, relativePath))).pipe(
+      Effect.map(
+        (identity) =>
+          identity ===
+          (relativePath === session.relativePath
+            ? session.key
+            : NodePath.join(
+                NodePath.dirname(session.absolutePath),
+                NodePath.basename(relativePath),
+              )),
+      ),
+    );
+  const REBOUND = "The sheet's path now leads to another file. Open it again.";
+
   const endSession = Effect.fn("DocumentSession.end")(function* (session: Session, reason: string) {
     if (session.closed) return;
     session.closed = true;
@@ -411,10 +431,12 @@ const make = Effect.gen(function* () {
       return null;
     });
     if (name === null) return "kept" as const;
+    const renamed = NodePath.join(NodePath.dirname(session.relativePath), name);
+    if (!(yield* bound(session, renamed))) return "kept" as const;
     const written = yield* files
       .writeFile({
         cwd: session.cwd,
-        relativePath: NodePath.join(NodePath.dirname(session.relativePath), name),
+        relativePath: renamed,
         contents: next.text,
         expectedRevision: session.fileRevision,
       })
@@ -531,6 +553,12 @@ const make = Effect.gen(function* () {
         );
         return;
       }
+      // Read by the path it was opened by, so only while that still leads here. What merged
+      // and is not saved stays in the log beside the file.
+      if (!(yield* bound(session))) {
+        yield* endSession(session, REBOUND);
+        return;
+      }
       const read = yield* readFile(session);
       // A file that cannot be read as a sheet right now (half written, or broken by hand) is left alone.
       if (read === null || !read.ok) return;
@@ -579,6 +607,10 @@ const make = Effect.gen(function* () {
       if (!next.ok) return false;
       // A file that already reads as the sheet does is left as it was written.
       if (next.text !== canonicalText(session.saved.document)) {
+        if (!(yield* bound(session))) {
+          yield* endSession(session, REBOUND);
+          return false;
+        }
         const written = yield* files
           .writeFile({
             cwd: session.cwd,
@@ -821,6 +853,9 @@ const make = Effect.gen(function* () {
                 participants: participantsOf(session),
                 activity: session.activity,
                 ...(session.unsaved === null ? {} : { unsaved: session.unsaved }),
+                ...(session.unsaved === null || session.base === null
+                  ? {}
+                  : { saved: sheetUpdateToBase64(session.base.state) }),
               });
               send(session, { type: "presence", participants: participantsOf(session) }, queue);
               if (access === "edit") {

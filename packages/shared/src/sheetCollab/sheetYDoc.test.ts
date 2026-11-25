@@ -221,6 +221,70 @@ describe("sheet as a Yjs document", () => {
     expect(merged.formats?.B3).toEqual({ kind: "percent", decimals: 1 });
   });
 
+  it("keeps a format someone else changed when an edit only moves it among tied entries", () => {
+    const { left, right } = pair(
+      sheet({ title: "Ties", tabs: [{ name: "Plan", cells: { B2: 1 } }] }),
+    );
+    const cell = (col: number) => ({ start: { col, row: 1 }, end: { col, row: 1 } });
+    // Two formats added at the same time take the same place in the order.
+    edit(left, (current) => setFormat(current, 0, cell(1), { kind: "percent", decimals: 0 }));
+    edit(right, (current) => setFormat(current, 0, cell(2), { kind: "percent", decimals: 0 }));
+    sync(left, right);
+    const atStart = readSheetYDoc(left);
+    expect(Object.keys(atStart.document.tabs[0]!.formats ?? {})).toEqual(["B2", "C2"]);
+    // Someone else changes the later one while this writer's edit is open.
+    edit(right, (current) => setFormat(current, 0, cell(2), { kind: "percent", decimals: 2 }));
+    sync(left, right);
+    const mine = {
+      ...atStart.document,
+      tabs: [{ ...atStart.document.tabs[0]!, widths: { A: 200 } }],
+    };
+    writeSheetChange(left, atStart, mine, "mine");
+    const merged = readSheetYDoc(left).document.tabs[0]!;
+    expect(merged.widths).toEqual({ A: 200 });
+    expect(merged.formats?.C2).toEqual({ kind: "percent", decimals: 2 });
+    expect(merged.formats?.B2).toEqual({ kind: "percent", decimals: 0 });
+  });
+
+  it("adds a tab once when two writers make the same edit again under its id", () => {
+    const { left, right } = pair(BUDGET);
+    const added = (current: SheetDocument): SheetDocument => ({
+      ...current,
+      tabs: [...current.tabs, { name: "Extra", cells: { A1: "kept" } }],
+    });
+    for (const doc of [left, right]) {
+      const before = readSheetYDoc(doc);
+      writeSheetChange(doc, before, added(before.document), "local", [
+        undefined,
+        undefined,
+        "t-first-made",
+      ]);
+    }
+    sync(left, right);
+    for (const doc of [left, right]) {
+      const read = readSheetYDoc(doc);
+      expect(read.document.tabs.map((tab) => tab.name)).toEqual(["Plan", "Notes", "Extra"]);
+      expect(read.tabIds[2]).toBe("t-first-made");
+      expect(read.document.tabs[2]!.cells).toEqual({ A1: "kept" });
+    }
+    // A writer that already holds the tab from the other one writes into it.
+    const before = readSheetYDoc(left);
+    const base = {
+      document: { ...before.document, tabs: before.document.tabs.slice(0, 2) },
+      tabIds: before.tabIds.slice(0, 2),
+    };
+    writeSheetChange(left, base, added(base.document), "local", [
+      undefined,
+      undefined,
+      "t-first-made",
+    ]);
+    expect(readSheetYDoc(left).document.tabs.map((tab) => tab.name)).toEqual([
+      "Plan",
+      "Notes",
+      "Extra",
+    ]);
+  });
+
   it("leaves a chart someone else removed when an edit built on the earlier sheet ends", () => {
     const chart = { id: "chart-1", type: "bar", title: "Costs", labels: "A2:A3", values: "B2:B3" };
     const start = sheet({

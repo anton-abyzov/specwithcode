@@ -15,11 +15,8 @@ import {
   usedRange,
 } from "@specweave-studio/shared/officeSheet";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
-import * as DocumentSession from "../../../documents/DocumentSession.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
-import type { SavedSheet } from "../../../project/OfficeArtifacts.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
 import { reportLink } from "../report/handlers.ts";
@@ -85,37 +82,17 @@ export const layer = Access.toLayer(OfficeToolkit, {
         });
       }
       const sheets = yield* OfficeArtifactService.OfficeArtifactService;
-      const sheet = { title: input.title, designSystem: input.designSystem, tabs: input.tabs };
-      // A sheet that is open in a window takes the write as one merged change (1480).
-      const live = yield* DocumentSession.DocumentSession;
-      const merged = yield* sheets
-        .projectFolder({ projectId: caller.projectId, threadId: caller.id })
-        .pipe(
-          Effect.flatMap((workspaceRoot) =>
-            live.writeSheet({
-              projectId: caller.projectId,
-              workspaceRoot,
-              sheet,
-              name: input.name,
-              merge: input.merge,
-              expectedRevision: input.expectedRevision,
-              by: { id: caller.id, label: caller.title },
-            }),
-          ),
-          Effect.mapError(failure),
-        );
-      const saved = Option.isSome(merged)
-        ? merged.value
-        : yield* sheets
-            .writeSheet({
-              projectId: caller.projectId,
-              threadId: caller.id,
-              sheet,
-              name: input.name,
-              merge: input.merge,
-              expectedRevision: input.expectedRevision,
-            })
-            .pipe(Effect.mapError(failure));
+      const saved = yield* sheets
+        .writeSheet({
+          projectId: caller.projectId,
+          threadId: caller.id,
+          sheet: { title: input.title, designSystem: input.designSystem, tabs: input.tabs },
+          name: input.name,
+          merge: input.merge,
+          expectedRevision: input.expectedRevision,
+          label: caller.title,
+        })
+        .pipe(Effect.mapError(failure));
       const evaluation = evaluateSheet(saved.document);
       const { cells, charts } = counts(saved.document);
       return {
@@ -139,20 +116,9 @@ export const layer = Access.toLayer(OfficeToolkit, {
       const { caller } = yield* readCaller();
       if (caller === undefined) return yield* noCaller;
       const sheets = yield* OfficeArtifactService.OfficeArtifactService;
-      const live = yield* DocumentSession.DocumentSession;
-      const shown = yield* sheets
-        .projectFolder({ projectId: caller.projectId, threadId: caller.id })
-        .pipe(
-          Effect.flatMap((workspaceRoot) => live.settle({ workspaceRoot, name: input.name })),
-          Effect.orElseSucceed(() => Option.none<SavedSheet>()),
-        );
-      // A sheet that is open is read from its session, which holds what the windows see even
-      // when the file would not take it or cannot be read right now.
-      const saved = Option.isSome(shown)
-        ? shown.value
-        : yield* sheets
-            .readSheet({ projectId: caller.projectId, threadId: caller.id, name: input.name })
-            .pipe(Effect.mapError(failure));
+      const saved = yield* sheets
+        .readSheet({ projectId: caller.projectId, threadId: caller.id, name: input.name })
+        .pipe(Effect.mapError(failure));
       const document = saved.document;
       const tabIndex =
         input.tab === undefined

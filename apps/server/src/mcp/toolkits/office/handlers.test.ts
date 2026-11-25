@@ -6,12 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterAll, expect, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  ProjectLibraryError,
-  ProviderInstanceId,
-  ThreadId,
-} from "@specweave-studio/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { parseSheetDocument } from "@specweave-studio/shared/officeSheet";
 import * as Effect from "effect/Effect";
@@ -19,17 +14,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as DocumentSession from "../../../documents/DocumentSession.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
 import {
-  readSheetArtifact,
   resolveSheetLockDbPath,
   resolveSheetLockIdentity,
   writeSheetArtifact,
   writeSheetFileCompareAndSet,
 } from "../../../project/OfficeArtifacts.ts";
-import { ProjectLibraryProblem } from "../../../project/ProjectLibrary.ts";
 import * as Context from "../../McpInvocationContext.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
@@ -59,33 +54,21 @@ const scopeFor = (provider: string): Context.McpInvocationScope => ({
 });
 const scope = scopeFor("codex");
 
-const problem = (projectId: ProjectLibraryError["projectId"]) => (error: unknown) =>
-  new ProjectLibraryError({
-    projectId,
-    code: error instanceof ProjectLibraryProblem ? error.code : "operation_failed",
-    detail: error instanceof Error ? error.message : "failed",
-  });
-
-/** The real file reader and writer behind the service, over a fixture project. */
+/** The real service over a fixture project: the thread's project folder is `folder`. */
 const sheetsIn = (folder: string) =>
-  Layer.mock(OfficeArtifactService.OfficeArtifactService)({
-    writeSheet: (input) =>
-      Effect.tryPromise({
-        try: () =>
-          writeSheetArtifact(folder, input.sheet, {
-            name: input.name,
-            merge: input.merge,
-            expectedRevision: input.expectedRevision,
-          }),
-        catch: problem(input.projectId),
-      }),
-    readSheet: (input) =>
-      Effect.tryPromise({
-        try: () => readSheetArtifact(folder, input.name),
-        catch: problem(input.projectId),
-      }),
-    projectFolder: () => Effect.succeed(folder),
-  });
+  // A layer of its own per folder: the shared one is built once and would keep the first folder.
+  Layer.effect(OfficeArtifactService.OfficeArtifactService, OfficeArtifactService.make).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: () => Effect.succeed(Option.some({ workspaceRoot: folder } as never)),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(caller as never),
+        }),
+      ),
+    ),
+  );
 
 /** No window has a sheet open: every write and read goes to the file. */
 const noLiveSessions = Layer.mock(DocumentSession.DocumentSession)({
@@ -102,8 +85,7 @@ const layerFor = (
   Access.HandlersLayer.layer(Handlers.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        sheetsIn(folder),
-        sessions,
+        sheetsIn(folder).pipe(Layer.provide(sessions)),
         Layer.mock(Threads.ThreadManagementService)({
           getThreadShell: () => Effect.succeed(shell),
         }),

@@ -639,6 +639,39 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           "before the last changes were saved",
         );
         expect(logOf(file).updates).toBe(2);
+        // Another sheet in the folder opens for editing: the log is all there is of those
+        // changes, so it is not cleared away with the logs of sheets that are simply gone.
+        NodeFS.writeFileSync(NodePath.join(NodePath.dirname(file), "other.sheet.json"), TEXT);
+        yield* openWindow(
+          { cwd: target.cwd, relativePath: ".specweave/artifacts/other.sheet.json" },
+          "window-bbbb",
+        );
+        expect(logOf(file).updates).toBe(2);
+      }),
+    );
+
+    it.effect("saves nothing through a link that was pointed at another sheet", () =>
+      Effect.gen(function* () {
+        const { cwd, file, read } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const other = NodePath.join(NodePath.dirname(file), "other.sheet.json");
+        NodeFS.writeFileSync(other, TEXT);
+        const link = NodePath.join(NodePath.dirname(file), "link.sheet.json");
+        NodeFS.symlinkSync(file, link);
+        const window = yield* openWindow(
+          { cwd, relativePath: ".specweave/artifacts/link.sheet.json" },
+          "window-aaaa",
+        );
+        yield* window.send(put("A4", "For the first sheet"));
+        // The link now leads to a sheet that reads the same, byte for byte.
+        NodeFS.unlinkSync(link);
+        NodeFS.symlinkSync(other, link);
+        yield* sessions.settleAll;
+        expect((yield* window.nextOf("closed")).reason).toContain("leads to another file");
+        expect(NodeFS.readFileSync(other, "utf8")).toBe(TEXT);
+        expect(read()).toBe(TEXT);
+        // The edit is still beside the sheet it was made in.
+        expect(logOf(file).updates).toBe(2);
       }),
     );
 
@@ -720,6 +753,10 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         // A window that joins now is told as well.
         const later = yield* openWindow(target, "window-bbbb");
         expect(later.first.unsaved).toBe(failed.detail);
+        // With it comes the sheet as the file last held it, so the window tells the two apart.
+        const held = createSheetYDoc();
+        applySheetUpdate(held, sheetUpdateFromBase64(later.first.saved!)!, "remote");
+        expect(readSheetYDoc(held).document.tabs[0]!.cells.A4).toBeUndefined();
         expect(later.cells().A4).toBe("Kept");
         // Put right, the file takes the edit and the windows are told.
         NodeFS.writeFileSync(file, TEXT);

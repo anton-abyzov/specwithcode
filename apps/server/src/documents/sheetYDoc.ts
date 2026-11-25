@@ -482,9 +482,17 @@ export async function writeSheetSidecar(
   }
 }
 
+/** Whether a sidecar's text ends in changes no file was saved with. */
+export function sheetSidecarHoldsUnsaved(text: string | null): boolean {
+  const sidecar = text === null ? null : parseSheetSidecar(text);
+  const last = sidecar?.entries.at(-1);
+  return last !== undefined && "update" in last;
+}
+
 /**
  * Remove the sidecars in a folder whose documents are gone: a sheet deleted
- * while nobody had it open leaves its merge state behind otherwise.
+ * while nobody had it open leaves its merge state behind otherwise. One that
+ * holds changes no file has is kept: it is all there is of them.
  */
 export async function sweepSheetSidecars(documentFolder: string): Promise<void> {
   const folder = await sidecarFolder(NodePath.join(documentFolder, SHEET_SIDECAR_DIR, "x"), false);
@@ -497,7 +505,10 @@ export async function sweepSheetSidecars(documentFolder: string): Promise<void> 
       () => false,
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
-    if (gone) await removeSheetSidecar(NodePath.join(folder, name));
+    if (!gone) continue;
+    const sidecarPath = NodePath.join(folder, name);
+    const text = await NodeFSP.readFile(sidecarPath, "utf8").catch(() => null);
+    if (!sheetSidecarHoldsUnsaved(text)) await removeSheetSidecar(sidecarPath);
   }
 }
 

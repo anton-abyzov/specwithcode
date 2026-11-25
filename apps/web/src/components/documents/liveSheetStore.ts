@@ -13,7 +13,12 @@ import type {
   DocumentSessionParticipant,
   DocumentSessionPlace,
 } from "@specweave-studio/contracts";
-import { type SheetDocument, validateSheetDocument } from "@specweave-studio/shared/officeSheet";
+import {
+  SHEET_LIMITS,
+  type SheetDocument,
+  type SheetTab,
+  validateSheetDocument,
+} from "@specweave-studio/shared/officeSheet";
 import {
   type SheetSnapshot,
   type SheetUndo,
@@ -52,6 +57,10 @@ export interface LiveSheetMessages {
   readonly refused: string;
   /** The home machine started the sheet over from its file while an edit was on its way. */
   readonly reloaded: string;
+  /** The same, where the edits were to a tab the file no longer has and are kept in a new tab. */
+  readonly recovered: string;
+  /** The word a tab kept that way carries after its name, as in "Plan (recovered)". */
+  readonly recoveredTab: string;
 }
 
 export interface LiveSheetState {
@@ -68,6 +77,65 @@ export interface LiveSheetState {
   readonly problem: string | null;
   /** Why what everyone sees is not in the file yet; null when the file is current. */
   readonly unsaved: string | null;
+}
+
+const sameTab = (left: SheetTab, right: SheetTab): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+/**
+ * Make a window's unconfirmed edits again on a document the home machine
+ * started over: the change from `base` (the sheet as the home machine last
+ * had it saved) to `mine` (what the window shows), on top of what `doc` holds.
+ * What others changed is in both, so it is not made again. A tab added by the
+ * edits keeps the id it had, so two windows making the same edits again add
+ * it once.
+ *
+ * Edits to a tab `doc` does not have (renamed or removed in the file) cannot
+ * be made there. With `recover` the tab as the window shows it is added under
+ * its name and `word` ("Plan (recovered)"); without, those edits are left out.
+ */
+function remakeSheetEdits(
+  doc: SheetYDoc,
+  base: SheetSnapshot,
+  mine: SheetSnapshot,
+  recover: string | null,
+): "made" | "recovered" | "missing" {
+  const from = sheetSnapshotByName(doc, base.document);
+  writeSheetChange(doc, from, mine.document, LOCAL, mine.tabIds);
+  const now = readSheetYDoc(doc);
+  const held = new Set(now.tabIds);
+  const gone: Array<{ readonly id: string; readonly tab: SheetTab }> = [];
+  base.document.tabs.forEach((tab, index) => {
+    if (held.has(from.tabIds[index]!)) return;
+    // The same tab in the window, by the id both had before; removed there, nothing is kept.
+    const shown = mine.document.tabs[mine.tabIds.indexOf(base.tabIds[index]!)];
+    if (shown !== undefined && !sameTab(shown, tab))
+      gone.push({ id: base.tabIds[index]!, tab: shown });
+  });
+  if (gone.length === 0) return "made";
+  if (recover === null) return "missing";
+  const tabs = [...now.document.tabs];
+  const ids: Array<string | undefined> = tabs.map(() => undefined);
+  const names = new Set(tabs.map((tab) => tab.name.trim().toLowerCase()));
+  for (const { id, tab } of gone) {
+    const kept = `r${id}`;
+    const at = now.tabIds.indexOf(kept);
+    if (at >= 0) {
+      // Another window kept the same tab first: this one's values go into it.
+      tabs[at] = { ...tab, name: tabs[at]!.name };
+      continue;
+    }
+    let name = "";
+    for (let count = 1; name === "" || names.has(name.trim().toLowerCase()); count += 1) {
+      const suffix = count === 1 ? ` (${recover})` : ` (${recover} ${count})`;
+      name = `${tab.name.slice(0, Math.max(1, SHEET_LIMITS.tabNameChars - suffix.length))}${suffix}`;
+    }
+    names.add(name.trim().toLowerCase());
+    tabs.push({ ...tab, name });
+    ids.push(kept);
+  }
+  writeSheetChange(doc, now, { ...now.document, tabs }, LOCAL, ids);
+  return "recovered";
 }
 
 const INITIAL: LiveSheetState = {
@@ -219,18 +287,28 @@ export class LiveSheetStore {
         (this.#unsent > 0 || this.#undelivered || this.#unsavedAtHome.length > 0);
       this.#undelivered = false;
       if (fresh) {
-        const mine = this.#snapshot?.document ?? null;
-        const base = this.#home === null ? null : readSheetYDoc(this.#home).document;
+        const mine = this.#snapshot;
+        const base = this.#home === null ? null : readSheetYDoc(this.#home);
         const doc = createSheetYDoc();
         applySheetUpdate(doc, bytes, REMOTE);
+        // A sheet the home machine has not saved comes with the state it has saved: what is
+        // beyond that is kept apart here too, by a window that joins only now.
+        const saved =
+          event.unsaved === undefined || event.saved === undefined
+            ? null
+            : sheetUpdateFromBase64(event.saved);
         this.#home = createSheetYDoc();
-        applySheetUpdate(this.#home, bytes, REMOTE);
-        this.#unsavedAtHome = [];
+        applySheetUpdate(this.#home, saved ?? bytes, REMOTE);
+        this.#unsavedAtHome = saved === null ? [] : [bytes];
         this.#adopt(doc, event.epoch);
         this.#unsent = 0;
         // What this window changed and the home machine never got is made again on the new sheet.
-        if (lost && !this.#remake(doc, base, mine, event.access)) {
-          this.#state = { ...this.#state, problem: this.#messages.reloaded };
+        const remade = lost ? this.#remake(doc, base, mine, event.access) : "made";
+        if (remade !== "made") {
+          this.#state = {
+            ...this.#state,
+            problem: remade === "recovered" ? this.#messages.recovered : this.#messages.reloaded,
+          };
         }
       } else {
         // The same log after a reconnect: merge, then send what the home machine lacks.
@@ -285,33 +363,26 @@ export class LiveSheetStore {
 
   /**
    * Make this window's unconfirmed edits again on a document the home machine
-   * started over: the change from `base` (the sheet as the home machine last
-   * sent it) to `mine` (what this window shows), on top of what the new
-   * document holds. What others changed is in both, so it is not made again.
-   * False when the edits could not be made.
+   * started over. Tried on a copy first: edits that no longer fit the sheet
+   * are not made at all, and a tab that cannot be kept beside the others is
+   * left out.
    */
   #remake(
     doc: SheetYDoc,
-    base: SheetDocument | null,
-    mine: SheetDocument | null,
+    base: SheetSnapshot | null,
+    mine: SheetSnapshot | null,
     access: DocumentSessionAccess,
-  ): boolean {
-    if (base === null || mine === null || access !== "edit") return false;
-    if (!validateSheetDocument(base).ok) return false;
-    // Tried on a copy first: an edit that no longer fits the sheet is not made at all.
-    const trial = cloneSheetYDoc(doc);
-    writeSheetChange(trial, sheetSnapshotByName(trial, base), mine, LOCAL);
-    if (!validateSheetDocument(readSheetYDoc(trial).document).ok) return false;
-    const from = sheetSnapshotByName(doc, base);
-    writeSheetChange(doc, from, mine, LOCAL);
-    // An edit to a tab the new document does not have (renamed or removed in the file) could
-    // not be made: the rest was, and the window says that something may be missing.
-    const held = new Set(readSheetYDoc(doc).tabIds);
-    return base.tabs.every((tab, index) => {
-      if (held.has(from.tabIds[index]!)) return true;
-      const kept = mine.tabs.find((entry) => entry.name === tab.name);
-      return kept !== undefined && JSON.stringify(kept) === JSON.stringify(tab);
-    });
+  ): "made" | "recovered" | "missing" {
+    if (base === null || mine === null || access !== "edit") return "missing";
+    if (!validateSheetDocument(base.document).ok) return "missing";
+    for (const recover of [this.#messages.recoveredTab, null]) {
+      const trial = cloneSheetYDoc(doc);
+      remakeSheetEdits(trial, base, mine, recover);
+      if (validateSheetDocument(readSheetYDoc(trial).document).ok) {
+        return remakeSheetEdits(doc, base, mine, recover);
+      }
+    }
+    return "missing";
   }
 
   get editable(): boolean {
