@@ -1,8 +1,13 @@
 import type { FolderCopySourceStatus } from "@specweave-studio/contracts";
-import { expect, it, vi } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { copyNoticeWarnings } from "./handoffCopyNotices";
 import { refreshCopyScan } from "./handoffCopyScanRecovery";
-import { healedSecrets, untickedSecrets } from "./handoffFolderCopyPending";
+import {
+  folderCopyStorageKey,
+  recordExclusions,
+  settledSecrets,
+  untickedSecrets,
+} from "./handoffFolderCopyPending";
 
 const summary = (secrets: ReadonlyArray<string>, warnings: ReadonlyArray<string> = []) =>
   ({
@@ -72,15 +77,55 @@ it("leaves Refresh's new secret out without ticking again one another window lef
   });
 });
 
-it("puts back an exclusion this window made that another window's save dropped", () => {
-  // B left .env out; A's save, from a read made just before, replaced it without .env.
-  const stored = { included: true, out: [".env.local"] };
-  expect(healedSecrets(stored, new Set([".env"]), false)).toEqual({
+function memoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => void values.delete(key),
+    setItem: (key, value) => void values.set(key, String(value)),
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+it("keeps every window's exclusion in what leaves any window, whatever order their saves land in", () => {
+  vi.stubGlobal("localStorage", memoryStorage());
+  const key = folderCopyStorageKey("env-a", "project-1");
+  const stale = { included: true, out: [] };
+  // Window B leaves .env out, then closes before hearing anything back.
+  recordExclusions(key, stale, { included: true, out: [".env"] });
+  // Window A, still on its stale choice, saves its whole pointer with Refresh's new exclusion.
+  recordExclusions(key, stale, { included: true, out: [".env.local"] });
+  localStorage.setItem(
+    key,
+    JSON.stringify({ operationId: "op", secrets: { included: true, out: [".env.local"] } }),
+  );
+  // What A sends, approves or compares again with still leaves .env out.
+  expect(settledSecrets(key, { included: true, out: [".env.local"] })).toEqual({
     included: true,
     out: [".env.local", ".env"],
   });
-  // Secrets this window turned off stay off.
-  expect(healedSecrets(stored, new Set(), true)).toEqual({ included: false, out: [".env.local"] });
-  // Nothing of this window's was dropped: nothing to write.
-  expect(healedSecrets({ included: true, out: [".env"] }, new Set([".env"]), false)).toBeNull();
+  // A deliberate re-tick, in any window, takes it back in.
+  recordExclusions(
+    key,
+    { included: true, out: [".env.local", ".env"] },
+    { included: true, out: [".env.local"] },
+  );
+  expect(settledSecrets(key, { included: true, out: [".env.local"] }).out).toEqual([".env.local"]);
+  // Leaving every secret out holds the same way, and turning them back on undoes it.
+  recordExclusions(key, { included: true, out: [] }, { included: false, out: [] });
+  expect(settledSecrets(key, { included: true, out: [] }).included).toBe(false);
+  recordExclusions(key, { included: false, out: [] }, { included: true, out: [] });
+  expect(settledSecrets(key, { included: true, out: [] }).included).toBe(true);
+  // The record is never read as a copy left running.
+  const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index));
+  expect(keys.filter((name) => name?.startsWith("specwithcode:folder-copy:"))).toEqual([key]);
 });
+

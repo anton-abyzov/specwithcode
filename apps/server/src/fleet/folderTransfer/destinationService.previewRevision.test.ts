@@ -183,3 +183,29 @@ it("names again a folder a source file would replace when a hidden part of it ch
   const after = await settle(copies, operationId, "previewed");
   expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(seen);
 }, 120_000);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "never names twice alike a folder a source file would replace when part of it cannot be read",
+  async () => {
+    const target = NodePath.join(base, "targets", "unlistable-tree");
+    const hidden = NodePath.join(target, "README.md", "node_modules", "pkg");
+    NodeFS.mkdirSync(hidden, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 1;\n");
+    // The app may pass through this folder but not list it, so an edit inside is unseen.
+    NodeFS.chmodSync(hidden, 0o300);
+    try {
+      const { copies, operationId, status } = await previewed("unlistable-tree");
+      const seen = status.destinationRevision;
+      expect(seen).toBeTruthy();
+      NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 'edited';\n");
+      await copies.decide(operationId, {});
+      const after = await settle(copies, operationId, "previewed");
+      expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(
+        seen,
+      );
+    } finally {
+      NodeFS.chmodSync(hidden, 0o755);
+    }
+  },
+  120_000,
+);
