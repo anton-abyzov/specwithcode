@@ -74,7 +74,9 @@ export interface WebhookDeliveryRow {
 
 export function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
-    message,
+    // A refusal is one line, like every reason a routine shows: a hold or grant note can name
+    // another machine by its label, and labels can span lines.
+    message: firstLineOf(message),
     ...(input?.taskId === undefined ? {} : { taskId: input.taskId }),
     ...(input?.cause === undefined ? {} : { cause: input.cause }),
   });
