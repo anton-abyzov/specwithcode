@@ -1186,6 +1186,34 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+    // A path two slots name is not one registration, as Git looks it up in
+    // the first: the spare slot is restored and a copy of it names it too.
+    yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${spareSlot}\n`);
+    const twin = path.join(repo, ".git", "worktrees", "spare-twin");
+    yield* fileSystem.copy(spareSlot, twin);
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    yield* fileSystem.remove(twin, { recursive: true });
+    // A slot Git would not read (no HEAD) stays refused even when this
+    // server's own environment names the repository for git.
+    yield* fileSystem.remove(path.join(spareSlot, "HEAD"));
+    const inherited = { GIT_DIR: process.env.GIT_DIR, GIT_WORK_TREE: process.env.GIT_WORK_TREE };
+    const refused = yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        process.env.GIT_DIR = path.join(repo, ".git");
+        process.env.GIT_WORK_TREE = ".";
+      }),
+      () => launchInto(locked),
+      () =>
+        Effect.sync(() => {
+          for (const [key, value] of Object.entries(inherited)) {
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+          }
+        }),
+    );
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     // The project's own checkout and its worktrees still launch.
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
     expect((yield* launchInto(other)).at(-1)?.result).toMatchObject({ projectId });
