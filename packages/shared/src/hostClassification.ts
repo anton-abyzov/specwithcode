@@ -119,6 +119,26 @@ export const isPrivateNetworkHost = (host: string): boolean => {
   );
 };
 
+/**
+ * Suffixes that never resolve in public DNS: reserved names, plus the private
+ * network names of RFC 6762 Appendix G and the `.localdomain` search domain.
+ * A host under one of them names an internal machine, so it is never sent out.
+ */
+const PRIVATE_FAVICON_SUFFIXES = [
+  ".alt",
+  ".corp",
+  ".example",
+  ".home",
+  ".internal",
+  ".intranet",
+  ".invalid",
+  ".lan",
+  ".localdomain",
+  ".onion",
+  ".private",
+  ".test",
+];
+
 /** Whether a hostname is eligible to be disclosed to a public favicon provider. */
 export const isPublicFaviconHost = (host: string): boolean => {
   // A single trailing dot is a valid absolute DNS name. Repeated trailing
@@ -127,7 +147,7 @@ export const isPublicFaviconHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
   if (isPrivateNetworkHost(normalized)) return false;
   if (
-    [".alt", ".example", ".internal", ".invalid", ".onion", ".test"].some(
+    PRIVATE_FAVICON_SUFFIXES.some(
       (suffix) => normalized === suffix.slice(1) || normalized.endsWith(suffix),
     )
   ) {

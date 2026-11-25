@@ -43,6 +43,26 @@ describe("isPublicFaviconHost", () => {
     expect(isPublicFaviconHost("100.128.0.1")).toBe(true);
   });
 
+  it("keeps internal-network names away from the favicon service", () => {
+    // RFC 6762 Appendix G names and the .localdomain search domain: never in public DNS.
+    for (const host of [
+      "nas.lan",
+      "box.localdomain",
+      "localhost.localdomain",
+      "jenkins.corp",
+      "printer.home",
+      "wiki.intranet",
+      "build.private",
+      "LAN",
+      "router.lan.",
+    ]) {
+      expect(isPublicFaviconHost(host), host).toBe(false);
+    }
+    for (const host of ["lan.example.co.uk", "corp.com", "private.dev", "home.page"]) {
+      expect(isPublicFaviconHost(host), host).toBe(true);
+    }
+  });
+
   it("detects private host names and suffixes", () => {
     for (const host of [
       "localhost",
