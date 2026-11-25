@@ -28,6 +28,7 @@ import {
 } from "../machineTools/terminalPath.ts";
 import * as CliService from "./service.ts";
 import { findWindowsShim, launcherOwnsVersionsDir, resolveLaunchedAs } from "./update.ts";
+import { windowsSystem32Dir, windowsSystem32Path } from "../process/windowsSystemTools.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   "CliUninstallError",
@@ -104,6 +105,42 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   };
   return plan;
 });
+
+/**
+ * Removes the runtime folder after this process exits, from a detached shell.
+ * The shell, and the `ping` that waits, run by absolute path from System32,
+ * never from the folder `uninstall` was started in. The folder reaches the
+ * shell through the environment and is used inside quotes, so an `&` or `%`
+ * in its name stays part of the name.
+ */
+export function spawnWindowsRuntimeRemoval(
+  environment: NodeJS.ProcessEnv,
+  runtimeDir: string,
+  spawn: typeof NodeChildProcess.spawn = NodeChildProcess.spawn,
+) {
+  return spawn(
+    windowsSystem32Path("cmd.exe", environment),
+    [
+      "/d",
+      "/v:off",
+      "/c",
+      '""%STUDIO_UNINSTALL_PING%" -n 3 127.0.0.1 >nul & rmdir /s /q "%STUDIO_UNINSTALL_RUNTIME%""',
+    ],
+    {
+      cwd: windowsSystem32Dir(environment),
+      env: {
+        ...environment,
+        STUDIO_UNINSTALL_PING: windowsSystem32Path("PING.EXE", environment),
+        STUDIO_UNINSTALL_RUNTIME: runtimeDir,
+      },
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      // cmd.exe reads its own command line; Node's quoting would break the quotes above.
+      windowsVerbatimArguments: true,
+    },
+  );
+}
 
 export const uninstallCommand = Command.make("uninstall", {
   ...projectLocationFlags,
@@ -203,16 +240,8 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     // process exits by a detached shell, and the user is told either way.
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
-      const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
       yield* Effect.try({
-        try: () => {
-          const child = NodeChildProcess.spawn(
-            comspec,
-            ["/d", "/c", `ping -n 3 127.0.0.1 >nul & rmdir /s /q "${runtimeDir}"`],
-            { detached: true, stdio: "ignore", windowsHide: true },
-          );
-          child.unref();
-        },
+        try: () => spawnWindowsRuntimeRemoval(environment, runtimeDir).unref(),
         catch: () =>
           new CliUninstallError({
             reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
@@ -251,5 +280,6 @@ const removeTerminalCommands = Effect.fn("cli.uninstall.terminal_commands")(func
   yield* fs
     .remove(terminalCommandsDir(baseDir), { recursive: true, force: true })
     .pipe(Effect.ignore);
-  if (left.length === 0) yield* Console.log("No SpecWithCode commands block is left in your Terminal startup files.");
+  if (left.length === 0)
+    yield* Console.log("No SpecWithCode commands block is left in your Terminal startup files.");
 });

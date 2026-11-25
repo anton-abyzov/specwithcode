@@ -27,6 +27,7 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 
 import { STUDIO_CLI_NAMES } from "../cli/cliName.ts";
+import { windowsPowerShellPath } from "../process/windowsSystemTools.ts";
 import {
   compareExactServiceVersions,
   isExactServiceVersion,
@@ -173,7 +174,7 @@ export async function listProcessCommandLines(
     return lines;
   }
   if (platform === "win32") {
-    const stdout = await execText("powershell.exe", [
+    const stdout = await execText(windowsPowerShellPath(), [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
