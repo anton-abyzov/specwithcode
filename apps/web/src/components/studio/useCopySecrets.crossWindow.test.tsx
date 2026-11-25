@@ -54,16 +54,24 @@ const machines = [{ id: "env-target", label: "Target", homeSecretFiles: false }]
 
 let roots: Array<Root> = [];
 
-function Window({ into, pending }: { into: { current: Secrets | null }; pending: RefObject<PendingCopy | null> }) {
+function Window({
+  into,
+  pending,
+  listed = summary,
+}: {
+  into: { current: Secrets | null };
+  pending: RefObject<PendingCopy | null>;
+  listed?: FolderCopySourceSummary;
+}) {
   into.current = useCopySecrets({
     source: "env-source" as EnvironmentId,
     sourceLabel: "Source",
     targetLabel: "Target",
     machine: "env-target" as EnvironmentId,
     machines,
-    summary,
+    summary: listed,
     copy: null,
-    summaryNow: { current: summary },
+    summaryNow: { current: listed },
     copyNow: { current: null },
     repositoryChoices: null,
     repositoryDraft: { current: null },
@@ -72,14 +80,14 @@ function Window({ into, pending }: { into: { current: Secrets | null }; pending:
     keep: (secrets) => {
       if (pending.current) pending.current = { ...pending.current, secrets };
     },
-    readSummary: async () => summary,
+    readSummary: async () => listed,
     storageKey,
   });
   return null;
 }
 
 /** One dialog window on the copy, with its own memory and the machine's shared storage. */
-async function openWindow() {
+async function openWindow(listed = summary) {
   const into: { current: Secrets | null } = { current: null };
   const pending: RefObject<PendingCopy | null> = {
     current: {
@@ -92,7 +100,7 @@ async function openWindow() {
   document.body.append(element);
   const root = createRoot(element);
   roots.push(root);
-  await act(async () => root.render(<Window into={into} pending={pending} />));
+  await act(async () => root.render(<Window into={into} pending={pending} listed={listed} />));
   return into;
 }
 
@@ -131,4 +139,12 @@ it("stages again when another window leaves a file out while the list is on its 
   expect(state.sends).toEqual([[".env", "app.env"], ["app.env"]]);
   // What the approval then names leaves .env out.
   expect(a.current!.sentFor("op-1")).toEqual(["app.env"]);
+});
+
+it("names no secret file to the approval when the saved summary lists none", async () => {
+  // A reopened dialog holds a summary from before a Refresh found .env; a list staged then
+  // must never be pulled unnamed.
+  const a = await openWindow({ secretFiles: [], warnings: [] } as unknown as FolderCopySourceSummary);
+  await act(async () => a.current!.sendTicked("op-1"));
+  expect(a.current!.sentFor("op-1")).toEqual([]);
 });
