@@ -58,7 +58,7 @@ export type ListedTool = (typeof ToolsListPayload.Type)["result"]["tools"][numbe
 export interface StubShell {
   readonly projectId: string;
   readonly worktreePath: string | null;
-  readonly deletedAt: null;
+  readonly deletedAt: string | null;
 }
 
 const stubServices = (shell: StubShell | null) =>

@@ -29,6 +29,7 @@ it.effect(
       Effect.gen(function* () {
         const workspace = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-mcp-meta-"));
         NodeFS.mkdirSync(NodePath.join(workspace, ".specweave"));
+        NodeFS.writeFileSync(NodePath.join(workspace, ".specweave", "config.json"), "{}\n");
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => NodeFS.rmSync(workspace, { recursive: true, force: true })),
         );
@@ -47,7 +48,7 @@ it.effect(
           .sort();
         expect(loaded).toEqual([...ALWAYS_LOAD_TOOLS].sort());
         for (const tool of tools) {
-          const keys = Object.keys(tool._meta ?? {}).filter((key) => key.startsWith("anthropic/"));
+          const keys = Object.keys(tool._meta ?? {});
           expect(keys, tool.name).toEqual(
             ALWAYS_LOAD_TOOLS.has(tool.name) ? [ALWAYS_LOAD_KEY] : [],
           );

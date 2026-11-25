@@ -81,6 +81,7 @@ const makeFixture = Effect.acquireRelease(
     );
     const workspace = NodePath.join(root, "worktree");
     NodeFS.mkdirSync(NodePath.join(workspace, ".specweave"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(workspace, ".specweave", "config.json"), "{}\n");
     const cli = NodePath.join(root, "specweave");
     NodeFS.writeFileSync(cli, STAND_IN, { mode: 0o755 });
     const pids = NodePath.join(root, "pids.json");
@@ -93,7 +94,10 @@ const makeFixture = Effect.acquireRelease(
     ),
 );
 
-const serve = (fixture: Fixture, shell: { readonly worktreePath?: string | null } = {}) =>
+const serve = (
+  fixture: Fixture,
+  shell: { readonly worktreePath?: string | null; readonly deletedAt?: string | null } = {},
+) =>
   Effect.gen(function* () {
     const serverLayer = McpHttpServer.toolkitRegistration(
       SpecweaveToolkit,
@@ -121,6 +125,7 @@ const serve = (fixture: Fixture, shell: { readonly worktreePath?: string | null 
               ...liveThreadShell(id),
               worktreePath:
                 shell.worktreePath === undefined ? fixture.workspace : shell.worktreePath,
+              ...(shell.deletedAt === undefined ? {} : { deletedAt: shell.deletedAt }),
             }),
         }),
       ),
@@ -339,6 +344,21 @@ it.live.each([
       const { result } = yield* call(port, headers, "specweave_task_status", { increment: "1483" });
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result)).toContain(expected);
+    }),
+  ),
+);
+
+it.live("a deleted thread is refused even while its worktree is still on disk", () =>
+  withServer(
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture;
+      const port = yield* serve(fixture, { deletedAt: "2026-11-25T00:00:00.000Z" });
+      const headers = yield* session(port, THREAD_TOKEN);
+      for (const name of ["specweave_task_status", "specweave_next_task"]) {
+        const { result } = yield* call(port, headers, name, { increment: "1483" });
+        expect(result.isError, name).toBe(true);
+        expect(JSON.stringify(result), name).toContain("calling thread was not found");
+      }
     }),
   ),
 );
