@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { copyNoticeWarnings } from "./handoffCopyNotices";
 import { refreshCopyScan } from "./handoffCopyScanRecovery";
 import {
+  clearExclusions,
   folderCopyStorageKey,
   recordExclusions,
   settledSecrets,
@@ -130,21 +131,18 @@ it("keeps every window's exclusion in what leaves any window, whatever order the
 });
 
 
-it("lets Sync again with secrets override only what was left out before, and only on that copy", () => {
+it("takes back only one window's own exclusions for one machine", () => {
   vi.stubGlobal("localStorage", memoryStorage());
   const key = folderCopyStorageKey("env-a", "project-1");
-  const now = vi.spyOn(Date, "now");
-  // Another window, on a copy to another machine, leaves .env.local out.
-  now.mockReturnValue(1_000);
-  recordExclusions(key, { included: true, out: [] }, { included: true, out: [".env.local"] });
-  // The person asks for every secret on a fresh copy here.
-  const again = { included: true, out: [], since: 2_000 };
-  expect(settledSecrets(key, again).out).toEqual([]);
-  // The other copy, without that request, still leaves it out.
-  expect(settledSecrets(key, { included: true, out: [] }).out).toEqual([".env.local"]);
-  // A file left out after the request stays out of the fresh copy too.
-  now.mockReturnValue(3_000);
-  recordExclusions(key, { included: true, out: [] }, { included: true, out: [".env"] });
-  expect(settledSecrets(key, again).out).toEqual([".env"]);
-  now.mockRestore();
+  const none = { included: true, out: [] };
+  recordExclusions(key, none, { included: false, out: [] }, "w1|machine-x");
+  recordExclusions(key, none, { included: true, out: [".env.local"] }, "w3|machine-y");
+  recordExclusions(key, none, { included: true, out: ["app.env"] }, "w1|machine-y");
+  recordExclusions(key, none, { included: true, out: [".env.x"] }, "w2|machine-x");
+  clearExclusions(key, (by) => by === "w1|machine-x" || by === "w1|");
+  // Window 1's "secrets off" for machine X is gone; everything else stays recorded.
+  expect(settledSecrets(key, none)).toEqual({
+    included: true,
+    out: [".env.local", ".env.x", "app.env"],
+  });
 });

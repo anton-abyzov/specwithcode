@@ -148,3 +148,15 @@ it("names no secret file to the approval when the saved summary lists none", asy
   await act(async () => a.current!.sendTicked("op-1"));
   expect(a.current!.sentFor("op-1")).toEqual([]);
 });
+
+it("lets Sync again with secrets take back only this window's own exclusions", async () => {
+  const a = await openWindow();
+  const b = await openWindow();
+  // B leaves .env out of this copy; A leaves app.env out.
+  await act(async () => b.current!.choose({ included: true, out: [".env"] }));
+  await act(async () => a.current!.choose({ included: true, out: ["app.env"] }));
+  // A asks for every secret on another copy to the same machine.
+  const again = a.current!.includeAll();
+  // A's own exclusion is taken back; B's still keeps .env out.
+  expect(a.current!.settled(again).out).toEqual([".env"]);
+});
