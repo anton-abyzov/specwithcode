@@ -26,6 +26,7 @@ import { ProviderDriverError } from "../Errors.ts";
 import {
   buildInitialPiProviderSnapshot,
   checkPiProviderStatus,
+  piStatusFolderUnavailable,
   enrichPiSnapshot,
 } from "../PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -86,20 +87,40 @@ const withInstanceIdentity =
 /**
  * Pi starts every extension's session hooks, and reads project MCP config, in
  * the folder it runs in. The server's folder is the home folder on the desktop
- * app, so the status check runs Pi in a private empty folder of its own.
+ * app, so each status check runs Pi in a new private empty folder (mode 0700,
+ * removed afterwards) under the status cache. A fixed folder name could be
+ * replaced by a symlink or filled in advance. When no such folder can be made
+ * the check fails without starting Pi anywhere else.
  */
 export const checkPiProviderStatusInProbeFolder = (
   settings: PiSettings,
   environment: NodeJS.ProcessEnv,
   providerStatusCacheDir: string,
 ) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const probeFolder = path.join(providerStatusCacheDir, "pi-status-probe");
-    yield* fileSystem.makeDirectory(probeFolder, { recursive: true }).pipe(Effect.ignore);
-    return yield* checkPiProviderStatus(settings, environment, probeFolder);
-  });
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      if (!settings.enabled) return yield* checkPiProviderStatus(settings, environment);
+      const probeFolder = yield* fileSystem
+        .makeDirectory(providerStatusCacheDir, { recursive: true })
+        .pipe(
+          Effect.andThen(
+            fileSystem.makeTempDirectoryScoped({
+              directory: providerStatusCacheDir,
+              prefix: "pi-status-probe-",
+            }),
+          ),
+          Effect.result,
+        );
+      if (probeFolder._tag === "Failure") {
+        yield* Effect.logWarning("Pi status check folder could not be made.", {
+          reason: probeFolder.failure.reason._tag,
+        });
+        return yield* piStatusFolderUnavailable(settings, probeFolder.failure.reason._tag);
+      }
+      return yield* checkPiProviderStatus(settings, environment, probeFolder.success);
+    }),
+  );
 
 export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
   driverKind: DRIVER_KIND,
