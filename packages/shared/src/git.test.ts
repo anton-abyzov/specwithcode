@@ -32,21 +32,17 @@ describe("normalizeGitRemoteUrl", () => {
   });
 
   it("drops the login from Git's transport::address form", () => {
-    expect(
-      normalizeGitRemoteUrl("https::https://user:placeholder@host.example/org/repo.git"),
-    ).toBe("https::https://host.example/org/repo");
+    expect(normalizeGitRemoteUrl("https::https://user:placeholder@host.example/org/repo.git")).toBe(
+      "https::https://host.example/org/repo",
+    );
     expect(withoutRemoteUrlLogin("https::https://user:placeholder@host.example/org/repo.git")).toBe(
       "https::https://host.example/org/repo.git",
     );
   });
 
   it("keeps every character of a file:// path", () => {
-    expect(normalizeGitRemoteUrl("file:///srv/git/repo#one.git")).toBe(
-      "file:///srv/git/repo#one",
-    );
-    expect(normalizeGitRemoteUrl("file:///srv/git/repo#two.git")).toBe(
-      "file:///srv/git/repo#two",
-    );
+    expect(normalizeGitRemoteUrl("file:///srv/git/repo#one.git")).toBe("file:///srv/git/repo#one");
+    expect(normalizeGitRemoteUrl("file:///srv/git/repo#two.git")).toBe("file:///srv/git/repo#two");
   });
 
   it("leaves credential-free remotes keyed exactly as before", () => {
