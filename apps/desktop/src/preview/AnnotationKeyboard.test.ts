@@ -5,6 +5,7 @@ import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 const keyboardEvent = (
   overrides: Partial<Parameters<typeof resolveAnnotationSubmission>[0]> = {},
 ) => ({
+  isTrusted: true,
   key: "Enter",
   metaKey: false,
   ctrlKey: false,
@@ -24,6 +25,17 @@ describe("resolveAnnotationSubmission", () => {
     expect(resolveAnnotationSubmission(keyboardEvent({ shiftKey: true }), true)).toBeNull();
     expect(resolveAnnotationSubmission(keyboardEvent({ isComposing: true }), true)).toBeNull();
     expect(resolveAnnotationSubmission(keyboardEvent({ key: " " }), true)).toBeNull();
+  });
+
+  it("ignores synthetic key events a page script dispatches", () => {
+    const synthetic = { isTrusted: false };
+    expect(resolveAnnotationSubmission(keyboardEvent(synthetic), true)).toBeNull();
+    expect(
+      resolveAnnotationSubmission(keyboardEvent({ ...synthetic, ctrlKey: true }), true),
+    ).toBeNull();
+    expect(
+      resolveAnnotationSubmission(keyboardEvent({ ...synthetic, metaKey: true }), true),
+    ).toBeNull();
   });
 
   it("keeps attach available while the send shortcut follows permission changes", () => {

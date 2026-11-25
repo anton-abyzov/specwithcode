@@ -1,5 +1,5 @@
-import type { Session } from "electron";
-import { session } from "electron";
+import type { Session, WebContents } from "electron";
+import { BrowserWindow, dialog, session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -8,6 +8,13 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+
+import {
+  consentPromptMessage,
+  isConsentPreviewPermission,
+  makePreviewPermissionConsent,
+  type AskPermission,
+} from "./PreviewPermissionConsent.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:studio-preview-";
 /**
@@ -21,7 +28,9 @@ const PROFILE_PARTITION_MARKER = "profile-";
 
 export type BrowserSessionPartitionNamespace = "profile";
 
-// Permissions granted to preview web content. `clipboard-sanitized-write` is the
+// Permissions granted to preview web content without asking. Clipboard read,
+// notifications and location ask the person once per origin instead
+// (PreviewPermissionConsent.ts). `clipboard-sanitized-write` is the
 // Electron permission behind `navigator.clipboard.writeText()` — note it is NOT
 // `clipboard-write`, which is not a valid Electron permission name. Async
 // clipboard writes are gated by the permission *check* handler (not only the
@@ -29,10 +38,7 @@ export type BrowserSessionPartitionNamespace = "profile";
 // buttons — e.g. the Next.js / Vercel error overlay — fail with
 // `Failed to execute 'writeText' on 'Clipboard': Write permission denied`.
 const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
-  "clipboard-read",
   "clipboard-sanitized-write",
-  "notifications",
-  "geolocation",
   // Deliberately NOT local-fonts: preview sessions run untrusted web content,
   // and silently granting it would hand every page the user's installed-font
   // fingerprint (and font file bytes via FontData.blob()). The app's own font
@@ -159,6 +165,37 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
       ),
   );
 
+/** The window showing the preview, so the prompt sits over the page that asked. */
+const previewHostWindow = (requester: unknown): BrowserWindow | null => {
+  if (typeof requester !== "object" || requester === null) return null;
+  const contents = requester as WebContents;
+  try {
+    return (
+      BrowserWindow.fromWebContents(contents.hostWebContents ?? contents) ??
+      BrowserWindow.fromWebContents(contents) ??
+      null
+    );
+  } catch {
+    return null;
+  }
+};
+
+const askWithDialog: AskPermission = async (requester, permission, origin) => {
+  const options = {
+    type: "question" as const,
+    buttons: ["Allow", "Block"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+    message: consentPromptMessage(permission, origin),
+  };
+  const owner = previewHostWindow(requester);
+  const { response } = owner
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options);
+  return response === 0;
+};
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
@@ -203,11 +240,22 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           // the challenge every few seconds, so logins behind it never complete
           // (#5002). Re-setting the unchanged native string is harmless, so it
           // is the rewritten string itself that trips the check.
-          browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-            callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
-          });
-          browserSession.setPermissionCheckHandler((_webContents, permission) =>
-            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          const consent = makePreviewPermissionConsent(askWithDialog);
+          browserSession.setPermissionRequestHandler(
+            (webContents, permission, callback, details) => {
+              if (isConsentPreviewPermission(permission)) {
+                const requestingUrl =
+                  details && "requestingUrl" in details ? details.requestingUrl : undefined;
+                consent.request(webContents, permission, requestingUrl, callback);
+                return;
+              }
+              callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
+            },
+          );
+          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+            isConsentPreviewPermission(permission)
+              ? consent.check(permission, requestingOrigin)
+              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);

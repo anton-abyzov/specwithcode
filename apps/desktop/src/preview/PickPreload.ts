@@ -1419,7 +1419,10 @@ function startAnnotation(sendEnabled: boolean): void {
         teardown(true);
       });
   };
-  submit.addEventListener("click", () => submitAnnotation("attach"));
+  submit.addEventListener("click", (event) => {
+    // A page script's synthetic click must not send its own text as the person's.
+    if (event.isTrusted) submitAnnotation("attach");
+  });
   root.addEventListener("keydown", (event) => {
     const submission =
       event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
