@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - A scratch workspace with a .specweave folder.
+// @effect-diagnostics nodeBuiltinImport:off - A scratch worktree with a .specweave folder.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -11,70 +11,54 @@ import {
   listToolsAsThread,
   serveFullLayer,
 } from "./McpFullLayer.testkit.ts";
-import {
-  ALWAYS_LOAD_KEY,
-  ALWAYS_LOAD_TOOLS,
-  FALLBACK_SEARCH_HINT,
-  SEARCH_HINT_KEY,
-  toolMeta,
-} from "./McpToolMeta.ts";
+import { ALWAYS_LOAD_KEY, ALWAYS_LOAD_TOOLS, toolMeta } from "./McpToolMeta.ts";
 
-it("gives the six core tools alwaysLoad and every other tool a toolkit search hint", () => {
+it("loads up front only the five measured core tools", () => {
   expect([...ALWAYS_LOAD_TOOLS].sort()).toEqual(
-    [
-      "advisor",
-      "ask_user",
-      "delegate_task",
-      "request_secret",
-      "studio_report_save",
-      "studio_thread_send",
-    ].sort(),
+    ["advisor", "ask_user", "delegate_task", "request_secret", "studio_thread_send"].sort(),
   );
   expect(toolMeta("ask_user")).toEqual({ [ALWAYS_LOAD_KEY]: true });
-  expect(toolMeta("chrome_click")).toEqual({
-    [SEARCH_HINT_KEY]: "chrome: the user's signed-in Chrome",
-  });
-  expect(toolMeta("specweave_next_task")[SEARCH_HINT_KEY]).toMatch(/^specweave: /);
-  expect(toolMeta("not_a_tool")).toEqual({ [SEARCH_HINT_KEY]: FALLBACK_SEARCH_HINT });
+  expect(toolMeta("studio_report_save")).toEqual({});
+  expect(toolMeta("chrome_click")).toEqual({});
 });
 
-it.effect("every tool in the real tools/list carries exactly one of the two _meta keys", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const workspace = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-mcp-meta-"));
-      NodeFS.mkdirSync(NodePath.join(workspace, ".specweave"));
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => NodeFS.rmSync(workspace, { recursive: true, force: true })),
-      );
-      yield* serveFullLayer({
-        projectId: "project-scratch",
-        worktreePath: workspace,
-        deletedAt: null,
-      });
-      const tools = yield* listToolsAsThread;
+it.effect(
+  "the real HTTP tools/list carries alwaysLoad on exactly that set and no other _meta key",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspace = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-mcp-meta-"));
+        NodeFS.mkdirSync(NodePath.join(workspace, ".specweave"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(workspace, { recursive: true, force: true })),
+        );
+        yield* serveFullLayer({
+          projectId: "project-scratch",
+          worktreePath: workspace,
+          deletedAt: null,
+        });
+        const tools = yield* listToolsAsThread;
 
-      expect(tools.length).toBeGreaterThan(170);
-      const names = tools.map((tool) => tool.name);
-      for (const core of ALWAYS_LOAD_TOOLS) expect(names, core).toContain(core);
-      for (const tool of tools) {
-        const meta = tool._meta ?? {};
-        const always = meta[ALWAYS_LOAD_KEY] === true;
-        const hint = meta[SEARCH_HINT_KEY];
-        expect(always !== (typeof hint === "string"), tool.name).toBe(true);
-        expect(always, tool.name).toBe(ALWAYS_LOAD_TOOLS.has(tool.name));
-        if (!always) {
-          expect(hint, tool.name).not.toBe(FALLBACK_SEARCH_HINT);
-          expect((hint as string).length, tool.name).toBeLessThanOrEqual(80);
+        // Every toolkit registers through registerToolkit; the image tools by hand.
+        expect(tools.length).toBeGreaterThan(160);
+        const loaded = tools
+          .filter((tool) => tool._meta?.[ALWAYS_LOAD_KEY] === true)
+          .map((tool) => tool.name)
+          .sort();
+        expect(loaded).toEqual([...ALWAYS_LOAD_TOOLS].sort());
+        for (const tool of tools) {
+          const keys = Object.keys(tool._meta ?? {}).filter((key) => key.startsWith("anthropic/"));
+          expect(keys, tool.name).toEqual(
+            ALWAYS_LOAD_TOOLS.has(tool.name) ? [ALWAYS_LOAD_KEY] : [],
+          );
         }
-      }
-      // Hand-registered image tools pass through the same wrapper.
-      const snapshot = tools.find((tool) => tool.name === "preview_snapshot");
-      expect(snapshot?._meta?.[SEARCH_HINT_KEY]).toMatch(/^preview: /);
-      // In a SpecWeave worktree the two read-only SpecWeave tools are listed.
-      expect(names.filter((name) => name.startsWith("specweave_")).sort()).toEqual([
-        "specweave_next_task",
-        "specweave_task_status",
-      ]);
-    }),
-  ).pipe(Effect.provide(fullLayerTestServices)),
+        // In a SpecWeave worktree the two read-only SpecWeave tools are listed.
+        expect(
+          tools
+            .map((tool) => tool.name)
+            .filter((name) => name.startsWith("specweave_"))
+            .sort(),
+        ).toEqual(["specweave_next_task", "specweave_task_status"]);
+      }),
+    ).pipe(Effect.provide(fullLayerTestServices)),
 );
