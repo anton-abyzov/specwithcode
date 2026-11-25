@@ -113,6 +113,39 @@ it.effect("records only the first line of a failed turn's message", () =>
   }).pipe(Effect.provide(serviceLayer)),
 );
 
+it.effect.each(["\r", "\u2028", "\u2029", "\u0085"])(
+  "cuts a failed turn's message at any line break: %j",
+  (lineBreak) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
+      const service = yield* Service.ScheduledTaskService;
+      const { task } = yield* service.upsert(taskInput);
+      yield* service.runNow({ id: task.id });
+
+      yield* service.recordTurnFailure({
+        id: task.id,
+        requestedAt: at("2026-10-21T19:00:00.100Z"),
+        error: `Setup failed.${lineBreak}token=sk-private`,
+      });
+      const [stored] = (yield* service.list()).tasks;
+      assert.equal(stored?.lastRunError, "Setup failed.");
+    }).pipe(Effect.provide(serviceLayer)),
+);
+
+it.effect("shows one line of a reason, whichever writer stored it", () =>
+  Effect.gen(function* () {
+    const service = yield* Service.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    const { task } = yield* service.upsert(taskInput);
+    // A note written before this rule, or by a writer that keeps the provider's diagnostic.
+    yield* sql`UPDATE scheduled_tasks SET last_run_status = 'failed',
+      last_run_error = ${"Provider unavailable.\nPATH=/Users/someone/private"}
+      WHERE task_id = ${task.id}`;
+    const [stored] = (yield* service.list()).tasks;
+    assert.equal(stored?.lastRunError, "Provider unavailable.");
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
 it.effect("reports running while the dispatch is not recorded yet", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
