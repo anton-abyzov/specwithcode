@@ -50,7 +50,7 @@ export function liveSheetBinding(
     redo: () => store.redo(),
     canUndo: state.canUndo,
     canRedo: state.canRedo,
-    problem: state.problem,
+    problem: state.problem ?? state.unsaved,
     clearProblem: () => store.clearProblem(),
     setPlace: store.setPlace,
     others: presence.filter((entry) => !entry.self),
@@ -91,6 +91,9 @@ export function useLiveSheet(input: {
   const messages = {
     viewOnly: tx("This window can only view the sheet."),
     refused: tx("That change could not be made. The sheet is back to what everyone sees."),
+    reloaded: tx(
+      "The sheet was opened again from its file. An edit that was still on its way may be missing.",
+    ),
   };
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -139,6 +142,9 @@ export function useLiveSheet(input: {
         },
         get refused() {
           return messagesRef.current.refused;
+        },
+        get reloaded() {
+          return messagesRef.current.reloaded;
         },
       },
     );

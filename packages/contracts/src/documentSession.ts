@@ -90,6 +90,8 @@ export const DocumentSessionEvent = Schema.Union([
     update,
     participants: Schema.Array(DocumentSessionParticipant),
     activity: Schema.Array(DocumentSessionActivity),
+    /** Why what merged is not in the file yet; left out when the file is current. */
+    unsaved: Schema.optionalKey(bounded(400)),
   }),
   Schema.Struct({
     type: Schema.Literal("update"),
@@ -99,6 +101,12 @@ export const DocumentSessionEvent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("presence"),
     participants: Schema.Array(DocumentSessionParticipant),
+  }),
+  /** The file could not be written (`saved` false, with why), or was written again after that. */
+  Schema.Struct({
+    type: Schema.Literal("save"),
+    saved: Schema.Boolean,
+    detail: Schema.optionalKey(bounded(400)),
   }),
   /** The file is gone or can no longer be read; the session is over. */
   Schema.Struct({ type: Schema.Literal("closed"), reason: bounded(400) }),

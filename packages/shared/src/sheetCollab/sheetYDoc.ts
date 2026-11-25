@@ -429,6 +429,11 @@ export function applySheetUpdate(doc: SheetYDoc, update: Uint8Array, origin: unk
   }
 }
 
+/** Whether the document holds an update it cannot apply yet, because what it builds on never arrived. */
+export function sheetHasUnappliedUpdate(doc: SheetYDoc): boolean {
+  return doc.store.pendingStructs !== null || doc.store.pendingDs !== null;
+}
+
 /** A copy of the document that can take an update the original has not seen. */
 export function cloneSheetYDoc(doc: SheetYDoc): SheetYDoc {
   const copy = createSheetYDoc();

@@ -33,6 +33,7 @@ import {
   applySheetUpdate,
   createSheetYDoc,
   encodeSheetState,
+  onSheetUpdate,
   readSheetYDoc,
   sheetUpdateFromBase64,
   sheetUpdateToBase64,
@@ -111,6 +112,11 @@ export function sheetFileText(snapshot: SheetSnapshot): SheetFileText {
 
 export interface SheetSidecar {
   readonly epoch: string;
+  /**
+   * Set when the log holds changes the file could not be given: the revision
+   * the file had then. While the file still has it, the log is the newer of the two.
+   */
+  readonly unsaved: string | null;
   readonly updates: ReadonlyArray<Uint8Array>;
   readonly lines: number;
 }
@@ -123,6 +129,7 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
   if (complete.length === 0) return null;
   const updates: Uint8Array[] = [];
   let epoch: string | null = null;
+  let unsaved: string | null = null;
   for (const [index, line] of complete.entries()) {
     let entry: unknown;
     try {
@@ -132,9 +139,10 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
     }
     if (typeof entry !== "object" || entry === null) return null;
     if (index === 0) {
-      const header = entry as { v?: unknown; epoch?: unknown };
+      const header = entry as { v?: unknown; epoch?: unknown; unsaved?: unknown };
       if (header.v !== SIDECAR_VERSION || typeof header.epoch !== "string") return null;
       epoch = header.epoch;
+      unsaved = typeof header.unsaved === "string" ? header.unsaved : null;
       continue;
     }
     const update = (entry as { u?: unknown }).u;
@@ -142,18 +150,18 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
     if (bytes === null) return null;
     updates.push(bytes);
   }
-  return epoch === null ? null : { epoch, updates, lines: complete.length };
+  return epoch === null ? null : { epoch, unsaved, updates, lines: complete.length };
 }
 
-export const sheetSidecarHeader = (epoch: string): string =>
-  `${JSON.stringify({ v: SIDECAR_VERSION, epoch })}\n`;
+export const sheetSidecarHeader = (epoch: string, unsaved?: string): string =>
+  `${JSON.stringify({ v: SIDECAR_VERSION, epoch, ...(unsaved === undefined ? {} : { unsaved }) })}\n`;
 
 export const sheetSidecarLine = (update: Uint8Array): string =>
   `${JSON.stringify({ u: sheetUpdateToBase64(update) })}\n`;
 
 /** The whole log as its header and one update: what a rewrite puts on disk. */
-export const compactSheetSidecar = (epoch: string, doc: SheetYDoc): string =>
-  `${sheetSidecarHeader(epoch)}${sheetSidecarLine(encodeSheetState(doc))}`;
+export const compactSheetSidecar = (epoch: string, doc: SheetYDoc, unsaved?: string): string =>
+  `${sheetSidecarHeader(epoch, unsaved)}${sheetSidecarLine(encodeSheetState(doc))}`;
 
 // ------------------------------------------------------------------ loading
 
@@ -166,17 +174,24 @@ export interface LoadedSheet {
   readonly restored: boolean;
   /** Lines the sidecar holds; zero when it has to be written from scratch. */
   readonly sidecarLines: number;
+  /** The document holds changes the file never got, kept from a save that failed. */
+  readonly unsaved: boolean;
 }
 
 /**
  * The merge document for a file. With a readable sidecar the document is the
  * sidecar's state, brought up to the file where the two differ; without one
  * it is started from the file under `newEpoch`.
+ *
+ * One case goes the other way: a sidecar that says it holds changes the file
+ * could not be given, beside a file that still has the revision it had then.
+ * Nothing touched the file since, so those changes stand and are saved now.
  */
 export function loadSheet(
   file: SheetDocument,
   sidecarText: string | null,
   newEpoch: string,
+  fileRevision?: string,
 ): LoadedSheet {
   const sidecar = sidecarText === null ? null : parseSheetSidecar(sidecarText);
   if (sidecar !== null) {
@@ -184,19 +199,44 @@ export function loadSheet(
     const applied = sidecar.updates.every((update) => applySheetUpdate(doc, update, "sidecar"));
     const held = readSheetYDoc(doc);
     if (applied && validateSheetDocument(held.document).ok) {
+      if (sidecar.unsaved !== null && sidecar.unsaved === fileRevision) {
+        return {
+          doc,
+          epoch: sidecar.epoch,
+          saved: fileSnapshot(doc, file),
+          restored: true,
+          // Rewritten once the file has the changes, without the mark.
+          sidecarLines: 0,
+          unsaved: true,
+        };
+      }
       // The file wins: what was changed in it since is one more change to merge.
+      let changed = false;
+      const stop = onSheetUpdate(doc, () => {
+        changed = true;
+      });
       writeSheetChange(doc, held, file, FILE_ORIGIN);
+      stop();
       return {
         doc,
         epoch: sidecar.epoch,
         saved: fileSnapshot(doc, file),
         restored: true,
-        sidecarLines: sidecar.lines,
+        // A log that lacks the change just made is rewritten whole, so later lines can build on it.
+        sidecarLines: changed || sidecar.unsaved !== null ? 0 : sidecar.lines,
+        unsaved: false,
       };
     }
   }
   const doc = sheetYDocFrom(file, FILE_ORIGIN);
-  return { doc, epoch: newEpoch, saved: fileSnapshot(doc, file), restored: false, sidecarLines: 0 };
+  return {
+    doc,
+    epoch: newEpoch,
+    saved: fileSnapshot(doc, file),
+    restored: false,
+    sidecarLines: 0,
+    unsaved: false,
+  };
 }
 
 /**
@@ -307,6 +347,25 @@ export async function writeSheetSidecar(
   } catch {
     await NodeFSP.unlink(temporary).catch(() => undefined);
     return false;
+  }
+}
+
+/**
+ * Remove the sidecars in a folder whose documents are gone: a sheet deleted
+ * while nobody had it open leaves its merge state behind otherwise.
+ */
+export async function sweepSheetSidecars(documentFolder: string): Promise<void> {
+  const folder = await sidecarFolder(NodePath.join(documentFolder, SHEET_SIDECAR_DIR, "x"), false);
+  if (folder === null) return;
+  const names = await NodeFSP.readdir(folder).catch(() => [] as string[]);
+  for (const name of names) {
+    if (!name.endsWith(SIDECAR_SUFFIX)) continue;
+    const document = NodePath.join(documentFolder, name.slice(0, -SIDECAR_SUFFIX.length));
+    const gone = await NodeFSP.lstat(document).then(
+      () => false,
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    if (gone) await removeSheetSidecar(NodePath.join(folder, name));
   }
 }
 

@@ -18,7 +18,7 @@ import { type LiveSheetSendResult, LiveSheetStore } from "./liveSheetStore";
 import { presenceEntries } from "./presence";
 import { liveSheetBinding } from "./useLiveSheet";
 
-const MESSAGES = { viewOnly: "view only", refused: "refused" };
+const MESSAGES = { viewOnly: "view only", refused: "refused", reloaded: "reloaded" };
 
 function sheet(cells: Record<string, string | number>): SheetDocument {
   const parsed = parseSheetDocument(
@@ -278,5 +278,22 @@ describe("a session that ends", () => {
     expect(first.getState().status).toBe("closed");
     expect(first.editable).toBe(false);
     expect(liveSheetBinding(first, first.getState(), [])).toBeNull();
+  });
+});
+
+describe("a file that cannot be saved", () => {
+  it("says so in every window until the file is written again", () => {
+    const machine = home(sheet({ A1: "Item" }));
+    const first = machine.join("w1", "edit");
+    first.receive({ type: "save", saved: false, detail: "The sheet could not be saved." });
+    expect(first.getState().unsaved).toBe("The sheet could not be saved.");
+    expect(liveSheetBinding(first, first.getState(), [])!.problem).toBe(
+      "The sheet could not be saved.",
+    );
+    // Editing goes on meanwhile.
+    expect(edit(first, "A2", "Rent")).toBe(true);
+    first.receive({ type: "save", saved: true });
+    expect(first.getState().unsaved).toBeNull();
+    expect(liveSheetBinding(first, first.getState(), [])!.problem).toBeNull();
   });
 });

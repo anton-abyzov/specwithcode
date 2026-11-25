@@ -45,6 +45,13 @@ export interface LiveSheetTransport {
   readonly restart: () => void;
 }
 
+export interface LiveSheetMessages {
+  readonly viewOnly: string;
+  readonly refused: string;
+  /** The home machine started the sheet over from its file while an edit was on its way. */
+  readonly reloaded: string;
+}
+
 export interface LiveSheetState {
   readonly status: "connecting" | "live" | "closed";
   readonly document: SheetDocument | null;
@@ -57,6 +64,8 @@ export interface LiveSheetState {
   readonly canRedo: boolean;
   /** Why the last edit was not taken, or why the session ended. */
   readonly problem: string | null;
+  /** Why what everyone sees is not in the file yet; null when the file is current. */
+  readonly unsaved: string | null;
 }
 
 const INITIAL: LiveSheetState = {
@@ -70,6 +79,7 @@ const INITIAL: LiveSheetState = {
   canUndo: false,
   canRedo: false,
   problem: null,
+  unsaved: null,
 };
 
 export class LiveSheetStore {
@@ -82,14 +92,15 @@ export class LiveSheetStore {
   #place: string | null = null;
   /** Start from the next snapshot even when it continues the same log. */
   #discard = false;
+  /** Edits sent and not yet answered. */
+  #unsent = 0;
+  /** An edit did not reach the home machine and has not been sent again yet. */
+  #undelivered = false;
   readonly #listeners = new Set<() => void>();
   readonly #transport: LiveSheetTransport;
-  readonly #messages: { readonly viewOnly: string; readonly refused: string };
+  readonly #messages: LiveSheetMessages;
 
-  constructor(
-    transport: LiveSheetTransport,
-    messages: { readonly viewOnly: string; readonly refused: string },
-  ) {
+  constructor(transport: LiveSheetTransport, messages: LiveSheetMessages) {
     this.#transport = transport;
     this.#messages = messages;
   }
@@ -135,8 +146,15 @@ export class LiveSheetStore {
   }
 
   #send(update: Uint8Array): void {
+    const doc = this.#doc;
+    this.#unsent += 1;
     void this.#transport.update(sheetUpdateToBase64(update)).then(
       (result) => {
+        // An answer for a document this window has since replaced counts for nothing.
+        if (doc === this.#doc) {
+          this.#unsent -= 1;
+          if (result === "failed" || result === "not_open") this.#undelivered = true;
+        }
         if (result === "merged" || this.#state.status === "closed") return;
         if (result === "failed" || result === "not_open") {
           // Not delivered: the next snapshot brings the two together again.
@@ -164,14 +182,26 @@ export class LiveSheetStore {
       this.#set({ participants: event.participants });
       return;
     }
+    if (event.type === "save") {
+      this.#set({ unsaved: event.saved ? null : (event.detail ?? "") });
+      return;
+    }
     const bytes = sheetUpdateFromBase64(event.update);
     if (event.type === "snapshot") {
       if (bytes === null) return;
       const fresh = this.#doc === null || this.#epoch !== event.epoch || this.#discard;
+      // The home machine began again from the file (a restart): an edit still on its way is not in it.
+      const lost =
+        this.#doc !== null &&
+        this.#epoch !== event.epoch &&
+        (this.#unsent > 0 || this.#undelivered);
+      this.#undelivered = false;
       if (fresh) {
         const doc = createSheetYDoc();
         applySheetUpdate(doc, bytes, REMOTE);
         this.#adopt(doc, event.epoch);
+        this.#unsent = 0;
+        if (lost) this.#state = { ...this.#state, problem: this.#messages.reloaded };
       } else {
         // The same log after a reconnect: merge, then send what the home machine lacks.
         applySheetUpdate(this.#doc!, bytes, REMOTE);
@@ -188,6 +218,7 @@ export class LiveSheetStore {
         participantId: event.participantId,
         participants: event.participants,
         activity: event.activity,
+        unsaved: event.unsaved ?? null,
         ...this.#read(),
       });
       // The home machine does not know where a window that just (re)joined is.

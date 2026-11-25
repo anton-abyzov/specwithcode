@@ -509,5 +509,129 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         expect(yield* open("../outside.sheet.json")).toMatchObject({ code: "not_found" });
       }),
     );
+
+    it.effect("tells the windows when the file cannot be saved, and saves once it can", () =>
+      Effect.gen(function* () {
+        const { target, file, cells } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        // Broken by hand: it cannot be merged with, so it is not written over.
+        NodeFS.writeFileSync(file, "{ half written");
+        expect(yield* window.send(put("A4", "Kept"))).toEqual({ merged: true });
+        yield* sessions.settleAll;
+        const failed = yield* window.nextOf("save");
+        expect(failed.saved).toBe(false);
+        expect(failed.detail).toContain("could not be saved");
+        expect(NodeFS.readFileSync(file, "utf8")).toBe("{ half written");
+        // A window that joins now is told as well.
+        const later = yield* openWindow(target, "window-bbbb");
+        expect(later.first.unsaved).toBe(failed.detail);
+        expect(later.cells().A4).toBe("Kept");
+        // Put right, the file takes the edit and the windows are told.
+        NodeFS.writeFileSync(file, TEXT);
+        yield* sessions.settleAll;
+        expect((yield* window.nextOf("save")).saved).toBe(true);
+        expect(cells().A4).toBe("Kept");
+      }),
+    );
+
+    it.effect("keeps edits the file never got and saves them when the sheet is next opened", () =>
+      Effect.gen(function* () {
+        const { target, file, cells } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        NodeFS.writeFileSync(file, "{ half written");
+        yield* window.send(put("A4", "Kept"));
+        yield* sessions.settleAll;
+        expect((yield* window.nextOf("save")).saved).toBe(false);
+        // The last window closes with the file still unwritable.
+        yield* Fiber.interrupt(window.fiber);
+        const kept = parseSheetSidecar(NodeFS.readFileSync(sheetSidecarPath(file), "utf8"));
+        expect(kept?.unsaved).toBe(sheetContentRevision(TEXT));
+        // The file is back as it was: nothing else changed it, so the kept edits stand.
+        NodeFS.writeFileSync(file, TEXT);
+        const again = yield* openWindow(target, "window-bbbb");
+        expect(again.cells().A4).toBe("Kept");
+        yield* sessions.settleAll;
+        expect(cells().A4).toBe("Kept");
+        expect(
+          parseSheetSidecar(NodeFS.readFileSync(sheetSidecarPath(file), "utf8"))?.unsaved,
+        ).toBeNull();
+      }),
+    );
+
+    it.effect("lets the file win over kept edits when it was changed in the meantime", () =>
+      Effect.gen(function* () {
+        const { target, file, cells } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        NodeFS.writeFileSync(file, "{ half written");
+        yield* window.send(put("A4", "Kept"));
+        yield* sessions.settleAll;
+        yield* Fiber.interrupt(window.fiber);
+        NodeFS.writeFileSync(file, serializeSheetDocument(put("A5", "Written elsewhere")(BUDGET)));
+        const again = yield* openWindow(target, "window-bbbb");
+        expect(again.cells().A5).toBe("Written elsewhere");
+        expect(again.cells().A4).toBeUndefined();
+        yield* sessions.settleAll;
+        expect(cells().A5).toBe("Written elsewhere");
+      }),
+    );
+
+    it.effect("writes nothing for a view-only window when the file changes outside", () =>
+      Effect.gen(function* () {
+        const { target, cwd, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const viewer = yield* openWindow(target, "window-viewer", "view");
+        // Another tool's layout: one line, with one cell changed.
+        const outside = JSON.stringify(put("A4", "From outside")(BUDGET));
+        NodeFS.writeFileSync(file, outside);
+        yield* sessions.reconcile(target);
+        yield* viewer.nextOf("update");
+        expect(viewer.cells().A4).toBe("From outside");
+        yield* sessions.settleAll;
+        yield* Fiber.interrupt(viewer.fiber);
+        expect(NodeFS.readFileSync(file, "utf8")).toBe(outside);
+        expect(
+          NodeFS.existsSync(NodePath.join(cwd, ".specweave/artifacts", SHEET_SIDECAR_DIR)),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("removes the merge state of a sheet that was deleted while closed", () =>
+      Effect.gen(function* () {
+        const { target, cwd, file } = yield* project;
+        const folder = NodePath.join(cwd, ".specweave/artifacts", SHEET_SIDECAR_DIR);
+        NodeFS.mkdirSync(folder);
+        NodeFS.writeFileSync(NodePath.join(folder, ".gitignore"), "*\n");
+        const orphan = NodePath.join(folder, "gone.sheet.json.ylog");
+        NodeFS.writeFileSync(orphan, '{"v":1,"epoch":"old"}\n');
+        const window = yield* openWindow(target, "window-aaaa");
+        expect(NodeFS.existsSync(orphan)).toBe(false);
+        expect(NodeFS.existsSync(folder)).toBe(false);
+        // This sheet's own state is written as before.
+        yield* window.send(put("A4", "Saved"));
+        yield* (yield* DocumentSession.DocumentSession).settleAll;
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(true);
+      }),
+    );
+
+    it.effect("asks for a change again when it arrives before the one it follows", () =>
+      Effect.gen(function* () {
+        const { target, cells } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        const first = window.edit(put("A4", "First"));
+        const second = window.edit(put("A4", "Second"));
+        const early = yield* sessions
+          .update({ ...target, sessionKey: "window-aaaa", update: second })
+          .pipe(Effect.flip);
+        expect(early).toMatchObject({ code: "failed" });
+        yield* sessions.update({ ...target, sessionKey: "window-aaaa", update: first });
+        yield* sessions.update({ ...target, sessionKey: "window-aaaa", update: second });
+        yield* sessions.settleAll;
+        expect(cells().A4).toBe("Second");
+      }),
+    );
   });
 });
