@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 
 import * as DocumentSession from "../../../documents/DocumentSession.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
+import type { SavedSheet } from "../../../project/OfficeArtifacts.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
 import { reportLink } from "../report/handlers.ts";
@@ -144,13 +145,16 @@ export const layer = Access.toLayer(OfficeToolkit, {
         .projectFolder({ projectId: caller.projectId, threadId: caller.id })
         .pipe(
           Effect.flatMap((workspaceRoot) => live.settle({ workspaceRoot, name: input.name })),
-          Effect.orElseSucceed(() => Option.none<SheetDocument>()),
+          Effect.orElseSucceed(() => Option.none<SavedSheet>()),
         );
-      const saved = yield* sheets
-        .readSheet({ projectId: caller.projectId, threadId: caller.id, name: input.name })
-        .pipe(Effect.mapError(failure));
-      // A file that would not take the open sheet's changes: the reader gets the open sheet.
-      const document = Option.getOrElse(shown, () => saved.document);
+      // A file that would not take the open sheet's changes, or cannot be read right now:
+      // the reader gets the open sheet, not the file.
+      const saved = Option.isSome(shown)
+        ? shown.value
+        : yield* sheets
+            .readSheet({ projectId: caller.projectId, threadId: caller.id, name: input.name })
+            .pipe(Effect.mapError(failure));
+      const document = saved.document;
       const tabIndex =
         input.tab === undefined
           ? 0

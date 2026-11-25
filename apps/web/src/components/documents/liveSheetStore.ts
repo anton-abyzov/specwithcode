@@ -98,8 +98,12 @@ export class LiveSheetStore {
   #unsent = 0;
   /** An edit did not reach the home machine and has not been sent again yet. */
   #undelivered = false;
-  /** The sheet as it read before the first edit the home machine has not answered yet. */
-  #unansweredBase: SheetDocument | null = null;
+  /**
+   * The sheet as the home machine has sent it: every snapshot and change
+   * received, and none of this window's edits until they come back. What this
+   * window shows beyond it is exactly what the home machine has not confirmed.
+   */
+  #home: SheetYDoc | null = null;
   /** Each sheet this store has shown, with its tabs' ids: what an edit built on it started from. */
   #shown = new WeakMap<SheetDocument, SheetSnapshot>();
   readonly #listeners = new Set<() => void>();
@@ -208,12 +212,13 @@ export class LiveSheetStore {
       this.#undelivered = false;
       if (fresh) {
         const mine = this.#snapshot?.document ?? null;
-        const base = this.#unansweredBase;
+        const base = this.#home === null ? null : readSheetYDoc(this.#home).document;
         const doc = createSheetYDoc();
         applySheetUpdate(doc, bytes, REMOTE);
+        this.#home = createSheetYDoc();
+        applySheetUpdate(this.#home, bytes, REMOTE);
         this.#adopt(doc, event.epoch);
         this.#unsent = 0;
-        this.#unansweredBase = null;
         // What this window changed and the home machine never got is made again on the new sheet.
         if (lost && !this.#remake(doc, base, mine, event.access)) {
           this.#state = { ...this.#state, problem: this.#messages.reloaded };
@@ -221,6 +226,7 @@ export class LiveSheetStore {
       } else {
         // The same log after a reconnect: merge, then send what the home machine lacks.
         applySheetUpdate(this.#doc!, bytes, REMOTE);
+        if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
         const missing =
           event.access === "edit"
             ? encodeSheetMissing(this.#doc!, sheetStateVectorOf(bytes))
@@ -245,6 +251,7 @@ export class LiveSheetStore {
     }
     if (bytes === null || this.#doc === null) return;
     applySheetUpdate(this.#doc, bytes, REMOTE);
+    if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
     this.#set({
       ...(event.activity === undefined
         ? {}
@@ -254,9 +261,11 @@ export class LiveSheetStore {
   }
 
   /**
-   * Make this window's unanswered edits again on a document the home machine
-   * started over: the change from `base` to `mine`, on top of what the new
-   * document holds. False when they could not be made.
+   * Make this window's unconfirmed edits again on a document the home machine
+   * started over: the change from `base` (the sheet as the home machine last
+   * sent it) to `mine` (what this window shows), on top of what the new
+   * document holds. What others changed is in both, so it is not made again.
+   * False when the edits could not be made.
    */
   #remake(
     doc: SheetYDoc,
@@ -265,20 +274,13 @@ export class LiveSheetStore {
     access: DocumentSessionAccess,
   ): boolean {
     if (base === null || mine === null || access !== "edit") return false;
+    if (!validateSheetDocument(base).ok) return false;
     // Tried on a copy first: an edit that no longer fits the sheet is not made at all.
     const trial = cloneSheetYDoc(doc);
     writeSheetChange(trial, sheetSnapshotByName(trial, base), mine, LOCAL);
     if (!validateSheetDocument(readSheetYDoc(trial).document).ok) return false;
-    this.#unansweredBase = readSheetYDoc(doc).document;
     writeSheetChange(doc, sheetSnapshotByName(doc, base), mine, LOCAL);
     return true;
-  }
-
-  /** Before an edit: remember the sheet as the home machine last had all of. */
-  #beforeEdit(): void {
-    if (this.#unsent === 0 && !this.#undelivered) {
-      this.#unansweredBase = this.#snapshot?.document ?? null;
-    }
   }
 
   get editable(): boolean {
@@ -305,22 +307,17 @@ export class LiveSheetStore {
       this.#set({ problem: checked.error });
       return false;
     }
-    this.#beforeEdit();
     writeSheetChange(doc, before, checked.document, LOCAL);
     this.#set({ problem: null, ...this.#read() });
     return true;
   }
 
   undo(): void {
-    if (!this.editable) return;
-    this.#beforeEdit();
-    if (this.#undo?.undo()) this.#set(this.#read());
+    if (this.editable && this.#undo?.undo()) this.#set(this.#read());
   }
 
   redo(): void {
-    if (!this.editable) return;
-    this.#beforeEdit();
-    if (this.#undo?.redo()) this.#set(this.#read());
+    if (this.editable && this.#undo?.redo()) this.#set(this.#read());
   }
 
   clearProblem(): void {
@@ -339,6 +336,7 @@ export class LiveSheetStore {
     this.#stop?.();
     this.#undo?.destroy();
     this.#doc = null;
+    this.#home = null;
     this.#listeners.clear();
   }
 }

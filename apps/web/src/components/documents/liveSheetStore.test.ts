@@ -72,20 +72,25 @@ function home(start: SheetDocument) {
     sent: (id: string) => windows.get(id)!.sent,
     join(id: string, access: "edit" | "view"): LiveSheetStore {
       const restarts = this.restarts;
+      const answer = async (update: string): Promise<LiveSheetSendResult> => {
+        const entry = windows.get(id)!;
+        entry.sent += 1;
+        if (entry.participant.access !== "edit") return "view_only";
+        if (refuseNext !== null) {
+          const result = refuseNext;
+          refuseNext = null;
+          return result;
+        }
+        applySheetUpdate(doc, sheetUpdateFromBase64(update)!, id);
+        send({ type: "update", update });
+        return "merged";
+      };
       const store = new LiveSheetStore(
         {
-          update: async (update) => {
-            const entry = windows.get(id)!;
-            entry.sent += 1;
-            if (entry.participant.access !== "edit") return "view_only";
-            if (refuseNext !== null) {
-              const result = refuseNext;
-              refuseNext = null;
-              return result;
-            }
-            applySheetUpdate(doc, sheetUpdateFromBase64(update)!, id);
-            send({ type: "update", update });
-            return "merged";
+          update: (update) => {
+            const call = answer(update);
+            calls.push(call);
+            return call;
           },
           presence: (place) => {
             const entry = windows.get(id)!;
@@ -112,7 +117,17 @@ function home(start: SheetDocument) {
   };
 }
 
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+/** Every call a store has made to its home machine, so a test waits for the answers and no clock. */
+const calls: Array<Promise<unknown>> = [];
+const settle = async () => {
+  for (let seen = -1; seen !== calls.length;) {
+    seen = calls.length;
+    await Promise.all(calls);
+    // The store acts on an answer in a step of its own, which may send again.
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+};
 const cells = (store: LiveSheetStore) => store.getState().document!.tabs[0]!.cells;
 const edit = (store: LiveSheetStore, name: string, value: string | number) => {
   const address = { col: name.charCodeAt(0) - 65, row: Number(name.slice(1)) - 1 };
@@ -284,6 +299,29 @@ describe("a change the home machine does not take", () => {
     });
     expect(cells(first)).toEqual({ A1: "Item", C1: "Written elsewhere", A2: "Rent" });
     expect(first.getState().problem).toBeNull();
+  });
+
+  it("does not make someone else's edit again when the home machine started over", async () => {
+    const machine = home(sheet({ A1: "Item", B1: 1 }));
+    const first = machine.join("w1", "edit");
+    const second = machine.join("w2", "edit");
+    // The other window's change arrives, then this window's edit goes unanswered.
+    expect(edit(second, "B1", 2)).toBe(true);
+    await settle();
+    expect(cells(first).B1).toBe(2);
+    machine.refuse("failed");
+    // The server comes back from a file where B1 was changed again by someone else.
+    machine.startOver(sheet({ A1: "Item", B1: 3 }));
+    expect(edit(first, "A2", "Rent")).toBe(true);
+    await settle();
+
+    // Only this window's own edit is made again: the file's newer B1 stands.
+    expect(readSheetYDoc(machine.doc).document.tabs[0]!.cells).toEqual({
+      A1: "Item",
+      B1: 3,
+      A2: "Rent",
+    });
+    expect(cells(first)).toEqual({ A1: "Item", B1: 3, A2: "Rent" });
   });
 
   it("merges only what an edit changed when it was worked out from an earlier sheet", async () => {

@@ -194,6 +194,31 @@ describe("sheet as a Yjs document", () => {
     expect(merged.tabs.map((tab) => tab.name)).toEqual(["Plan", "Notes", "Extra"]);
   });
 
+  it("leaves a format someone else changed when an edit built on the earlier sheet ends", () => {
+    const doc = sheetYDocFrom(BUDGET);
+    const atStart = readSheetYDoc(doc);
+    // Someone else changes a format while this writer's edit (a column being dragged) is open.
+    const theirs = setFormat(
+      atStart.document,
+      0,
+      { start: { col: 1, row: 2 }, end: { col: 1, row: 2 } },
+      { kind: "percent", decimals: 1 },
+    );
+    writeSheetChange(doc, atStart, theirs, "theirs");
+    // The edit ends: the sheet as it was at the start, with one width changed.
+    const mine = {
+      ...atStart.document,
+      tabs: [
+        { ...atStart.document.tabs[0]!, widths: { A: 200 } },
+        ...atStart.document.tabs.slice(1),
+      ],
+    };
+    writeSheetChange(doc, atStart, mine, "mine");
+    const merged = readSheetYDoc(doc).document.tabs[0]!;
+    expect(merged.widths).toEqual({ A: 200 });
+    expect(merged.formats?.B3).toEqual({ kind: "percent", decimals: 1 });
+  });
+
   it("writes nothing when the sheet did not change", () => {
     const doc = sheetYDocFrom(BUDGET);
     let updates = 0;

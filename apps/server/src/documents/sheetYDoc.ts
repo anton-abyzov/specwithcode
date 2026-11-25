@@ -35,11 +35,13 @@ import {
   type SheetYDoc,
   applySheetUpdate,
   createSheetYDoc,
+  encodeSheetMissing,
   encodeSheetState,
   onSheetUpdate,
   readSheetYDoc,
   sheetHasUnappliedUpdate,
   sheetSnapshotByName,
+  sheetStateVectorOf,
   sheetUpdateFromBase64,
   sheetUpdateToBase64,
   sheetYDocFrom,
@@ -185,6 +187,29 @@ export const compactSheetSidecar = (
 
 // ------------------------------------------------------------------ loading
 
+/** A saved state of the file as the log knows it: what kept edits are told apart from. */
+export interface SheetSidecarBase {
+  readonly revision: string;
+  readonly state: Uint8Array;
+}
+
+/**
+ * The log of a sheet whose file is behind: the document as the file last had
+ * it, the mark saying so, and everything since as one update. This is how a
+ * log that grew long while the file could not be written is made short again
+ * without losing which edits are still to be saved.
+ */
+export const unsavedSheetSidecar = (
+  epoch: string,
+  base: SheetSidecarBase,
+  doc: SheetYDoc,
+): string => {
+  const since = encodeSheetMissing(doc, sheetStateVectorOf(base.state));
+  return `${sheetSidecarHeader(epoch)}${sheetSidecarLine(base.state)}${sheetSidecarMark(base.revision)}${
+    since === null ? "" : sheetSidecarLine(since)
+  }`;
+};
+
 export interface LoadedSheet {
   readonly doc: SheetYDoc;
   readonly epoch: string;
@@ -196,6 +221,8 @@ export interface LoadedSheet {
   readonly sidecarLines: number;
   /** The revision the sidecar's last line marks as saved; null when its last line is not a mark. */
   readonly marked: string | null;
+  /** The log's last mark: the revision the file had, and the document as it was then. */
+  readonly base: SheetSidecarBase | null;
   /** Changes made to the document while loading (the file's), still to be added to the log. */
   readonly pending: ReadonlyArray<Uint8Array>;
   /** The document holds changes the file never got, kept from a save that did not happen. */
@@ -229,6 +256,7 @@ export function loadSheet(
     restored: false,
     sidecarLines: 0,
     marked: null,
+    base: null,
     pending: [],
     unsaved: false,
   };
@@ -241,11 +269,23 @@ function restoreSheet(
 ): LoadedSheet | null {
   const doc = createSheetYDoc();
   /** The document as the file last held it, and how many updates came after. */
-  let marked: { readonly revision: string; readonly snapshot: SheetSnapshot } | null = null;
+  let marked: {
+    readonly revision: string;
+    readonly snapshot: SheetSnapshot;
+    readonly state: Uint8Array;
+  } | null = null;
   let after = 0;
-  for (const entry of sidecar.entries) {
+  const lastMark = sidecar.entries.findLastIndex((entry) => "saved" in entry);
+  for (const [index, entry] of sidecar.entries.entries()) {
     if ("saved" in entry) {
-      marked = { revision: entry.saved, snapshot: readSheetYDoc(doc) };
+      // Only the last mark is ever used: the others are passed over.
+      if (index === lastMark) {
+        marked = {
+          revision: entry.saved,
+          snapshot: readSheetYDoc(doc),
+          state: encodeSheetState(doc),
+        };
+      }
       after = 0;
     } else {
       if (!applySheetUpdate(doc, entry.update, "sidecar")) return null;
@@ -263,6 +303,7 @@ function restoreSheet(
       restored: true,
       sidecarLines: sidecar.lines,
       marked: null,
+      base: { revision: marked!.revision, state: marked!.state },
       pending: [],
       unsaved: true,
     };
@@ -286,6 +327,8 @@ function restoreSheet(
       pending.length === 0 && after === 0 && marked !== null && fileRevision !== undefined
         ? marked.revision
         : null,
+    // Kept edits stay told apart from the state they were made on until they are saved.
+    base: kept ? { revision: marked!.revision, state: marked!.state } : null,
     pending,
     unsaved,
   };
@@ -336,9 +379,46 @@ export async function readSheetSidecar(sidecarPath: string): Promise<string | nu
   }
 }
 
-/** Add lines to the sidecar. False when it could not be written; the session goes on without. */
+/**
+ * Cut off a last line that was never finished (the server stopped while
+ * writing it), so the next line added does not run into it and make the whole
+ * log unreadable.
+ */
+async function trimTornSidecar(sidecarPath: string): Promise<void> {
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(sidecarPath, NodeFS.constants.O_RDWR | NO_FOLLOW);
+  } catch {
+    return;
+  }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size === 0) return;
+    const last = Buffer.alloc(1);
+    await handle.read(last, 0, 1, stat.size - 1);
+    if (last[0] === 0x0a) return;
+    const whole = await handle.readFile();
+    await handle.truncate(whole.lastIndexOf(0x0a) + 1);
+  } catch {
+    // Left as it is: the log is then read as far as its last whole line.
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+/** Move a sidecar to stand beside a document that was renamed in its folder. */
+export async function moveSheetSidecar(from: string, to: string): Promise<boolean> {
+  if ((await sidecarFolder(from, false)) === null) return false;
+  return NodeFSP.rename(from, to).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Add lines to the sidecar. False when it could not be written. */
 export async function appendSheetSidecar(sidecarPath: string, text: string): Promise<boolean> {
   if ((await sidecarFolder(sidecarPath, true)) === null) return false;
+  await trimTornSidecar(sidecarPath);
   try {
     const handle = await NodeFSP.open(
       sidecarPath,

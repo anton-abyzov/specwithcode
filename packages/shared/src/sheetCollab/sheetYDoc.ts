@@ -96,7 +96,9 @@ function writeRecord(
 /**
  * Difference of two ordered lists of entries. An entry that kept its place
  * keeps its sort key; one that is new, or moved, gets a key between its
- * neighbours. Entries someone else added meanwhile are left where they are.
+ * neighbours. Entries someone else added meanwhile are left where they are,
+ * and so is a value someone else changed meanwhile that this edit did not:
+ * only what differs between `before` and `after` is written.
  */
 function writeOrdered(
   target: Y.Map<unknown>,
@@ -118,7 +120,7 @@ function writeOrdered(
     const [key, value] = after[index]!;
     const current = placed(key);
     if (current !== null && current.o > previous) {
-      if (!same(current.v, value)) target.set(key, { v: value, o: current.o });
+      if (!same(beforeValues.get(key), value)) target.set(key, { v: value, o: current.o });
       previous = current.o;
       assigned.push(previous);
       continue;
@@ -146,7 +148,11 @@ function writeOrdered(
   // Out of room between two keys: number the whole list again.
   const increasing = assigned.every((order, index) => index === 0 || order > assigned[index - 1]!);
   if (!increasing) {
-    after.forEach(([key, value], index) => target.set(key, { v: value, o: index + 1 }));
+    after.forEach(([key, value], index) => {
+      const current = placed(key);
+      const kept = current !== null && same(beforeValues.get(key), value) ? current.v : value;
+      target.set(key, { v: kept, o: index + 1 });
+    });
   }
 }
 

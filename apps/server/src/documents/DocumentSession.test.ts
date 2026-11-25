@@ -40,7 +40,13 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as DocumentSession from "./DocumentSession.ts";
-import { SHEET_SIDECAR_DIR, loadSheet, parseSheetSidecar, sheetSidecarPath } from "./sheetYDoc.ts";
+import {
+  SHEET_SIDECAR_DIR,
+  SHEET_SIDECAR_MAX_LINES,
+  loadSheet,
+  parseSheetSidecar,
+  sheetSidecarPath,
+} from "./sheetYDoc.ts";
 
 const layerFiles = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
@@ -377,6 +383,58 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         });
       });
 
+    it.effect("keeps a chart a window added after the agent read the sheet", () =>
+      Effect.gen(function* () {
+        const { target, cwd, cells } = yield* project;
+        const window = yield* openWindow(target, "window-aaaa");
+        const chart = (id: string, title: string) => ({
+          id,
+          type: "bar" as const,
+          title,
+          labels: "A2:A3",
+          values: "B2:B3",
+        });
+        yield* window.send((document) => ({
+          ...document,
+          tabs: [{ ...document.tabs[0]!, charts: [chart("chart-window", "By the window")] }],
+        }));
+        // The agent read the sheet before that chart and sends its own list of charts.
+        const result = yield* agentWrite(
+          cwd,
+          {
+            tabs: [
+              { name: "Plan", cells: { B4: 300 }, charts: [chart("chart-agent", "By the agent")] },
+            ],
+          },
+          { expectedRevision: sheetContentRevision(TEXT) },
+        );
+        const saved = Option.getOrThrow(result);
+        expect(saved.document.tabs[0]!.charts?.map((entry) => entry.id)).toEqual([
+          "chart-window",
+          "chart-agent",
+        ]);
+        expect(cells().B4).toBe(300);
+      }),
+    );
+
+    it.effect("finds no session through a link to a sheet open under another project", () =>
+      Effect.gen(function* () {
+        const { target, file, read } = yield* project;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const window = yield* openWindow(target, "window-aaaa");
+        const other = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-document-other-",
+        });
+        NodeFS.mkdirSync(NodePath.join(other, ".specweave", "artifacts"), { recursive: true });
+        NodeFS.symlinkSync(file, NodePath.join(other, RELATIVE));
+        // The other project's agent names its own artifact, which is a link to the open sheet.
+        const result = yield* agentWrite(other, { tabs: [{ name: "Plan", cells: { B2: 1 } }] });
+        expect(Option.isNone(result)).toBe(true);
+        expect(read()).toBe(TEXT);
+        expect(window.cells().B2).toBe(1200);
+      }),
+    );
+
     it.effect("leaves the write to the file writer when no window has the sheet open", () =>
       Effect.gen(function* () {
         const { cwd, read } = yield* project;
@@ -415,8 +473,9 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           // A file that will not take the next change: the reader gets the sheet the windows see.
           NodeFS.writeFileSync(file, "{ half written");
           yield* window.send(put("A4", "Not in the file"));
-          const open = yield* sessions.settle(name);
-          expect(Option.getOrThrow(open).tabs[0]!.cells.A4).toBe("Not in the file");
+          const open = Option.getOrThrow(yield* sessions.settle(name));
+          expect(open.document.tabs[0]!.cells.A4).toBe("Not in the file");
+          expect(open).toMatchObject({ name: "budget", absolutePath: file });
         }),
     );
 
@@ -718,6 +777,111 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           "Before the rename",
         );
         expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(false);
+      }),
+    );
+
+    it.effect("adds to a log whose last line was cut off without losing what it held", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "First"));
+        // The server stopped in the middle of a line.
+        NodeFS.appendFileSync(sheetSidecarPath(file), '{"u":"AAEC');
+        yield* window.send(put("A5", "Second"));
+        const log = logOf(file);
+        expect(log.updates).toBe(3);
+        const loaded = loadSheet(BUDGET, log.text, "new-epoch", sheetContentRevision(TEXT));
+        expect(readSheetYDoc(loaded.doc).document.tabs[0]!.cells).toMatchObject({
+          A4: "First",
+          A5: "Second",
+        });
+        yield* sessions.settleAll;
+      }),
+    );
+
+    it.effect("writes the file before answering when the log cannot be written", () =>
+      Effect.gen(function* () {
+        const { target, file, cells } = yield* project;
+        // Something that is not a folder where the sidecar folder would go.
+        NodeFS.writeFileSync(
+          NodePath.join(NodePath.dirname(file), SHEET_SIDECAR_DIR),
+          "in the way",
+        );
+        const window = yield* openWindow(target, "window-aaaa");
+        expect(yield* window.send(put("A4", "Straight to the file"))).toEqual({ merged: true });
+        // No save was waited for: the answer came after the file had the edit.
+        expect(cells().A4).toBe("Straight to the file");
+      }),
+    );
+
+    it.effect(
+      "keeps a log short, and the edits in it told apart, while the file cannot be saved",
+      () =>
+        Effect.gen(function* () {
+          const { target, file, cells } = yield* project;
+          const sessions = yield* DocumentSession.DocumentSession;
+          const window = yield* openWindow(target, "window-aaaa");
+          NodeFS.writeFileSync(file, "{ half written");
+          for (let count = 0; count < SHEET_SIDECAR_MAX_LINES + 20; count += 1) {
+            yield* window.send(put("A4", `Edit ${count}`));
+          }
+          const log = logOf(file);
+          expect(log.updates).toBeLessThan(SHEET_SIDECAR_MAX_LINES);
+          expect(log.marked).toBeNull();
+          yield* Fiber.interrupt(window.fiber);
+          // Opened again beside the file as it was: the last edit is still one to save.
+          NodeFS.writeFileSync(file, TEXT);
+          const again = yield* openWindow(target, "window-bbbb");
+          expect(again.cells().A4).toBe(`Edit ${SHEET_SIDECAR_MAX_LINES + 19}`);
+          yield* sessions.settleAll;
+          expect(cells().A4).toBe(`Edit ${SHEET_SIDECAR_MAX_LINES + 19}`);
+        }),
+    );
+
+    it.effect("leaves the log where it is when a window that may only view sees the sheet go", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const editor = yield* openWindow(target, "window-aaaa");
+        yield* editor.send(put("A4", "Saved"));
+        yield* sessions.settleAll;
+        yield* Fiber.interrupt(editor.fiber);
+        const viewer = yield* openWindow(target, "window-viewer", "view");
+        NodeFS.renameSync(file, `${file}.moved`);
+        yield* sessions.reconcile(target);
+        yield* viewer.nextOf("closed");
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(true);
+      }),
+    );
+
+    it.effect("moves the log with a renamed sheet that changed before the edits reached it", () =>
+      Effect.gen(function* () {
+        const { target, file, cwd } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "Before the rename"));
+        const renamed = NodePath.join(NodePath.dirname(file), "plan.sheet.json");
+        NodeFS.renameSync(file, renamed);
+        // Changed under its new name, in place, before the session looks.
+        NodeFS.writeFileSync(
+          renamed,
+          serializeSheetDocument(put("A5", "Written elsewhere")(BUDGET)),
+        );
+        yield* sessions.reconcile(target);
+        yield* window.nextOf("closed");
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(false);
+        expect(NodeFS.existsSync(sheetSidecarPath(renamed))).toBe(true);
+        // Opened under its new name: both the kept edit and the file's change are there, and saved.
+        const again = yield* openWindow(
+          { cwd, relativePath: ".specweave/artifacts/plan.sheet.json" },
+          "window-bbbb",
+        );
+        expect(again.cells()).toMatchObject({ A4: "Before the rename", A5: "Written elsewhere" });
+        yield* sessions.settleAll;
+        expect(
+          sheet(JSON.parse(NodeFS.readFileSync(renamed, "utf8"))).tabs[0]!.cells,
+        ).toMatchObject({ A4: "Before the rename", A5: "Written elsewhere" });
       }),
     );
 
