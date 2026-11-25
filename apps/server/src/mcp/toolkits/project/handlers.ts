@@ -408,7 +408,7 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   // Windows paths come back from Node with `\`; Git writes them with `/`.
   const gitSpelling = (path: string) =>
     /^[A-Za-z]:[\\/]/u.test(path) ? path.replaceAll("\\", "/") : path;
-  const ownsCheckout = (commonDir: string) =>
+  const ownsCheckout = (commonDir: string, isMain: boolean) =>
     Effect.gen(function* () {
       if (asked.includes("\n")) return false;
       const entry = `${asked}/.git`;
@@ -419,7 +419,7 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       if (isLink) return false;
       const info = yield* fileSystem.stat(entry).pipe(Effect.option);
       if (Option.isNone(info)) return false;
-      if (info.value.type === "Directory") return (yield* real(entry)) === commonDir;
+      if (info.value.type === "Directory") return isMain && (yield* real(entry)) === commonDir;
       if (info.value.type !== "File") return false;
       const pointer = yield* fileSystem.readFile(entry).pipe(Effect.option);
       if (Option.isNone(pointer)) return false;
@@ -457,7 +457,8 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       return naming === 1;
     });
   const project = yield* checkoutOf(workspaceRoot);
-  for (const path of registered) {
+  let listedButChanged = false;
+  for (const [index, path] of registered.entries()) {
     // The registered path, not the caller's spelling: a symlink that resolves
     // here now could point somewhere else by the time the thread starts.
     if ((yield* real(path)) !== asked) continue;
@@ -467,13 +468,17 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       checkout !== undefined &&
       checkout[0] === asked &&
       checkout[1] === project[1] &&
-      (yield* ownsCheckout(project[1]))
+      // git lists the main checkout first.
+      (yield* ownsCheckout(project[1], index === 0))
     )
       return path;
+    listedButChanged = true;
   }
   return yield* new OrchestratorMcpFailure({
     code: "invalid_request",
-    message: `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
+    message: listedButChanged
+      ? `git still lists ${worktreePath} as one of ${owner} worktrees, but the folder there is no longer that worktree. \`git worktree repair\` reconnects a moved worktree; \`git worktree remove\` drops the record.`
+      : `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
   });
 });
 
