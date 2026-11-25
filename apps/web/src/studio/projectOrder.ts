@@ -91,6 +91,11 @@ export function followLinkedProjects<M>(
   order: SidebarProjectOrder,
   groups: ReadonlyArray<LinkedOrderGroup<M>>,
   unlinkedKey: (member: M) => string | null,
+  /**
+   * Every machine has sent its projects, so a key that is not listed is gone rather than
+   * late. Until then an unrecorded pin never moves: its old group may only be loading.
+   */
+  allListed = true,
 ): SidebarProjectOrder {
   const listed = new Set(groups.map((group) => group.projectKey));
   const known = new Set([...order.pinned, ...order.unpinned]);
@@ -106,7 +111,9 @@ export function followLinkedProjects<M>(
     const pinSource = sources.find((source) => {
       if (!pinned.includes(source)) return false;
       const recorded = pinnedMembers[source] ?? [];
-      return recorded.length === 0 ? !listed.has(source) : recorded.some((id) => ids.includes(id));
+      return recorded.length === 0
+        ? allListed && !listed.has(source)
+        : recorded.some((id) => ids.includes(id));
     });
     if (pinSource === undefined && known.has(key)) continue;
     if (pinSource !== undefined) {

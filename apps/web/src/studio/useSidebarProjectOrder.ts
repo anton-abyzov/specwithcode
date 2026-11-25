@@ -24,6 +24,7 @@ import {
 } from "../hooks/useSettings";
 import { deriveUnlinkedProjectKey, selectProjectGroupingSettings } from "../logicalProject";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
+import { useAllEnvironmentProjectSnapshotsReady } from "../state/entities";
 import { primaryServerConfigAtom } from "../state/server";
 import {
   followLinkedMachineChoices,
@@ -115,6 +116,7 @@ export function useSidebarProjectOrder(
   }, [hostOrder, shown, updatePrimarySettings]);
 
   // A linked project takes the place its copies had before the link.
+  const allListed = useAllEnvironmentProjectSnapshotsReady();
   const grouping = useClientSettings(selectProjectGroupingSettings);
   const unlinkedKey = useCallback(
     // A copy whose folder has not loaded has no pre-link key to follow.
@@ -125,8 +127,8 @@ export function useSidebarProjectOrder(
     [grouping],
   );
   const followed = useMemo(
-    () => followLinkedProjects(shown, groups, unlinkedKey),
-    [groups, shown, unlinkedKey],
+    () => followLinkedProjects(shown, groups, unlinkedKey, allListed),
+    [allListed, groups, shown, unlinkedKey],
   );
   // Written once per order read; until the host's config loads, a write would reach this
   // browser only and the host's older order would replace it. The move repeats anyway.
