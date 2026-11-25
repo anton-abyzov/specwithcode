@@ -5,7 +5,7 @@
  * authenticated, before its handler mints.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi } from "@specweave-studio/contracts";
+import { EnvironmentHttpApi, EnvironmentId } from "@specweave-studio/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -23,6 +23,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as AuthHttp from "./http.ts";
+import { RequestRevocationEpoch } from "./revocationEpoch.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
@@ -154,3 +155,45 @@ for (const mint of mints) {
       ),
   );
 }
+
+// Device approval, a phone code and both fleet invitation lines mint through
+// createPairingLink or issueSession inside an authenticated request; the
+// request's counter reading orders each against a revoke-all.
+it.effect("a request's other mints are refused once a revoke-all passed it", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const owner = yield* auth.issueSession();
+    const before = yield* auth.revocationEpoch;
+    yield* auth.revokeOtherClientSessions(owner.sessionId);
+    const inRequest = <A, E>(mint: Effect.Effect<A, E>) =>
+      mint.pipe(Effect.provideService(RequestRevocationEpoch, before), Effect.result);
+
+    for (const mint of [
+      auth.createPairingLink({ label: "Device approval" }),
+      auth.createPairingLink({
+        label: "Fleet invite",
+        principal: { kind: "coordinator", environmentId: EnvironmentId.make("coordinator") },
+      }),
+      auth.issueSession({ label: "Fleet management" }),
+    ] as const) {
+      expect((yield* inRequest(mint))._tag).toBe("Failure");
+    }
+    expect(yield* auth.listPairingLinks()).toEqual([]);
+    expect((yield* auth.listSessions()).map((session) => session.sessionId)).toEqual([
+      owner.sessionId,
+    ]);
+
+    // A request that read the counter after the revoke mints, and so does
+    // code outside any request (the CLI).
+    const after = yield* auth.revocationEpoch;
+    const fresh = yield* auth
+      .createPairingLink({ label: "After" })
+      .pipe(Effect.provideService(RequestRevocationEpoch, after));
+    expect(fresh.credential.length).toBeGreaterThan(0);
+    yield* auth.issueSession({ label: "CLI" });
+    // A pairing credential minted under the request's counter takes the lock once.
+    yield* auth
+      .issuePairingCredential({ label: "Phone", revocationEpoch: after })
+      .pipe(Effect.provideService(RequestRevocationEpoch, after));
+  }).pipe(Effect.provide(layerEnvironmentAuth), Effect.provide(NodeServices.layer)),
+);

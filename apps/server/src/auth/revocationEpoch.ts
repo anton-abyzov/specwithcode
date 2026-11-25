@@ -31,7 +31,10 @@ export const makeRevocationEpoch: Effect.Effect<RevocationEpoch> = Effect.gen(fu
   ): Effect.Effect<A, E | E2, R> =>
     lock.withPermits(1)(
       Effect.suspend((): Effect.Effect<A, E | E2, R> =>
-        epoch === startedAt ? issue : Effect.fail(refused()),
+        epoch === startedAt
+          ? // What `issue` mints inside is already ordered here; taking the lock again would wait on itself.
+            issue.pipe(Effect.provideService(RequestRevocationEpoch, undefined))
+          : Effect.fail(refused()),
       ),
     );
   const bump = Effect.sync(() => {
