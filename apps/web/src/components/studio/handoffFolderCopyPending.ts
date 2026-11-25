@@ -340,6 +340,14 @@ const exclusionPrefix = (storageKey: string) =>
 /** One recorded key: who made it (`by`, its own segment) and what it leaves out. */
 type Recorded = { readonly key: string; readonly by: string; readonly what: string };
 
+const safeDecode = (text: string) => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+};
+
 function recordedKeys(storageKey: string): Array<Recorded> {
   const prefix = exclusionPrefix(storageKey);
   const found: Array<Recorded> = [];
@@ -347,9 +355,15 @@ function recordedKeys(storageKey: string): Array<Recorded> {
     const key = localStorage.key(index);
     if (!key?.startsWith(prefix)) continue;
     const rest = key.slice(prefix.length);
+    // Notes saved before owners were recorded have none: they keep applying, and no
+    // owner's Sync again with secrets takes them back. An owner is encoded, so never "file".
+    if (rest === "off" || rest.startsWith("file:")) {
+      found.push({ key, by: "", what: rest });
+      continue;
+    }
     const split = rest.indexOf(":");
     if (split < 0) continue;
-    found.push({ key, by: decodeURIComponent(rest.slice(0, split)), what: rest.slice(split + 1) });
+    found.push({ key, by: safeDecode(rest.slice(0, split)), what: rest.slice(split + 1) });
   }
   return found;
 }
