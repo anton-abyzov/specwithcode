@@ -189,8 +189,25 @@ function writeTab(target: Y.Map<unknown>, before: SheetTab | undefined, after: S
   }
 }
 
-/** Pair each tab of `after` with the tab of `before` it continues, by name, then by place. */
-function matchTabs(before: SheetSnapshot | null, after: SheetDocument): Array<number | null> {
+/** Whether a tab reads enough like another to be the same tab under a new name. */
+function continues(before: SheetTab, after: SheetTab): boolean {
+  const keys = Object.keys(before.cells);
+  const most = Math.max(keys.length, Object.keys(after.cells).length);
+  // A rename rewrites the formulas that name the tab, and leaves the rest as it was.
+  const kept = keys.filter((key) => same(before.cells[key], after.cells[key])).length;
+  return most === 0 || kept * 2 >= most;
+}
+
+/**
+ * Pair each tab of `after` with the tab of `before` it continues, by name, then by place.
+ * `fromFile`: `after` is a file someone else wrote, where a tab in a removed tab's place may
+ * be another tab altogether; an edit made here names the tab it renames.
+ */
+function matchTabs(
+  before: SheetSnapshot | null,
+  after: SheetDocument,
+  fromFile: boolean,
+): Array<number | null> {
   const beforeTabs = before?.document.tabs ?? [];
   const taken = new Set<number>();
   const matches: Array<number | null> = after.tabs.map((tab) => {
@@ -202,15 +219,15 @@ function matchTabs(before: SheetSnapshot | null, after: SheetDocument): Array<nu
     taken.add(index);
     return index;
   });
-  // A tab with a new name in the place of one that is gone, holding the same cells, was
-  // renamed. With other cells it is another tab that took the place: what was changed in
-  // the old one meanwhile is not carried into it.
+  // A tab with a new name in the place of one that is gone was renamed. In a file written
+  // elsewhere it may instead be another tab that took the place: one that reads unlike the
+  // old tab is that, and what was changed in the old one meanwhile is not carried into it.
   matches.forEach((match, index) => {
     if (
       match === null &&
       index < beforeTabs.length &&
       !taken.has(index) &&
-      same(beforeTabs[index]!.cells, after.tabs[index]!.cells)
+      (!fromFile || continues(beforeTabs[index]!, after.tabs[index]!))
     ) {
       taken.add(index);
       matches[index] = index;
@@ -244,6 +261,8 @@ export function writeSheetChange(
   before: SheetSnapshot | null,
   after: SheetDocument,
   origin: unknown,
+  /** `after` is a file read from disk, not an edit made to `before`. */
+  fromFile = false,
 ): ReadonlyArray<string> {
   const { sheet, order, tabs } = roots(doc);
   const afterIds: string[] = [];
@@ -253,7 +272,7 @@ export function writeSheetChange(
       if (after.designSystem === undefined) sheet.delete("designSystem");
       else sheet.set("designSystem", after.designSystem);
     }
-    const matches = matchTabs(before, after);
+    const matches = matchTabs(before, after, fromFile);
     const kept = new Set(matches.filter((match): match is number => match !== null));
     const removed = new Set<string>();
     before?.tabIds.forEach((id, index) => {

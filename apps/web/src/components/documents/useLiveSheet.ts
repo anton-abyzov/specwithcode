@@ -32,6 +32,8 @@ export interface LiveSheet {
   readonly presence: ReadonlyArray<PresenceEntry>;
   /** What the sheet view edits through; null until the session has the sheet, and after it ends. */
   readonly binding: SheetLiveBinding | null;
+  /** Open the sheet again after its session ended. */
+  readonly reopen: () => void;
 }
 
 /** The sheet view's side of a live store. */
@@ -190,7 +192,12 @@ export function useLiveSheet(input: {
       window: (n) => tx("Window {n}", { n: String(n) }),
       agent: agentName,
     });
-    return { state, presence, binding: liveSheetBinding(store, state, presence) };
+    return {
+      state,
+      presence,
+      binding: liveSheetBinding(store, state, presence),
+      reopen: () => store.reopen(),
+    };
   }, [agentName, selfName, state, store, tx]);
 
   // The machine could not open a session on this file: save by revision instead.

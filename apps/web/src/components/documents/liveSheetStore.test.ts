@@ -391,6 +391,29 @@ describe("a change the home machine does not take", () => {
 });
 
 describe("a session that ends", () => {
+  it("opens again from what the home machine holds, with nothing made again", async () => {
+    const machine = home(sheet({ A1: "Item" }));
+    const first = machine.join("w1", "edit");
+    // An edit goes unanswered, then the session ends: another file took the sheet's name.
+    machine.refuse("failed");
+    expect(edit(first, "A2", "Rent")).toBe(true);
+    first.receive({ type: "closed", reason: "The sheet was replaced by another file." });
+    await settle();
+    // Nothing more is taken, and the reason stays in view.
+    expect(edit(first, "A3", "Power")).toBe(false);
+    first.clearProblem();
+    expect(first.getState().problem).toBe("The sheet was replaced by another file.");
+    expect(machine.restarts).toEqual([]);
+    machine.startOver(sheet({ A1: "Another sheet" }));
+    first.reopen();
+    await settle();
+    expect(first.getState().status).toBe("live");
+    expect(first.getState().problem).toBeNull();
+    expect(cells(first)).toEqual({ A1: "Another sheet" });
+    expect(readSheetYDoc(machine.doc).document.tabs[0]!.cells).toEqual({ A1: "Another sheet" });
+    expect(machine.sent("w1")).toBe(1);
+  });
+
   it("stops being editable", () => {
     const machine = home(sheet({ A1: "Item" }));
     const first = machine.join("w1", "edit");

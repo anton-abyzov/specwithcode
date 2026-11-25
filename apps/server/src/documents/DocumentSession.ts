@@ -652,7 +652,7 @@ const make = Effect.gen(function* () {
       // sheet (one tab too many), neither is given up: the file stays as it is, the edits stay
       // in the session and its log, and the windows are told the sheet is not saved.
       const trial = cloneSheetYDoc(session.doc);
-      writeSheetChange(trial, session.saved, read.file.document, FILE_ORIGIN);
+      writeSheetChange(trial, session.saved, read.file.document, FILE_ORIGIN, true);
       if (!sheetFileText(readSheetYDoc(trial, session.saved)).ok) return;
       const before = session.current;
       const updates: Uint8Array[] = [];
@@ -662,6 +662,7 @@ const make = Effect.gen(function* () {
         session.saved,
         read.file.document,
         FILE_ORIGIN,
+        true,
       );
       stop();
       session.fileRevision = read.file.revision;

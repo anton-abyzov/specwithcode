@@ -310,11 +310,50 @@ describe("sheet as a Yjs document", () => {
       ...saved.document,
       tabs: [{ name: "Inventory", cells: { A1: "Stock" } }, ...saved.document.tabs.slice(1)],
     };
-    writeSheetChange(doc, saved, replaced, "file");
+    writeSheetChange(doc, saved, replaced, "file", true);
     const read = readSheetYDoc(doc).document;
     const inventory = read.tabs.find((tab) => tab.name === "Inventory")!;
     expect(inventory.cells).toEqual({ A1: "Stock" });
     expect(read.tabs.some((tab) => tab.name === saved.document.tabs[0]!.name)).toBe(false);
+  });
+
+  it("keeps another writer's edit in a tab whose rename also rewrote a formula", () => {
+    const { left, right } = pair(
+      sheet({ title: "Refs", tabs: [{ name: "Plan", cells: { A1: 1, B1: "=Plan!A1" } }] }),
+    );
+    const atStart = readSheetYDoc(left);
+    // One window edits a cell; the other renames the tab from the sheet as it was before.
+    edit(right, (current) => ({
+      ...current,
+      tabs: [{ ...current.tabs[0]!, cells: { ...current.tabs[0]!.cells, C1: "kept" } }],
+    }));
+    sync(left, right);
+    writeSheetChange(
+      left,
+      atStart,
+      {
+        ...atStart.document,
+        tabs: [{ name: "Forecast", cells: { A1: 1, B1: "=Forecast!A1" } }],
+      },
+      "local",
+    );
+    sync(left, right);
+    for (const doc of [left, right]) {
+      const tabs = readSheetYDoc(doc).document.tabs;
+      expect(tabs.map((tab) => tab.name)).toEqual(["Forecast"]);
+      expect(tabs[0]!.cells).toEqual({ A1: 1, B1: "=Forecast!A1", C1: "kept" });
+    }
+    // The same rename read from a file is still a rename: most of the tab reads as before.
+    const file = sheetYDocFrom(atStart.document);
+    const saved = readSheetYDoc(file);
+    const ids = writeSheetChange(
+      file,
+      saved,
+      { ...saved.document, tabs: [{ name: "Forecast", cells: { A1: 1, B1: "=Forecast!A1" } }] },
+      "file",
+      true,
+    );
+    expect(ids).toEqual(saved.tabIds);
   });
 
   it("leaves a chart someone else removed when an edit built on the earlier sheet ends", () => {

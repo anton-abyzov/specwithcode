@@ -371,7 +371,8 @@ export class LiveSheetStore {
     const before = (base === undefined ? undefined : this.#shown.get(base)) ?? this.#snapshot;
     if (doc === null || before === null) return false;
     if (!this.editable) {
-      this.#set({ problem: this.#messages.viewOnly });
+      // An ended session keeps saying why it ended.
+      if (this.#state.status !== "closed") this.#set({ problem: this.#messages.viewOnly });
       return false;
     }
     const checked = validateSheetDocument(next);
@@ -393,7 +394,30 @@ export class LiveSheetStore {
   }
 
   clearProblem(): void {
-    if (this.#state.problem !== null) this.#set({ problem: null });
+    if (this.#state.problem !== null && this.#state.status !== "closed") {
+      this.#set({ problem: null });
+    }
+  }
+
+  /**
+   * Open the sheet again after its session ended. This starts from what the
+   * home machine holds now: nothing from the ended session is made again, as
+   * the file under the name may be another one.
+   */
+  reopen(): void {
+    this.#stop?.();
+    this.#undo?.destroy();
+    this.#stop = null;
+    this.#undo = null;
+    this.#doc = null;
+    this.#home = null;
+    this.#epoch = null;
+    this.#snapshot = null;
+    this.#unsent = 0;
+    this.#undelivered = false;
+    this.#discard = false;
+    this.#set({ ...INITIAL, draft: this.#state.draft });
+    this.#transport.restart();
   }
 
   /** The kept sheet was saved somewhere, or is not wanted. */

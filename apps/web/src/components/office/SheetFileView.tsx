@@ -19,6 +19,7 @@ import { design } from "~/studio/design";
 import { useTx } from "../../i18n";
 import { DocumentHeader } from "../documents/DocumentHeader";
 import { useLiveSheet } from "../documents/useLiveSheet";
+import { Button } from "../ui/button";
 import { fileSaveErrorMessage } from "../files/filePreviewMode";
 import {
   clearProjectFileQueryData,
@@ -171,6 +172,10 @@ export function SheetFileView(props: {
   const binding = live?.binding ?? null;
   // A sheet whose session has ended goes back to revision saves; one still joining is read-only.
   const joining = live !== null && live.state.status === "connecting";
+  // Ended for a reason (the file left, or another took its name): the sheet stays read-only
+  // until it is opened again, so an edit begun in the old session is not saved by revision
+  // into whatever is under the name now.
+  const ended = live !== null && live.state.status === "closed" && live.state.problem !== null;
   const title =
     binding?.document.title ??
     path
@@ -187,10 +192,22 @@ export function SheetFileView(props: {
         activity={binding === null ? [] : (live?.state.activity ?? [])}
         access={(binding === null ? canWrite : binding.editable) ? "edit" : "view"}
       />
-      {live?.state.status === "closed" && live.state.problem ? (
+      {ended ? (
         // Why live editing ended, which may say where unsaved changes were kept.
         <p className="office-sheet-note" role="alert" data-testid="sheet-live-ended">
-          {live.state.problem}
+          {live.state.problem}{" "}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="sheet-live-reopen"
+            onClick={() => {
+              void reload();
+              live.reopen();
+            }}
+          >
+            {tx("Open it again")}
+          </Button>
         </p>
       ) : null}
       <SheetView
@@ -200,7 +217,9 @@ export function SheetFileView(props: {
         onDesignSystem={setSystemId}
         onReload={reload}
         onSave={
-          binding === null && !joining && canWrite && relativePath !== null ? save : undefined
+          binding === null && !joining && !ended && canWrite && relativePath !== null
+            ? save
+            : undefined
         }
         live={binding ?? undefined}
       />

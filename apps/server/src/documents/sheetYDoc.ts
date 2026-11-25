@@ -335,7 +335,7 @@ function restoreSheet(
   const pending: Uint8Array[] = [];
   const stop = onSheetUpdate(doc, (update) => pending.push(update));
   const from = kept ? marked!.snapshot : held;
-  const fileTabIds = writeSheetChange(doc, from, file, FILE_ORIGIN);
+  const fileTabIds = writeSheetChange(doc, from, file, FILE_ORIGIN, true);
   stop();
   const merged = readSheetYDoc(doc);
   const checked = validateSheetDocument(merged.document);
