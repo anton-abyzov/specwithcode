@@ -362,16 +362,19 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         // The release consults the launcher state file under the configured
         // baseDir, so every harness run gets a scoped temp baseDir.
+        // The relay URL this server is configured for comes from the environment.
         Effect.provide(
           ServerConfigModule.layerTest("/", { prefix: "studio-http-release-test-" }).pipe(
             Layer.provideMerge(NodeServices.layer),
-          ),
-        ),
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromEnv({
-              env: { STUDIO_RELAY_URL: harness.configuredRelayUrl ?? "https://relay.example.test" },
-            }),
+            Layer.provideMerge(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    STUDIO_RELAY_URL: harness.configuredRelayUrl ?? "https://relay.example.test",
+                  },
+                }),
+              ),
+            ),
           ),
         ),
         Effect.scoped,
