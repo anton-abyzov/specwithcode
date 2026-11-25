@@ -92,6 +92,7 @@ import {
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
+import { withListedCommit } from "./listedCommit.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
@@ -3412,8 +3413,15 @@ export const make = Effect.gen(function* () {
     activity: credentialCached(activity),
     preview: credentialCached(preview),
     threadComments,
-    diff: credentialCached(diff),
-    diffFileContents,
+    // A named commit must be one the change request lists before a host is asked for it.
+    diff: (input) =>
+      withListedCommit("diff", input, credentialCached(activity)).pipe(
+        Effect.flatMap(credentialCached(diff)),
+      ),
+    diffFileContents: (input) =>
+      withListedCommit("diffFileContents", input, credentialCached(activity)).pipe(
+        Effect.flatMap(diffFileContents),
+      ),
     checkFailureLog,
     filesViewed: credentialCached(filesViewed),
     setFilesViewed,

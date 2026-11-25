@@ -5925,6 +5925,17 @@ it.effect("returns large diff slices intact without retaining them in either cac
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider("github", {
+          // The one commit read below is one this change request lists.
+          getChangeRequestActivity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [
+                { oid: "a".repeat(40), messageHeadline: "a", committedDate: "2026-11-20T00:00:00.000Z" },
+              ],
+            }),
           getDiff: () =>
             Effect.sync(() => {
               reads += 1;

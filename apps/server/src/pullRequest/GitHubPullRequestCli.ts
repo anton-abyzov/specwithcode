@@ -776,6 +776,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      /** The pull request the thread must belong to; checked before anything is written. */
+      readonly number: number;
       readonly threadId: string;
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
@@ -784,6 +786,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      /** The pull request the thread must belong to; checked before anything is written. */
+      readonly number: number;
       readonly threadId: string;
       readonly resolved: boolean;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
@@ -1303,6 +1307,33 @@ export const make = Effect.gen(function* () {
       decode: decodeReactionSubjectScopeJson,
     });
   };
+
+  /**
+   * Fails unless the review thread hangs off the named pull request. A thread id is global on
+   * its host, so without this a reply or resolve would act on whichever pull request the id
+   * really belongs to, with this reader's token.
+   */
+  const requireReviewThreadOfPullRequest = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+    readonly threadId: string;
+    readonly operation: string;
+  }) =>
+    subjectBelongsToPullRequest({ ...input, subjectId: input.threadId }).pipe(
+      Effect.flatMap((belongs) =>
+        belongs
+          ? Effect.void
+          : Effect.fail(
+              new GitHubSubjectScopeError({
+                command: "gh",
+                cwd: input.cwd,
+                operation: input.operation,
+              }),
+            ),
+      ),
+    );
 
   /** A GraphQL mutation whose answer is not read back; a GraphQL error fails it. */
   const graphql = (input: {
@@ -2735,7 +2766,9 @@ export const make = Effect.gen(function* () {
           });
         }
         let body: string | undefined;
-        let expectedHead: string | undefined;
+        // Every merge names the head it was decided on, so a push that lands after this read
+        // makes GitHub refuse the merge rather than merge commits nobody looked at.
+        let expectedHead = state.headRefOid;
         if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {
           const message = yield* graphqlRead({
             cwd: input.cwd,
@@ -2776,7 +2809,7 @@ export const make = Effect.gen(function* () {
             input: {
               pullRequestId: state.id,
               mergeMethod: GRAPHQL_MERGE_METHODS[input.mergeMethod ?? "merge"],
-              ...(expectedHead === undefined ? {} : { expectedHeadOid: expectedHead }),
+              expectedHeadOid: expectedHead,
               ...(body === undefined ? {} : { commitBody: body }),
             },
           },
@@ -2816,12 +2849,16 @@ export const make = Effect.gen(function* () {
     },
 
     replyToReviewThread: (input) =>
-      graphql({
-        host: input.host,
-        operation: "replyToReviewThread",
-        query: REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
-        variables: { threadId: input.threadId, body: input.body },
-      }),
+      requireReviewThreadOfPullRequest({ ...input, operation: "replyToReviewThread" }).pipe(
+        Effect.andThen(
+          graphql({
+            host: input.host,
+            operation: "replyToReviewThread",
+            query: REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
+            variables: { threadId: input.threadId, body: input.body },
+          }),
+        ),
+      ),
 
     getPullRequestFilesViewed: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
@@ -2867,14 +2904,18 @@ export const make = Effect.gen(function* () {
     },
 
     setReviewThreadResolution: (input) =>
-      graphql({
-        host: input.host,
-        operation: "setReviewThreadResolution",
-        query: input.resolved
-          ? RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION
-          : UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
-        variables: { threadId: input.threadId },
-      }),
+      requireReviewThreadOfPullRequest({ ...input, operation: "setReviewThreadResolution" }).pipe(
+        Effect.andThen(
+          graphql({
+            host: input.host,
+            operation: "setReviewThreadResolution",
+            query: input.resolved
+              ? RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION
+              : UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
+            variables: { threadId: input.threadId },
+          }),
+        ),
+      ),
 
     setReaction: (input) => {
       const givenSubjectId = input.subjectId;

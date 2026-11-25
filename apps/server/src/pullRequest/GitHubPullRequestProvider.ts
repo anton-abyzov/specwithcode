@@ -641,6 +641,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           body: input.body,
         })
@@ -665,6 +666,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           resolved: input.resolved,
         })

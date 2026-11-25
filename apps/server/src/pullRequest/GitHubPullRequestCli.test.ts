@@ -2180,7 +2180,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       expect(variablesOf("mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "abc123" } },
       ]);
       expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
     }),
@@ -2255,7 +2255,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(variablesOf("query PullRequestMergeMessage")[0]?.["method"]).toBe("MERGE");
       // A merge queue takes the pull request through auto-merge, with its own message.
       expect(variablesOf(queued ? "enablePullRequestAutoMerge(" : "mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE", expectedHeadOid: "abc123" } },
       ]);
     }),
   );
@@ -3316,15 +3316,23 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  const ownThreadScope = {
+    data: {
+      repository: { pullRequest: { id: "PR_7" } },
+      node: { id: "PRRT_1", reviewThreadPullRequest: { id: "PR_7" } },
+    },
+  };
+
   it.effect("sends a reply body as a variable, never inside the document", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      route([SUBJECT_SCOPE_QUERY, ownThreadScope]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.replyToReviewThread({
         cwd: "/w",
         repository: "acme/web",
         host: "github.com",
+        number: 7,
         threadId: "PRRT_1",
         body: "Fixed in 42ff8ec.",
       });
@@ -3332,19 +3340,21 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(variablesOf("addPullRequestReviewThreadReply(")).toEqual([
         { threadId: "PRRT_1", body: "Fixed in 42ff8ec." },
       ]);
-      expect(queryAt(0)).not.toContain("Fixed in 42ff8ec.");
+      expect(queryAt(1)).toContain("addPullRequestReviewThreadReply(");
+      expect(queryAt(1)).not.toContain("Fixed in 42ff8ec.");
     }),
   );
 
   it.effect("resolves and unresolves through the mutation each one needs", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      route([SUBJECT_SCOPE_QUERY, ownThreadScope]);
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       yield* cli.setReviewThreadResolution({
         cwd: "/w",
         repository: "acme/web",
         host: "github.acme.dev",
+        number: 7,
         threadId: "PRRT_1",
         resolved: true,
       });
@@ -3352,16 +3362,25 @@ layer("GitHubPullRequestCli.layer", (it) => {
         cwd: "/w",
         repository: "acme/web",
         host: "github.acme.dev",
+        number: 7,
         threadId: "PRRT_1",
         resolved: false,
       });
 
-      expect(queryAt(0)).toContain("resolveReviewThread(");
-      expect(queryAt(0)).not.toContain("unresolveReviewThread(");
-      expect(queryAt(1)).toContain("unresolveReviewThread(");
-      expect([varsAt(0), varsAt(1)]).toEqual([{ threadId: "PRRT_1" }, { threadId: "PRRT_1" }]);
-      // A GitHub Enterprise thread is resolved on its own host, not on github.com.
-      expect([callAt(0).host, callAt(1).host]).toEqual(["github.acme.dev", "github.acme.dev"]);
+      // Each write follows its own scope check.
+      expect(queryAt(0)).toContain(SUBJECT_SCOPE_QUERY);
+      expect(queryAt(1)).toContain("resolveReviewThread(");
+      expect(queryAt(1)).not.toContain("unresolveReviewThread(");
+      expect(queryAt(2)).toContain(SUBJECT_SCOPE_QUERY);
+      expect(queryAt(3)).toContain("unresolveReviewThread(");
+      expect([varsAt(1), varsAt(3)]).toEqual([{ threadId: "PRRT_1" }, { threadId: "PRRT_1" }]);
+      // A GitHub Enterprise thread is checked and resolved on its own host, not on github.com.
+      expect([0, 1, 2, 3].map((index) => callAt(index).host)).toEqual([
+        "github.acme.dev",
+        "github.acme.dev",
+        "github.acme.dev",
+        "github.acme.dev",
+      ]);
     }),
   );
 
