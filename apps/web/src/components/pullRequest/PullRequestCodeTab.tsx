@@ -348,11 +348,15 @@ function PullRequestCodeTab({
     }),
   );
   // A new pin drops the open composer and rereads the diff; the answer already on hand was read
-  // for the previous head and is ignored above.
-  const appliedHead = useRef(headSha);
+  // for the previous head and is ignored above. Mounting counts as a new pin: the panel can close
+  // and reopen on another head while the last diff read stays cached for this pull request.
+  const appliedHead = useRef<string | undefined | null>(null);
   useEffect(() => {
     if (appliedHead.current === headSha) return;
+    const mounting = appliedHead.current === null;
     appliedHead.current = headSha;
+    // Without a pin nothing is stamped, so a cached diff is as good as before.
+    if (mounting && headSha === undefined) return;
     headMovedAt.current = Date.now();
     setDraft(null);
     setSelectedLines(null);
