@@ -756,6 +756,31 @@ describe("ArtifactAppInstaller on Linux", () => {
     ),
   );
 
+  // Folder modes do not stop Windows or root from searching it.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "keeps the install while its applications folder cannot be searched",
+    () =>
+      withHome(({ home, recordsPath, fileSystem, path }) =>
+        Effect.gen(function* () {
+          const h = yield* harness({ platform: "linux", fileSystem }, home, recordsPath);
+          const result = yield* h.installer.install(input);
+          if (result.status !== "installed") return assert.fail("not installed");
+          const directory = path.join(home, ".local/share/applications");
+          const entryPath = path.join(
+            directory,
+            `specwithcode-app-${result.app.installId}.desktop`,
+          );
+          yield* fileSystem.chmod(directory, 0o600);
+          const uninstalled = yield* h.installer
+            .uninstall(result.app.installId)
+            .pipe(Effect.ensuring(fileSystem.chmod(directory, 0o755).pipe(Effect.orDie)));
+          assert.isFalse(uninstalled);
+          assert.isTrue(yield* fileSystem.exists(entryPath));
+          assert.equal((yield* h.records.list).length, 1);
+        }),
+      ),
+  );
+
   it.effect("still removes its own entry after the app's icon moved", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {

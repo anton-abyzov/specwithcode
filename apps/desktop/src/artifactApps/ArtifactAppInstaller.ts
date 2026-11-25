@@ -388,7 +388,10 @@ const make = Effect.gen(function* () {
         Effect.mapError(writeError("read-launcher", path)),
       );
 
-  const exists = (path: string) => fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+  // Only a missing path is absent: a folder that cannot be searched fails, so a
+  // launcher behind it is never taken for gone.
+  const exists = (path: string) =>
+    fileSystem.exists(path).pipe(Effect.mapError(writeError("read-launcher", path)));
 
   const isSymbolicLink = (path: string) =>
     fileSystem.readLink(path).pipe(
