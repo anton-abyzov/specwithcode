@@ -39,6 +39,28 @@ class PairingInputTest {
         assertFalse(PairingInput.isCleartext(real))
     }
 
+    @Test fun hostedLinksShowAndCheckTheMachineTheyPairWith() {
+        // Pairing sends the code to the `?host=` machine, so the banner and the guards read that one.
+        val other = "https://my-mac.local/pair?host=https%3A%2F%2Fother.example&label=Mac#token=$code"
+        assertEquals("other.example", PairingInput.host(other))
+        assertFalse(PairingInput.isCleartext(other))
+
+        val cleartext = "https://x.example/pair?host=http%3A%2F%2F203.0.113.5%3A3773#token=$code"
+        assertEquals("203.0.113.5", PairingInput.host(cleartext))
+        assertTrue(PairingInput.isCleartext(cleartext))
+        assertTrue(PairingInput.isPublicCleartext(cleartext))
+
+        val wrapped = "specwithcode://pair?link=" + java.net.URLEncoder.encode(cleartext, "UTF-8")
+        assertEquals("203.0.113.5", PairingInput.host(wrapped))
+        assertTrue(PairingInput.isPublicCleartext(wrapped))
+
+        // A plain link keeps today's answers.
+        assertEquals("m4.example.ts.net", PairingInput.host("https://m4.example.ts.net/pair#token=$code"))
+        assertEquals("10.0.0.2", PairingInput.host("http://10.0.0.2:3773/#token=$code"))
+        assertTrue(PairingInput.isCleartext("http://10.0.0.2:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://10.0.0.2:3773/#token=$code"))
+    }
+
     @Test fun deepLinksOpenPairingOrAThread() {
         val real = "https://m4.example.ts.net/pair#token=$code"
         assertEquals(DeepLink.Pair(real), DeepLink.parse("studio://pair?pairingUrl=" + java.net.URLEncoder.encode(real, "UTF-8")))
