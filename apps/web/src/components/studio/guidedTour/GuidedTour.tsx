@@ -23,7 +23,12 @@ import {
   type GuidedTourStep,
   type TourRect,
 } from "./guidedTour.logic";
-import { endGuidedTour, showGuidedTourStep, useGuidedTour } from "./guidedTourStore";
+import {
+  endGuidedTour,
+  leaveGuidedTour,
+  showGuidedTourStep,
+  useGuidedTour,
+} from "./guidedTourStore";
 
 /** How long a step waits for its page to draw the target. */
 export const TARGET_WAIT_MS = 3000;
@@ -211,12 +216,18 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
     return () => window.clearTimeout(timer);
   }, [navigate, step]);
 
-  // Browser Back, or a link outside the tour, moved away from the step's page: the person
-  // left the tour, so it ends where they are and leaves history alone.
+  // Browser Back or Forward means the person left the tour, even to an entry with the same
+  // path: the tour's own pages only replace entries, which never fires popstate.
+  useEffect(() => {
+    window.addEventListener("popstate", leaveGuidedTour);
+    return () => window.removeEventListener("popstate", leaveGuidedTour);
+  }, []);
+
+  // Anything else that moves away from the step's page ends the tour the same way.
   useEffect(() => {
     if (resolution.kind === "waiting") return;
     const check = window.setInterval(() => {
-      if (window.location.pathname !== step.route) endGuidedTour();
+      if (window.location.pathname !== step.route) leaveGuidedTour();
     }, 250);
     return () => window.clearInterval(check);
   }, [resolution.kind, step.route]);

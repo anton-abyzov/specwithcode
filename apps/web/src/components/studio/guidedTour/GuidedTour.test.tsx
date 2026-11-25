@@ -249,13 +249,36 @@ describe("guided tour host (1486)", () => {
     expect(overlay()?.dataset.tourStep).toBe("projects");
     router.replace.mockClear();
     router.navigate.mockClear();
-    // Browser Back to a page from before the tour.
+    // Browser Back to a project page from before the tour; the app records it for Settings.
     window.history.replaceState(null, "", "/projects/sample");
+    setMainAppHref("/projects/sample");
     await settle(400);
     expect(overlay()).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
     expect(router.navigate).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe("/projects/sample");
+    expect(getMainAppHref()).toBe("/projects/sample");
+  });
+
+  it("ends on browser Back to an entry with the same path (AC-04)", async () => {
+    drawTargets();
+    setMainAppHref("/projects/sample");
+    await act(async () => root.render(<GuidedTourHost />));
+    await act(async () => startGuidedTour());
+    await settle();
+    setMainAppHref("/");
+    for (let step = 1; step < GUIDED_TOUR_STEPS.length; step += 1) {
+      await act(async () => button("Next").click());
+      await settle();
+    }
+    expect(overlay()?.dataset.tourStep).toBe("again");
+    router.replace.mockClear();
+    // Back lands on an earlier Settings General entry: same path, still a different entry.
+    await act(async () => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(overlay()).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+    // On a Settings page nothing records a new place, so closing goes where it did before.
+    expect(getMainAppHref()).toBe("/projects/sample");
   });
 
   it("moves to the real target when it draws after a stand-in (AC-03)", async () => {

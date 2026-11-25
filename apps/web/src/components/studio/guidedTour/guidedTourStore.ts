@@ -5,7 +5,11 @@
  */
 import { useSyncExternalStore } from "react";
 
-import { getMainAppHref, setMainAppHref } from "../../sidebar/mainAppLocation";
+import {
+  getMainAppHref,
+  isSidebarUtilityPage,
+  setMainAppHref,
+} from "../../sidebar/mainAppLocation";
 
 export interface GuidedTourState {
   readonly open: boolean;
@@ -48,6 +52,19 @@ export function endGuidedTour(): string {
   if (open) setMainAppHref(mainAppHref);
   set(CLOSED);
   return returnTo;
+}
+
+/**
+ * The person left the tour with browser Back or Forward: it closes where they are and writes no
+ * history. On a main app page the app has already recorded that page as where Settings closes to,
+ * so only a utility page (Settings and the like) gets the pre-tour value back.
+ */
+export function leaveGuidedTour(): void {
+  const { mainAppHref, open } = state;
+  if (open && typeof window !== "undefined" && isSidebarUtilityPage(window.location.pathname)) {
+    setMainAppHref(mainAppHref);
+  }
+  set(CLOSED);
 }
 
 export function getGuidedTourState(): GuidedTourState {
