@@ -115,38 +115,44 @@ const isPrivateFolderPath = (fileSystem: FileSystem.FileSystem, path: Path.Path,
  * Pi starts every extension's session hooks, and reads project MCP config, in
  * the folder it runs in. The server's folder is the home folder on the desktop
  * app, so each status check runs Pi in a new private empty folder (mode 0700,
- * removed afterwards) under the status cache. A fixed folder name could be
- * replaced by a symlink or filled in advance, and a cache folder another user
- * can write could have the new folder swapped, so the cache folder's real path
- * must be private too. When no such folder can be made the check fails without
- * starting Pi anywhere else.
+ * removed afterwards). It is made in the system's temporary folder, which is
+ * private to the user on macOS and Windows and sticky on Linux, so no other
+ * user can swap it; tests pass their own `probeParent`. Pi runs in the
+ * folder's real path, and only when no other user can write the folder or any
+ * folder above it. When no such folder can be made the check fails without
+ * starting Pi anywhere else. A relative binary path still names a file from
+ * the server's folder.
  */
 export const checkPiProviderStatusInProbeFolder = (
   settings: PiSettings,
   environment: NodeJS.ProcessEnv,
-  providerStatusCacheDir: string,
+  probeParent?: string,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       if (!settings.enabled) return yield* checkPiProviderStatus(settings, environment);
+      const binaryPath = settings.binaryPath.trim();
+      const probeSettings =
+        binaryPath.length > 0 && /[\\/]/.test(binaryPath) && !path.isAbsolute(binaryPath)
+          ? { ...settings, binaryPath: path.resolve(binaryPath) }
+          : settings;
       const probeFolder = yield* Effect.gen(function* () {
-        yield* fileSystem.makeDirectory(providerStatusCacheDir, { recursive: true });
-        const cacheFolder = yield* fileSystem.realPath(providerStatusCacheDir);
-        if (!(yield* isPrivateFolderPath(fileSystem, path, cacheFolder))) return undefined;
-        return yield* fileSystem.makeTempDirectoryScoped({
-          directory: cacheFolder,
+        const made = yield* fileSystem.makeTempDirectoryScoped({
+          ...(probeParent === undefined ? {} : { directory: probeParent }),
           prefix: "pi-status-probe-",
         });
+        const folder = yield* fileSystem.realPath(made);
+        return (yield* isPrivateFolderPath(fileSystem, path, folder)) ? folder : undefined;
       }).pipe(Effect.result);
       if (probeFolder._tag === "Failure" || probeFolder.success === undefined) {
         const reason =
           probeFolder._tag === "Failure" ? probeFolder.failure.reason._tag : "NotPrivate";
         yield* Effect.logWarning("Pi status check folder could not be made.", { reason });
-        return yield* piStatusFolderUnavailable(settings, reason);
+        return yield* piStatusFolderUnavailable(probeSettings, reason);
       }
-      return yield* checkPiProviderStatus(settings, environment, probeFolder.success);
+      return yield* checkPiProviderStatus(probeSettings, environment, probeFolder.success);
     }),
   );
 
@@ -164,7 +170,6 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -209,11 +214,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       );
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkPiProviderStatusInProbeFolder(
-        effectiveConfig,
-        processEnv,
-        providerStatusCacheDir,
-      ).pipe(
+      const checkProvider = checkPiProviderStatusInProbeFolder(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads the probe folder synchronously while Pi runs in it.
 import * as NodeFs from "node:fs";
+import * as NodeOs from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -31,9 +32,14 @@ function processHandle(input: { readonly stdout?: string; readonly exitCode?: nu
   });
 }
 
-const recordingSpawner = (cwds: Array<string | undefined>, seen?: (cwd: string) => void) =>
+const recordingSpawner = (
+  cwds: Array<string | undefined>,
+  seen?: (cwd: string) => void,
+  commands?: Array<string>,
+) =>
   ChildProcessSpawner.make((command) => {
     const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+    if (ChildProcess.isStandardCommand(command)) commands?.push(command.command);
     if (ChildProcess.isStandardCommand(command) && !args.includes("--version")) {
       cwds.push(command.options.cwd);
       if (command.options.cwd !== undefined) seen?.(command.options.cwd);
@@ -144,5 +150,39 @@ describe("Pi status probe folder", () => {
         }
         assert.deepEqual(yield* fileSystem.readDirectory(cacheDir), []);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("by default makes the folder in the system's temporary folder", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const cwds: Array<string | undefined> = [];
+      const modes: Array<number> = [];
+      yield* checkPiProviderStatusInProbeFolder(piSettings, {}).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          recordingSpawner(cwds, (cwd) => modes.push(NodeFs.lstatSync(cwd).mode & 0o777)),
+        ),
+      );
+      assert.isAbove(cwds.length, 0);
+      const folder = cwds[0]!;
+      assert.equal(path.dirname(folder), NodeFs.realpathSync(NodeOs.tmpdir()));
+      assert.isTrue(path.basename(folder).startsWith("pi-status-probe-"));
+      if (process.platform !== "win32") assert.equal(modes[0], 0o700);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("runs a relative binary path from the server's folder, not the probe folder", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const commands: Array<string> = [];
+      yield* checkPiProviderStatusInProbeFolder({ ...piSettings, binaryPath: "./bin/pi" }, {}).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          recordingSpawner([], undefined, commands),
+        ),
+      );
+      assert.isAbove(commands.length, 0);
+      for (const command of commands) assert.equal(command, path.resolve("bin/pi"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
