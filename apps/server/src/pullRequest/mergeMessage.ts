@@ -11,9 +11,10 @@ const AGENT_EMAILS = new Set([
 const GENERATED_BY_AGENT =
   /^(?:🤖\s*)?generated (?:with|by)\s+(?:claude(?: code)?|codex|cursor|github copilot|copilot|opencode|grok|antigravity)[.!]?$/i;
 
-// Link text excludes `[`, so a run of unmatched brackets cannot make each start rescan the rest.
+// Link text excludes `[`, so a run of unmatched brackets cannot make each start rescan the rest,
+// and the path stops at brackets and parentheses, so an unclosed link cannot run into the next.
 const AGENT_LINK =
-  /\[([^[\]\r\n]+)\]\(https:\/\/(?:claude\.ai|claude\.com|www\.anthropic\.com|chatgpt\.com|openai\.com|cursor\.com|github\.com|opencode\.ai|x\.ai|antigravity\.google)(?:\/[^\s)]*)?\)/gi;
+  /\[([^[\]\r\n]+)\]\(https:\/\/(?:claude\.ai|claude\.com|www\.anthropic\.com|chatgpt\.com|openai\.com|cursor\.com|github\.com|opencode\.ai|x\.ai|antigravity\.google)(?:\/[^\s()[\]]*)?\)/gi;
 
 // A `Claude-Session:` style trailer, or a bare link to an agent's session or task.
 const AGENT_SESSION =
@@ -28,9 +29,11 @@ export function literalMarkdownLines(lines: ReadonlyArray<string>): ReadonlyArra
   let fence: string | undefined;
   return lines.map((line) => {
     if (/^(?: {4}|\t)/.test(line)) return true;
-    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    // The remainder is sliced off rather than matched: `.` stops at a line separator, and
+    // backtracking through a long marker to find one would rescan the line from each tick.
+    const delimiter = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     const marker = delimiter?.[1];
-    const remainder = delimiter?.[2] ?? "";
+    const remainder = delimiter === null ? "" : line.slice(delimiter[0].length);
     if (marker !== undefined) {
       if (fence === undefined) {
         if (marker[0] === "~" || !remainder.includes("`")) fence = marker;
