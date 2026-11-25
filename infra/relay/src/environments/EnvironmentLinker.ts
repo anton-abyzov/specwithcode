@@ -469,10 +469,22 @@ const make = Effect.gen(function* () {
       for (const previous of previousAccounts) {
         // Best effort, as for a replaced machine link: a tunnel left behind is
         // offline once the machine reconnects under its new account, and the
-        // idle-tunnel sweep removes it.
+        // idle-tunnel sweep removes it. The machine may have moved back to the
+        // previous account since the read above, so its link must still be
+        // revoked, as an unlink checks before its own retry.
         const key = { userId: previous.userId, environmentId: verified.environmentId };
         yield* managedEndpointProvider.prepareDeprovision(key).pipe(
-          Effect.flatMap((target) => managedEndpointProvider.deprovision({ ...key, target })),
+          Effect.flatMap((target) =>
+            links
+              .getForUser(key)
+              .pipe(
+                Effect.flatMap((relinked) =>
+                  relinked === null
+                    ? managedEndpointProvider.deprovision({ ...key, target })
+                    : Effect.void,
+                ),
+              ),
+          ),
           Effect.tapError((error) =>
             Effect.logWarning("could not remove the previous account's tunnel", {
               environmentId: verified.environmentId,
