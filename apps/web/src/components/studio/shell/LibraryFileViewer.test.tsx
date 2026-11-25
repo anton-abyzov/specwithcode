@@ -187,29 +187,6 @@ it("shows a PDF report in the PDF frame", async () => {
   expect(find("data-document-frame")[0]!.props["data-pdf"]).toBe("true");
 });
 
-it("keeps an open PDF on its first URL when the signed URL is re-minted", async () => {
-  const viewer = () => (
-    <LibraryFileViewer
-      environmentId={EnvironmentId.make("library-host")}
-      workspaceRoot={ROOT}
-      files={[{ path: `${COPY}/plan.pdf`, name: "plan.pdf" }]}
-      path={`${COPY}/plan.pdf`}
-      onPath={() => {}}
-      onClose={() => {}}
-    />
-  );
-  await act(async () => {
-    renderer = create(viewer());
-  });
-  state.mint = 2;
-  await act(async () => renderer!.update(viewer()));
-  // The re-render saw the new URL; the frame kept the first.
-  expect(state.assets.length).toBeGreaterThan(1);
-  expect(find("data-document-frame")[0]!.props["data-document-frame"]).toBe(
-    "https://asset.test/plan.pdf",
-  );
-});
-
 it("plays a browser video, shows any other as a preview card, and says when one will not load", async () => {
   await open(`${COPY}/demo.mp4`);
   const video = find("data-library-video")[0]!;
@@ -219,6 +196,27 @@ it("plays a browser video, shows any other as a preview card, and says when one 
   await open(`${COPY}/capture.avi`);
   expect(find("data-library-video")).toHaveLength(0);
   expect(find("data-file-card")).toHaveLength(1);
+});
+
+it("tries a video again when its signed URL is re-minted after an error", async () => {
+  const viewer = () => (
+    <LibraryFileViewer
+      environmentId={EnvironmentId.make("library-host")}
+      workspaceRoot={ROOT}
+      files={[{ path: `${COPY}/demo.mp4`, name: "demo.mp4" }]}
+      path={`${COPY}/demo.mp4`}
+      onPath={() => {}}
+      onClose={() => {}}
+    />
+  );
+  await act(async () => {
+    renderer = create(viewer());
+  });
+  await act(async () => find("data-library-video")[0]!.props.onError());
+  expect(find("data-library-video")).toHaveLength(0);
+  state.mint = 2;
+  await act(async () => renderer!.update(viewer()));
+  expect(find("data-library-video")[0]!.props.src).toBe("https://asset.test/demo.mp4?mint=2");
 });
 
 it("leaves the arrow keys to a video's controls instead of changing files", async () => {

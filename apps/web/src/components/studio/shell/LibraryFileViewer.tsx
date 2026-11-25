@@ -383,17 +383,12 @@ function LibraryAssetBody(props: {
     [props.kind, props.path, props.workspaceRoot],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
-  const [broken, setBroken] = useState(false);
-  // A page or PDF keeps its first URL while it stays open: signed URLs are
-  // re-minted every half hour, and a new URL would reload the frame back to
-  // the top. An image or video takes the new one (a video's later range
-  // requests need a URL that has not expired).
-  const [kept, setKept] = useState<{ readonly path: string; readonly url: string } | null>(null);
-  const keeps = props.kind === "html" || props.kind === "pdf";
-  if (keeps && asset._tag === "Success" && kept?.path !== props.path) {
-    setKept({ path: props.path, url: asset.url });
-  }
-  const frameUrl = keeps && kept?.path === props.path ? kept.url : null;
+  // An error belongs to the URL that failed: a re-minted URL tries again.
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
+  const broken = asset._tag === "Success" && brokenUrl === asset.url;
+  const setBroken = () => {
+    if (asset._tag === "Success") setBrokenUrl(asset.url);
+  };
   if (asset._tag === "Failure" || broken) {
     return (
       <p className="m-auto max-w-xl p-6 text-center text-muted-foreground text-sm" role="alert">
@@ -411,7 +406,7 @@ function LibraryAssetBody(props: {
     );
   }
   if (props.kind === "image") {
-    return <ViewerImageStage src={asset.url} name={props.name} onError={() => setBroken(true)} />;
+    return <ViewerImageStage src={asset.url} name={props.name} onError={() => setBroken()} />;
   }
   if (props.kind === "video") {
     return (
@@ -422,13 +417,13 @@ function LibraryAssetBody(props: {
         preload="metadata"
         className="h-full max-h-full w-full"
         data-library-video={props.name}
-        onError={() => setBroken(true)}
+        onError={() => setBroken()}
       />
     );
   }
   return (
     <BrowserDocumentFrame
-      src={frameUrl ?? asset.url}
+      src={asset.url}
       title={props.name}
       pdf={props.kind === "pdf"}
       lockedFile={props.kind === "html"}
