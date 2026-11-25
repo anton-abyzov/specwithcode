@@ -76,6 +76,8 @@ interface World {
   readonly tunnels?: Partial<ManagedEndpointProvider.ManagedEndpointTunnelClient["Service"]>;
   /** Clerk session ids the relay removed with a phone. */
   readonly removedSessions?: ReadonlyArray<string>;
+  /** Accounts marked for deletion, in the app or by Clerk's webhook. */
+  readonly deletedAccounts?: ReadonlyArray<string>;
   /** The removal check itself fails, or throws something nobody expected. */
   readonly removalCheck?: "fails" | "crashes";
   /** More rows on top of the five seeded accounts. */
@@ -139,7 +141,8 @@ const withAdmin = <A, E>(
         ...world.tunnels,
       }),
       Layer.mock(PhoneRemovals.PhoneRemovals, {
-        isAccountDeleted: () => Effect.succeed(false),
+        isAccountDeleted: ({ userId }) =>
+          Effect.succeed(world.deletedAccounts?.includes(userId) ?? false),
         findBlocking: (input) =>
           world.removalCheck === "fails"
             ? Effect.fail(
@@ -277,6 +280,15 @@ describe("who may use the Connect admin routes", () => {
         yield* expectHidden(yield* call("/v1/admin/me", "owner-phone-session"));
         // The owner's other session still works.
         expect((yield* call("/v1/admin/me", "owner-session")).status).toBe(200);
+      }),
+    ),
+  );
+
+  it.effect("refuses a deleted owner's unexpired token, with a session id or without", () =>
+    withAdmin({ owners: ["user_owner"], deletedAccounts: ["user_owner"] }, (call) =>
+      Effect.gen(function* () {
+        yield* expectHidden(yield* call("/v1/admin/me", "owner-session"));
+        yield* expectHidden(yield* call("/v1/admin/me", "owner-phone-session"));
       }),
     ),
   );

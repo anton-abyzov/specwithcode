@@ -84,19 +84,14 @@ export const layerAdminAuth = Layer.effect(
         ) {
           return null;
         }
-        const { sid } = clerkSessionIdClaim(verified);
-        if (sid) {
-          // The token names its Clerk session: one removed with a phone is
-          // refused, and so is one the relay cannot check. A token without a
-          // session id (the relay's own JWT template) is not checked here; it
-          // stops working when it expires.
-          const session = yield* PhoneRemovalApi.clerkSessionStatus({
-            userId: verified.sub,
-            clerkSessionId: sid,
-          }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
-          if (session !== "allowed") return null;
-        }
-        return verified.sub;
+        // A deleted owner is refused for as long as the token is valid. A token
+        // that names its Clerk session is also refused when that session was
+        // removed with a phone, and when the relay cannot check either.
+        const session = yield* PhoneRemovalApi.clerkSessionStatus({
+          userId: verified.sub,
+          clerkSessionId: clerkSessionIdClaim(verified).sid,
+        }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
+        return session === "allowed" ? verified.sub : null;
       },
       Effect.catchCause(() => Effect.succeed(null)),
     );
