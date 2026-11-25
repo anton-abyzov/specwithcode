@@ -90,7 +90,7 @@ const sheetsIn = (folder: string) =>
 /** No window has a sheet open: every write and read goes to the file. */
 const noLiveSessions = Layer.mock(DocumentSession.DocumentSession)({
   writeSheet: () => Effect.succeed(Option.none()),
-  settle: () => Effect.void,
+  settle: () => Effect.succeed(Option.none()),
 });
 
 const layerFor = (
@@ -713,7 +713,11 @@ it.effect("hands a write to the sheet's live session when a window has it open",
         }),
       );
     },
-    settle: (input) => Effect.sync(() => void settled.push(input.name)),
+    settle: (input) =>
+      Effect.sync(() => {
+        settled.push(input.name);
+        return Option.none();
+      }),
   });
   return Effect.gen(function* () {
     const saved = yield* call("sheet_write", { ...BUDGET, name: "q3-budget", merge: true });

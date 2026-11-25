@@ -1,4 +1,5 @@
 import {
+  type AuthPrincipal,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   DOCUMENT_SESSION_RPC_METHODS,
@@ -23,6 +24,9 @@ const attempt = (
   scopes: ReadonlyArray<typeof AuthFilesystemReadScope | typeof AuthFilesystemWriteScope>,
   method: string,
   payload: unknown,
+  /** Set for a connection that comes from an approved Connect device rather than this machine. */
+  deviceKey?: string,
+  principal?: AuthPrincipal,
 ) =>
   Effect.gen(function* () {
     const authorize = yield* RpcScopeAuthorization;
@@ -38,7 +42,7 @@ const attempt = (
         onSuccess: (value) => String(value),
       }),
     );
-  }).pipe(Effect.provide(RpcAuthorization.layer(scopes)));
+  }).pipe(Effect.provide(RpcAuthorization.layer(scopes, principal, deviceKey)));
 
 it.effect("refuses a change to a sheet from a connection that may only read files", () =>
   Effect.gen(function* () {
@@ -79,5 +83,33 @@ it.effect("lets a read-only connection watch a sheet and refuses it an editing s
         },
       ),
     ).toBe("ran");
+  }),
+);
+
+it.effect("refuses a live session to a connection from another device, whatever its scopes", () =>
+  Effect.gen(function* () {
+    const scopes = [AuthFilesystemReadScope, AuthFilesystemWriteScope] as const;
+    for (const [method, payload] of [
+      [DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen, { ...session, access: "edit" }],
+      [DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen, { ...session, access: "view" }],
+      [DOCUMENT_SESSION_RPC_METHODS.documentSessionUpdate, { ...session, update: "AAA=" }],
+      [DOCUMENT_SESSION_RPC_METHODS.documentSessionPresence, { ...session, place: null }],
+    ] as const) {
+      expect(yield* attempt(scopes, method, payload, "device-key-1")).toBe(
+        RpcAuthorization.REMOTE_DOCUMENT_SESSION_MESSAGE,
+      );
+      // Another machine acting through its coordinator is refused the same way.
+      expect(
+        yield* attempt(scopes, method, payload, undefined, {
+          kind: "coordinator",
+          environmentId: "environment-other" as never,
+        }),
+      ).toBe(RpcAuthorization.REMOTE_DOCUMENT_SESSION_MESSAGE);
+      // A browser paired on this machine is one of its windows.
+      expect(
+        yield* attempt(scopes, method, payload, undefined, { kind: "device", id: "browser-1" }),
+      ).toBe("ran");
+      expect(yield* attempt(scopes, method, payload)).toBe("ran");
+    }
   }),
 );

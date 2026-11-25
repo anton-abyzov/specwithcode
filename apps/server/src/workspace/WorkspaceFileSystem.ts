@@ -12,7 +12,11 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import { SHEET_ARTIFACT_SUFFIX, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
+import {
+  SHEET_ARTIFACT_SUFFIX,
+  SHEET_LIMITS,
+  sheetContentRevision,
+} from "@specweave-studio/shared/officeSheet";
 import { WHITEBOARD_LIMITS, isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
 import * as NodePath from "node:path";
@@ -602,9 +606,12 @@ export const make = Effect.gen(function* () {
 
           const size = Number(stat.size);
           // Whiteboards carry their images inline, so they may be larger than other text.
+          // A sheet may be saved up to its own limit, so it is read up to it too.
           const cap = isWhiteboardPath(input.relativePath)
             ? WHITEBOARD_LIMITS.bytes
-            : PROJECT_READ_FILE_MAX_BYTES;
+            : input.relativePath.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)
+              ? Math.max(SHEET_LIMITS.bytes, PROJECT_READ_FILE_MAX_BYTES)
+              : PROJECT_READ_FILE_MAX_BYTES;
           const limit = Math.min(input.maxBytes ?? Infinity, cap);
           const bytesToRead = Math.min(size, limit);
           const buffer = Buffer.alloc(bytesToRead);

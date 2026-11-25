@@ -140,14 +140,17 @@ export const layer = Access.toLayer(OfficeToolkit, {
       const sheets = yield* OfficeArtifactService.OfficeArtifactService;
       // An open sheet is written to its file first, so the read is what the windows show.
       const live = yield* DocumentSession.DocumentSession;
-      yield* sheets.projectFolder({ projectId: caller.projectId, threadId: caller.id }).pipe(
-        Effect.flatMap((workspaceRoot) => live.settle({ workspaceRoot, name: input.name })),
-        Effect.ignore,
-      );
+      const shown = yield* sheets
+        .projectFolder({ projectId: caller.projectId, threadId: caller.id })
+        .pipe(
+          Effect.flatMap((workspaceRoot) => live.settle({ workspaceRoot, name: input.name })),
+          Effect.orElseSucceed(() => Option.none<SheetDocument>()),
+        );
       const saved = yield* sheets
         .readSheet({ projectId: caller.projectId, threadId: caller.id, name: input.name })
         .pipe(Effect.mapError(failure));
-      const document = saved.document;
+      // A file that would not take the open sheet's changes: the reader gets the open sheet.
+      const document = Option.getOrElse(shown, () => saved.document);
       const tabIndex =
         input.tab === undefined
           ? 0

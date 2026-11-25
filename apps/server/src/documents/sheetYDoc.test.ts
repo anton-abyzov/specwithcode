@@ -183,7 +183,7 @@ describe("the sidecar log", () => {
   it("skips a cut-off last line and starts over from the file when the log is unreadable", () => {
     const loaded = loadSheet(FORECAST, null, "e1");
     const good = `${sheetSidecarHeader("e1")}${sheetSidecarLine(encodeSheetState(loaded.doc))}`;
-    expect(parseSheetSidecar(`${good}{"u":"AAEC`)?.updates).toHaveLength(1);
+    expect(parseSheetSidecar(`${good}{"u":"AAEC`)?.entries).toHaveLength(1);
     expect(parseSheetSidecar("")).toBeNull();
     expect(parseSheetSidecar("not json\n")).toBeNull();
     expect(parseSheetSidecar(`${JSON.stringify({ v: 9, epoch: "x" })}\n`)).toBeNull();
@@ -203,7 +203,7 @@ describe("the sidecar log", () => {
 
     expect(await writeSheetSidecar(sidecar, sheetSidecarHeader("e1"), ".tmp-1")).toBe(true);
     expect(await appendSheetSidecar(sidecar, sheetSidecarLine(new Uint8Array([0, 0])))).toBe(true);
-    expect(parseSheetSidecar((await readSheetSidecar(sidecar))!)?.updates).toHaveLength(1);
+    expect(parseSheetSidecar((await readSheetSidecar(sidecar))!)?.entries).toHaveLength(1);
     // Git skips the folder, and no listing of sheets takes its file for one.
     expect(
       NodeFS.readFileSync(NodePath.join(folder, SHEET_SIDECAR_DIR, ".gitignore"), "utf8"),

@@ -11,9 +11,12 @@
  *   <folder>/.collab/<file name>.ylog      one JSON object per line
  *   <folder>/.collab/.gitignore            "*", so Git and the Library skip the folder
  *
- * The first line names the log's epoch; every other line is one merged update.
- * The file wins over the sidecar: when they disagree on open, the difference
- * is written into the merge document as one more change.
+ * The first line names the log's epoch. Every other line is one merged
+ * update, or a mark: the revision the file had when it was last saved with
+ * everything above the mark in it. An update is in the log before the window
+ * that made it is answered, so updates below the last mark are changes the
+ * file has not got yet, and a server that stopped in between finds them here.
+ * Where the file was changed meanwhile, its change since the mark goes on top.
  */
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -35,6 +38,8 @@ import {
   encodeSheetState,
   onSheetUpdate,
   readSheetYDoc,
+  sheetHasUnappliedUpdate,
+  sheetSnapshotByName,
   sheetUpdateFromBase64,
   sheetUpdateToBase64,
   sheetYDocFrom,
@@ -110,14 +115,14 @@ export function sheetFileText(snapshot: SheetSnapshot): SheetFileText {
 
 // ------------------------------------------------------------------ the sidecar log
 
+export type SheetSidecarEntry =
+  | { readonly update: Uint8Array }
+  /** The file was saved, at this revision, holding every update above. */
+  | { readonly saved: string };
+
 export interface SheetSidecar {
   readonly epoch: string;
-  /**
-   * Set when the log holds changes the file could not be given: the revision
-   * the file had then. While the file still has it, the log is the newer of the two.
-   */
-  readonly unsaved: string | null;
-  readonly updates: ReadonlyArray<Uint8Array>;
+  readonly entries: ReadonlyArray<SheetSidecarEntry>;
   readonly lines: number;
 }
 
@@ -127,9 +132,8 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
   // A log always ends with a newline, so text after the last one is a line cut off mid-write.
   const complete = lines.slice(0, -1).filter((line) => line.length > 0);
   if (complete.length === 0) return null;
-  const updates: Uint8Array[] = [];
+  const entries: SheetSidecarEntry[] = [];
   let epoch: string | null = null;
-  let unsaved: string | null = null;
   for (const [index, line] of complete.entries()) {
     let entry: unknown;
     try {
@@ -139,29 +143,45 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
     }
     if (typeof entry !== "object" || entry === null) return null;
     if (index === 0) {
-      const header = entry as { v?: unknown; epoch?: unknown; unsaved?: unknown };
+      const header = entry as { v?: unknown; epoch?: unknown };
       if (header.v !== SIDECAR_VERSION || typeof header.epoch !== "string") return null;
       epoch = header.epoch;
-      unsaved = typeof header.unsaved === "string" ? header.unsaved : null;
       continue;
     }
-    const update = (entry as { u?: unknown }).u;
+    const { u: update, s: saved } = entry as { u?: unknown; s?: unknown };
+    if (typeof saved === "string") {
+      entries.push({ saved });
+      continue;
+    }
     const bytes = typeof update === "string" ? sheetUpdateFromBase64(update) : null;
     if (bytes === null) return null;
-    updates.push(bytes);
+    entries.push({ update: bytes });
   }
-  return epoch === null ? null : { epoch, unsaved, updates, lines: complete.length };
+  return epoch === null ? null : { epoch, entries, lines: complete.length };
 }
 
-export const sheetSidecarHeader = (epoch: string, unsaved?: string): string =>
-  `${JSON.stringify({ v: SIDECAR_VERSION, epoch, ...(unsaved === undefined ? {} : { unsaved }) })}\n`;
+export const sheetSidecarHeader = (epoch: string): string =>
+  `${JSON.stringify({ v: SIDECAR_VERSION, epoch })}\n`;
+
+/** The line that says the file, at `revision`, holds every update above it. */
+export const sheetSidecarMark = (revision: string): string =>
+  `${JSON.stringify({ s: revision })}\n`;
 
 export const sheetSidecarLine = (update: Uint8Array): string =>
   `${JSON.stringify({ u: sheetUpdateToBase64(update) })}\n`;
 
-/** The whole log as its header and one update: what a rewrite puts on disk. */
-export const compactSheetSidecar = (epoch: string, doc: SheetYDoc, unsaved?: string): string =>
-  `${sheetSidecarHeader(epoch, unsaved)}${sheetSidecarLine(encodeSheetState(doc))}`;
+/**
+ * The whole log as its header and one update: what a rewrite puts on disk.
+ * `savedRevision` is given when the file, at that revision, reads as the document does.
+ */
+export const compactSheetSidecar = (
+  epoch: string,
+  doc: SheetYDoc,
+  savedRevision?: string,
+): string =>
+  `${sheetSidecarHeader(epoch)}${sheetSidecarLine(encodeSheetState(doc))}${
+    savedRevision === undefined ? "" : sheetSidecarMark(savedRevision)
+  }`;
 
 // ------------------------------------------------------------------ loading
 
@@ -174,7 +194,11 @@ export interface LoadedSheet {
   readonly restored: boolean;
   /** Lines the sidecar holds; zero when it has to be written from scratch. */
   readonly sidecarLines: number;
-  /** The document holds changes the file never got, kept from a save that failed. */
+  /** The revision the sidecar's last line marks as saved; null when its last line is not a mark. */
+  readonly marked: string | null;
+  /** Changes made to the document while loading (the file's), still to be added to the log. */
+  readonly pending: ReadonlyArray<Uint8Array>;
+  /** The document holds changes the file never got, kept from a save that did not happen. */
   readonly unsaved: boolean;
 }
 
@@ -183,9 +207,10 @@ export interface LoadedSheet {
  * sidecar's state, brought up to the file where the two differ; without one
  * it is started from the file under `newEpoch`.
  *
- * One case goes the other way: a sidecar that says it holds changes the file
- * could not be given, beside a file that still has the revision it had then.
- * Nothing touched the file since, so those changes stand and are saved now.
+ * Updates below the sidecar's last mark never reached the file. They stand:
+ * with the file as the mark left it they are saved as they are, and with a
+ * file changed since, what changed in the file from the marked state goes on
+ * top of them, so both sides' edits to different cells are kept.
  */
 export function loadSheet(
   file: SheetDocument,
@@ -194,40 +219,8 @@ export function loadSheet(
   fileRevision?: string,
 ): LoadedSheet {
   const sidecar = sidecarText === null ? null : parseSheetSidecar(sidecarText);
-  if (sidecar !== null) {
-    const doc = createSheetYDoc();
-    const applied = sidecar.updates.every((update) => applySheetUpdate(doc, update, "sidecar"));
-    const held = readSheetYDoc(doc);
-    if (applied && validateSheetDocument(held.document).ok) {
-      if (sidecar.unsaved !== null && sidecar.unsaved === fileRevision) {
-        return {
-          doc,
-          epoch: sidecar.epoch,
-          saved: fileSnapshot(doc, file),
-          restored: true,
-          // Rewritten once the file has the changes, without the mark.
-          sidecarLines: 0,
-          unsaved: true,
-        };
-      }
-      // The file wins: what was changed in it since is one more change to merge.
-      let changed = false;
-      const stop = onSheetUpdate(doc, () => {
-        changed = true;
-      });
-      writeSheetChange(doc, held, file, FILE_ORIGIN);
-      stop();
-      return {
-        doc,
-        epoch: sidecar.epoch,
-        saved: fileSnapshot(doc, file),
-        restored: true,
-        // A log that lacks the change just made is rewritten whole, so later lines can build on it.
-        sidecarLines: changed || sidecar.unsaved !== null ? 0 : sidecar.lines,
-        unsaved: false,
-      };
-    }
-  }
+  const restored = sidecar === null ? null : restoreSheet(file, sidecar, fileRevision);
+  if (restored !== null) return restored;
   const doc = sheetYDocFrom(file, FILE_ORIGIN);
   return {
     doc,
@@ -235,29 +228,71 @@ export function loadSheet(
     saved: fileSnapshot(doc, file),
     restored: false,
     sidecarLines: 0,
+    marked: null,
+    pending: [],
     unsaved: false,
   };
 }
 
-/**
- * The file's sheet as a snapshot: each tab paired, by name, with the id it has
- * in the merge document. A tab the document no longer holds gets an id nothing
- * answers to, so a later change to it in the file is left out.
- */
-export function fileSnapshot(doc: SheetYDoc, file: SheetDocument): SheetSnapshot {
+function restoreSheet(
+  file: SheetDocument,
+  sidecar: SheetSidecar,
+  fileRevision: string | undefined,
+): LoadedSheet | null {
+  const doc = createSheetYDoc();
+  /** The document as the file last held it, and how many updates came after. */
+  let marked: { readonly revision: string; readonly snapshot: SheetSnapshot } | null = null;
+  let after = 0;
+  for (const entry of sidecar.entries) {
+    if ("saved" in entry) {
+      marked = { revision: entry.saved, snapshot: readSheetYDoc(doc) };
+      after = 0;
+    } else {
+      if (!applySheetUpdate(doc, entry.update, "sidecar")) return null;
+      after += 1;
+    }
+  }
   const held = readSheetYDoc(doc);
-  const ids = new Map<string, string>();
-  held.document.tabs.forEach((tab, index) => {
-    const key = tab.name.trim().toLowerCase();
-    if (!ids.has(key)) ids.set(key, held.tabIds[index]!);
-  });
+  if (sheetHasUnappliedUpdate(doc) || !validateSheetDocument(held.document).ok) return null;
+  const kept = marked !== null && after > 0 && validateSheetDocument(marked.snapshot.document).ok;
+  if (kept && marked!.revision === fileRevision) {
+    return {
+      doc,
+      epoch: sidecar.epoch,
+      saved: fileSnapshot(doc, file),
+      restored: true,
+      sidecarLines: sidecar.lines,
+      marked: null,
+      pending: [],
+      unsaved: true,
+    };
+  }
+  // The file's side: against the marked state when edits were kept, else against all the log holds.
+  const pending: Uint8Array[] = [];
+  const stop = onSheetUpdate(doc, (update) => pending.push(update));
+  writeSheetChange(doc, kept ? marked!.snapshot : held, file, FILE_ORIGIN);
+  stop();
+  const merged = readSheetYDoc(doc);
+  const checked = validateSheetDocument(merged.document);
+  if (!checked.ok) return null;
+  const unsaved = kept && serializeSheetDocument(checked.document) !== serializeSheetDocument(file);
   return {
-    document: file,
-    tabIds: file.tabs.map(
-      (tab, index) => ids.get(tab.name.trim().toLowerCase()) ?? `gone-${index}`,
-    ),
+    doc,
+    epoch: sidecar.epoch,
+    saved: fileSnapshot(doc, file),
+    restored: true,
+    sidecarLines: sidecar.lines,
+    marked:
+      pending.length === 0 && after === 0 && marked !== null && fileRevision !== undefined
+        ? marked.revision
+        : null,
+    pending,
+    unsaved,
   };
 }
+
+/** The file's sheet as a snapshot of the merge document: its tabs paired with theirs by name. */
+export const fileSnapshot = sheetSnapshotByName;
 
 // ------------------------------------------------------------------ sidecar files
 

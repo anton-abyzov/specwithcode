@@ -73,7 +73,10 @@ import {
 
 export interface SheetEditingState {
   readonly address: CellAddress;
+  /** The tab the edit is on; -1 when that tab was removed while the edit was open. */
   readonly tabIndex: number;
+  /** That tab's id in a live sheet, where tabs may be added or removed by others meanwhile. */
+  readonly tabKey?: string | undefined;
   /** Started by typing: arrows commit and move. */
   readonly typing: boolean;
   /** Where the caret is: the cell or the formula bar. */
@@ -92,10 +95,14 @@ export function useSheetEditor(input: {
   readonly evaluation: SheetEvaluation | null;
   readonly tab: SheetTab | undefined;
   readonly tabIndex: number;
+  /** Live, each tab's id in tab order: an open edit stays on its tab when the order changes. */
+  readonly tabKeys?: ReadonlyArray<string> | null | undefined;
   readonly grid: SheetGridModel | null;
   readonly editable: boolean;
   /** Why edits are refused right now (an unresolved conflict), shown when one is tried. */
   readonly blockedReason?: string | null | undefined;
+  /** What to say when the tab an edit was open on has been removed by someone else. */
+  readonly removedTabReason?: string | undefined;
   readonly platform: SheetPlatform;
   readonly selection: Selection | null;
   readonly setSelection: (next: Selection | null) => void;
@@ -117,7 +124,16 @@ export function useSheetEditor(input: {
 }) {
   const { document, evaluation, tab, tabIndex, grid, selection, setSelection } = input;
   const store = useMemo(() => createSheetEditStore(), []);
-  const [editing, setEditing] = useState<SheetEditingState | null>(null);
+  const [heldEditing, setEditing] = useState<SheetEditingState | null>(null);
+  // Live, an open edit follows its tab by id: a tab added or removed by someone else moves the index.
+  const editingAt =
+    heldEditing?.tabKey === undefined || !input.tabKeys
+      ? (heldEditing?.tabIndex ?? -1)
+      : input.tabKeys.indexOf(heldEditing.tabKey);
+  const editing =
+    heldEditing === null || editingAt === heldEditing.tabIndex
+      ? heldEditing
+      : { ...heldEditing, tabIndex: editingAt };
   const [history, setHistory] = useState<SheetHistory>(EMPTY_SHEET_HISTORY);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [menu, setMenu] = useState<SheetContextTarget | null>(null);
@@ -253,13 +269,19 @@ export function useSheetEditor(input: {
     store.set({ text: initial, caret: initial.length, pointed: null });
     pointAnchor.current = null;
     setSelection({ anchor: address, focus: address });
-    setEditing({ address, tabIndex, typing, origin });
+    setEditing({ address, tabIndex, tabKey: input.tabKeys?.[tabIndex], typing, origin });
   };
 
   const commitEdit = (move: SheetDirection | null) => {
     const current = editing;
     if (!current || !tab) return;
     setEditing(null);
+    if (current.tabIndex < 0) {
+      // The tab was removed by someone else while this was being typed.
+      input.setSaveError(input.removedTabReason ?? null);
+      focusGrid();
+      return;
+    }
     const text = store.get().text;
     const name = cellName(current.address);
     const before = cellInputText(document?.tabs[current.tabIndex]?.cells[name]);

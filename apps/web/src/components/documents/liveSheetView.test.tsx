@@ -93,6 +93,66 @@ describe("a sheet edited live", () => {
     expect(inst.root.findAllByProps({ "data-sheet-conflict": true })).toHaveLength(0);
   });
 
+  it("keeps an open edit on its tab when someone else adds or removes a tab", () => {
+    const commits: Array<{
+      tabs: ReadonlyArray<{ name: string; cells: Record<string, unknown> }>;
+    }> = [];
+    const commit = (next: unknown) => {
+      commits.push(next as (typeof commits)[number]);
+      return true;
+    };
+    const inst = render(binding({ commit }));
+    act(() => cell(inst.root, "A1").props.onMouseDown({ shiftKey: false }));
+    act(() => cell(inst.root, "A1").props.onDoubleClick());
+    const editor = () =>
+      inst.root.findAll(
+        (node) => typeof node.props.onAction === "function" && node.props.store !== undefined,
+      )[0]!;
+    act(() => editor().props.store.set({ text: "Typed", caret: 5, pointed: null }));
+
+    // Someone else puts a tab in front: "Plan", where the edit is open, is now the second tab.
+    const withFirst = {
+      ...DOCUMENT,
+      tabs: [{ name: "First", cells: { A1: "Theirs" } }, ...DOCUMENT.tabs],
+    };
+    act(() => {
+      inst.update(
+        <SheetView
+          text="not a sheet"
+          mode="light"
+          live={binding({ commit, document: withFirst, tabIds: ["t0", "t1", "t2"] })}
+        />,
+      );
+    });
+    act(() => editor().props.onAction({ type: "commit", move: null }));
+    expect(commits).toHaveLength(1);
+    expect(commits[0]!.tabs.map((tab) => [tab.name, tab.cells.A1])).toEqual([
+      ["First", "Theirs"],
+      ["Plan", "Typed"],
+      ["Notes", "Second"],
+    ]);
+
+    // Its tab removed under an open edit: nothing is written to another tab, and the window says so.
+    act(() => cell(inst.root, "A1").props.onDoubleClick());
+    act(() => editor().props.store.set({ text: "Lost", caret: 4, pointed: null }));
+    act(() => {
+      inst.update(
+        <SheetView
+          text="not a sheet"
+          mode="light"
+          live={binding({
+            commit,
+            document: { ...DOCUMENT, tabs: [withFirst.tabs[0]!, DOCUMENT.tabs[1]!] },
+            tabIds: ["t0", "t2"],
+          })}
+        />,
+      );
+    });
+    act(() => editor().props.onAction({ type: "commit", move: null }));
+    expect(commits).toHaveLength(1);
+    expect(textOf(inst.root.findByProps({ role: "alert" }))).toContain("was removed");
+  });
+
   it("flags the cell someone else is on, and tints their selection", () => {
     const inst = render(
       binding({

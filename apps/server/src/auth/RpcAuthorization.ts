@@ -464,6 +464,29 @@ const ownerOnlyRpcMessage = (method: string) =>
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
 
+const DOCUMENT_SESSION_METHODS: ReadonlySet<string> = new Set(
+  Object.values(DOCUMENT_SESSION_RPC_METHODS),
+);
+
+export const REMOTE_DOCUMENT_SESSION_MESSAGE =
+  "Live editing is for windows on the machine that holds the sheet. This window saves the sheet the usual way.";
+
+/**
+ * Live document sessions (1480, first slice) are for the windows of the
+ * machine that holds the file. A connection that stands for another machine
+ * (a coordinator principal), or that came in as a Connect or phone device (the
+ * only sessions that carry a device key), is refused, and its window saves by
+ * revision as before; editing from the owner's other machines is a later slice
+ * with its own access design. A browser paired on this machine carries neither.
+ */
+export const refusesRemoteDocumentSession = (
+  method: string,
+  principal: AuthPrincipal | undefined,
+  deviceKey: string | undefined,
+) =>
+  DOCUMENT_SESSION_METHODS.has(method) &&
+  (principal?.kind === "coordinator" || deviceKey !== undefined);
+
 const LOCAL_OWNER_SUBJECTS: ReadonlySet<string> = new Set([
   "desktop-bootstrap",
   "administrative-bootstrap",
@@ -522,6 +545,14 @@ export const layer = (
         new EnvironmentAuthorizationError({
           message: ownerOnlyRpcMessage(rpc._tag),
           requiredScope: AuthAccessWriteScope,
+        }),
+      );
+    }
+    if (refusesRemoteDocumentSession(rpc._tag, principal, deviceKey)) {
+      return Effect.fail(
+        new EnvironmentAuthorizationError({
+          message: REMOTE_DOCUMENT_SESSION_MESSAGE,
+          requiredScope: AuthFilesystemWriteScope,
         }),
       );
     }

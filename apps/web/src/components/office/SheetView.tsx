@@ -32,6 +32,8 @@ import {
   useState,
 } from "react";
 
+import { randomUUID } from "~/lib/utils";
+
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import { Button } from "../ui/button";
@@ -94,8 +96,12 @@ export interface SheetLiveBinding {
   /** Each tab's id in the merge document, in tab order. */
   readonly tabIds: ReadonlyArray<string>;
   readonly editable: boolean;
-  /** Make an edit; false when it was not taken. */
-  readonly commit: (next: SheetDocument) => boolean;
+  /**
+   * Make an edit; false when it was not taken. `base` is the sheet the edit
+   * was worked out from: only the difference is merged, so a change someone
+   * else made since stays.
+   */
+  readonly commit: (next: SheetDocument, base?: SheetDocument) => boolean;
   readonly undo: () => void;
   readonly redo: () => void;
   readonly canUndo: boolean;
@@ -186,7 +192,8 @@ export function SheetView(props: {
         },
         save: async (next: SheetDocument) => {
           setLiveError(null);
-          return live.commit(next);
+          // This render's sheet is what `next` was built from, even when the edit ends later (a drag).
+          return live.commit(next, live.document);
         },
         showOnly: (next: SheetDocument) => setLiveShown({ base: live.document, document: next }),
         discard: fileDraft.discard,
@@ -277,6 +284,8 @@ export function SheetView(props: {
     evaluation,
     tab,
     tabIndex: activeIndex,
+    tabKeys: liveTabIds,
+    removedTabReason: tx("The tab you were typing on was removed. That entry was not kept."),
     grid,
     editable,
     blockedReason:
@@ -363,7 +372,9 @@ export function SheetView(props: {
 
   const insertChart = async () => {
     if (!range) return;
-    const chart = chartFromSelection(tab, range, chartType, chartTitle);
+    const made = chartFromSelection(tab, range, chartType, chartTitle);
+    // Live, two windows may add a chart at once: each gets an id of its own, so both stay.
+    const chart = live ? { ...made, id: `${made.id}-${randomUUID().slice(0, 8)}` } : made;
     if (await (editor.commit((doc) => addChart(doc, activeIndex, chart)) ?? false)) {
       setInserting(false);
       setChartTitle("");

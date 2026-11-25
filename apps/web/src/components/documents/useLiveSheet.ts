@@ -45,7 +45,7 @@ export function liveSheetBinding(
     document: state.document,
     tabIds: state.tabIds,
     editable: state.access === "edit",
-    commit: (next) => store.commit(next),
+    commit: (next, base) => store.commit(next, base),
     undo: () => store.undo(),
     redo: () => store.redo(),
     canUndo: state.canUndo,

@@ -79,6 +79,7 @@ import {
   removeSheetSidecar,
   sheetFileText,
   sheetSidecarLine,
+  sheetSidecarMark,
   sheetSidecarPath,
   sweepSheetSidecars,
   writeSheetSidecar,
@@ -135,13 +136,19 @@ interface Session {
   flushScheduled: boolean;
   /** Why the last save failed; null while the file is current or a save has not failed. */
   unsaved: string | null;
-  /** The sidecar carries a mark that must go once the file is written. */
-  rewriteSidecar: boolean;
+  /** The revision the sidecar's last line marks as saved; null when its last line is not a mark. */
+  marked: string | null;
   /**
    * A window or an agent changed the sheet in this session. Until then nothing
    * is written beside the file: watching a sheet leaves no trace.
    */
   edited: boolean;
+  /**
+   * Someone who may change the sheet has been here: a window with edit access,
+   * or an agent's write. A session only ever watched writes nothing, not the
+   * file and not the sidecar, even when it holds edits kept from before.
+   */
+  authorized: boolean;
   /** The latest write of each agent shown, so an earlier write's timer leaves it be. */
   agentWrites: Map<string, number>;
   watcher: Fiber.Fiber<unknown, unknown> | null;
@@ -189,6 +196,17 @@ const statSignature = (absolutePath: string): Promise<string | null> =>
     (error: NodeJS.ErrnoException) =>
       error.code === "ENOENT" || error.code === "ENOTDIR" ? null : UNREADABLE,
   );
+
+/** A sheet as the text a save writes, worked out once per sheet. */
+const canonicalTexts = new WeakMap<SheetDocument, string>();
+function canonicalText(document: SheetDocument): string {
+  let text = canonicalTexts.get(document);
+  if (text === undefined) {
+    text = serializeSheetDocument(document);
+    canonicalTexts.set(document, text);
+  }
+  return text;
+}
 
 function isSheetPath(relativePath: string): boolean {
   return (
@@ -242,11 +260,15 @@ export class DocumentSession extends Context.Service<
       readonly expectedRevision?: string | undefined;
       readonly by: { readonly id: string; readonly label?: string | undefined };
     }) => Effect.Effect<Option.Option<SavedSheet>, ProjectLibraryError>;
-    /** Write what an open session holds to the file now, so a read of the file is current. */
+    /**
+     * Write what an open session holds to the file now, so a read of the file
+     * is current. When the file would not take it, the sheet the session holds
+     * is returned for the reader to use in the file's place.
+     */
     readonly settle: (input: {
       readonly workspaceRoot: string;
       readonly name: string;
-    }) => Effect.Effect<void>;
+    }) => Effect.Effect<Option.Option<SheetDocument>>;
     /** Write every open session to its file now. */
     readonly settleAll: Effect.Effect<void>;
     /** Look at one open sheet's file for a change made outside the session, now. */
@@ -335,81 +357,137 @@ const make = Effect.gen(function* () {
       yield* Fiber.interrupt(session.watcher).pipe(Effect.forkIn(scope));
   });
 
-  /** Bring a change made to the file from outside into the merge document. */
-  const takeFile = Effect.fn("DocumentSession.takeFile")(function* (session: Session) {
-    if (session.closed) return;
-    const exists = yield* Effect.promise(() => statSignature(session.absolutePath));
-    if (exists === null) {
-      // The document is gone, and its merge state goes with it.
-      yield* Effect.promise(() => removeSheetSidecar(session.sidecarPath).catch(() => undefined));
-      yield* endSession(session, "The sheet was deleted or moved.");
-      return;
-    }
-    const read = yield* readFile(session);
-    // A file that cannot be read as a sheet right now (half written, or broken by hand) is left alone.
-    if (read === null || !read.ok) return;
-    session.fileStat = exists;
-    if (read.file.revision === session.fileRevision) return;
-    const before = session.current;
-    const updates: Uint8Array[] = [];
-    const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
-    writeSheetChange(session.doc, session.saved, read.file.document, FILE_ORIGIN);
-    stop();
-    session.fileRevision = read.file.revision;
-    session.saved = fileSnapshot(session.doc, read.file.document);
-    session.current = readCurrent(session);
-    const mine = sheetFileText(session.current);
-    // Dirty only when the sheets differ: a file laid out another way is left as it was written.
-    session.dirty = !mine.ok || mine.text !== serializeSheetDocument(read.file.document);
-    if (updates.length === 0) return;
-    session.pending.push(...updates);
-    const entry = yield* record(
-      session,
-      { id: "file", kind: "file" },
-      before.document,
-      session.current.document,
-    );
-    updates.forEach((update, index) =>
-      send(session, {
-        type: "update",
-        update: sheetUpdateToBase64(update),
-        ...(index === updates.length - 1 && entry !== undefined ? { activity: entry } : {}),
-      }),
-    );
+  /**
+   * The file is gone from its path. When a file in the same folder is the same
+   * file under another name (a rename), what merged and was not saved yet is
+   * written to it. A file moved to another folder is not followed.
+   */
+  const followRename = Effect.fn("DocumentSession.followRename")(function* (session: Session) {
+    const inode = session.fileStat.split(":")[2];
+    const next = sheetFileText(readSheetYDoc(session.doc, session.saved));
+    if (!next.ok || inode === undefined || inode === "0") return;
+    const folder = NodePath.dirname(session.absolutePath);
+    const name = yield* Effect.promise(async () => {
+      const names = await NodeFSP.readdir(folder).catch(() => [] as string[]);
+      for (const candidate of names) {
+        if (!candidate.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX)) continue;
+        const stat = await NodeFSP.stat(NodePath.join(folder, candidate)).catch(() => null);
+        if (stat !== null && stat.isFile() && String(stat.ino) === inode) return candidate;
+      }
+      return null;
+    });
+    if (name === null) return;
+    yield* files
+      .writeFile({
+        cwd: session.cwd,
+        relativePath: NodePath.join(NodePath.dirname(session.relativePath), name),
+        contents: next.text,
+        expectedRevision: session.fileRevision,
+      })
+      .pipe(Effect.ignore);
   });
 
-  const saveSidecar = Effect.fn("DocumentSession.saveSidecar")(function* (session: Session) {
-    // Nothing merged, nothing to keep: opening a sheet leaves no trace beside it.
-    if (!session.edited || (session.pending.length === 0 && !session.rewriteSidecar)) return;
-    const compact =
-      session.rewriteSidecar ||
-      session.sidecarLines === 0 ||
+  /**
+   * Put what merged into the sidecar. This runs with every change, before its
+   * writer is answered: the updates below the log's last mark are what the
+   * file has not got, and they are found there if the server stops before the
+   * save. With the file current, the log ends in a mark of the file's revision.
+   */
+  const writeLog = Effect.fn("DocumentSession.writeLog")(function* (session: Session) {
+    if (session.sidecarLines === 0 && !session.edited) {
+      // Nothing merged, nothing to keep: opening a sheet leaves no trace beside it.
+      session.pending = [];
+      return;
+    }
+    // Only a session someone may edit in writes beside the file.
+    if (!session.authorized || session.closed) return;
+    const clean = !session.dirty;
+    const over =
       session.sidecarLines + session.pending.length > SHEET_SIDECAR_MAX_LINES ||
       session.sidecarBytes > SHEET_SIDECAR_MAX_BYTES;
-    if (compact) {
-      const text = compactSheetSidecar(session.epoch, session.doc);
+    if (session.sidecarLines === 0 || (clean && over)) {
+      const text = compactSheetSidecar(
+        session.epoch,
+        session.doc,
+        clean ? session.fileRevision : undefined,
+      );
       session.counter += 1;
       const written = yield* Effect.promise(() =>
         writeSheetSidecar(session.sidecarPath, text, `.tmp-${session.epoch}-${session.counter}`),
       );
       if (written) {
-        session.sidecarLines = 2;
+        session.sidecarLines = clean ? 3 : 2;
         session.sidecarBytes = text.length;
         session.pending = [];
-        session.rewriteSidecar = false;
+        session.marked = clean ? session.fileRevision : null;
       }
       return;
     }
-    const text = session.pending.map(sheetSidecarLine).join("");
+    const mark = clean && (session.marked !== session.fileRevision || session.pending.length > 0);
+    if (session.pending.length === 0 && !mark) return;
+    const text = `${session.pending.map(sheetSidecarLine).join("")}${
+      mark ? sheetSidecarMark(session.fileRevision) : ""
+    }`;
     if (yield* Effect.promise(() => appendSheetSidecar(session.sidecarPath, text))) {
-      session.sidecarLines += session.pending.length;
+      session.sidecarLines += session.pending.length + (mark ? 1 : 0);
       session.sidecarBytes += text.length;
       session.pending = [];
+      session.marked = mark ? session.fileRevision : null;
     }
   });
 
+  /** Bring a change made to the file from outside into the merge document. */
+  const takeFile: (session: Session) => Effect.Effect<void> = Effect.fn("DocumentSession.takeFile")(
+    function* (session: Session) {
+      if (session.closed) return;
+      const exists = yield* Effect.promise(() => statSignature(session.absolutePath));
+      if (exists === null) {
+        // Renamed with edits not yet in it: they follow the file to its new name.
+        if (session.dirty && session.authorized) yield* followRename(session);
+        // The document is gone from here, and its merge state goes with it.
+        yield* Effect.promise(() => removeSheetSidecar(session.sidecarPath).catch(() => undefined));
+        yield* endSession(session, "The sheet was deleted or moved.");
+        return;
+      }
+      const read = yield* readFile(session);
+      // A file that cannot be read as a sheet right now (half written, or broken by hand) is left alone.
+      if (read === null || !read.ok) return;
+      session.fileStat = exists;
+      if (read.file.revision === session.fileRevision) return;
+      const before = session.current;
+      const updates: Uint8Array[] = [];
+      const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
+      writeSheetChange(session.doc, session.saved, read.file.document, FILE_ORIGIN);
+      stop();
+      session.fileRevision = read.file.revision;
+      session.saved = fileSnapshot(session.doc, read.file.document);
+      session.current = readCurrent(session);
+      const mine = sheetFileText(session.current);
+      // Dirty only when the sheets differ: a file laid out another way is left as it was written.
+      session.dirty = !mine.ok || mine.text !== canonicalText(read.file.document);
+      session.pending.push(...updates);
+      yield* writeLog(session);
+      if (updates.length === 0) return;
+      const entry = yield* record(
+        session,
+        { id: "file", kind: "file" },
+        before.document,
+        session.current.document,
+      );
+      updates.forEach((update, index) =>
+        send(session, {
+          type: "update",
+          update: sheetUpdateToBase64(update),
+          ...(index === updates.length - 1 && entry !== undefined ? { activity: entry } : {}),
+        }),
+      );
+    },
+  );
+
   /** Write the merged sheet to the file. False when it could not be written; it stays to be written. */
   const flush = Effect.fn("DocumentSession.flush")(function* (session: Session) {
+    // Edits kept from before are saved once someone who may change the sheet is here.
+    if (!session.authorized) return !session.dirty;
     for (
       let attempt = 0;
       attempt < WRITE_ATTEMPTS && session.dirty && !session.closed;
@@ -417,8 +495,8 @@ const make = Effect.gen(function* () {
     ) {
       const next = sheetFileText(readSheetYDoc(session.doc, session.saved));
       if (!next.ok) return false;
-      const revision = sheetContentRevision(next.text);
-      if (revision !== session.fileRevision) {
+      // A file that already reads as the sheet does is left as it was written.
+      if (next.text !== canonicalText(session.saved.document)) {
         const written = yield* files
           .writeFile({
             cwd: session.cwd,
@@ -438,15 +516,16 @@ const make = Effect.gen(function* () {
           yield* takeFile(session);
           continue;
         }
+        session.fileRevision = sheetContentRevision(next.text);
       }
-      session.fileRevision = revision;
       session.saved = { document: next.document, tabIds: readSheetYDoc(session.doc).tabIds };
+      canonicalTexts.set(next.document, next.text);
       session.current = session.saved;
       session.dirty = false;
       session.fileStat =
         (yield* Effect.promise(() => statSignature(session.absolutePath))) ?? session.fileStat;
     }
-    if (!session.dirty && !session.closed) yield* saveSidecar(session);
+    yield* writeLog(session);
     return !session.dirty;
   });
 
@@ -461,7 +540,7 @@ const make = Effect.gen(function* () {
   const save: (session: Session) => Effect.Effect<boolean> = Effect.fn("DocumentSession.save")(
     function* (session: Session) {
       const saved = yield* flush(session);
-      if (session.closed) return saved;
+      if (session.closed || !session.authorized) return saved;
       if (!saved && session.dirty) {
         if (session.unsaved === null) {
           session.unsaved = UNSAVED_DETAIL;
@@ -522,7 +601,7 @@ const make = Effect.gen(function* () {
       ? find(NodePath.resolve(target.cwd, target.relativePath))
       : Effect.succeed<Session | undefined>(undefined);
 
-  const start = Effect.fn("DocumentSession.start")(function* (target: Target) {
+  const start = Effect.fn("DocumentSession.start")(function* (target: Target, mayWrite: boolean) {
     if (!isSheetPath(target.relativePath)) {
       return yield* refuse(
         "not_found",
@@ -542,9 +621,12 @@ const make = Effect.gen(function* () {
     if (!read.ok) return yield* refuse("not_found", `The file is not a valid sheet: ${read.error}`);
     const sidecarPath = sheetSidecarPath(absolutePath);
     // Merge state of sheets that were deleted while closed goes before this one's is read.
-    yield* Effect.promise(() =>
-      sweepSheetSidecars(NodePath.dirname(absolutePath)).catch(() => undefined),
-    );
+    // A window that may only view removes nothing.
+    if (mayWrite) {
+      yield* Effect.promise(() =>
+        sweepSheetSidecars(NodePath.dirname(absolutePath)).catch(() => undefined),
+      );
+    }
     const sidecarText = yield* Effect.promise(() => readSheetSidecar(sidecarPath));
     epochs += 1;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -569,17 +651,18 @@ const make = Effect.gen(function* () {
       current: loaded.saved,
       fileRevision: read.file.revision,
       fileStat: (yield* Effect.promise(() => statSignature(absolutePath))) ?? "",
-      // Changes kept from a save that failed are saved now that the sheet is open again.
+      // Changes kept from a save that did not happen are saved once an editor is here.
       dirty: loaded.unsaved,
-      pending: [],
+      pending: [...loaded.pending],
       sidecarLines: loaded.sidecarLines,
       sidecarBytes: loaded.sidecarLines > 0 ? (sidecarText?.length ?? 0) : 0,
       activity: [],
       counter: 0,
       flushScheduled: false,
       unsaved: null,
-      rewriteSidecar: loaded.unsaved,
-      edited: loaded.unsaved,
+      marked: loaded.marked,
+      edited: false,
+      authorized: false,
       agentWrites: new Map(),
       watcher: null,
       closed: false,
@@ -587,7 +670,6 @@ const make = Effect.gen(function* () {
     session.current = readCurrent(session);
     sessions.set(key, session);
     session.watcher = yield* watch(session).pipe(Effect.forkIn(scope));
-    if (session.dirty) yield* scheduleFlush(session);
     return session;
   });
 
@@ -602,19 +684,9 @@ const make = Effect.gen(function* () {
           return;
         }
         // The last window left: the file gets what merged, and the session ends.
-        const saved = yield* flush(session);
-        if (!saved && session.dirty) {
-          // The file would not take it. The changes wait in the sidecar, marked with the
-          // revision the file has, and are saved when the sheet is next opened unchanged.
-          session.counter += 1;
-          yield* Effect.promise(() =>
-            writeSheetSidecar(
-              session.sidecarPath,
-              compactSheetSidecar(session.epoch, session.doc, session.fileRevision),
-              `.tmp-${session.epoch}-${session.counter}`,
-            ),
-          );
-        }
+        // What the file would not take waits in the sidecar, below its last mark, and is
+        // saved when the sheet is next opened for editing.
+        yield* flush(session);
         yield* endSession(session, "closed");
       }),
     ).pipe(
@@ -664,6 +736,11 @@ const make = Effect.gen(function* () {
                 ...(session.unsaved === null ? {} : { unsaved: session.unsaved }),
               });
               send(session, { type: "presence", participants: participantsOf(session) }, queue);
+              if (access === "edit") {
+                session.authorized = true;
+                yield* writeLog(session);
+                if (session.dirty) yield* scheduleFlush(session);
+              }
               return { session, subscriber };
             }),
           );
@@ -672,7 +749,7 @@ const make = Effect.gen(function* () {
           registryLock.withPermits(1)(
             Effect.gen(function* () {
               for (let attempt = 0; attempt < 3; attempt += 1) {
-                const entered = yield* join(yield* start(input));
+                const entered = yield* join(yield* start(input, input.access === "edit"));
                 if (entered !== null) return entered;
               }
               return yield* refuse("failed", "The sheet could not be opened. Try again.");
@@ -726,14 +803,23 @@ const make = Effect.gen(function* () {
           const checked = sheetFileText(trialSnapshot);
           if (!checked.ok) return yield* refuse("refused", checked.error);
           const before = session.current;
-          const held = sheetUpdateToBase64(encodeSheetStateVector(session.doc));
-          applySheetUpdate(session.doc, bytes, WINDOW_ORIGIN);
           // New writes that change nothing on screen lost to a change made at the same time.
-          const added = sheetUpdateToBase64(encodeSheetStateVector(session.doc)) !== held;
-          session.current = { document: checked.document, tabIds: trialSnapshot.tabIds };
-          session.pending.push(bytes);
-          session.dirty = true;
+          const added =
+            sheetUpdateToBase64(encodeSheetStateVector(trial)) !==
+            sheetUpdateToBase64(encodeSheetStateVector(session.doc));
+          // Nothing new and nothing changed (a change sent twice): the sheet and its file stay as they are.
+          if (!added && checked.text === canonicalText(before.document)) return { merged: true };
+          session.authorized = true;
           session.edited = true;
+          // The log starts from the sheet as the file has it, so the change below is told apart from it.
+          if (session.sidecarLines === 0) yield* writeLog(session);
+          applySheetUpdate(session.doc, bytes, WINDOW_ORIGIN);
+          session.current = { document: checked.document, tabIds: trialSnapshot.tabIds };
+          canonicalTexts.set(checked.document, checked.text);
+          session.pending.push(bytes);
+          session.dirty = checked.text !== canonicalText(session.saved.document);
+          // In the log before the window is answered: a server that stops now still has it.
+          yield* writeLog(session);
           const { id, color } = subscriber.participant;
           const entry = yield* record(
             session,
@@ -821,20 +907,34 @@ const make = Effect.gen(function* () {
           if (!size.ok) return yield* invalid(size.error);
 
           const agentId = `agent:${input.by.id}`.slice(0, 64);
+          session.authorized = true;
+          if (session.sidecarLines === 0 && size.text !== canonicalText(before.document)) {
+            // The log starts from the sheet as the file has it, as it does for a window's change.
+            session.edited = true;
+            yield* writeLog(session);
+          }
+          const updates: Uint8Array[] = [];
+          const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
+          writeSheetChange(session.doc, before, checked.document, AGENT_ORIGIN);
+          stop();
+          session.current = readCurrent(session);
+
+          // Where the agent wrote, in the sheet as it reads now: a tab it added has its id only now.
           const written = firstWritten(input.sheet);
           const tabIndex =
             written === null
               ? 0
               : Math.max(
                   0,
-                  before.document.tabs.findIndex(
+                  session.current.document.tabs.findIndex(
                     (tab) => tab.name.toLowerCase() === written.tab.trim().toLowerCase(),
                   ),
                 );
+          const tabId = session.current.tabIds[tabIndex];
           const place: DocumentSessionPlace | undefined =
-            before.tabIds[tabIndex] === undefined
+            tabId === undefined
               ? undefined
-              : { tab: before.tabIds[tabIndex], cell: (written?.cell ?? "A1").slice(0, 16) };
+              : { tab: tabId, cell: (written?.cell ?? "A1").slice(0, 16) };
           const color = session.agents.get(agentId)?.color ?? freeColor(session);
           session.agents.set(agentId, {
             id: agentId,
@@ -846,15 +946,12 @@ const make = Effect.gen(function* () {
           });
           sendPresence(session);
 
-          const updates: Uint8Array[] = [];
-          const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
-          writeSheetChange(session.doc, before, checked.document, AGENT_ORIGIN);
-          stop();
-          session.current = readCurrent(session);
           if (updates.length > 0) {
             session.pending.push(...updates);
-            session.dirty = true;
+            const text = sheetFileText(session.current);
+            session.dirty = !text.ok || text.text !== canonicalText(session.saved.document);
             session.edited = true;
+            yield* writeLog(session);
             const entry = yield* record(
               session,
               {
@@ -915,10 +1012,19 @@ const make = Effect.gen(function* () {
 
   const settle: DocumentSession["Service"]["settle"] = (input) =>
     Effect.gen(function* () {
-      if (sessions.size === 0) return;
+      if (sessions.size === 0) return Option.none<SheetDocument>();
       const absolutePath = artifactPath(input.workspaceRoot, input.name);
       const session = absolutePath === null ? undefined : yield* find(absolutePath);
-      if (session !== undefined) yield* locked(session, save(session));
+      if (session === undefined) return Option.none<SheetDocument>();
+      return yield* locked(
+        session,
+        Effect.gen(function* () {
+          const saved = yield* save(session);
+          return saved || session.closed
+            ? Option.none<SheetDocument>()
+            : Option.some(session.current.document);
+        }),
+      );
     });
 
   const settleAll = Effect.suspend(() =>

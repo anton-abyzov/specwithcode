@@ -40,7 +40,7 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as DocumentSession from "./DocumentSession.ts";
-import { SHEET_SIDECAR_DIR, parseSheetSidecar, sheetSidecarPath } from "./sheetYDoc.ts";
+import { SHEET_SIDECAR_DIR, loadSheet, parseSheetSidecar, sheetSidecarPath } from "./sheetYDoc.ts";
 
 const layerFiles = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
@@ -157,6 +157,18 @@ const openWindow = (
     };
   });
 
+/** What the sidecar beside `file` holds: its updates, and the revision its last line marks as saved. */
+const logOf = (file: string) => {
+  const text = NodeFS.readFileSync(sheetSidecarPath(file), "utf8");
+  const entries = parseSheetSidecar(text)?.entries ?? [];
+  const last = entries.at(-1);
+  return {
+    text,
+    updates: entries.filter((entry) => "update" in entry).length,
+    marked: last !== undefined && "saved" in last ? last.saved : null,
+  };
+};
+
 const at = (name: string) => {
   const match = /^([A-Z])(\d+)$/.exec(name)!;
   return { col: match[1]!.charCodeAt(0) - 65, row: Number(match[2]) - 1 };
@@ -216,8 +228,10 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           [at("B4"), 300],
         ]);
         expect(read()).toBe(serializeSheetDocument(expected));
-        const sidecar = parseSheetSidecar(NodeFS.readFileSync(sheetSidecarPath(file), "utf8"));
-        expect(sidecar?.updates.length).toBeGreaterThan(0);
+        const log = logOf(file);
+        expect(log.updates).toBeGreaterThan(0);
+        // The log ends in a mark of the file as it now is: nothing is left to save.
+        expect(log.marked).toBe(sheetContentRevision(read()));
       }),
     );
 
@@ -370,6 +384,40 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         expect(Option.isNone(result)).toBe(true);
         expect(read()).toBe(TEXT);
       }),
+    );
+
+    it.effect(
+      "shows an agent on the tab it added, and gives a reader the open sheet when the file cannot be saved",
+      () =>
+        Effect.gen(function* () {
+          const { target, cwd, file } = yield* project;
+          const sessions = yield* DocumentSession.DocumentSession;
+          const window = yield* openWindow(target, "window-aaaa");
+          yield* agentWrite(
+            cwd,
+            { tabs: [{ name: "Forecast", cells: { B2: 40 } }] },
+            { merge: true },
+          );
+          const shown = yield* window.nextOf("presence");
+          yield* window.nextOf("update");
+          const tabs = readSheetYDoc(window.doc);
+          const forecast =
+            tabs.tabIds[tabs.document.tabs.findIndex((tab) => tab.name === "Forecast")];
+          expect(forecast).toBeDefined();
+          expect(shown.participants.find((entry) => entry.kind === "agent")?.place).toEqual({
+            tab: forecast,
+            cell: "B2",
+          });
+
+          // A saved file reads as the sheet does: the reader uses the file.
+          const name = { workspaceRoot: cwd, name: "budget" };
+          expect(Option.isNone(yield* sessions.settle(name))).toBe(true);
+          // A file that will not take the next change: the reader gets the sheet the windows see.
+          NodeFS.writeFileSync(file, "{ half written");
+          yield* window.send(put("A4", "Not in the file"));
+          const open = yield* sessions.settle(name);
+          expect(Option.getOrThrow(open).tabs[0]!.cells.A4).toBe("Not in the file");
+        }),
     );
 
     it.effect("merges an agent's write with a window's unsaved edit, and shows the agent", () =>
@@ -546,35 +594,147 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         expect((yield* window.nextOf("save")).saved).toBe(false);
         // The last window closes with the file still unwritable.
         yield* Fiber.interrupt(window.fiber);
-        const kept = parseSheetSidecar(NodeFS.readFileSync(sheetSidecarPath(file), "utf8"));
-        expect(kept?.unsaved).toBe(sheetContentRevision(TEXT));
+        // The log has the edit below a mark of the file as it last was.
+        expect(logOf(file).marked).toBeNull();
         // The file is back as it was: nothing else changed it, so the kept edits stand.
         NodeFS.writeFileSync(file, TEXT);
         const again = yield* openWindow(target, "window-bbbb");
         expect(again.cells().A4).toBe("Kept");
         yield* sessions.settleAll;
         expect(cells().A4).toBe("Kept");
-        expect(
-          parseSheetSidecar(NodeFS.readFileSync(sheetSidecarPath(file), "utf8"))?.unsaved,
-        ).toBeNull();
+        expect(logOf(file).marked).toBe(sheetContentRevision(NodeFS.readFileSync(file, "utf8")));
       }),
     );
 
-    it.effect("lets the file win over kept edits when it was changed in the meantime", () =>
+    it.effect("keeps both sides when the file was changed while edits waited to be saved", () =>
       Effect.gen(function* () {
         const { target, file, cells } = yield* project;
         const sessions = yield* DocumentSession.DocumentSession;
         const window = yield* openWindow(target, "window-aaaa");
         NodeFS.writeFileSync(file, "{ half written");
         yield* window.send(put("A4", "Kept"));
+        yield* window.send(put("B2", 1500));
         yield* sessions.settleAll;
         yield* Fiber.interrupt(window.fiber);
-        NodeFS.writeFileSync(file, serializeSheetDocument(put("A5", "Written elsewhere")(BUDGET)));
+        // Another tool changes other cells, and one of the same ones, before the sheet is opened again.
+        NodeFS.writeFileSync(
+          file,
+          serializeSheetDocument(
+            setCells(BUDGET, 0, [
+              [at("A5"), "Written elsewhere"],
+              [at("B2"), 1300],
+            ]),
+          ),
+        );
         const again = yield* openWindow(target, "window-bbbb");
         expect(again.cells().A5).toBe("Written elsewhere");
-        expect(again.cells().A4).toBeUndefined();
+        expect(again.cells().A4).toBe("Kept");
+        // The same cell changed on both sides: the file's value stands.
+        expect(again.cells().B2).toBe(1300);
         yield* sessions.settleAll;
-        expect(cells().A5).toBe("Written elsewhere");
+        expect(cells()).toMatchObject({ A4: "Kept", A5: "Written elsewhere", B2: 1300 });
+      }),
+    );
+
+    it.effect(
+      "has a change in the log before the window is answered, for a server that stops",
+      () =>
+        Effect.gen(function* () {
+          const { target, file, read } = yield* project;
+          const window = yield* openWindow(target, "window-aaaa");
+          expect(yield* window.send(put("A4", "Typed"))).toEqual({ merged: true });
+          // No save has run: the file is as it was, and the log already holds the edit below its mark.
+          expect(read()).toBe(TEXT);
+          const log = logOf(file);
+          expect(log.updates).toBe(2);
+          expect(log.marked).toBeNull();
+          // What a server starting again makes of the two: the edit stands and is saved.
+          const loaded = loadSheet(BUDGET, log.text, "new-epoch", sheetContentRevision(TEXT));
+          expect(loaded.unsaved).toBe(true);
+          expect(loaded.epoch).toBe(window.first.epoch);
+          expect(readSheetYDoc(loaded.doc).document.tabs[0]!.cells.A4).toBe("Typed");
+        }),
+    );
+
+    it.effect("saves kept edits only once a window that may edit opens the sheet", () =>
+      Effect.gen(function* () {
+        const { target, file, read, cells } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        NodeFS.writeFileSync(file, "{ half written");
+        yield* window.send(put("A4", "Kept"));
+        yield* sessions.settleAll;
+        yield* Fiber.interrupt(window.fiber);
+        NodeFS.writeFileSync(file, TEXT);
+        const before = logOf(file).text;
+
+        const viewer = yield* openWindow(target, "window-viewer", "view");
+        expect(viewer.cells().A4).toBe("Kept");
+        yield* sessions.settleAll;
+        yield* Fiber.interrupt(viewer.fiber);
+        // A window that may only view changed nothing: not the file, not the log.
+        expect(read()).toBe(TEXT);
+        expect(logOf(file).text).toBe(before);
+
+        const editor = yield* openWindow(target, "window-editor");
+        expect(editor.cells().A4).toBe("Kept");
+        yield* sessions.settleAll;
+        expect(cells().A4).toBe("Kept");
+      }),
+    );
+
+    it.effect("leaves a file alone when a change that changes nothing arrives", () =>
+      Effect.gen(function* () {
+        const { target, cwd, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        // Another tool's layout of the same sheet: one line.
+        const compact = JSON.stringify(BUDGET);
+        NodeFS.writeFileSync(file, compact);
+        const window = yield* openWindow(target, "window-aaaa");
+        // An update with nothing in it.
+        expect(
+          yield* sessions.update({ ...target, sessionKey: "window-aaaa", update: "AAA=" }),
+        ).toEqual({ merged: true });
+        yield* sessions.settleAll;
+        yield* Fiber.interrupt(window.fiber);
+        expect(NodeFS.readFileSync(file, "utf8")).toBe(compact);
+        expect(
+          NodeFS.existsSync(NodePath.join(cwd, ".specweave/artifacts", SHEET_SIDECAR_DIR)),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("writes unsaved edits to a sheet that was renamed in its folder", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "Before the rename"));
+        const renamed = NodePath.join(NodePath.dirname(file), "plan.sheet.json");
+        NodeFS.renameSync(file, renamed);
+        yield* sessions.reconcile(target);
+        expect((yield* window.nextOf("closed")).reason).toContain("moved");
+        expect(sheet(JSON.parse(NodeFS.readFileSync(renamed, "utf8"))).tabs[0]!.cells.A4).toBe(
+          "Before the rename",
+        );
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(false);
+      }),
+    );
+
+    it.effect("opens a sheet saved past the size other files are read to", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const filler = "x".repeat(4_000);
+        const large = setCells(
+          BUDGET,
+          0,
+          Array.from({ length: 300 }, (_, row) => [{ col: 3, row }, `${row}${filler}`] as const),
+        );
+        const text = serializeSheetDocument(large);
+        expect(Buffer.byteLength(text)).toBeGreaterThan(1024 * 1024);
+        NodeFS.writeFileSync(file, text);
+        const window = yield* openWindow(target, "window-aaaa");
+        expect(Object.keys(window.cells())).toHaveLength(Object.keys(large.tabs[0]!.cells).length);
       }),
     );
 

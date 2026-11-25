@@ -33,7 +33,8 @@ function sheet(cells: Record<string, string | number>): SheetDocument {
  * change checked against the sender's access, then sent on to everyone.
  */
 function home(start: SheetDocument) {
-  const doc = sheetYDocFrom(start, "file");
+  let doc = sheetYDocFrom(start, "file");
+  let epoch = "e1";
   const windows = new Map<
     string,
     { readonly store: LiveSheetStore; participant: DocumentSessionParticipant; sent: number }
@@ -48,7 +49,7 @@ function home(start: SheetDocument) {
     entry.store.receive({
       type: "snapshot",
       participantId: id,
-      epoch: "e1",
+      epoch,
       access: entry.participant.access,
       update: sheetUpdateToBase64(encodeSheetState(doc)),
       participants: everyone(),
@@ -56,7 +57,14 @@ function home(start: SheetDocument) {
     });
   };
   return {
-    doc,
+    get doc() {
+      return doc;
+    },
+    /** The server stopped and started again from the file, which never got the unsaved edits. */
+    startOver(file: SheetDocument) {
+      doc = sheetYDocFrom(file, "file");
+      epoch = "e2";
+    },
     restarts: [] as string[],
     refuse(result: LiveSheetSendResult) {
       refuseNext = result;
@@ -256,6 +264,47 @@ describe("a change the home machine does not take", () => {
     expect(cells(first).A2).toBe("Kept");
     expect(cells(second).A2).toBe("Kept");
     expect(first.getState().problem).toBeNull();
+  });
+
+  it("makes an undelivered edit again when the home machine started over from the file", async () => {
+    const machine = home(sheet({ A1: "Item" }));
+    const first = machine.join("w1", "edit");
+    // The server goes away with the edit on its way, and comes back from a file someone else changed.
+    machine.refuse("failed");
+    machine.startOver(sheet({ A1: "Item", C1: "Written elsewhere" }));
+    expect(edit(first, "A2", "Rent")).toBe(true);
+    await settle();
+
+    expect(machine.restarts).toEqual(["w1"]);
+    // The new document has the edit, sent again as a change to it, beside what the file brought.
+    expect(readSheetYDoc(machine.doc).document.tabs[0]!.cells).toEqual({
+      A1: "Item",
+      C1: "Written elsewhere",
+      A2: "Rent",
+    });
+    expect(cells(first)).toEqual({ A1: "Item", C1: "Written elsewhere", A2: "Rent" });
+    expect(first.getState().problem).toBeNull();
+  });
+
+  it("merges only what an edit changed when it was worked out from an earlier sheet", async () => {
+    const machine = home(sheet({ A1: "Item", B2: 1 }));
+    const first = machine.join("w1", "edit");
+    const second = machine.join("w2", "edit");
+    // The first window starts a drag: its edit will be built on the sheet as it is now.
+    const atStart = first.getState().document!;
+    expect(edit(second, "B2", 900)).toBe(true);
+    await settle();
+    expect(cells(first).B2).toBe(900);
+
+    // The drag ends: the sheet it was built from, with one width changed.
+    const next = { ...atStart, tabs: [{ ...atStart.tabs[0]!, widths: { A: 200 } }] };
+    expect(first.commit(next, atStart)).toBe(true);
+    await settle();
+
+    for (const store of [first, second]) {
+      expect(cells(store).B2).toBe(900);
+      expect(store.getState().document!.tabs[0]!.widths).toEqual({ A: 200 });
+    }
   });
 
   it("refuses a sheet that would be invalid before anything is sent", async () => {

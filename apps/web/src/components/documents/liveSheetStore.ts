@@ -19,11 +19,13 @@ import {
   type SheetUndo,
   type SheetYDoc,
   applySheetUpdate,
+  cloneSheetYDoc,
   createSheetUndo,
   createSheetYDoc,
   encodeSheetMissing,
   onSheetUpdate,
   readSheetYDoc,
+  sheetSnapshotByName,
   sheetStateVectorOf,
   sheetUpdateFromBase64,
   sheetUpdateToBase64,
@@ -96,6 +98,10 @@ export class LiveSheetStore {
   #unsent = 0;
   /** An edit did not reach the home machine and has not been sent again yet. */
   #undelivered = false;
+  /** The sheet as it read before the first edit the home machine has not answered yet. */
+  #unansweredBase: SheetDocument | null = null;
+  /** Each sheet this store has shown, with its tabs' ids: what an edit built on it started from. */
+  #shown = new WeakMap<SheetDocument, SheetSnapshot>();
   readonly #listeners = new Set<() => void>();
   readonly #transport: LiveSheetTransport;
   readonly #messages: LiveSheetMessages;
@@ -123,7 +129,10 @@ export class LiveSheetStore {
     if (doc === null) return { document: null, tabIds: [], canUndo: false, canRedo: false };
     const snapshot = readSheetYDoc(doc, this.#snapshot);
     const checked = validateSheetDocument(snapshot.document);
-    if (checked.ok) this.#snapshot = { document: checked.document, tabIds: snapshot.tabIds };
+    if (checked.ok) {
+      this.#snapshot = { document: checked.document, tabIds: snapshot.tabIds };
+      this.#shown.set(checked.document, this.#snapshot);
+    }
     return {
       document: this.#snapshot?.document ?? null,
       tabIds: this.#snapshot?.tabIds ?? [],
@@ -138,6 +147,7 @@ export class LiveSheetStore {
     this.#doc = doc;
     this.#epoch = epoch;
     this.#snapshot = null;
+    this.#shown = new WeakMap();
     this.#undo = createSheetUndo(doc, LOCAL);
     // Whatever this window writes (an edit, an undo) goes to the home machine.
     this.#stop = onSheetUpdate(doc, (update, origin) => {
@@ -197,11 +207,17 @@ export class LiveSheetStore {
         (this.#unsent > 0 || this.#undelivered);
       this.#undelivered = false;
       if (fresh) {
+        const mine = this.#snapshot?.document ?? null;
+        const base = this.#unansweredBase;
         const doc = createSheetYDoc();
         applySheetUpdate(doc, bytes, REMOTE);
         this.#adopt(doc, event.epoch);
         this.#unsent = 0;
-        if (lost) this.#state = { ...this.#state, problem: this.#messages.reloaded };
+        this.#unansweredBase = null;
+        // What this window changed and the home machine never got is made again on the new sheet.
+        if (lost && !this.#remake(doc, base, mine, event.access)) {
+          this.#state = { ...this.#state, problem: this.#messages.reloaded };
+        }
       } else {
         // The same log after a reconnect: merge, then send what the home machine lacks.
         applySheetUpdate(this.#doc!, bytes, REMOTE);
@@ -237,17 +253,48 @@ export class LiveSheetStore {
     });
   }
 
+  /**
+   * Make this window's unanswered edits again on a document the home machine
+   * started over: the change from `base` to `mine`, on top of what the new
+   * document holds. False when they could not be made.
+   */
+  #remake(
+    doc: SheetYDoc,
+    base: SheetDocument | null,
+    mine: SheetDocument | null,
+    access: DocumentSessionAccess,
+  ): boolean {
+    if (base === null || mine === null || access !== "edit") return false;
+    // Tried on a copy first: an edit that no longer fits the sheet is not made at all.
+    const trial = cloneSheetYDoc(doc);
+    writeSheetChange(trial, sheetSnapshotByName(trial, base), mine, LOCAL);
+    if (!validateSheetDocument(readSheetYDoc(trial).document).ok) return false;
+    this.#unansweredBase = readSheetYDoc(doc).document;
+    writeSheetChange(doc, sheetSnapshotByName(doc, base), mine, LOCAL);
+    return true;
+  }
+
+  /** Before an edit: remember the sheet as the home machine last had all of. */
+  #beforeEdit(): void {
+    if (this.#unsent === 0 && !this.#undelivered) {
+      this.#unansweredBase = this.#snapshot?.document ?? null;
+    }
+  }
+
   get editable(): boolean {
     return this.#state.status === "live" && this.#state.access === "edit";
   }
 
   /**
-   * Make an edit: the sheet as it should read now. False, with the reason in
-   * `problem`, when this window may not edit or the sheet would be invalid.
+   * Make an edit: the sheet as it should read now. `base` is the sheet the
+   * edit was worked out from, when that is not the latest one: only what
+   * differs between the two is written, so what others changed in between
+   * (while a column was dragged, or a paste was read) stays. False, with the
+   * reason in `problem`, when this window may not edit or the sheet would be invalid.
    */
-  commit(next: SheetDocument): boolean {
+  commit(next: SheetDocument, base?: SheetDocument): boolean {
     const doc = this.#doc;
-    const before = this.#snapshot;
+    const before = (base === undefined ? undefined : this.#shown.get(base)) ?? this.#snapshot;
     if (doc === null || before === null) return false;
     if (!this.editable) {
       this.#set({ problem: this.#messages.viewOnly });
@@ -258,17 +305,22 @@ export class LiveSheetStore {
       this.#set({ problem: checked.error });
       return false;
     }
+    this.#beforeEdit();
     writeSheetChange(doc, before, checked.document, LOCAL);
     this.#set({ problem: null, ...this.#read() });
     return true;
   }
 
   undo(): void {
-    if (this.editable && this.#undo?.undo()) this.#set(this.#read());
+    if (!this.editable) return;
+    this.#beforeEdit();
+    if (this.#undo?.undo()) this.#set(this.#read());
   }
 
   redo(): void {
-    if (this.editable && this.#undo?.redo()) this.#set(this.#read());
+    if (!this.editable) return;
+    this.#beforeEdit();
+    if (this.#undo?.redo()) this.#set(this.#read());
   }
 
   clearProblem(): void {

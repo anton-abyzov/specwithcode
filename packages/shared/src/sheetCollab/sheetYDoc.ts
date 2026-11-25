@@ -392,6 +392,27 @@ export function readSheetYDoc(doc: SheetYDoc, hint?: SheetSnapshot | null): Shee
   return { document, tabIds: ids };
 }
 
+/**
+ * A sheet read somewhere else (the file, or a document this one replaced) as a
+ * snapshot of this document: each tab paired, by name, with the id it has
+ * here. A tab the document does not hold gets an id nothing answers to, so a
+ * change to it is left out.
+ */
+export function sheetSnapshotByName(doc: SheetYDoc, document: SheetDocument): SheetSnapshot {
+  const held = readSheetYDoc(doc);
+  const ids = new Map<string, string>();
+  held.document.tabs.forEach((tab, index) => {
+    const key = tab.name.trim().toLowerCase();
+    if (!ids.has(key)) ids.set(key, held.tabIds[index]!);
+  });
+  return {
+    document,
+    tabIds: document.tabs.map(
+      (tab, index) => ids.get(tab.name.trim().toLowerCase()) ?? `gone-${index}`,
+    ),
+  };
+}
+
 // ------------------------------------------------------------------ transport
 
 export function createSheetYDoc(): SheetYDoc {
