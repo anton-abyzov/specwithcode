@@ -641,51 +641,15 @@ describe("EnvironmentLinker", () => {
       ),
     );
 
-    it.effect("keeps the previous account's tunnel when that account relinked meanwhile", () => {
+    it.effect("leaves the previous account's tunnel to that account when the machine moves", () => {
       const calls: Array<string> = [];
       return Effect.gen(function* () {
         const { request } = yield* makeRequest;
         const linker = yield* EnvironmentLinker.EnvironmentLinker;
         yield* linker.link({ userId: "user_123", request });
-        // A to B to A: the machine went back to user_old after this link read
-        // it, so its tunnel is live again and must stay.
+        // The move ends user_old's link (EnvironmentLinks.upsert); its tunnel
+        // is left to user_old's unlink, account deletion or the idle sweep.
         expect(calls).toEqual(["upsert:user_123"]);
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            getForUser: (query) =>
-              Effect.succeed(
-                query.userId === "user_old"
-                  ? activeLink(environmentKeyPair.publicKey.trim())
-                  : null,
-              ),
-            findActiveManagedForEnvironment: () =>
-              Effect.succeed([
-                {
-                  ...activeLink(environmentKeyPair.publicKey.trim()),
-                  userId: "user_old",
-                  holdWebhooksWhileOffline: false,
-                },
-              ]),
-            upsert: (upsertInput) =>
-              Effect.sync(() => void calls.push(`upsert:${upsertInput.userId}`)),
-            deprovision: (target) =>
-              Effect.sync(() => {
-                if (target.userId !== "user_123") calls.push(`deprovision:${target.userId}`);
-                return true;
-              }),
-          }),
-        ),
-      );
-    });
-
-    it.effect("removes the previous account's tunnel after the machine moves accounts", () => {
-      const calls: Array<string> = [];
-      return Effect.gen(function* () {
-        const { request } = yield* makeRequest;
-        const linker = yield* EnvironmentLinker.EnvironmentLinker;
-        yield* linker.link({ userId: "user_123", request });
-        expect(calls).toEqual(["upsert:user_123", "deprovision:user_old"]);
       }).pipe(
         Effect.provide(
           layerTest({

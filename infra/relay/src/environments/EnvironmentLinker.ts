@@ -430,18 +430,6 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      // Other accounts' managed links proven by this key end with the upsert
-      // below (the machine moved accounts). Read them first so their tunnels
-      // can be removed once the move commits.
-      const previousAccounts = yield* links
-        .findActiveManagedForEnvironment({
-          environmentId: verified.environmentId,
-          environmentPublicKey: verified.environmentPublicKey,
-        })
-        .pipe(
-          Effect.map((rows) => rows.filter((row) => row.userId !== input.userId)),
-          Effect.orElseSucceed(() => []),
-        );
       yield* links
         .upsert({
           ...input,
@@ -476,34 +464,6 @@ const make = Effect.gen(function* () {
             ),
             Effect.ignore,
           );
-      }
-      for (const previous of previousAccounts) {
-        // Best effort, as for a replaced machine link: a tunnel left behind is
-        // offline once the machine reconnects under its new account, and the
-        // idle-tunnel sweep removes it. The machine may have moved back to the
-        // previous account since the read above, so its link must still be
-        // revoked, as an unlink checks before its own retry.
-        const key = { userId: previous.userId, environmentId: verified.environmentId };
-        yield* managedEndpointProvider.prepareDeprovision(key).pipe(
-          Effect.flatMap((target) =>
-            links
-              .getForUser(key)
-              .pipe(
-                Effect.flatMap((relinked) =>
-                  relinked === null
-                    ? managedEndpointProvider.deprovision({ ...key, target })
-                    : Effect.void,
-                ),
-              ),
-          ),
-          Effect.tapError((error) =>
-            Effect.logWarning("could not remove the previous account's tunnel", {
-              environmentId: verified.environmentId,
-              errorTag: error._tag,
-            }),
-          ),
-          Effect.ignore,
-        );
       }
       // Only a managed link that succeeded creates the Connect account and,
       // while seats remain, grants its founder number. A link refused at a cap
