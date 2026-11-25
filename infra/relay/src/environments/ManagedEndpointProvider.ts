@@ -1,6 +1,3 @@
-import * as CloudflareRetry from "@distilled.cloud/cloudflare/Retry";
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -9,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -177,6 +173,8 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
       readonly target?: ManagedEndpointDeprovisionTarget | null;
+      /** Drop a live host's connectors instead of leaving its tunnel; only for deleted accounts. */
+      readonly forceDisconnect?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
     /**
      * Deletes the provisioned Cloudflare tunnel while keeping the allocation
@@ -232,6 +230,7 @@ const ManagedEndpointTunnelClientOperation = Schema.Literals([
   "put-configuration",
   "get-token",
   "delete",
+  "disconnect",
 ]);
 
 export class ManagedEndpointTunnelClientError extends Schema.TaggedError<ManagedEndpointTunnelClientError>()(
@@ -283,6 +282,10 @@ export class ManagedEndpointTunnelClient extends Context.Service<
       tunnelId: string,
     ) => Effect.Effect<string, ManagedEndpointTunnelClientError>;
     readonly delete: (tunnelId: string) => Effect.Effect<unknown, ManagedEndpointTunnelClientError>;
+    /** Rotates the tunnel secret and drops its connectors, so a live host no longer blocks deletion. */
+    readonly disconnect?: (
+      tunnelId: string,
+    ) => Effect.Effect<void, ManagedEndpointTunnelClientError>;
   }
 >()("studio-relay/environments/ManagedEndpointProvider/ManagedEndpointTunnelClient") {}
 
@@ -373,7 +376,7 @@ function formatOriginService(origin: RelayManagedEndpointOrigin): string {
   return `http://${host}:${origin.localHttpPort}`;
 }
 
-function normalizeHostname(hostname: string): string {
+export function normalizeHostname(hostname: string): string {
   return hostname
     .trim()
     .toLowerCase()
@@ -761,9 +764,19 @@ export const make = Effect.gen(function* () {
           // tunnel stays in Cloudflare with no address. Forget the deleted
           // DNS record, though, or the row would hold one of the global slots
           // for as long as it exists.
+          // A deleted account's host gets no say: its connectors are dropped
+          // (secret rotated, connections cleaned up) and the delete retried.
+          const disconnect = input.forceDisconnect === true ? tunnels.disconnect : undefined;
           const tunnelDeleted = yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
             Effect.as(true),
-            Effect.catchIf(isManagedEndpointTunnelInUse, () => Effect.succeed(false)),
+            Effect.catchIf(isManagedEndpointTunnelInUse, () =>
+              disconnect === undefined
+                ? Effect.succeed(false)
+                : disconnect(tunnelId).pipe(
+                    Effect.andThen(Effect.suspend(() => ignoreNotFound(tunnels.delete(tunnelId)))),
+                    Effect.as(true),
+                  ),
+            ),
             Effect.mapError(
               (cause) =>
                 new ManagedEndpointDeprovisioningFailed({
@@ -1427,162 +1440,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ManagedEndpointProvider, make);
-
-// The client's default policy retries transient errors, including "Authentication
-// error", 8 times with up to 5s between tries, which outlasts the call limit. A
-// persistent failure then surfaced only as a timeout, hiding the real error. Four
-// retries over 3.75s still ride out a short auth blip and leave room for its error.
-export const CLOUDFLARE_CALL_RETRY: CloudflareRetry.Options = {
-  ...(CloudflareRetry.transientOptions.while === undefined
-    ? {}
-    : { while: CloudflareRetry.transientOptions.while }),
-  schedule: Schedule.max([Schedule.exponential(250, 2), Schedule.recurs(4)]),
-};
-
-export const limitCloudflareCall = <A, E, R>(call: Effect.Effect<A, E, R>) =>
-  call.pipe(CloudflareRetry.policy(CLOUDFLARE_CALL_RETRY), Effect.timeout("8 seconds"));
-
-export const layerCloudflareBindings = (
-  tunnelClient: Cloudflare.Tunnel.ReadWriteTunnelClient,
-  dnsClient: Cloudflare.DNS.ReadWriteDnsClient,
-  alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
-) =>
-  layer.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        layerTunnelClient({
-          get: (tunnelId) =>
-            limitCloudflareCall(tunnelClient.get(tunnelId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "get",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          list: (request) =>
-            limitCloudflareCall(tunnelClient.list(request)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "list",
-                    ...(request.name === undefined ? {} : { tunnelName: request.name }),
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          create: (request) =>
-            limitCloudflareCall(tunnelClient.create(request)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "create",
-                    tunnelName: request.name,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          putConfiguration: (tunnelId, config) =>
-            limitCloudflareCall(tunnelClient.putConfiguration(tunnelId, config)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "put-configuration",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          getToken: (tunnelId) =>
-            limitCloudflareCall(tunnelClient.getToken(tunnelId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "get-token",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          delete: (tunnelId) =>
-            limitCloudflareCall(tunnelClient.delete(tunnelId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "delete",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-        }),
-        layerDnsClient({
-          listRecords: (hostname) =>
-            limitCloudflareCall(dnsClient.listDnsRecords({ search: hostname })).pipe(
-              Effect.map((response) =>
-                response.result.filter(
-                  (record): record is typeof record & { readonly id: string } =>
-                    typeof record.id === "string" &&
-                    normalizeHostname(record.name) === normalizeHostname(hostname),
-                ),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "list-records",
-                    hostname,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          createRecord: (request) =>
-            limitCloudflareCall(dnsClient.createDnsRecord(request)).pipe(
-              Effect.map((response) => ({ id: response.id })),
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "create-record",
-                    hostname: request.name,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          updateRecord: (dnsRecordId, request) =>
-            limitCloudflareCall(dnsClient.updateDnsRecord(dnsRecordId, request)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "update-record",
-                    hostname: request.name,
-                    dnsRecordId,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-          deleteRecord: (dnsRecordId) =>
-            limitCloudflareCall(dnsClient.deleteDnsRecord(dnsRecordId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "delete-record",
-                    dnsRecordId,
-                    cause,
-                  }),
-              ),
-              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-            ),
-        }),
-      ),
-    ),
-  );

@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import * as ManagedEndpointCloudflareBindings from "./ManagedEndpointCloudflareBindings.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
@@ -427,7 +428,7 @@ describe("ManagedEndpointProvider", () => {
       deleteDnsRecord: () => Effect.void,
     } as unknown as Cloudflare.DNS.ReadWriteDnsClient;
     const runtimeContext = {} as Alchemy.BaseRuntimeContext;
-    const layer = ManagedEndpointProvider.layerCloudflareBindings(
+    const layer = ManagedEndpointCloudflareBindings.layerCloudflareBindings(
       tunnelClient,
       dnsClient,
       runtimeContext,
@@ -2030,10 +2031,12 @@ describe("ManagedEndpointProvider", () => {
 describe("CLOUDFLARE_CALL_RETRY", () => {
   it.effect("reaches the Cloudflare client through its retry service", () =>
     Effect.gen(function* () {
-      const policy = yield* ManagedEndpointProvider.limitCloudflareCall(
+      const policy = yield* ManagedEndpointCloudflareBindings.limitCloudflareCall(
         Effect.serviceOption(CloudflareRetry.Retry),
       );
-      expect(Option.getOrNull(policy)).toBe(ManagedEndpointProvider.CLOUDFLARE_CALL_RETRY);
+      expect(Option.getOrNull(policy)).toBe(
+        ManagedEndpointCloudflareBindings.CLOUDFLARE_CALL_RETRY,
+      );
     }),
   );
 
@@ -2044,7 +2047,9 @@ describe("CLOUDFLARE_CALL_RETRY", () => {
         attempts += 1;
       }).pipe(
         Effect.andThen(Effect.fail("still failing")),
-        Effect.retry({ schedule: ManagedEndpointProvider.CLOUDFLARE_CALL_RETRY.schedule! }),
+        Effect.retry({
+          schedule: ManagedEndpointCloudflareBindings.CLOUDFLARE_CALL_RETRY.schedule!,
+        }),
         Effect.exit,
         Effect.forkChild,
       );

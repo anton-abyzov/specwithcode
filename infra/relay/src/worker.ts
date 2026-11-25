@@ -69,6 +69,7 @@ import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
+import * as ManagedEndpointCloudflareBindings from "./environments/ManagedEndpointCloudflareBindings.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as ConnectAccounts from "./environments/ConnectAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
@@ -317,7 +318,7 @@ export const layer = Api.make(
         ),
       ),
       Layer.provideMerge(
-        ManagedEndpointProvider.layerCloudflareBindings(
+        ManagedEndpointCloudflareBindings.layerCloudflareBindings(
           managedEndpointTunnelBinding,
           managedEndpointDnsBinding,
           alchemyRuntimeContext,

@@ -60,6 +60,8 @@ function makeFakeRelay(input: {
   const faults = {
     deprovision: new Set<string>(),
     keepAllocation: new Set<string>(),
+    /** Machines still connected: their tunnel goes only when connectors are dropped. */
+    liveHost: new Set<string>(),
     clerk: 0,
   };
 
@@ -94,7 +96,7 @@ function makeFakeRelay(input: {
             ? ({ environmentId, tunnelName: "unrelated" } as never)
             : null,
         ),
-      deprovision: ({ userId, environmentId }) =>
+      deprovision: ({ userId, environmentId, forceDisconnect }) =>
         Effect.gen(function* () {
           if (faults.deprovision.has(environmentId)) {
             return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
@@ -106,6 +108,7 @@ function makeFakeRelay(input: {
           }
           log.push(`deprovision:${environmentId}`);
           if (faults.keepAllocation.has(environmentId)) return false;
+          if (faults.liveHost.has(environmentId) && forceDisconnect !== true) return false;
           return allocations.delete(environmentId) || true;
         }),
     }),
@@ -207,6 +210,16 @@ describe("account deletion", () => {
       }).pipe(Effect.provide(relay.layer));
     },
   );
+
+  it.effect("removes a still-connected machine's tunnel with the account", () => {
+    const relay = makeFakeRelay({ activeLinks: ["env-a"], allocations: ["env-a"] });
+    relay.faults.liveHost.add("env-a");
+    return Effect.gen(function* () {
+      expect(yield* deleteAccount).toEqual({ deleted: true, environmentCount: 1 });
+      expect(relay.allocations.size).toBe(0);
+      expect(relay.log).toContain(`delete-clerk-user:${USER}`);
+    }).pipe(Effect.provide(relay.layer));
+  });
 
   it.effect("refuses to delete the Clerk user while a managed endpoint remains", () => {
     const relay = makeFakeRelay({ activeLinks: [], allocations: ["env-a"] });
