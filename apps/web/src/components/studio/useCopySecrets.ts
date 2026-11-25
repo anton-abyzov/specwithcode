@@ -139,13 +139,15 @@ export function useCopySecrets({
     const saved = latestPending.current;
     const destination = saved?.environmentId ?? machine;
     const wanted = settled(saved ? pendingSecrets(saved) : null);
-    return sendableSecrets({
-      summary: summaryNow.current,
+    return (
+      sendableSecrets({
+        summary: summaryNow.current,
       plan: copyNow.current,
       repositories: repositoryDraft.current,
       machine: machinesNow.current.find(({ id }) => id === destination),
-      choice: secretsBlockedNow(source, destination) ? withoutSecrets(wanted) : wanted,
-    });
+        choice: secretsBlockedNow(source, destination) ? withoutSecrets(wanted) : wanted,
+      }) ?? []
+    );
   };
   const sameList = (a: ReadonlyArray<string> | null, b: ReadonlyArray<string> | null) =>
     JSON.stringify(a && [...a].sort()) === JSON.stringify(b && [...b].sort());
@@ -188,7 +190,9 @@ export function useCopySecrets({
       machine: there,
       choice: sending,
     });
-    sent.current = null;
+    // No secret file listed: the approval names none, so an offer staged earlier (a file a
+    // Refresh found, ticked in another window) is never pulled unnamed.
+    sent.current = { operationId, paths: [] };
     if (!list) return;
     const input = { operationId, paths: list, destinationLabel: there?.label ?? targetLabel };
     await sendSecretsOrWithdraw(
