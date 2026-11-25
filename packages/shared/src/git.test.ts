@@ -84,9 +84,9 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/StudioTools/Platform/Studio")).toBe(
       "dev.azure.com/studiotools/platform/_git/studio",
     );
-    expect(normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/StudioTools/Platform/Studio")).toBe(
-      "dev.azure.com/studiotools/platform/_git/studio",
-    );
+    expect(
+      normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/StudioTools/Platform/Studio"),
+    ).toBe("dev.azure.com/studiotools/platform/_git/studio");
     expect(
       normalizeGitRemoteUrl("https://StudioTools@dev.azure.com/StudioTools/Platform/_git/Studio"),
     ).toBe("dev.azure.com/studiotools/platform/_git/studio");
@@ -126,7 +126,9 @@ describe("parseOriginUrlFromGitConfig", () => {
       '[branch "main"]',
       "\tremote = origin",
     ].join("\n");
-    expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:anton-abyzov/specwithcode.git");
+    expect(parseOriginUrlFromGitConfig(config)).toBe(
+      "git@github.com:anton-abyzov/specwithcode.git",
+    );
   });
 
   it("strips inline comments and quotes from the url value", () => {
@@ -182,13 +184,19 @@ describe("parseOriginUrlFromGitConfig", () => {
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
   it("extracts the owner and repository from common GitHub remote shapes", () => {
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:StudioTools/SpecWeaveStudio.git"),
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "git@github.com:StudioTools/SpecWeaveStudio.git",
+      ),
     ).toBe("StudioTools/SpecWeaveStudio");
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/StudioTools/SpecWeaveStudio.git"),
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "https://github.com/StudioTools/SpecWeaveStudio.git",
+      ),
     ).toBe("StudioTools/SpecWeaveStudio");
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://github.com/StudioTools/SpecWeaveStudio.git"),
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "ssh://github.com/StudioTools/SpecWeaveStudio.git",
+      ),
     ).toBe("StudioTools/SpecWeaveStudio");
   });
 });
