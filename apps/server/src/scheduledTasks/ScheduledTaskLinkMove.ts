@@ -269,7 +269,13 @@ export const makeLinkMove = (deps: LinkMoveDeps) => {
         Effect.gen(function* () {
           // Marked only when it was on, or still carries this link's mark: one its
           // owner turned on or off meanwhile is left as the owner set it.
-          const markable = task.enabled || (yield* deps.linkPause.read(task.id)) === input.target;
+          // Read now, not at entry: the owner may have turned it off during the move.
+          const current = (yield* deps.routines.pipe(Effect.orElseSucceed(() => []))).find(
+            (entry) => entry.id === task.id,
+          );
+          const markable =
+            current !== undefined &&
+            (current.enabled || (yield* deps.linkPause.read(task.id)) === input.target);
           if (!markable)
             return result(
               "failed",
