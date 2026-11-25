@@ -1359,8 +1359,16 @@ const make = Effect.gen(function* () {
           ]),
         ),
       );
+      // Every load folds and cleans up an older app's project settings before
+      // anything is saved, so a file this server writes is already in the
+      // current shape. Marked so: otherwise the next reload would read a new
+      // project override as legacy and, with one live project, make it the
+      // value for every project.
+      const current: ServerSettings = settings.projectSettingsSimplified
+        ? settings
+        : { ...settings, projectSettingsSimplified: true };
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
+        stripDefaultServerSettings(current, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
       );
 
       return yield* writeFileStringAtomically({
