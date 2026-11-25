@@ -20,6 +20,7 @@ import {
   RunId,
   RuntimeRequestId,
   TurnItemId,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -30,6 +31,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -73,7 +75,7 @@ const layerTest = Layer.mergeAll(
 );
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.4",
+  model: "gpt-6.2-sol",
 } satisfies ModelSelection;
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
@@ -139,14 +141,43 @@ function threadCreatedEvent(
 
 const layer = it.layer(layerTest);
 
+const codexProvider: ServerProvider = {
+  instanceId: modelSelection.instanceId,
+  driver: CODEX_DRIVER,
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-11-24T00:00:00.000Z",
+  models: [
+    { slug: "gpt-6.2-sol", name: "GPT-6.2-Sol", isCustom: false, capabilities: null },
+    { slug: "my-gateway-deployment", name: "Gateway", isCustom: true, capabilities: null },
+  ],
+  slashCommands: [],
+  skills: [],
+};
+const openCodeProvider: ServerProvider = {
+  ...codexProvider,
+  instanceId: ProviderInstanceId.make("opencode"),
+  driver: ProviderDriverKind.make("opencode"),
+  models: [{ slug: "/Users/x/models/foo.gguf", name: "foo", isCustom: false, capabilities: null }],
+};
+const layerProviderRegistry = Layer.mock(ProviderRegistry.ProviderRegistry)({
+  getProviders: Effect.succeed([codexProvider, openCodeProvider]),
+});
+
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];
-  const layerAnalytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
-    record: (properties: Readonly<Record<string, unknown>>) =>
-      Effect.sync(() => {
-        recorded.push(properties);
-      }),
-  });
+  const layerAnalytics = Layer.merge(
+    Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+      record: (properties: Readonly<Record<string, unknown>>) =>
+        Effect.sync(() => {
+          recorded.push(properties);
+        }),
+    }),
+    layerProviderRegistry,
+  );
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
     const eventSink = yield* EventSink.EventSinkV2;
@@ -237,6 +268,165 @@ it.effect("records accepted billed turn usage once without billing the context w
       durationMs: 120,
     });
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
+});
+
+it.effect.each([
+  {
+    label: "a local file model on a driver that lists the user's own models",
+    driver: "opencode",
+    selection: {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "/Users/x/models/foo.gguf",
+    },
+    expected: "custom:opencode",
+  },
+  {
+    label: "a custom model on a vendor driver",
+    driver: "codex",
+    selection: { instanceId: modelSelection.instanceId, model: "my-gateway-deployment" },
+    expected: "custom:codex",
+  },
+  {
+    label: "a model the vendor never listed",
+    driver: "codex",
+    selection: { instanceId: modelSelection.instanceId, model: "acme-internal-7b" },
+    expected: "custom:codex",
+  },
+])("reports $label to analytics as $expected", ({ driver, selection, expected }) => {
+  const recorded: Array<Readonly<Record<string, unknown>>> = [];
+  const layerAnalytics = Layer.merge(
+    Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+      record: (properties: Readonly<Record<string, unknown>>) =>
+        Effect.sync(() => {
+          recorded.push(properties);
+        }),
+    }),
+    layerProviderRegistry,
+  );
+  const driverKind = ProviderDriverKind.make(driver);
+  return Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const threadEvent = yield* threadCreatedEvent(now);
+    yield* eventSink.write({ events: [threadEvent] });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: selection.instanceId,
+      threadId: threadEvent.threadId,
+    });
+    const providerThreadId = idAllocator.derive.providerThread({
+      driver: driverKind,
+      nativeThreadId: "custom-model-thread",
+    });
+    yield* ingestor.ingestNormalized({
+      providerSessionId,
+      providerInstanceId: selection.instanceId,
+      threadId: threadEvent.threadId,
+      analyticsContext: { modelSelection: selection },
+      event: {
+        type: "provider_turn.updated" as const,
+        driver: driverKind,
+        providerTurn: {
+          id: idAllocator.derive.providerTurn({ driver: driverKind, nativeTurnId: "custom-turn" }),
+          providerThreadId,
+          nodeId: NodeId.make("node:custom-turn"),
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+        },
+      },
+    });
+    assert.lengthOf(recorded, 1);
+    assert.equal(recorded[0]?.model, expected);
+    assert.notInclude(JSON.stringify(recorded[0]), selection.model);
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
+});
+
+// Claude's native discovery lists a configured backend id (a Bedrock profile,
+// a gateway deployment) as a vendor model, so a listed, non-custom row is not
+// proof the name is public.
+const claudeProvider: ServerProvider = {
+  ...codexProvider,
+  instanceId: ProviderInstanceId.make("claude-work"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  models: [
+    { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+    {
+      slug: "acme-bedrock-opus-prod",
+      name: "acme-bedrock-opus-prod",
+      aliases: ["acme-opus"],
+      isCustom: false,
+      capabilities: null,
+    },
+  ],
+};
+it.each([
+  {
+    label: "a configured backend id Claude discovery lists",
+    model: "acme-bedrock-opus-prod",
+    expected: "custom:claudeAgent",
+  },
+  { label: "an alias of that backend id", model: "acme-opus", expected: "custom:claudeAgent" },
+  { label: "a catalog model", model: "claude-opus-5-5", expected: "claude-opus-5-5" },
+  { label: "a catalog alias", model: "opus-5.5", expected: "claude-opus-5-5" },
+  {
+    label: "a catalog model with a context suffix",
+    model: "claude-opus-5-5[1m]",
+    expected: "claude-opus-5-5",
+  },
+  {
+    label: "a catalog model the instance does not list",
+    model: "claude-sonnet-5-5",
+    expected: "claude-sonnet-5-5",
+  },
+])("labels $label for analytics as $expected", ({ model, expected }) => {
+  assert.equal(
+    ProviderEventIngestor.analyticsModelLabel([claudeProvider], {
+      instanceId: claudeProvider.instanceId,
+      driver: "claudeAgent",
+      model,
+    }),
+    expected,
+  );
+});
+
+// Native Codex lists a gateway's models from `model/list` as non-custom rows,
+// and Cursor, Grok and Muse have no catalog in the manifest: a listing alone
+// never makes a name public.
+it.each([
+  { driver: "codex", model: "acme-gateway-gpt-prod", expected: "custom:codex" },
+  { driver: "cursor", model: "acme-cursor-deploy", expected: "custom:cursor" },
+  { driver: "codex", model: "gpt-6.2-sol", expected: "gpt-6.2-sol" },
+])("labels $model that $driver discovery lists as $expected", ({ driver, model, expected }) => {
+  const provider: ServerProvider = {
+    ...codexProvider,
+    instanceId: ProviderInstanceId.make(`${driver}-listed`),
+    driver: ProviderDriverKind.make(driver),
+    models: [{ slug: model, name: model, isCustom: false, capabilities: null }],
+  };
+  assert.equal(
+    ProviderEventIngestor.analyticsModelLabel([provider], {
+      instanceId: provider.instanceId,
+      driver,
+      model,
+    }),
+    expected,
+  );
+});
+
+it("labels a model an unknown instance sends by the catalog only", () => {
+  assert.equal(
+    ProviderEventIngestor.analyticsModelLabel([], {
+      instanceId: ProviderInstanceId.make("gone"),
+      driver: "claudeAgent",
+      model: "acme-bedrock-opus-prod",
+    }),
+    "custom:claudeAgent",
+  );
 });
 
 layer("ProviderEventIngestorV2", (it) => {

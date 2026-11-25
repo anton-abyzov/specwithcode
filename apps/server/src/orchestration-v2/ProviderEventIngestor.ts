@@ -13,6 +13,7 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   ProviderInstanceId,
+  type ServerProvider,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -25,9 +26,12 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/model";
+import { BUNDLED_MODEL_MANIFEST, type ModelManifestData } from "../provider/ModelManifest.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as CrashReporter from "../telemetry/CrashReporter.ts";
 import * as EventSink from "./EventSink.ts";
@@ -154,10 +158,61 @@ export const layerFailureReports = Layer.effect(
   }),
 );
 
+// A context-window marker such as `[1m]` after a slug.
+const MODEL_SUFFIX = /\[[^\]]*\]$/u;
+
+/** The slug of a model the bundled model manifest lists for a driver, by slug or alias. */
+function manifestModelSlug(
+  manifest: ModelManifestData,
+  driver: string,
+  model: string,
+): string | undefined {
+  const name = model.replace(MODEL_SUFFIX, "");
+  const listed = manifest.providers?.[driver]?.models.find(
+    (entry) => entry.slug === name || entry.aliases?.includes(name) === true,
+  );
+  if (listed !== undefined) return listed.slug;
+  return manifest.currentModels[driver]?.includes(name) === true ? name : undefined;
+}
+
+/**
+ * The model name analytics and error reports may carry: the slug the bundled
+ * model manifest lists for the driver, by slug or alias. A provider's own
+ * listing is not enough, because discovery lists configured names as vendor
+ * models (a Bedrock profile in Claude, a gateway's models in Codex). Any other
+ * name can identify a person, a deployment or a file on disk, so it reports
+ * only the driver, as `custom:<driver>`; so does every model of a driver the
+ * manifest has no catalog for.
+ */
+export function analyticsModelLabel(
+  providers: ReadonlyArray<ServerProvider>,
+  input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: string;
+    readonly model: string;
+  },
+  manifest: ModelManifestData = BUNDLED_MODEL_MANIFEST,
+): string {
+  const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
+  const driver = provider?.driver ?? input.driver;
+  // An instance alias of a catalog model reports that model.
+  const listed = provider?.models.find(
+    (entry) =>
+      !entry.isCustom &&
+      (entry.slug === input.model || entry.aliases?.includes(input.model) === true),
+  );
+  return (
+    manifestModelSlug(manifest, driver, input.model) ??
+    (listed === undefined ? undefined : manifestModelSlug(manifest, driver, listed.slug)) ??
+    `custom:${input.driver}`
+  );
+}
+
 function providerTurnAnalyticsProperties(input: {
   readonly driver: ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;
+  readonly modelLabel?: string;
 }): Readonly<Record<string, unknown>> {
   const usage = input.providerTurn.turnTokenUsage;
   const modelSelection = input.context?.modelSelection;
@@ -180,7 +235,9 @@ function providerTurnAnalyticsProperties(input: {
       : { cacheCreationTokens: usage.cacheCreationTokens }),
     ...(usage?.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
     ...(usage?.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
-    ...(modelSelection ? { model: modelSelection.model, mixedModels: false } : {}),
+    ...(modelSelection && input.modelLabel !== undefined
+      ? { model: input.modelLabel, mixedModels: false }
+      : {}),
     ...(effort ? { effort } : {}),
     ...(input.context?.runtimeMode ? { runtimeMode: input.context.runtimeMode } : {}),
     ...(input.context?.interactionMode ? { interactionMode: input.context.interactionMode } : {}),
@@ -344,6 +401,22 @@ export const layer: Layer.Layer<
     const completedTurnAnalytics = new Set<string>();
     const failureReports = yield* ProviderTurnFailureReports;
     const reportedTurnFailures = new Set<string>();
+    // Optional so services and tests without a provider registry still run;
+    // without one every model reports as custom.
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    const labelModel = (input: ProviderEventIngestInput) =>
+      Effect.gen(function* () {
+        const modelSelection = input.analyticsContext?.modelSelection;
+        if (modelSelection === undefined) return undefined;
+        const providers = Option.isSome(providerRegistry)
+          ? yield* providerRegistry.value.getProviders
+          : [];
+        return analyticsModelLabel(providers, {
+          instanceId: modelSelection.instanceId,
+          driver: input.event.driver,
+          model: modelSelection.model,
+        });
+      });
 
     const makeDomainEvent = (
       input: ProviderEventIngestInput,
@@ -794,7 +867,7 @@ export const layer: Layer.Layer<
                 const oldest = reportedTurnFailures.values().next().value;
                 if (oldest !== undefined) reportedTurnFailures.delete(oldest);
               }
-              const model = input.analyticsContext?.modelSelection.model;
+              const model = yield* labelModel(input);
               yield* failureReports.report({
                 driver: event.driver,
                 failure: event.failure,
@@ -821,10 +894,12 @@ export const layer: Layer.Layer<
                 const oldest = completedTurnAnalytics.values().next().value;
                 if (oldest !== undefined) completedTurnAnalytics.delete(oldest);
               }
+              const modelLabel = yield* labelModel(input);
               yield* analytics.record(
                 providerTurnAnalyticsProperties({
                   driver: input.event.driver,
                   providerTurn,
+                  ...(modelLabel === undefined ? {} : { modelLabel }),
                   ...(input.analyticsContext === undefined
                     ? {}
                     : { context: input.analyticsContext }),
