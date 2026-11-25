@@ -195,33 +195,12 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
-  const removeAtRelay = Effect.fn("environment.cloud.removeClientKeyAtRelay")(
-    function* (proofKeyThumbprint: string) {
-      const result = yield* withRelay((client, environmentId) =>
-        client.server.removeClientKey({
-          params: { environmentId },
-          payload: { proofKeyThumbprint },
-        }),
-      );
-      if (Option.isNone(result)) {
-        yield* Effect.logWarning(
-          "Not linked to SpecWithCode Connect; the phone was revoked on this computer only",
-        );
-        return false;
-      }
-      if (!result.value.removed) {
-        // Expected for a browser or another non-phone Connect client.
-        yield* Effect.logDebug("SpecWithCode Connect has no phone with this key to remove");
-      }
-      return result.value.removed;
-    },
-    Effect.catchCause((cause) =>
-      Effect.logWarning(
-        "Could not remove the phone from the SpecWithCode Connect account; it was revoked on this computer only",
-        { cause },
-      ).pipe(Effect.as(false)),
-    ),
-  );
+  const removeAtRelay = (proofKeyThumbprint: string) =>
+    environment.getEnvironmentId.pipe(
+      Effect.flatMap((environmentId) => removeClientKeyAtRelay(proofKeyThumbprint, environmentId)),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
 
   const pullRemovedClientKeys = Effect.fn("environment.cloud.pullRemovedClientKeys")(function* () {
     const result = yield* withRelay((client, environmentId) =>
@@ -265,6 +244,37 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(ConnectPhoneRevocation, make);
 
 /**
+ * `removeAtRelay` without the service, for the CLI while no server runs: it
+ * needs only this home's relay link and the environment's id.
+ */
+export const removeClientKeyAtRelay = Effect.fn("environment.cloud.removeClientKeyAtRelay")(
+  function* (proofKeyThumbprint: string, environmentId: EnvironmentId) {
+    const connection = yield* readRelayConnection;
+    if (connection === null) {
+      yield* Effect.logWarning(
+        "Not linked to SpecWithCode Connect; the phone was revoked on this computer only",
+      );
+      return false;
+    }
+    const client = yield* makeRelayEnvironmentHttpClient(connection);
+    const result = yield* client.server
+      .removeClientKey({ params: { environmentId }, payload: { proofKeyThumbprint } })
+      .pipe(Effect.timeout(RELAY_REQUEST_TIMEOUT));
+    if (!result.removed) {
+      // Expected for a browser or another non-phone Connect client.
+      yield* Effect.logDebug("SpecWithCode Connect has no phone with this key to remove");
+    }
+    return result.removed;
+  },
+  Effect.catchCause((cause) =>
+    Effect.logWarning(
+      "Could not remove the phone from the SpecWithCode Connect account; it was revoked on this computer only",
+      { cause },
+    ).pipe(Effect.as(false)),
+  ),
+);
+
+/**
  * Pulls the keys removed while this environment was offline once it is active,
  * then every {@link REMOVED_CLIENT_KEYS_CATCH_UP_INTERVAL}, so a missed relay
  * order still ends a removed phone's sessions. Each check is one small relay
@@ -276,10 +286,7 @@ export const layerStartupSync = Layer.effectDiscard(
     yield* forkParked(
       revocation
         .syncRemovedClientKeys()
-        .pipe(
-          Effect.repeat(Schedule.spaced(REMOVED_CLIENT_KEYS_CATCH_UP_INTERVAL)),
-          Effect.asVoid,
-        ),
+        .pipe(Effect.repeat(Schedule.spaced(REMOVED_CLIENT_KEYS_CATCH_UP_INTERVAL)), Effect.asVoid),
     );
   }),
 );
