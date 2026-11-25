@@ -2,6 +2,7 @@ import type { RepositoryIdentity, SourceControlProviderError } from "@specweave-
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
+  withoutRemoteUrlLogin,
 } from "@specweave-studio/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -79,7 +80,8 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
     if (direction !== "fetch" || remoteName.length === 0 || remoteUrl.length === 0) {
       continue;
     }
-    remotes.set(remoteName, remoteUrl);
+    // Clients see the remote that names the repository, never the login used to reach it.
+    remotes.set(remoteName, withoutRemoteUrlLogin(remoteUrl));
   }
   return remotes;
 }
