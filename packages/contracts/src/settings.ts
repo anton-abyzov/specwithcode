@@ -541,6 +541,28 @@ export const DEFAULT_GITHUB_STAR_PROMPT: GitHubStarPrompt = {
   asks: 0,
   nextAskAt: null,
 };
+/**
+ * Two machines' star states folded into one, so a stale machine can never undo an answer
+ * (1489). Starred and done stay; a shown card only moves the count forward; an explicit
+ * re-enable (asking with no asks) only lifts Off. Order-free for everything but Off/re-enable,
+ * which are the person's own latest choice.
+ */
+export function mergeGitHubStarPrompt(
+  current: GitHubStarPrompt,
+  incoming: GitHubStarPrompt,
+): GitHubStarPrompt {
+  if (incoming.status === "off" || incoming.status === "starred") return incoming;
+  if (current.status === "starred") return current;
+  if (incoming.status === "asking" && incoming.asks === 0 && incoming.nextAskAt === null) {
+    return current.status === "off" ? incoming : current;
+  }
+  if (current.status === "off") return current;
+  if (incoming.status === "done") return incoming;
+  if (current.status === "done") return current;
+  if (incoming.asks !== current.asks) return incoming.asks > current.asks ? incoming : current;
+  return (incoming.nextAskAt ?? "") >= (current.nextAskAt ?? "") ? incoming : current;
+}
+
 /** Device-local use counts that decide when the card may first show. */
 export const GitHubStarUsage = Schema.Struct({
   firstUsedAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(64))),

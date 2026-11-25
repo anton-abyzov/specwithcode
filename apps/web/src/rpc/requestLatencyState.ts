@@ -30,7 +30,11 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-const untrackedRpcAckMethods = new Set<string>([WS_METHODS.serverGetUsageSummary]);
+const untrackedRpcAckMethods = new Set<string>([
+  WS_METHODS.serverGetUsageSummary,
+  // A background check behind the star card (1489); nobody is waiting on it.
+  WS_METHODS.gitHubCredentialStarred,
+]);
 const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,

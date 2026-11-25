@@ -1,4 +1,9 @@
-import { DEFAULT_GITHUB_STAR_PROMPT, type GitHubStarUsage } from "@specweave-studio/contracts";
+import {
+  DEFAULT_GITHUB_STAR_PROMPT,
+  mergeGitHubStarPrompt,
+  type GitHubStarPrompt,
+  type GitHubStarUsage,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -89,5 +94,40 @@ describe("setStarPromptEnabled", () => {
   it("Off ends asking; On starts a fresh three-ask budget", () => {
     expect(setStarPromptEnabled(false).status).toBe("off");
     expect(setStarPromptEnabled(true)).toEqual(DEFAULT_GITHUB_STAR_PROMPT);
+  });
+});
+
+describe("mergeGitHubStarPrompt", () => {
+  const starred: GitHubStarPrompt = { status: "starred", asks: 1, nextAskAt: null };
+  const off: GitHubStarPrompt = { status: "off", asks: 0, nextAskAt: null };
+  const done: GitHubStarPrompt = { status: "done", asks: 3, nextAskAt: null };
+  const shownOnce: GitHubStarPrompt = {
+    status: "asking",
+    asks: 1,
+    nextAskAt: "2026-12-01T00:00:00.000Z",
+  };
+  const shownTwice: GitHubStarPrompt = {
+    status: "asking",
+    asks: 2,
+    nextAskAt: "2027-01-01T00:00:00.000Z",
+  };
+
+  it("never lets a stale machine's showing undo a star, Off or the last ask", () => {
+    for (const settled of [starred, off, done]) {
+      expect(mergeGitHubStarPrompt(settled, shownOnce)).toEqual(settled);
+      expect(mergeGitHubStarPrompt(settled, DEFAULT_GITHUB_STAR_PROMPT)).toEqual(
+        settled === off ? DEFAULT_GITHUB_STAR_PROMPT : settled,
+      );
+    }
+  });
+
+  it("only moves the count forward", () => {
+    expect(mergeGitHubStarPrompt(shownTwice, shownOnce)).toEqual(shownTwice);
+    expect(mergeGitHubStarPrompt(shownOnce, shownTwice)).toEqual(shownTwice);
+  });
+
+  it("takes a star or Off from anywhere", () => {
+    expect(mergeGitHubStarPrompt(shownTwice, starred)).toEqual(starred);
+    expect(mergeGitHubStarPrompt(done, off)).toEqual(off);
   });
 });

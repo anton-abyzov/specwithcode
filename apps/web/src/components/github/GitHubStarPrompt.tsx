@@ -9,9 +9,10 @@
  * counts stay on this device.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  ensureClientSettingsHydrated,
   getClientSettings,
   persistClientSettingsPatch,
   useClientSettings,
@@ -20,7 +21,8 @@ import {
   usePrimarySettingsAvailable,
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { mergeGitHubStarPrompt } from "@specweave-studio/contracts";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { primaryServerConfigAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { gitHubCredential } from "../../studio/gitHubCredentialCopy";
@@ -35,8 +37,32 @@ import { openRepository } from "./StarOnGitHub";
 
 /** Called where a composer turn starts; counts the thread toward the first ask. */
 export function noteStarPromptTurn(threadKey: string): void {
-  const next = noteStartedTurn(getClientSettings().githubStarUsage, threadKey, Date.now());
-  if (next !== null) void persistClientSettingsPatch({ githubStarUsage: next });
+  const now = Date.now();
+  // Counted from the saved values, never from the defaults that stand in before they load.
+  void ensureClientSettingsHydrated()
+    .then(() => {
+      const next = noteStartedTurn(getClientSettings().githubStarUsage, threadKey, now);
+      if (next !== null) void persistClientSettingsPatch({ githubStarUsage: next });
+    })
+    .catch(() => undefined);
+}
+
+/** Runs `work` and reports whether the window stayed focused and untouched meanwhile. */
+async function stayedQuietDuring<A>(work: () => Promise<A>): Promise<{ value: A; quiet: boolean }> {
+  let touched = false;
+  const touch = () => {
+    touched = true;
+  };
+  for (const name of QUIET_EVENTS) window.addEventListener(name, touch, true);
+  try {
+    const value = await work();
+    return {
+      value,
+      quiet: !touched && document.visibilityState === "visible" && document.hasFocus(),
+    };
+  } finally {
+    for (const name of QUIET_EVENTS) window.removeEventListener(name, touch, true);
+  }
 }
 
 const QUIET_EVENTS = ["pointerdown", "keydown", "wheel", "focus"] as const;
@@ -71,7 +97,17 @@ export function GitHubStarPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const clientHydrated = useClientSettingsHydrated();
-  const prompt = usePrimarySettings((settings) => settings.githubStarPrompt);
+  const primaryPrompt = usePrimarySettings((settings) => settings.githubStarPrompt);
+  const { environments } = useEnvironments();
+  // Every connected machine's answer counts, so one that missed a write cannot ask again.
+  const prompt = useMemo(
+    () =>
+      environments.reduce((merged, environment) => {
+        const other = environment.serverConfig?.settings?.githubStarPrompt;
+        return other ? mergeGitHubStarPrompt(merged, other) : merged;
+      }, primaryPrompt),
+    [environments, primaryPrompt],
+  );
   const usage = useClientSettings((settings) => settings.githubStarUsage);
   const updateSettings = useUpdatePrimarySettings();
   const readStarred = useAtomCommand(gitHubCredential.starred, { reportFailure: false });
@@ -90,15 +126,20 @@ export function GitHubStarPromptHost() {
       await waitForQuietMoment(STAR_PROMPT_QUIET_MS, controller.signal);
       if (controller.signal.aborted || lookedRef.current) return;
       lookedRef.current = true;
-      const result = await readStarred({ environmentId, input: {} });
+      const { value: result, quiet } = await stayedQuietDuring(() =>
+        readStarred({ environmentId, input: {} }),
+      );
       if (controller.signal.aborted) return;
       const now = Date.now();
       if (result._tag === "Success" && result.value.starred === true) {
         void updateSettings({ githubStarPrompt: answerStarPrompt(prompt, "detected", now) });
         return;
       }
+      // The check can take seconds; never let the card land on someone who started typing.
+      if (!quiet) await waitForQuietMoment(STAR_PROMPT_QUIET_MS, controller.signal);
+      if (controller.signal.aborted) return;
       // Saved before it shows, so a reload or an ignored card still uses up this ask.
-      void updateSettings({ githubStarPrompt: answerStarPrompt(prompt, "shown", now) });
+      void updateSettings({ githubStarPrompt: answerStarPrompt(prompt, "shown", Date.now()) });
       setVisible(true);
     })();
     return () => controller.abort();
