@@ -41,8 +41,9 @@ import {
 // A thread that never loads (an unknown machine, a stuck connection) stops
 // saying "Loading" after this long.
 const THREAD_WAIT_LIMIT_MS = 20_000;
-// Older history pages read while looking for a page before calling it gone.
-const MAX_HISTORY_PAGES = 20;
+// A guard against a history that never ends, far beyond any real thread: the
+// window pages back to the thread's start before it says a page is gone.
+const MAX_HISTORY_PAGES = 1_000;
 // The same inset AppSidebarLayout keeps for the macOS window buttons.
 const MACOS_WINDOW_BUTTONS_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -105,31 +106,38 @@ function InstalledPageWindow({ app }: { readonly app: DesktopArtifactApp }) {
     return () => window.clearTimeout(timer);
   }, []);
   // The thread arrives as its newest window; a page published long ago may sit
-  // in older history, so page back (a bounded number of times) before calling it gone.
+  // in older history, so page back to the start of the thread before calling it gone.
   const history = useThreadHistory(threadRef);
   const loadEarlier = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
     reportFailure: false,
   });
+  // Bumped when a read settles, so the next page is asked for even if the loading flag never flipped.
   const [historyPages, setHistoryPages] = useState(0);
+  // A read that fails stops the paging; the window then says the thread is not available.
+  const [historyFailed, setHistoryFailed] = useState(false);
   const canPageBack =
     page === null &&
     threadStatus === "live" &&
     history.hasMoreHistory &&
     history.error === null &&
+    !historyFailed &&
     historyPages < MAX_HISTORY_PAGES;
   useEffect(() => {
-    if (!canPageBack || history.loading) return;
+    if (!canPageBack || history.loading || historyPages >= MAX_HISTORY_PAGES) return;
     // Counted when the read settles: the history's own loading flag holds off a second read.
     void loadEarlier({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId },
-    }).finally(() => setHistoryPages((pages) => pages + 1));
-  }, [canPageBack, history.loading, loadEarlier, threadRef]);
+    })
+      .catch(() => setHistoryFailed(true))
+      .finally(() => setHistoryPages((pages) => pages + 1));
+  }, [canPageBack, history.loading, historyPages, loadEarlier, threadRef]);
   const state = artifactAppViewState({
     install: app,
     routeInstallId: app.installId,
-    environmentUnreachable: unreachable,
+    // History that could not be read is not proof the page is gone.
+    environmentUnreachable: unreachable || historyFailed,
     threadListLoaded: shell.data?.snapshot._tag === "Some",
     threadListed: threadShell !== null,
     threadDeleted: threadShell?.deletedAt != null,

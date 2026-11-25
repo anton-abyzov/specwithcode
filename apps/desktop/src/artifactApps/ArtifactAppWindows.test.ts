@@ -280,7 +280,19 @@ describe("ArtifactAppWindows", () => {
       emit(fake.contentsListeners, "will-navigate", event, WINDOW_URL);
       assert.equal(prevented, 0);
       emit(fake.contentsListeners, "will-navigate", event, "https://example.com/next");
-      emit(fake.contentsListeners, "will-redirect", event, "studio://app/#/");
+      emit(
+        fake.contentsListeners,
+        "will-redirect",
+        { ...event, url: "studio://app/#/", isMainFrame: true },
+        "studio://app/#/",
+      );
+      // A frame inside the page redirecting is left alone and opens nothing.
+      emit(
+        fake.contentsListeners,
+        "will-redirect",
+        { ...event, url: "https://example.com/framed", isMainFrame: false },
+        "https://example.com/framed",
+      );
       emit(fake.contentsListeners, "will-navigate", event, "file:///etc/hosts");
       assert.equal(prevented, 3);
       assert.deepEqual(fake.openHandler?.({ url: "https://example.com/popup" }), {

@@ -112,6 +112,10 @@ describe("foldArtifactAppName", () => {
   it("folds digits and letter pairs that imitate letters", () => {
     expect(foldArtifactAppName("Micr0s0ft")).toBe(foldArtifactAppName("Microsoft"));
     expect(foldArtifactAppName("C1aude")).toBe(foldArtifactAppName("Claude"));
+    // Capitals that lowercase to a different-looking letter (Greek Μ to μ).
+    expect(foldArtifactAppName("\u039Cicrosoft")).toBe(foldArtifactAppName("Microsoft"));
+    expect(foldArtifactAppName("\u0391pple")).toBe(foldArtifactAppName("Apple"));
+    expect(foldArtifactAppName("\u041Cicrosoft")).toBe(foldArtifactAppName("Microsoft"));
     expect(foldArtifactAppName("CIaude")).toBe(foldArtifactAppName("Claude"));
     expect(foldArtifactAppName("Terrninal")).toBe(foldArtifactAppName("Terminal"));
     expect(foldArtifactAppName("Ｗindows")).toBe(foldArtifactAppName("Windows"));
@@ -152,6 +156,9 @@ describe("resolveArtifactAppName", () => {
       "SYSTEM SETTINGS (Page)",
     );
     expect(resolveArtifactAppName({ title: "Fi\u0301nder", takenNames: [] })).toBe("Fínder (Page)");
+    expect(resolveArtifactAppName({ title: "\u039Cicrosoft", takenNames: [] })).toBe(
+      "\u039Cicrosoft (Page)",
+    );
   });
 
   it("adds caller reserved names to the built-in list", () => {

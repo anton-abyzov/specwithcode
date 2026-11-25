@@ -77,6 +77,43 @@ export function sanitizeArtifactAppName(title: string): string {
   return name.length === 0 ? ARTIFACT_APP_UNTITLED : name;
 }
 
+// Capitals that look like a Latin capital but lowercase to a letter that does
+// not (Greek Μ lowercases to μ, which reads as u). Mapped before lowercasing.
+const CAPITAL_HOMOGLYPHS: Readonly<Record<string, string>> = {
+  // Greek
+  Α: "A",
+  Β: "B",
+  Ε: "E",
+  Ζ: "Z",
+  Η: "H",
+  Ι: "I",
+  Κ: "K",
+  Μ: "M",
+  Ν: "N",
+  Ο: "O",
+  Ρ: "P",
+  Τ: "T",
+  Υ: "Y",
+  Χ: "X",
+  // Cyrillic
+  А: "A",
+  В: "B",
+  Е: "E",
+  З: "3",
+  К: "K",
+  М: "M",
+  Н: "H",
+  О: "O",
+  Р: "P",
+  С: "C",
+  Т: "T",
+  Х: "X",
+  Ѕ: "S",
+  І: "I",
+  Ј: "J",
+  Ү: "Y",
+};
+
 // Characters that look like Latin letters in common UI fonts, mapped to the letter they imitate.
 const HOMOGLYPHS: Readonly<Record<string, string>> = {
   // Cyrillic
@@ -139,8 +176,12 @@ const HOMOGLYPHS: Readonly<Record<string, string>> = {
  * to one letter only widens what counts as a look-alike.
  */
 export function foldArtifactAppName(name: string): string {
+  const capitals = Array.from(
+    name.normalize("NFKD"),
+    (character) => CAPITAL_HOMOGLYPHS[character] ?? character,
+  ).join("");
   const mapped = Array.from(
-    name.normalize("NFKD").toLowerCase().replace(/\p{M}/gu, ""),
+    capitals.toLowerCase().replace(/\p{M}/gu, ""),
     (character) => HOMOGLYPHS[character] ?? character,
   ).join("");
   return mapped

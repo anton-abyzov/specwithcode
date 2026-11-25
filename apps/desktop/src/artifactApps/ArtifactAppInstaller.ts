@@ -178,6 +178,8 @@ export class ArtifactAppInstallerHost extends Context.Service<
       shortcutPath: string,
       options: Electron.ShortcutDetails,
     ) => Effect.Effect<boolean>;
+    /** The arguments a Windows shortcut starts its target with; none when it cannot be read. */
+    readonly readShortcutArgs: (shortcutPath: string) => Effect.Effect<Option.Option<string>>;
     readonly trashItem: (path: string) => Effect.Effect<void, ArtifactAppTrashError>;
     readonly showItemInFolder: (path: string) => Effect.Effect<void>;
   }
@@ -357,6 +359,50 @@ const make = Effect.gen(function* () {
     error.reason._tag === "NotFound";
 
   const exists = (path: string) => fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+
+  const isSymbolicLink = (path: string) =>
+    fileSystem.readLink(path).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const fileMentions = (path: string, installId: string) =>
+    fileSystem.readFileString(path).pipe(
+      Effect.map((contents) => contents.includes(installId)),
+      Effect.orElseSucceed(() => false),
+    );
+
+  /**
+   * Whether the file at a launcher path is this install's own launcher: not a
+   * link, in a folder that is not a link, and naming the install's random id.
+   * Uninstall and reveal act only on such a file, so a file that took the
+   * launcher's place (another app, a moved folder) is never touched.
+   */
+  const launcherPathOwned = Effect.fn("desktop.artifactApps.launcherPathOwned")(function* (
+    location: LauncherLocation,
+    path: string,
+    installId: string,
+  ) {
+    if (yield* isSymbolicLink(location.folder)) return false;
+    if (yield* isSymbolicLink(path)) return false;
+    if (!(yield* exists(path))) return false;
+    switch (location.kind) {
+      case "mac-bundle": {
+        const launcher = location.files.find(
+          (file) => file.kind === "text" && file.contents.includes(installId),
+        );
+        if (launcher === undefined) return false;
+        return yield* fileMentions(rules.join(path, launcher.relativePath), installId);
+      }
+      case "windows-shortcuts":
+        return Option.match(yield* host.readShortcutArgs(path), {
+          onNone: () => false,
+          onSome: (args) => args.includes(installId),
+        });
+      case "linux-entry":
+        return yield* fileMentions(path, installId);
+    }
+  });
 
   // Names already used in a folder, so a new launcher never replaces someone's file.
   const namesInFolder = (folder: string | null, extension: string) =>
@@ -567,19 +613,32 @@ const make = Effect.gen(function* () {
       Effect.mapError(writeError("remove-launcher", path)),
     );
 
-  const removeLauncher = (location: LauncherLocation) =>
+  // Removes only what is still this install's launcher; anything else at the path is left alone.
+  const removeLauncher = (location: LauncherLocation, installId: string) =>
     Effect.gen(function* () {
+      const owned = (path: string) =>
+        launcherPathOwned(location, path, installId).pipe(
+          Effect.tap((isOwned) =>
+            isOwned
+              ? Effect.void
+              : logInfo("left a file that is not this page's launcher", { installId }),
+          ),
+        );
       switch (location.kind) {
         case "mac-bundle":
-          if (yield* exists(location.path)) yield* host.trashItem(location.path);
+          if (yield* owned(location.path)) yield* host.trashItem(location.path);
           return;
         case "windows-shortcuts":
-          yield* removeFile(location.path);
-          if (location.desktopPath !== null) yield* removeFile(location.desktopPath);
+          if (yield* owned(location.path)) yield* removeFile(location.path);
+          if (location.desktopPath !== null && (yield* owned(location.desktopPath))) {
+            yield* removeFile(location.desktopPath);
+          }
           return;
         case "linux-entry":
-          yield* removeFile(location.path);
-          yield* refreshLinux(location.folder);
+          if (yield* owned(location.path)) {
+            yield* removeFile(location.path);
+            yield* refreshLinux(location.folder);
+          }
           return;
       }
     });
@@ -597,11 +656,14 @@ const make = Effect.gen(function* () {
     const existing = (yield* records.list).find((app) => sameInstall(app, input));
     if (existing !== undefined) {
       const location = yield* locateRecorded(existing, context);
-      if (Option.isSome(location) && (yield* exists(location.value.path))) {
+      if (
+        Option.isSome(location) &&
+        (yield* launcherPathOwned(location.value, location.value.path, existing.installId))
+      ) {
         yield* windows.open(existing.installId);
         return { status: "already-installed", app: existing } as const;
       }
-      // The launcher was deleted by hand: forget the stale record and install again.
+      // The launcher was deleted or replaced by hand: forget the stale record and install again.
       yield* logInfo("forgetting an install whose launcher is gone", {
         installId: existing.installId,
       });
@@ -636,7 +698,7 @@ const make = Effect.gen(function* () {
     // A launcher without a record opens nothing, so it is taken back when the record fails.
     yield* records
       .add(app)
-      .pipe(Effect.tapError(() => removeLauncher(location).pipe(Effect.ignore)));
+      .pipe(Effect.tapError(() => removeLauncher(location, installId).pipe(Effect.ignore)));
     yield* logInfo("installed page", { installId, platform: host.platform });
     const opened = yield* windows.open(installId);
     if (opened !== "opened" && opened !== "focused") {
@@ -683,7 +745,7 @@ const make = Effect.gen(function* () {
     const location = yield* locateRecorded(app.value, yield* launcherContext);
     if (Option.isSome(location)) {
       // A launcher that could not be removed keeps its record, so uninstall can be tried again.
-      yield* removeLauncher(location.value);
+      yield* removeLauncher(location.value, installId);
     }
     yield* records.remove(installId);
     yield* windows.close(installId);
@@ -696,7 +758,12 @@ const make = Effect.gen(function* () {
     const app = yield* records.get(installId);
     if (Option.isNone(app)) return false;
     const location = yield* locateRecorded(app.value, yield* launcherContext);
-    if (Option.isNone(location) || !(yield* exists(location.value.path))) return false;
+    if (
+      Option.isNone(location) ||
+      !(yield* launcherPathOwned(location.value, location.value.path, installId))
+    ) {
+      return false;
+    }
     yield* host.showItemInFolder(location.value.path);
     return true;
   });
@@ -922,6 +989,14 @@ const makeElectronHost = Effect.gen(function* () {
           return Electron.shell.writeShortcutLink(shortcutPath, "create", options);
         } catch {
           return false;
+        }
+      }),
+    readShortcutArgs: (shortcutPath) =>
+      Effect.sync(() => {
+        try {
+          return Option.some(Electron.shell.readShortcutLink(shortcutPath).args ?? "");
+        } catch {
+          return Option.none<string>();
         }
       }),
     trashItem: (path) =>

@@ -103,6 +103,12 @@ const hostLayer = (input: {
           input.calls.shortcuts.push({ path, options });
           return true;
         }),
+      // The shortcut this test wrote at that path, read back like Windows would.
+      readShortcutArgs: (path) =>
+        Effect.sync(() => {
+          const written = input.calls.shortcuts.findLast((shortcut) => shortcut.path === path);
+          return written === undefined ? Option.none() : Option.some(written.options.args ?? "");
+        }),
       trashItem: (path) =>
         Effect.gen(function* () {
           input.calls.trashed.push(path);
@@ -409,6 +415,52 @@ describe("ArtifactAppInstaller on macOS", () => {
   );
 });
 
+describe("ArtifactAppInstaller uninstall leaves files that are not its launcher", () => {
+  it.effect("keeps an app that took the launcher's place and forgets the install", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+
+        // The launcher is moved away and another app is put at its path.
+        yield* fileSystem.rename(bundle, path.join(home, "moved.app"));
+        const macOS = path.join(bundle, "Contents", "MacOS");
+        yield* fileSystem.makeDirectory(macOS, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(macOS, "Morning dashboard"), "#!/bin/sh\n");
+
+        assert.isFalse(yield* h.installer.reveal(result.app.installId));
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(h.calls.trashed, []);
+        assert.isTrue(yield* fileSystem.exists(bundle));
+        assert.deepEqual(yield* h.records.list, []);
+      }),
+    ),
+  );
+
+  it.effect("never removes through an apps folder that became a link", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const elsewhere = path.join(home, "Elsewhere");
+
+        // The folder is moved and a link to it takes its place.
+        yield* fileSystem.rename(folder, elsewhere);
+        yield* fileSystem.symlink(elsewhere, folder);
+
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(h.calls.trashed, []);
+        assert.isTrue(yield* fileSystem.exists(path.join(elsewhere, "Morning dashboard.app")));
+      }),
+    ),
+  );
+});
+
 describe("ArtifactAppInstaller names", () => {
   it.effect("marks a page that imitates an app on the computer, case folded", () =>
     withHome(({ home, recordsPath }) =>
@@ -523,11 +575,13 @@ describe("ArtifactAppInstaller on Windows", () => {
         ]);
 
         for (const shortcut of h.calls.shortcuts) recording.existing.add(shortcut.path);
+        // Someone replaced the Desktop shortcut with one of their own: it stays.
+        h.calls.shortcuts.push({
+          path: "C:\\Users\\alice\\Desktop\\Morning dashboard.lnk",
+          options: { target: "C:\\Tools\\other.exe", args: "--other" },
+        });
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
-        assert.deepEqual(recording.removed, [
-          `${startMenu}\\Morning dashboard.lnk`,
-          "C:\\Users\\alice\\Desktop\\Morning dashboard.lnk",
-        ]);
+        assert.deepEqual(recording.removed, [`${startMenu}\\Morning dashboard.lnk`]);
         assert.deepEqual(yield* h.records.list, []);
       }),
     ),

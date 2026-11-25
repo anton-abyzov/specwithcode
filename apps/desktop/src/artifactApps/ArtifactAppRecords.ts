@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { newArtifactAppInstallId } from "./ArtifactAppUrl.ts";
 
 export const ARTIFACT_APPS_RECORD_FILE = "artifact-apps-installed.json";
 
@@ -193,10 +194,28 @@ const make = Effect.fnUntraced(function* (filePath: string) {
       ),
     );
     temporaryFileCounter += 1;
-    const temporaryPath = `${filePath}.${process.pid}.${temporaryFileCounter}.tmp`;
-    const removeTemporary = fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore);
+    // An unguessable name, created exclusively: a file or link already at that
+    // path makes the write fail instead of writing through it.
+    const temporaryPath = `${filePath}.${process.pid}.${temporaryFileCounter}.${newArtifactAppInstallId()}.tmp`;
+    let created = false;
+    const removeTemporary = Effect.suspend(() =>
+      created ? fileSystem.remove(temporaryPath, { force: true }) : Effect.void,
+    ).pipe(Effect.ignore);
     yield* fileSystem
-      .writeFileString(temporaryPath, `${encoded}\n`, { mode: RECORDS_FILE_MODE })
+      .writeFileString(temporaryPath, `${encoded}\n`, { mode: RECORDS_FILE_MODE, flag: "wx" })
+      .pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            created = true;
+          }),
+        ),
+        // Anything but "already there" means this write made the file and may have left it.
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            if (error.reason._tag !== "AlreadyExists") created = true;
+          }),
+        ),
+      )
       .pipe(
         // The mode on create is masked by the umask; set it explicitly before the file is visible.
         Effect.andThen(fileSystem.chmod(temporaryPath, RECORDS_FILE_MODE)),

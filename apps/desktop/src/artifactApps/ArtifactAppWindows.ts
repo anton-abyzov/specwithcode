@@ -238,7 +238,13 @@ const make = Effect.gen(function* () {
       openExternally(url);
     };
     window.webContents.on("will-navigate", guardNavigation);
-    window.webContents.on("will-redirect", guardNavigation);
+    // Only the window's own document. A frame inside the page (the report's
+    // sandboxed iframe or anything it embeds) may redirect without the person
+    // asking, and that must never open the system browser.
+    window.webContents.on("will-redirect", (event) => {
+      if (!event.isMainFrame) return;
+      guardNavigation(event, event.url);
+    });
     window.webContents.setWindowOpenHandler(({ url }) => {
       openExternally(url);
       return { action: "deny" };
