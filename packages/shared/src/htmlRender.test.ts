@@ -527,3 +527,41 @@ describe("evidence links in the bootstrap", () => {
       expect(() => new Function(script[1]!)).not.toThrow();
   });
 });
+
+// A page is agent-written text; unclosed tags must not make each scan rescan
+// the rest of the page.
+describe("injectHtmlRenderBootstrap on unclosed tags", () => {
+  it.each([
+    "<meta a",
+    "<meta name=x ",
+    '<meta "',
+    "<template a",
+    "<template '",
+    "<head a",
+    "<head '",
+    '<html a="b" ',
+  ])("injects 200 KB of %j in under 50 ms", (tag) => {
+    const html = tag.repeat(Math.ceil(200_000 / tag.length));
+    const started = performance.now();
+    const out = injectHtmlRenderBootstrap(html);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(out).toContain('id="studio-theme"');
+  });
+
+  it("still finds the page's own charset and viewport", () => {
+    const own =
+      '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=600"></head><body></body></html>';
+    const out = injectHtmlRenderBootstrap(own);
+    expect(out.match(/<meta charset/g)).toHaveLength(1);
+    expect(out.match(/name="viewport"/g)).toHaveLength(1);
+    const quoted = injectHtmlRenderBootstrap(
+      '<meta charset="utf-8"><meta data-if="a<b" name="viewport" content="width=600"><p>hi</p>',
+    );
+    expect(quoted.match(/name="viewport"/g)).toHaveLength(1);
+    const bare = injectHtmlRenderBootstrap(
+      "<!doctype html><html><head></head><body></body></html>",
+    );
+    expect(bare).toContain('<meta charset="utf-8">');
+    expect(bare).toContain('<meta name="viewport"');
+  });
+});
