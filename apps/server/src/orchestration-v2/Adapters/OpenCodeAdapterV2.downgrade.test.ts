@@ -51,6 +51,12 @@ describe("OpenCode after a thread is lowered from Full access", () => {
     assert.equal(action(child, "bash"), "ask");
   });
 
+  it("a Task child keeps its own external_directory deny under Full access", () => {
+    const deny = { permission: "external_directory", pattern: "*", action: "deny" } as const;
+    const child = openCodeChildPermissionRules(policy("full-access"), [deny]);
+    assert.equal(action(child, "external_directory"), "deny");
+  });
+
   it.effect("a resumed session gets the current mode's rules before the next prompt", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly method: string; readonly permission?: Rules }> = [];

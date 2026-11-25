@@ -4,7 +4,11 @@ import { countPatchLines, splitPatchByFile } from "@specweave-studio/shared/stru
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { legacyCodexFileChanges, projectCodexFileChanges } from "./codexFileChanges.ts";
+import {
+  codexCommandApprovalPrompt,
+  legacyCodexFileChanges,
+  projectCodexFileChanges,
+} from "./codexFileChanges.ts";
 
 type NativeChange = CodexSchema.V2ItemCompletedNotification__FileUpdateChange;
 const decodeTurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
@@ -288,5 +292,18 @@ describe("Codex file change projection", () => {
     expect(encode(decode(base))).toEqual(base);
     const legacy = { ...base, changes: [{ operation: "update", path: "/workspace/case.mjs" }] };
     expect(encode(decode(legacy))).toEqual(legacy);
+  });
+});
+
+describe("codexCommandApprovalPrompt", () => {
+  it("names nothing to judge for a network request with a blank host", () => {
+    expect(
+      codexCommandApprovalPrompt({ networkApprovalContext: { host: "  ", protocol: "https" } }),
+    ).toBeUndefined();
+    expect(
+      codexCommandApprovalPrompt({
+        networkApprovalContext: { host: "example.invalid", protocol: "https" },
+      }),
+    ).toBe("network https example.invalid");
   });
 });

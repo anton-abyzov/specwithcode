@@ -772,11 +772,12 @@ export function openCodeChildPermissionRules(
   const inheritedRules = parentRules.filter(
     (rule) => rule.permission === "external_directory" || rule.action === "deny",
   );
-  // external_directory comes only from the current parent rules: a child
-  // session copies its parent's, which may be from an earlier, wider mode.
+  // An external_directory allow or ask comes only from the current parent
+  // rules: a child session copies its parent's, which may be from an earlier,
+  // wider mode. A deny the child carries (an agent's own limit) is kept.
   const childSpecificRules = nativeChildRules.filter(
     (childRule) =>
-      childRule.permission !== "external_directory" &&
+      (childRule.permission !== "external_directory" || childRule.action === "deny") &&
       !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)),
   );
   return [...parentRules, ...childSpecificRules];

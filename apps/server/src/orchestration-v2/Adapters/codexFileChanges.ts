@@ -153,7 +153,10 @@ export function codexCommandApprovalPrompt(input: {
   const command =
     input.command?.trim() ||
     (input.argv && input.argv.length > 0 ? codexArgvCommandLine(input.argv) : "");
-  const network = input.networkApprovalContext;
+  const network =
+    input.networkApprovalContext && input.networkApprovalContext.host.trim()
+      ? input.networkApprovalContext
+      : undefined;
   // A network approval names no command: what it reaches is the decision.
   if (!command && !network) return undefined;
   const actions = (input.commandActions ?? [])
