@@ -22,7 +22,10 @@ const scratch = (withSpecweave: boolean) =>
   Effect.acquireRelease(
     Effect.sync(() => {
       const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-mcp-visibility-"));
-      if (withSpecweave) NodeFS.mkdirSync(NodePath.join(folder, ".specweave"));
+      if (withSpecweave) {
+        NodeFS.mkdirSync(NodePath.join(folder, ".specweave"));
+        NodeFS.writeFileSync(NodePath.join(folder, ".specweave", "config.json"), "{}\n");
+      }
       return folder;
     }),
     (folder) => Effect.sync(() => NodeFS.rmSync(folder, { recursive: true, force: true })),
@@ -93,6 +96,20 @@ it.effect("a recorded worktree that is missing hides them", () =>
         projectId: "p",
         worktreePath: NodePath.join(workspace, "gone"),
         deletedAt: null,
+      });
+      expect(specweaveNames(yield* listToolsAsThread)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(fullLayerTestServices)),
+);
+
+it.effect("a deleted thread is not offered them, though its worktree is still there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const workspace = yield* scratch(true);
+      yield* serveFullLayer({
+        projectId: "p",
+        worktreePath: workspace,
+        deletedAt: "2026-11-25T00:00:00.000Z",
       });
       expect(specweaveNames(yield* listToolsAsThread)).toEqual([]);
     }),

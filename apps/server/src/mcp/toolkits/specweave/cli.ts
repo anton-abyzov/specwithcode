@@ -157,6 +157,9 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
         FORCE_COLOR: "0",
         CI: "1",
         SPECWEAVE_AGENT: SPECWEAVE_VIEW_AGENT,
+        // On Windows the npm `.cmd` shim runs through cmd.exe in the worktree; this keeps a
+        // bare `node` from resolving to an executable in that folder.
+        NoDefaultCurrentDirectoryInExePath: "1",
       },
     })
     .pipe(

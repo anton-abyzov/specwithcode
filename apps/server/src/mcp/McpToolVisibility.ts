@@ -5,9 +5,12 @@
  * calling, so per-caller listing happens here: after sign-in, a `tools/list`
  * answer is rewritten to drop the tools this caller cannot use. Today that is
  * the SpecWeave tools, offered only to a thread whose registered worktree
- * holds `.specweave/`. It fails closed: if the caller's workspace cannot be read,
- * the tools are dropped. Their handlers refuse such a caller as well, so a
- * client that calls an unlisted tool gets a refusal, not a run.
+ * holds `.specweave/`. The caller check fails closed: if the caller's workspace
+ * cannot be read, the tools are dropped. The body rewrite does not: an answer
+ * that is not a buffered JSON or one-line-per-event stream (Effect buffers every
+ * non-subscription answer today) is passed on as it is. Either way the handlers
+ * refuse such a caller, so a client that calls an unlisted tool gets a refusal,
+ * not a run.
  */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

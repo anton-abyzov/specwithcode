@@ -46,6 +46,7 @@ import * as DesignSystems from "../design/systems/adapters.ts";
 import { DesignSystemsToolkit } from "./toolkits/designSystems/tools.ts";
 import * as DesignSystemsHandlers from "./toolkits/designSystems/handlers.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -1379,7 +1380,10 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),
-  toolkitRegistration(SpecweaveToolkit, SpecweaveHandlers.layer),
+  // The runner is not a server-wide service, and registerToolkit's type does not ask for it.
+  toolkitRegistration(SpecweaveToolkit, SpecweaveHandlers.layer).pipe(
+    Layer.provide(ProcessRunner.layer),
+  ),
   layerEnvironmentRegistration,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

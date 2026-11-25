@@ -8,6 +8,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServer } from "effect/http";
@@ -53,7 +54,7 @@ const STAND_IN = `#!/usr/bin/env node
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
-const base = { argv, cwd: process.cwd(), noColor: process.env.NO_COLOR, agent: process.env.SPECWEAVE_AGENT };
+const base = { argv, cwd: process.cwd(), noColor: process.env.NO_COLOR, noCwdLookup: process.env.NoDefaultCurrentDirectoryInExePath, agent: process.env.SPECWEAVE_AGENT };
 if (argv.includes("2222")) {
   const child = spawn("sleep", ["60"], { stdio: "ignore" });
   fs.writeFileSync(process.env.STAND_IN_PIDS, JSON.stringify([process.pid, child.pid]));
@@ -81,6 +82,7 @@ const makeFixture = Effect.acquireRelease(
     );
     const workspace = NodePath.join(root, "worktree");
     NodeFS.mkdirSync(NodePath.join(workspace, ".specweave"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(workspace, ".specweave", "config.json"), "{}\n");
     const cli = NodePath.join(root, "specweave");
     NodeFS.writeFileSync(cli, STAND_IN, { mode: 0o755 });
     const pids = NodePath.join(root, "pids.json");
@@ -93,7 +95,13 @@ const makeFixture = Effect.acquireRelease(
     ),
 );
 
-const serve = (fixture: Fixture, shell: { readonly worktreePath?: string | null } = {}) =>
+const serve = (
+  fixture: Fixture,
+  shell: {
+    readonly worktreePath?: string | null;
+    readonly deletedAt?: ReturnType<typeof liveThreadShell>["deletedAt"];
+  } = {},
+) =>
   Effect.gen(function* () {
     const serverLayer = McpHttpServer.toolkitRegistration(
       SpecweaveToolkit,
@@ -121,6 +129,7 @@ const serve = (fixture: Fixture, shell: { readonly worktreePath?: string | null 
               ...liveThreadShell(id),
               worktreePath:
                 shell.worktreePath === undefined ? fixture.workspace : shell.worktreePath,
+              ...(shell.deletedAt === undefined ? {} : { deletedAt: shell.deletedAt }),
             }),
         }),
       ),
@@ -257,6 +266,7 @@ it.live(
           argv: ["--workspace", fixture.workspace, "task", "list", "1483", "--json"],
           cwd: fixture.workspace,
           noColor: "1",
+          noCwdLookup: "1",
           agent: SPECWEAVE_VIEW_AGENT,
         });
       }),
@@ -339,6 +349,23 @@ it.live.each([
       const { result } = yield* call(port, headers, "specweave_task_status", { increment: "1483" });
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result)).toContain(expected);
+    }),
+  ),
+);
+
+it.live("a deleted thread is refused even while its worktree is still on disk", () =>
+  withServer(
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture;
+      const port = yield* serve(fixture, {
+        deletedAt: DateTime.makeUnsafe("2026-11-25T00:00:00.000Z"),
+      });
+      const headers = yield* session(port, THREAD_TOKEN);
+      for (const name of ["specweave_task_status", "specweave_next_task"]) {
+        const { result } = yield* call(port, headers, name, { increment: "1483" });
+        expect(result.isError, name).toBe(true);
+        expect(JSON.stringify(result), name).toContain("calling thread was not found");
+      }
     }),
   ),
 );

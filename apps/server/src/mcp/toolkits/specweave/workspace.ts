@@ -4,6 +4,12 @@
  * worktree, and nothing else. A thread without one (it works in the project's
  * shared folder) is refused, and so is a worktree that is recorded but
  * missing: neither is ever swapped for the project's checkout.
+ *
+ * The link checks guard against mistakes, not against the thread itself: the
+ * CLI reopens these paths after the check and follows links inside
+ * `.specweave/`, so an agent that can already rename files in its own worktree
+ * could point a read elsewhere. It could read that place with its shell anyway,
+ * and the tools only read. Write tools need a stronger boundary.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -37,10 +43,21 @@ const isDirectory = (path: string) =>
     () => false,
   );
 
+const isFile = (path: string) =>
+  NodeFSP.stat(path).then(
+    (stat) => stat.isFile(),
+    () => false,
+  );
+
 /** True when `inner` is `outer` or inside it; both are real paths. */
 export function isInside(outer: string, inner: string): boolean {
   const relative = NodePath.relative(outer, inner);
-  return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${NodePath.sep}`) &&
+      !NodePath.isAbsolute(relative))
+  );
 }
 
 export async function resolveCallerWorkspace(
@@ -92,10 +109,19 @@ export async function resolveCallerWorkspace(
       message: `${specweaveRoot} has no .specweave folder, so it is not a SpecWeave project. Name a folder inside the worktree that has one, or set SpecWeave up from the project's Board.`,
     };
   }
+  // `specweave --workspace` reads `.specweave/config.json` before any command and fails without it.
+  const config = await realPath(NodePath.join(marker, "config.json"));
+  if (config === null || !isInside(workspace, config) || !(await isFile(config))) {
+    return {
+      ok: false,
+      reason: "no-specweave",
+      message: `${specweaveRoot}/.specweave has no config.json inside this thread's worktree, so SpecWeave cannot read it. Run \`specweave init\` there, or set SpecWeave up from the project's Board.`,
+    };
+  }
   return { ok: true, workspace, specweaveRoot };
 }
 
-/** Whether a thread is offered the SpecWeave tools: its worktree holds `.specweave/` itself. */
+/** Whether a thread is offered the SpecWeave tools: its worktree holds `.specweave/config.json` itself. */
 export async function workspaceHasSpecweave(input: CallerWorkspaceInput): Promise<boolean> {
   const resolved = await resolveCallerWorkspace({ ...input, folder: undefined });
   return resolved.ok;
