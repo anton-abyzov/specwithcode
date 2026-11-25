@@ -22,7 +22,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, androidUserHashInput, fitFcmData, hexDigest } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
@@ -298,7 +298,9 @@ export const make = Effect.gen(function* () {
       const data: Record<string, string> = {
         studio_kind: "agent_activity",
         device_id: job.deviceId,
-        user_id: job.userId,
+        user_hash: hexDigest(
+          yield* crypto.digest("SHA-256", androidUserHashInput(job.userId, job.deviceId)),
+        ),
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
         ...alert,
@@ -307,7 +309,7 @@ export const make = Effect.gen(function* () {
         // Group identities can contain five sets of IDs. Hash the full,
         // stable identity rather than spending the payload budget on it.
         const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(alert.alert_id));
-        data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        data.alert_id = hexDigest(digest);
       }
       const result = yield* client.send({
         token: job.token,

@@ -12,6 +12,7 @@ import * as RelayConfiguration from "../src/Config.ts";
 import * as WebCrypto from "../src/WebCrypto.ts";
 import * as FcmAssertionSigner from "../src/agentActivity/FcmAssertionSigner.ts";
 import * as FcmClient from "../src/agentActivity/FcmClient.ts";
+import { androidUserHashInput, hexDigest } from "../src/agentActivity/fcmPayloads.ts";
 
 const Device = Schema.Struct({
   token: Schema.NonEmptyString,
@@ -57,6 +58,12 @@ class SmokeUnregisteredDeviceError extends Schema.TaggedError<SmokeUnregisteredD
   }
 }
 
+/** The per-device hash Android pushes carry instead of the account id. */
+const userHash = (userId: string, deviceId: string) =>
+  Effect.promise(() =>
+    globalThis.crypto.subtle.digest("SHA-256", androidUserHashInput(userId, deviceId)),
+  ).pipe(Effect.map((digest) => hexDigest(new Uint8Array(digest))));
+
 const main = Effect.gen(function* () {
   const [credentialPath, devicePath, phaseArg] = process.argv.slice(2);
   if (!credentialPath || !devicePath || !phaseArg) return yield* new SmokeUsageError({});
@@ -94,6 +101,7 @@ const main = Effect.gen(function* () {
     managedEndpointBaseDomain: undefined,
     managedEndpointNamespace: undefined,
   };
+  const deviceUserHash = yield* userHash(device.userId, device.deviceId);
   const result = yield* FcmClient.FcmClient.pipe(
     Effect.flatMap((client) =>
       client.send({
@@ -103,7 +111,7 @@ const main = Effect.gen(function* () {
         data: {
           studio_kind: "agent_activity",
           device_id: device.deviceId,
-          user_id: device.userId,
+          user_hash: deviceUserHash,
           updated_at: String(now),
           active: String(active),
           activity_title: active
