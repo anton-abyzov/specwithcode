@@ -102,13 +102,20 @@ object PairingInput {
 
     /**
      * True when a link from another app must not be used: it would send the sign-in over
-     * plain http to a host outside this device, the local network and the tailnet, or no
-     * machine address can be read from it at all.
+     * plain http to a host outside this device, the local network and the tailnet, or to a
+     * name without a dot, or no machine address can be read from it at all.
+     *
+     * A name without a dot is finished by the phone's DNS search domain, so the network the
+     * phone is on, not the link, picks the machine that gets the code.
      */
     fun isPublicCleartext(link: String): Boolean {
         val host = host(link) ?: return true
         if (!isCleartext(link)) return false
-        return RouteKind.classify(host) == RouteKind.PUBLIC
+        return when (RouteKind.classify(host)) {
+            RouteKind.PUBLIC -> true
+            RouteKind.LAN -> host.trimEnd('.').let { '.' !in it && ':' !in it }
+            else -> false
+        }
     }
 }
 
