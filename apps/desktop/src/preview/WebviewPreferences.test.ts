@@ -10,9 +10,7 @@ import { PREVIEW_WEBVIEW_PREFERENCES } from "./WebviewPreferences.ts";
  *   `" sandbox=true"` becomes an unknown key and Electron falls back to
  *   defaults — re-opening the Node-leak window we closed),
  * - non-`true`/`false` values (`"yes"`, `"no"`, etc.) are kept as truthy
- *   strings and assigned to a boolean preference, which silently flips
- *   `contextIsolation=no` to ENABLED (then react-grab can't see the React
- *   DevTools hook and componentName resolution always returns null).
+ *   strings and assigned to a boolean preference (`"no"` is truthy).
  *
  * The actual Electron parser does roughly:
  *
@@ -58,8 +56,8 @@ describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
     }
   });
 
-  it("disables context isolation (so react-grab can see the page's React DevTools hook)", () => {
-    expect(parsed["contextIsolation"]).toBe("false");
+  it("isolates the picker preload from the page (so page scripts cannot reach its IPC)", () => {
+    expect(parsed["contextIsolation"]).toBe("true");
   });
 
   it("keeps the renderer sandbox enabled (so the page cannot reach Node APIs)", () => {

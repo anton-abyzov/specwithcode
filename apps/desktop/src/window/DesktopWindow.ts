@@ -878,7 +878,7 @@ export const make = Effect.gen(function* () {
       webPreferences.sandbox = true;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
+      webPreferences.contextIsolation = true;
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();

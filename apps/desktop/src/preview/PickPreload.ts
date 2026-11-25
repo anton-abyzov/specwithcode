@@ -1,6 +1,5 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
-import { getElementContext } from "react-grab/primitives";
 import type {
   DesktopPreviewAnnotationTheme,
   PickedElementPayload,
@@ -16,6 +15,7 @@ import type {
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { readPageElementContext } from "./PageWorldBridge.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
@@ -366,7 +366,7 @@ function toStackFrame(frame: {
 
 /**
  * Resolves to `null` instead of hanging when `promise` outlives `millis`.
- * `getElementContext` walks the inspected page's React internals, and some
+ * The React context lookup walks the inspected page's internals, and some
  * pages leave it pending forever. Without a bound, the whole submit chain
  * stalls and the overlay sits on "Capturing…".
  */
@@ -398,7 +398,7 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
   };
   try {
     const context = await withCaptureTimeout(
-      Promise.resolve(getElementContext(element)),
+      readPageElementContext(element),
       ELEMENT_CONTEXT_TIMEOUT_MS,
     );
     if (context) {

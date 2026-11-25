@@ -439,7 +439,7 @@ type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect
  * Protocols a preview page may open in a real popup window.
  *
  * `about:blank` stays out: Chromium skips browser-side navigation for it, so the
- * child copies the guest's `contextIsolation: false` preferences and Electron
+ * child copies the guest's preferences, picker preload included, and Electron
  * gives no way to override them. Those popups are denied.
  *
  * Deliberately not `ElectronShell.parseSafeExternalUrl`: that also admits
@@ -477,9 +477,9 @@ const windowOpenProtocol = (rawUrl: string): string | null => {
  *
  * A popup is not a webview attach, so the `will-attach-webview` hardening in
  * `DesktopWindow` never sees it, and an unoverridden child would inherit the
- * guest's relaxed posture: the picker preload needs `contextIsolation: false`
- * to share `globalThis` with the previewed page, and no OAuth provider should
- * get that. The window keeps the opener and the guest session either way.
+ * guest's preferences: the picker preload, with its IPC, is built for the
+ * preview page, and no OAuth provider should get it.
+ * The window keeps the opener and the guest session either way.
  */
 const POPUP_WINDOW_OPTIONS = {
   webPreferences: {
