@@ -236,8 +236,10 @@ describe("ClaudeMcpElicitation", () => {
     await h.until(() => h.card() !== undefined);
     handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } });
     controller.abort();
+    h.endGrace();
     expect(await result).toEqual({ action: "cancel" });
     expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
   });
 
   it("declines a form that asks for a password or token, with a note, and shows no card", async () => {
