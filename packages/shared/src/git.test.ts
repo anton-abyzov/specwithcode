@@ -11,9 +11,51 @@ import {
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
   WORKTREE_BRANCH_PREFIX,
+  withoutRemoteUrlLogin,
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
+  it("keys a one-segment URL remote by its repository, never its login", () => {
+    expect(normalizeGitRemoteUrl("https://deploy:s3cret@git.example.com/Repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://u:p@host.example/repo?x=1#frag")).toBe(
+      "https://host.example/repo",
+    );
+    expect(normalizeGitRemoteUrl("http://token@host.example/repo")).toBe(
+      "http://host.example/repo",
+    );
+    // Over SSH the user is the login name, part of the address; a password is not.
+    expect(normalizeGitRemoteUrl("ssh://git:pw@host.example/repo")).toBe(
+      "ssh://git@host.example/repo",
+    );
+  });
+
+  it("drops the login from Git's transport::address form", () => {
+    expect(normalizeGitRemoteUrl("https::https://user:placeholder@host.example/org/repo.git")).toBe(
+      "https::https://host.example/org/repo",
+    );
+    expect(withoutRemoteUrlLogin("https::https://user:placeholder@host.example/org/repo.git")).toBe(
+      "https::https://host.example/org/repo.git",
+    );
+  });
+
+  it("keeps every character of a file:// path", () => {
+    expect(normalizeGitRemoteUrl("file:///srv/git/repo#one.git")).toBe("file:///srv/git/repo#one");
+    expect(normalizeGitRemoteUrl("file:///srv/git/repo#two.git")).toBe("file:///srv/git/repo#two");
+  });
+
+  it("leaves credential-free remotes keyed exactly as before", () => {
+    expect(normalizeGitRemoteUrl("https://host.example/repo")).toBe("https://host.example/repo");
+    expect(normalizeGitRemoteUrl("ssh://git@host.example/repo")).toBe(
+      "ssh://git@host.example/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://user:tok@github.com/Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("/srv/git/repo.git")).toBe("/srv/git/repo");
+  });
+
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
     expect(normalizeGitRemoteUrl("git@github.com:StudioTools/Studio.git")).toBe(
       "github.com/studiotools/studio",
@@ -57,9 +99,9 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/StudioTools/Platform/Studio")).toBe(
       "dev.azure.com/studiotools/platform/_git/studio",
     );
-    expect(normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/StudioTools/Platform/Studio")).toBe(
-      "dev.azure.com/studiotools/platform/_git/studio",
-    );
+    expect(
+      normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/StudioTools/Platform/Studio"),
+    ).toBe("dev.azure.com/studiotools/platform/_git/studio");
     expect(
       normalizeGitRemoteUrl("https://StudioTools@dev.azure.com/StudioTools/Platform/_git/Studio"),
     ).toBe("dev.azure.com/studiotools/platform/_git/studio");
@@ -99,7 +141,9 @@ describe("parseOriginUrlFromGitConfig", () => {
       '[branch "main"]',
       "\tremote = origin",
     ].join("\n");
-    expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:anton-abyzov/specwithcode.git");
+    expect(parseOriginUrlFromGitConfig(config)).toBe(
+      "git@github.com:anton-abyzov/specwithcode.git",
+    );
   });
 
   it("strips inline comments and quotes from the url value", () => {
@@ -155,13 +199,19 @@ describe("parseOriginUrlFromGitConfig", () => {
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
   it("extracts the owner and repository from common GitHub remote shapes", () => {
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:StudioTools/SpecWeaveStudio.git"),
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "git@github.com:StudioTools/SpecWeaveStudio.git",
+      ),
     ).toBe("StudioTools/SpecWeaveStudio");
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/StudioTools/SpecWeaveStudio.git"),
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "https://github.com/StudioTools/SpecWeaveStudio.git",
+      ),
     ).toBe("StudioTools/SpecWeaveStudio");
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://github.com/StudioTools/SpecWeaveStudio.git"),
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "ssh://github.com/StudioTools/SpecWeaveStudio.git",
+      ),
     ).toBe("StudioTools/SpecWeaveStudio");
   });
 });

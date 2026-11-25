@@ -231,6 +231,34 @@ describe("webhook route", () => {
     }
   });
 
+  it("keeps the caller's cookies out of what the task reads", async () => {
+    let received: WebhookTriggerRequest | undefined;
+    const { handler, dispose } = handlerFor((request) => {
+      received = request;
+      return Effect.succeed({
+        _tag: "accepted",
+        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:2"),
+        outcome: "accepted",
+      });
+    });
+    try {
+      const response = await handler(
+        post("/api/hooks/scheduled-task%3Ahook/tok", "{}", {
+          Cookie: "session=browser-session-value",
+          Authorization: "Bearer sender-token",
+          "X-Hub-Signature-256": "sha256=abc",
+        }),
+      );
+      expect(response.status).toBe(202);
+      expect(received?.headers).not.toHaveProperty("cookie");
+      expect(JSON.stringify(received?.headers)).not.toContain("browser-session-value");
+      expect(received?.headers["authorization"]).toBe("Bearer sender-token");
+      expect(received?.headers["x-hub-signature-256"]).toBe("sha256=abc");
+    } finally {
+      await dispose();
+    }
+  });
+
   // Live clock: the server checks proofs against real time.
   it.live("trusts the relay's delivery id and receive time only with its signed proof", () =>
     Effect.gen(function* () {

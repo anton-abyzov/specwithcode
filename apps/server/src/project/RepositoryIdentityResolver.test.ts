@@ -255,6 +255,32 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect("keeps a remote URL's login out of the repository identity", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-repository-identity-login-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, [
+        "remote",
+        "add",
+        "origin",
+        "https://someone:ghp_secretvalue@github.com/StudioTools/studio.git",
+      ]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+
+      expect(identity?.canonicalKey).toBe("github.com/studiotools/studio");
+      expect(identity?.locator.remoteUrl).toBe("https://github.com/StudioTools/studio.git");
+      const serialized = JSON.stringify(identity);
+      expect(serialized).not.toContain("ghp_secretvalue");
+      expect(serialized).not.toContain("someone");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect.each(["origin", "upstream"] as const)(
     "resolves a real local partial-clone with an annotated %s remote",
     (remoteName) =>
