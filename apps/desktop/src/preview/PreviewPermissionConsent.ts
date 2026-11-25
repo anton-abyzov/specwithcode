@@ -94,9 +94,18 @@ export function makePreviewPermissionConsent(ask: AskPermission) {
     void answer.then(callback);
   };
 
-  /** Synchronous, so it answers only from a decision already made. */
-  const check = (permission: ConsentPreviewPermission, requestingOrigin: string): boolean => {
-    const origin = permissionOrigin(requestingOrigin);
+  /**
+   * Synchronous, so it answers only from a decision already made. A frame's
+   * own URL decides, as in `request`: an `about:blank`, `about:srcdoc` or
+   * `data:` child inherits its parent's origin but is refused. Checks made on
+   * behalf of no document (a service worker) carry no URL and use the origin.
+   */
+  const check = (
+    permission: ConsentPreviewPermission,
+    requestingOrigin: string,
+    requestingUrl?: string,
+  ): boolean => {
+    const origin = permissionOrigin(requestingUrl ?? requestingOrigin);
     return origin !== null && decisions.get(permission)?.get(origin) === true;
   };
 

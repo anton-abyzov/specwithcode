@@ -252,10 +252,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-            isConsentPreviewPermission(permission)
-              ? consent.check(permission, requestingOrigin)
-              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          browserSession.setPermissionCheckHandler(
+            (_webContents, permission, requestingOrigin, details) =>
+              isConsentPreviewPermission(permission)
+                ? consent.check(permission, requestingOrigin, details?.requestingUrl)
+                : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);

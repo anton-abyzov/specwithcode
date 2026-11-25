@@ -163,8 +163,11 @@ describe("BrowserSession", () => {
           requestingUrl === undefined ? {} : { requestingUrl },
         );
       });
-    const check = (permission: string, requestingOrigin = ""): boolean =>
-      checkHandler(null, permission, requestingOrigin) as boolean;
+    const check = (
+      permission: string,
+      requestingOrigin = "",
+      details?: { readonly requestingUrl?: string; readonly isMainFrame?: boolean },
+    ): boolean => checkHandler(null, permission, requestingOrigin, details) as boolean;
     return { request, check };
   });
 
@@ -223,6 +226,27 @@ describe("BrowserSession", () => {
       }
       assert.isFalse(check("geolocation", "null"));
       assert.strictEqual(showMessageBox.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses the check for a child frame without a readable origin of its own", () =>
+    Effect.gen(function* () {
+      const { request, check } = yield* permissionHandlers;
+      showMessageBox.mockResolvedValueOnce({ response: 0 });
+      assert.isTrue(yield* Effect.promise(() => request("geolocation", "https://a.example/")));
+      // The allowed frame itself, and a check made with no frame (a service worker), still read granted.
+      assert.isTrue(
+        check("geolocation", "https://a.example", { requestingUrl: "https://a.example/map" }),
+      );
+      assert.isTrue(check("geolocation", "https://a.example"));
+      // Its about:blank, about:srcdoc and data: children inherit the origin but are refused,
+      // as the request handler refuses them.
+      for (const requestingUrl of ["about:blank", "about:srcdoc", "data:text/html,x"]) {
+        assert.isFalse(
+          check("geolocation", "https://a.example", { requestingUrl, isMainFrame: false }),
+          requestingUrl,
+        );
+      }
     }).pipe(Effect.provide(layer)),
   );
 
