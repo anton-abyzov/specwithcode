@@ -2655,6 +2655,22 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
   });
 
+  it("lets a Full access Task child start without approval prompts", () => {
+    // A Task child starts with only the parent's external_directory and deny
+    // rules, so Full access must grant external_directory by name.
+    const childStartRules = (rules: ReturnType<typeof openCodePermissionRules>) =>
+      rules.filter((rule) => rule.permission === "external_directory" || rule.action === "deny");
+    const fullAccess = childStartRules(openCodePermissionRules(runtimePolicy("full-access")));
+    assert.equal(permissionAction(fullAccess, "external_directory"), "allow");
+    assert.notExists(fullAccess.find((rule) => rule.action === "deny"));
+
+    // Supervised modes keep asking before a child leaves the workspace.
+    const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));
+    assert.equal(permissionAction(approvalRequired, "external_directory"), "ask");
+    const autoAcceptEdits = openCodePermissionRules(runtimePolicy("auto-accept-edits"));
+    assert.equal(permissionAction(autoAcceptEdits, "external_directory"), "ask");
+  });
+
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {
     const readOnly = openCodePermissionRules(
       runtimePolicy("full-access", {
