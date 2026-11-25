@@ -652,8 +652,8 @@ function bootstrapMarkup(markup: string, appearance?: ThemeAppearance): string {
       ? `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`
       : `${rootRule(appearance === "dark" ? dark : light)}${BASE_CSS}`;
   return [
-    /<meta\s[^>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
-    /<meta\s[^>]*name\s*=\s*["']?viewport/i.test(markup)
+    /<meta\s[^<>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
+    /<meta\s(?:[^"'<>]|"[^"]*"|'[^']*')*name\s*=\s*["']?viewport/i.test(markup)
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="studio-theme">${defaultCss}</style>`,
@@ -661,6 +661,9 @@ function bootstrapMarkup(markup: string, appearance?: ThemeAppearance): string {
   ].join("");
 }
 
+// Tag scans stop at the next "<" outside a quoted value, so a page full of
+// unclosed tags costs linear time instead of rescanning to the end per tag.
+//
 // Comments, raw text, and template contents are blanked to the same length,
 // so offsets still line up and inert tags cannot receive the bootstrap.
 const blankNonMarkup = (html: string) => {
@@ -672,7 +675,7 @@ const blankNonMarkup = (html: string) => {
   let depth = 0;
   let start = 0;
   let at = 0;
-  for (const match of scan.matchAll(/<(\/?)template(?:\s[^>]*)?\/?>/gi)) {
+  for (const match of scan.matchAll(/<(\/?)template(?:\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?\/?>/gi)) {
     if (!match[1]) {
       if (depth++ === 0) start = match.index;
     } else if (depth > 0 && --depth === 0) {
@@ -701,12 +704,12 @@ export function injectHtmlRenderBootstrap(
 ): string {
   const scan = blankNonMarkup(html);
   const markup = before + bootstrapMarkup(scan, appearance);
-  const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
+  const headOpen = /<head(?:\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
     return html.slice(0, at) + markup + html.slice(at);
   }
-  const htmlOpen = /<html(?:\s[^>]*)?>/i.exec(scan);
+  const htmlOpen = /<html(?:\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (htmlOpen) {
     const at = htmlOpen.index + htmlOpen[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
