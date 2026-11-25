@@ -214,8 +214,9 @@ it("keeps the Windows task alive for the signed-in user without elevation or a w
   expect(task).toContain("<Interval>PT1M</Interval>");
   expect(task).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
   expect(task).toContain("<RestartOnFailure>");
-  expect(task).toContain("<Command>conhost.exe</Command>");
-  expect(task).toContain("<Arguments>--headless cmd.exe /d /c ");
+  // By absolute path: the task starts in the user's home, where a planted conhost.exe could sit.
+  expect(task).toContain("<Command>C:\\Windows\\System32\\conhost.exe</Command>");
+  expect(task).toContain('<Arguments>--headless "C:\\Windows\\System32\\cmd.exe" /d /c ');
   expect(task).not.toContain("STUDIO_HOME");
 });
 
@@ -992,7 +993,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       ).toBe(true);
       const task = yield* fs.readFileString(plan.unitPath);
       expect(task).toContain("<UserId>WORKSTATION\\dev</UserId>");
-      expect(task).toContain(`--headless cmd.exe /d /c "${scriptPath}"`);
+      expect(task).toContain(`System32\\cmd.exe" /d /c "${scriptPath}"`);
       const script = yield* fs.readFileString(scriptPath);
       expect(script).toContain(
         `"${runtime.entryPath}" "__service-launcher" >>"${plan.logPath}" 2>&1`,
@@ -1040,7 +1041,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.exists(scriptPath)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands[0]).toBe(`schtasks.exe /Delete /TN ${taskName} /F`);
-      expect(commands[1]).toContain("taskkill.exe /F /T /PID");
+      expect(commands[1]).toContain("System32\\taskkill.exe' /F /T /PID");
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       expect(timeouts.get(commands[1]!)).toEqual(Duration.seconds(120));
     }),
@@ -1060,8 +1061,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const versionsDir = path.join(plan.baseDir, "runtime", "versions");
       expect(commands[1]).toContain(`$root = '${versionsDir}\\'`);
       expect(commands[1]).toContain("-like '*__service-launcher*'");
-      expect(commands[1]).toContain("taskkill.exe /F /T /PID $_.ProcessId");
-      expect(commands[1]).toContain(`schtasks.exe /End /TN '${taskName}'`);
+      expect(commands[1]).toContain("System32\\taskkill.exe' /F /T /PID $_.ProcessId");
+      expect(commands[1]).toContain(`System32\\schtasks.exe' /End /TN '${taskName}'`);
       expect(commands[2]).toContain("Register-ScheduledTask");
       expect(commands[3]).toBe(`schtasks.exe /Run /TN ${taskName}`);
     }),

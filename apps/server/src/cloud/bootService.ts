@@ -345,8 +345,8 @@ export function renderBootServiceTask(
     `  </Settings>`,
     `  <Actions Context="Author">`,
     `    <Exec>`,
-    `      <Command>conhost.exe</Command>`,
-    `      <Arguments>--headless cmd.exe /d /c "${escapeXmlText(options.scriptPath)}"</Arguments>`,
+    `      <Command>${escapeXmlText(windowsSystem32Path("conhost.exe"))}</Command>`,
+    `      <Arguments>--headless "${escapeXmlText(windowsSystem32Path("cmd.exe"))}" /d /c "${escapeXmlText(options.scriptPath)}"</Arguments>`,
     `      <WorkingDirectory>${escapeXmlText(options.homeDir)}</WorkingDirectory>`,
     `    </Exec>`,
     `  </Actions>`,
@@ -633,8 +633,8 @@ export function renderBootServiceStopScript(input: {
     `$root = ${quotePowerShell(root)}`,
     "Get-CimInstance Win32_Process -Filter \"Name = 'specweave-studio.exe'\" |",
     "  Where-Object { $_.CommandLine -like '*__service-launcher*' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) } |",
-    "  ForEach-Object { & taskkill.exe /F /T /PID $_.ProcessId | Out-Null }",
-    `& schtasks.exe /End /TN ${quotePowerShell(input.taskName)} 2>&1 | Out-Null`,
+    `  ForEach-Object { & ${quotePowerShell(windowsSystem32Path("taskkill.exe"))} /F /T /PID $_.ProcessId | Out-Null }`,
+    `& ${quotePowerShell(windowsSystem32Path("schtasks.exe"))} /End /TN ${quotePowerShell(input.taskName)} 2>&1 | Out-Null`,
     "exit 0",
   ].join("\n");
 }
