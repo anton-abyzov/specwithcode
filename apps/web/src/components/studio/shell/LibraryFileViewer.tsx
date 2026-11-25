@@ -39,6 +39,11 @@ function extensionBadge(name: string): string {
 
 /** What the viewer draws from a signed URL rather than from the file's text. */
 const ASSET_KINDS = new Set(["image", "html", "pdf", "video"]);
+/**
+ * Videos a browser plays; any other (`.avi`, `.mkv`) keeps the preview card
+ * with its open-in-app actions.
+ */
+const PLAYABLE_VIDEO = /\.(mp4|m4v|webm|ogv|mov)$/iu;
 
 /** The part of a path from `.specweave/` on, which every copy of a project shares. */
 function planningPath(path: string): string {
@@ -194,6 +199,8 @@ export function LibraryFileViewer(props: {
           target instanceof HTMLInputElement ||
           target instanceof HTMLTextAreaElement ||
           target instanceof HTMLSelectElement ||
+          // A video's own controls seek and change volume with the arrows.
+          target instanceof HTMLMediaElement ||
           (target instanceof HTMLElement &&
             (target.isContentEditable || target.closest("[data-keybinding-capture]") !== null))
         ) {
@@ -236,7 +243,10 @@ function LibraryFileBody(props: {
   const whiteboard = isWhiteboardPath(props.path);
   const host = hostFilePreview(props.path);
   const kind = filePreviewKind({ name: props.path });
-  const asset = ASSET_KINDS.has(kind) && !(kind === "html" && props.source === true);
+  const asset =
+    ASSET_KINDS.has(kind) &&
+    !(kind === "html" && props.source === true) &&
+    (kind !== "video" || PLAYABLE_VIDEO.test(props.path));
   // HTML is read as text too: its source view, and a missing file said plainly.
   const readable =
     !sheet &&
@@ -267,6 +277,7 @@ function LibraryFileBody(props: {
     if (readable && file.error && file.readError?.failure !== "binary_file") return unreadable();
     return (
       <LibraryAssetBody
+        key={absolute}
         environmentId={props.environmentId}
         workspaceRoot={props.workspaceRoot}
         path={absolute}
@@ -372,7 +383,12 @@ function LibraryAssetBody(props: {
     [props.kind, props.path, props.workspaceRoot],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
-  const [broken, setBroken] = useState(false);
+  // An error belongs to the URL that failed: a re-minted URL tries again.
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null);
+  const broken = asset._tag === "Success" && brokenUrl === asset.url;
+  const setBroken = () => {
+    if (asset._tag === "Success") setBrokenUrl(asset.url);
+  };
   if (asset._tag === "Failure" || broken) {
     return (
       <p className="m-auto max-w-xl p-6 text-center text-muted-foreground text-sm" role="alert">
@@ -390,7 +406,7 @@ function LibraryAssetBody(props: {
     );
   }
   if (props.kind === "image") {
-    return <ViewerImageStage src={asset.url} name={props.name} onError={() => setBroken(true)} />;
+    return <ViewerImageStage src={asset.url} name={props.name} onError={() => setBroken()} />;
   }
   if (props.kind === "video") {
     return (
@@ -401,6 +417,7 @@ function LibraryAssetBody(props: {
         preload="metadata"
         className="h-full max-h-full w-full"
         data-library-video={props.name}
+        onError={() => setBroken()}
       />
     );
   }
