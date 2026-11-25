@@ -88,6 +88,13 @@ const COLD_IDENTITY_DELAY = Duration.millis(500);
 const MAX_REMOTE_PROJECT_PAGES = 5;
 const LAUNCH_TIMEOUT_MS = 60_000;
 
+/**
+ * Another machine's "No project" folder, as its project list shows it: the
+ * title every such folder is made with, in a folder named for scratch work.
+ */
+export const isScratchEntry = (project: Pick<Project, "title" | "workspaceRoot">): boolean =>
+  project.title === "No project" && /scratch/i.test(project.workspaceRoot);
+
 /** The saved entry for `machine` in the project's worker machine list, if any. */
 export function savedWorkerMachine(
   project: Project,
@@ -701,13 +708,16 @@ const make = Effect.gen(function* () {
             if (said._tag === "Success" && said.success?.reviewLock === true)
               row.handoffReviewLock = true;
             if (probed.success.platform !== undefined) row.platform = probed.success.platform;
-            const scope = probed.success.projectScope;
-            if (scope !== undefined) row.projectScope = scope;
+            let scope = probed.success.projectScope;
             if (project !== undefined) {
               let listed = probed.success;
               let found = matchFor(machine, project, listed.projects, undefined);
+              // That machine's own "No project" folder is not a repository and never
+              // will be, so it is no sign of repositories still being read.
               const unread = () =>
-                listed.projects.some((candidate) => !candidate.repositoryIdentity);
+                listed.projects.some(
+                  (candidate) => !candidate.repositoryIdentity && !isScratchEntry(candidate),
+                );
               // A machine that just started may not have read its repositories yet: ask
               // again, as a launch does, before a fresh read says nothing matches.
               for (
@@ -721,6 +731,8 @@ const make = Effect.gen(function* () {
                 listed = probed.success;
                 found = matchFor(machine, project, listed.projects, undefined);
               }
+              // The scope and the match come from the same, last read.
+              scope = listed.projectScope;
               const match = machineRowProjectMatch(found);
               // A list cut short, or one with repositories still unread, cannot show
               // that no checkout matches.
@@ -731,6 +743,7 @@ const make = Effect.gen(function* () {
               if (scope !== undefined && scope !== "all" && match.match === "none")
                 row.status = "project_not_in_grant";
             }
+            if (scope !== undefined) row.projectScope = scope;
             return row;
           }),
         { concurrency: 4 },

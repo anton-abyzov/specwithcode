@@ -496,6 +496,66 @@ describe("RemoteWorkers", () => {
     });
   });
 
+  it.live("a fresh read after a first helper still says no copy, from its last answer", () => {
+    const fresh = RemoteWorkers.RemoteWorkers.pipe(
+      Effect.flatMap((workers) =>
+        workers.listMachines({
+          projectId: ProjectId.make("local-project"),
+          probe: true,
+          only: "m1",
+          fresh: true,
+        }),
+      ),
+      Effect.map((listed) => listed.machines[0]),
+    );
+    // The first helper made M1's "No project" folder, which has no repository.
+    const scratch = {
+      ...remoteProject,
+      id: "remote-scratch",
+      title: "No project",
+      workspaceRoot: "C:\\Users\\b\\.specwithcode\\scratch",
+      repositoryIdentity: null,
+    };
+    let lists = 0;
+    const second = setup({
+      orchestrator_capabilities: () => ({ result: { ...capabilities, grantProjects: "all" } }),
+      studio_project_list: () => {
+        lists++;
+        return { result: { projects: [scratch], nextCursor: null } };
+      },
+    });
+    let reads = 0;
+    // The first read says every project and has an unread checkout; the retry says
+    // the grant now shows only listed projects, and none of them.
+    const narrowed = setup({
+      orchestrator_capabilities: () => ({
+        result: { ...capabilities, grantProjects: ++reads < 2 ? "all" : "listed" },
+      }),
+      studio_project_list: () => ({
+        result: {
+          projects: reads < 2 ? [{ ...remoteProject, repositoryIdentity: null }] : [],
+          nextCursor: null,
+        },
+      }),
+    });
+    const read = (world: ReturnType<typeof setup>) =>
+      Effect.gen(function* () {
+        yield* allow();
+        return yield* fresh;
+      }).pipe(Effect.provide(world.layer));
+    return Effect.gen(function* () {
+      expect(yield* read(second)).toMatchObject({
+        projectScope: "all",
+        project: { match: "none" },
+      });
+      expect(lists).toBe(1);
+      expect(yield* read(narrowed)).toMatchObject({
+        projectScope: "listed",
+        status: "project_not_in_grant",
+      });
+    });
+  });
+
   it.live("lists the operating system and simulator support each machine reports", () => {
     const list = Effect.gen(function* () {
       yield* allow();
