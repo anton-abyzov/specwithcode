@@ -3,6 +3,7 @@ import {
   HTML_RENDER_COPY_PATH_METHOD,
   HTML_RENDER_OPEN_FILE_METHOD,
   htmlRenderError,
+  HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -212,6 +213,8 @@ export function HtmlRenderDocument(props: {
   readonly onEscape?: (() => void) | undefined;
   /** Lets the page's evidence links open and copy files; without it they are refused. */
   readonly fileTarget?: HtmlRenderFileTarget | undefined;
+  /** For a frame inline in the chat: the page's `scrollIntoView` moves only the page, never the thread. */
+  readonly containScroll?: boolean | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -219,7 +222,10 @@ export function HtmlRenderDocument(props: {
   useLayoutEffect(() => {
     fileTargetRef.current = props.fileTarget;
   });
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(
+    () =>
+      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
+  );
   const [loaded, setLoaded] = useState(false);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");

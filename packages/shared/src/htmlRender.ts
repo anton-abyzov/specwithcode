@@ -551,6 +551,40 @@ export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
   return `#${THEME_FRAGMENT_KEY}=${encodeURIComponent(JSON.stringify(theme))}`;
 }
 
+const CONTAIN_SCROLL_FRAGMENT_KEY = "studio-contain-scroll";
+
+/**
+ * Goes after {@link htmlRenderThemeFragment} for a frame that sits inline in
+ * the chat: the page's `scrollIntoView` then moves only what is inside the
+ * page, never the thread around it.
+ */
+export const HTML_RENDER_CONTAIN_SCROLL_FRAGMENT = `&${CONTAIN_SCROLL_FRAGMENT_KEY}`;
+
+// A browser's own scrollIntoView scrolls every scroller up to the top window,
+// so a page in an inline frame can move the thread under the reader. This one
+// walks the scrollers inside the page, innermost first, then the page's own
+// viewport, and stops there. Each step aligns the element's scroll-margin box
+// in the scroller's scroll-padding box as `block` and `inline` ask, clamps to
+// what the scroller can move, and carries the move outward, so smooth scrolls
+// line up without measuring again. Past a fixed element the viewport does not
+// move it, so the walk ends.
+const CONTAINED_SCROLL_INTO_VIEW = `(function(){function px(v){return parseFloat(v)||0;}
+function scrolls(v){return v==="auto"||v==="scroll"||v==="hidden"||v==="overlay";}
+function shift(a,z,lo,hi,how){var big=z-a>hi-lo;if(how==="start")return a-lo;if(how==="end")return z-hi;if(how==="center")return (a+z-lo-hi)/2;if(a<lo&&z>hi||a>=lo&&z<=hi)return 0;return (a<lo)!==big?a-lo:z-hi;}
+function clamp(at,move,max){var to=Math.max(0,Math.min(max,at+move));return to-at;}
+function up(n){return n.parentElement||(n.parentNode&&n.parentNode.host)||null;}
+Element.prototype.scrollIntoView=function(arg){var o=arg!==null&&typeof arg==="object"?arg:{block:arg===false?"end":"start"},block=o.block||"start",inline=o.inline||"nearest",behavior=o.behavior||"auto";
+var st=getComputedStyle(this),r=this.getBoundingClientRect(),t=r.top-px(st.scrollMarginTop),b=r.bottom+px(st.scrollMarginBottom),l=r.left-px(st.scrollMarginLeft),g=r.right+px(st.scrollMarginRight),root=document.scrollingElement||document.documentElement,fixed=st.position==="fixed";
+for(var n=up(this);n&&!fixed&&n!==root&&n!==document.body&&n!==document.documentElement;n=up(n)){var s=getComputedStyle(n);if(s.position==="fixed")fixed=true;
+var sy=scrolls(s.overflowY)&&n.scrollHeight>n.clientHeight,sx=scrolls(s.overflowX)&&n.scrollWidth>n.clientWidth;if(!sy&&!sx)continue;
+var box=n.getBoundingClientRect(),top=box.top+n.clientTop,left=box.left+n.clientLeft,dy=0,dx=0;
+if(sy)dy=clamp(n.scrollTop,shift(t,b,top+px(s.scrollPaddingTop),top+n.clientHeight-px(s.scrollPaddingBottom),block),n.scrollHeight-n.clientHeight);
+if(sx)dx=clamp(n.scrollLeft,shift(l,g,left+px(s.scrollPaddingLeft),left+n.clientWidth-px(s.scrollPaddingRight),inline),n.scrollWidth-n.clientWidth);
+if(dy||dx)n.scrollTo({top:n.scrollTop+dy,left:n.scrollLeft+dx,behavior:behavior});t-=dy;b-=dy;l-=dx;g-=dx;}
+if(fixed)return;var rs=getComputedStyle(document.documentElement),h=document.documentElement.clientHeight,w=document.documentElement.clientWidth;
+var vy=clamp(window.scrollY,shift(t,b,px(rs.scrollPaddingTop),h-px(rs.scrollPaddingBottom),block),root.scrollHeight-h),vx=clamp(window.scrollX,shift(l,g,px(rs.scrollPaddingLeft),w-px(rs.scrollPaddingRight),inline),root.scrollWidth-w);
+if(vy||vx)window.scrollTo({top:window.scrollY+vy,left:window.scrollX+vx,behavior:behavior});};})();`;
+
 /** The `host-context-changed` notification a client posts into a mounted render when the theme changes. */
 export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
   return {
@@ -630,8 +664,10 @@ function rootRule(theme: HtmlRenderTheme): string {
 // a framed page asks its client to open it, and a top-level page (mobile)
 // opens it as a new window, which the client sends to the browser. A framed
 // page also reports its content height, measured as the server measures it,
-// so its client can fit the frame to the page.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
+// so its client can fit the frame to the page. A framed page whose fragment
+// carries the contain-scroll flag gets the contained `scrollIntoView` first,
+// read before the fragment is dropped.
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;if(P&&window.parent!==window)${CONTAINED_SCROLL_INTO_VIEW}var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
 
 // A page's Copy buttons and selections put exactly the text shown on the
 // clipboard: no newline a textarea or <pre> ends with, no trailing spaces, no
@@ -652,8 +688,8 @@ function bootstrapMarkup(markup: string, appearance?: ThemeAppearance): string {
       ? `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`
       : `${rootRule(appearance === "dark" ? dark : light)}${BASE_CSS}`;
   return [
-    /<meta\s[^>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
-    /<meta\s[^>]*name\s*=\s*["']?viewport/i.test(markup)
+    /<meta\s[^<>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
+    /<meta\s(?:[^"'<>]|"[^"]*"|'[^']*')*name\s*=\s*["']?viewport/i.test(markup)
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="studio-theme">${defaultCss}</style>`,
@@ -661,6 +697,9 @@ function bootstrapMarkup(markup: string, appearance?: ThemeAppearance): string {
   ].join("");
 }
 
+// Tag scans stop at the next "<" outside a quoted value, so a page full of
+// unclosed tags costs linear time instead of rescanning to the end per tag.
+//
 // Comments, raw text, and template contents are blanked to the same length,
 // so offsets still line up and inert tags cannot receive the bootstrap.
 const blankNonMarkup = (html: string) => {
@@ -672,7 +711,7 @@ const blankNonMarkup = (html: string) => {
   let depth = 0;
   let start = 0;
   let at = 0;
-  for (const match of scan.matchAll(/<(\/?)template(?:\s[^>]*)?\/?>/gi)) {
+  for (const match of scan.matchAll(/<(\/?)template(?:\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?\/?>/gi)) {
     if (!match[1]) {
       if (depth++ === 0) start = match.index;
     } else if (depth > 0 && --depth === 0) {
@@ -701,12 +740,12 @@ export function injectHtmlRenderBootstrap(
 ): string {
   const scan = blankNonMarkup(html);
   const markup = before + bootstrapMarkup(scan, appearance);
-  const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
+  const headOpen = /<head(?:\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
     return html.slice(0, at) + markup + html.slice(at);
   }
-  const htmlOpen = /<html(?:\s[^>]*)?>/i.exec(scan);
+  const htmlOpen = /<html(?:\s(?:[^"'<>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (htmlOpen) {
     const at = htmlOpen.index + htmlOpen[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;

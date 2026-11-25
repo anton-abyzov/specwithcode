@@ -155,6 +155,7 @@ function HtmlVisualFrame(props: HtmlRenderFrameProps) {
               className="block size-full"
               onContentHeight={setContentHeight}
               fileTarget={fileTarget}
+              containScroll
             />
           ) : (
             <p className="html-visual-placeholder" role="status">

@@ -1,3 +1,4 @@
+import * as FindMyWay from "effect/http/FindMyWay";
 import * as Mime from "effect/http/Mime";
 import {
   AuthOrchestrationOperateScope,
@@ -316,6 +317,31 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
+/**
+ * Answers whether the router would send a request to one of `paths`. It is a
+ * router of its own, so case, repeated slashes, encoded characters, `;`, a
+ * trailing slash and an absolute-form target (`GET http://host/mcp`) are read
+ * exactly as routing reads them. A target it cannot read counts as a match:
+ * each caller then takes the stricter branch.
+ */
+const routeMatcher = (paths: ReadonlyArray<`/${string}`>) => {
+  const router = FindMyWay.make<true>();
+  for (const path of paths) router.all(path, true);
+  return (request: HttpServerRequest.HttpServerRequest): boolean => {
+    try {
+      return (
+        router.find(request.method, request.url) !== undefined ||
+        (request.method === "HEAD" && router.find("GET", request.url) !== undefined)
+      );
+    } catch {
+      return true;
+    }
+  };
+};
+
+/** The MCP transport's path; McpHttpServer serves it. */
+const isMcpRequest = routeMatcher(["/mcp"]);
+
 export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });
@@ -331,7 +357,7 @@ export const layerBrowserApiCors = Layer.unwrap(
     // origin — a tailnet name, a LAN IP, a phone. Browser dev normally proxies
     // through Vite and is same-origin (no preflight at all), so this is a
     // safety net for the desktop renderer and any direct-to-backend caller.
-    return HttpRouter.cors({
+    const cors = HttpMiddleware.cors({
       ...(devOrigin
         ? {
             allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
@@ -342,6 +368,17 @@ export const layerBrowserApiCors = Layer.unwrap(
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
+    // `/mcp` refuses every browser origin (McpHttpServer), so no CORS answer or
+    // preflight may invite a page to call it.
+    return HttpRouter.middleware(
+      (httpEffect) => {
+        const withCors = cors(httpEffect);
+        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+          isMcpRequest(request) ? httpEffect : withCors,
+        );
+      },
+      { global: true },
+    );
   }),
 );
 
@@ -459,32 +496,41 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
 
 // The Google sign-in callback carries a one-time authorization code in its query,
 // and the socket upgrade a connection ticket.
-const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([
+// Signed URLs (webhooks, assets, attachment uploads) carry bearer tokens in
+// the path itself, where query redaction cannot reach them.
+const SIGNED_URL_ROUTES = [
+  `${WEBHOOK_ROUTE_PREFIX}/*`,
+  `${ASSET_ROUTE_PREFIX}/*`,
+  `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
+] as const;
+const isSignedUrlRequest = routeMatcher(SIGNED_URL_ROUTES);
+
+// Skips the HTTP server span for these routes and the signed ones. That span
+// starts before routing, so a route handler cannot skip it. TracerDisabledWhen
+// is one predicate for the whole server, and HttpRouter.serve builds its routes
+// privately, so it is provided to the served layer, never merged into the
+// routes. Add paths here instead of providing it again.
+const isUntracedRequest = routeMatcher([
   OTLP_TRACES_PROXY_PATH,
   GOOGLE_CALLBACK_PATH,
   "/ws",
+  ...SIGNED_URL_ROUTES,
 ]);
-
-// Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts
-// before routing, so a route handler cannot skip it. TracerDisabledWhen is one
-// predicate for the whole server, and HttpRouter.serve builds its routes
-// privately, so it is provided to the served layer, never merged into the
-// routes. Add paths here instead of providing it again. The query string is
-// ignored, as in routing.
-const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
-  const queryIndex = request.url.indexOf("?");
-  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  // Signed URLs (webhooks, assets, attachment uploads) carry bearer tokens in
-  // the path, so they never reach a trace.
-  return (
-    UNTRACED_REQUEST_PATHS.has(path) ||
-    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
-  );
-});
+const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)(isUntracedRequest);
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
+
+/**
+ * Leaves signed URLs out of the request log. The logger writes the path of
+ * every request when request logging is on, and a signed path is a credential.
+ */
+export const layerUnloggedSignedRequests = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      isSignedUrlRequest(request) ? HttpMiddleware.withLoggerDisabled(httpEffect) : httpEffect,
+    ),
+  { global: true },
+);
 
 export const layerAssetRoute = HttpRouter.add(
   "GET",

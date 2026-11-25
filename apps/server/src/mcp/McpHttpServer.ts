@@ -420,6 +420,15 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   // the current span with the raw arguments. The HTTP server span covers it.
   return Effect.fnUntraced(function* (httpEffect) {
     const request = yield* HttpServerRequest.HttpServerRequest;
+    // No browser page is an MCP client here: a request with an Origin is a
+    // page trying its luck (or a rebound DNS name), refused before credentials
+    // are looked at. Agents and CLIs send no Origin.
+    if (request.headers.origin !== undefined) {
+      return HttpServerResponse.jsonUnsafe(
+        { error: "forbidden_origin", message: "Browser pages may not call this MCP server." },
+        { status: 403, headers: { "cache-control": "no-store" } },
+      );
+    }
     const admitted = yield* authenticateRequest(request);
     if (HttpServerResponse.isHttpServerResponse(admitted)) return admitted;
     // Only after sign-in, so an unknown caller never makes this server buffer

@@ -42,6 +42,7 @@ import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import { layerApiBodyLimit } from "./httpBodyLimit.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fixPath } from "./os-jank.ts";
@@ -1165,6 +1166,8 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(ConnectDevicesHttp.layer),
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
+      // API payloads are small; the routes below that take more set their own limits.
+      Layer.provide(layerApiBodyLimit),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
@@ -1228,6 +1231,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
+  Layer.provide(ServerHttp.layerUnloggedSignedRequests),
 );
 
 // @effect-diagnostics-next-line anyUnknownInErrorContext:off
