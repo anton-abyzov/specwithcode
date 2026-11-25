@@ -325,3 +325,17 @@ export const ScreenShareLocalState = Schema.Struct({
   ),
 });
 export type ScreenShareLocalState = typeof ScreenShareLocalState.Type;
+
+/**
+ * What the app's own window may ask its main process about screen sharing on
+ * this machine. It reaches only the machine the app runs on: a window showing
+ * another machine has no way to that machine's switch.
+ */
+export interface ScreenShareBridge {
+  readonly getState: () => Promise<ScreenShareLocalState>;
+  /** Turning on asks the system for Touch ID or the password; the answer says what is true afterwards. */
+  readonly setEnabled: (enabled: boolean) => Promise<ScreenShareLocalState>;
+  readonly removeGrant: (thumbprint: string) => Promise<ScreenShareLocalState>;
+  /** Says this window is showing another machine's screen, so computer use here holds off. */
+  readonly setViewing: (viewing: boolean) => Promise<void>;
+}

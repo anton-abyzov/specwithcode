@@ -35,6 +35,7 @@ import {
   TAKE_FIRST_RUN_RESUME_CHANNEL,
 } from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { SCREEN_SHARE_VIEWING_REFUSAL, screenShareViewing } from "./screenShare.ts";
 
 class ComputerUseRunFailed extends Data.TaggedError("ComputerUseRunFailed")<{
   readonly reason: string;
@@ -186,7 +187,11 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
       result: ComputerUseIpcResult,
       handler: (action) =>
         Effect.tryPromise({
-          try: () => runComputerUseAction(action, showHelper),
+          // A window here shows another machine's screen (1490): its picture stays out of threads.
+          try: () =>
+            screenShareViewing.active() && action.kind !== "status"
+              ? Promise.reject(new Error(SCREEN_SHARE_VIEWING_REFUSAL))
+              : runComputerUseAction(action, showHelper),
           catch: (error) =>
             new ComputerUseRunFailed({
               reason: error instanceof Error ? error.message : String(error),

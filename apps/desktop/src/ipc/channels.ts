@@ -183,3 +183,9 @@ export const CLOSE_THREAD_NOTIFICATION_CHANNEL = "desktop:close-thread-notificat
 export const THREAD_NOTIFICATION_OPEN_CHANNEL = "desktop:thread-notification-open";
 export const TAKE_THREAD_NOTIFICATION_OPEN_CHANNEL = "desktop:take-thread-notification-open";
 export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";
+export const SCREEN_SHARE_GET_STATE_CHANNEL = "desktop:screen-share-get-state";
+export const SCREEN_SHARE_SET_ENABLED_CHANNEL = "desktop:screen-share-set-enabled";
+export const SCREEN_SHARE_REMOVE_GRANT_CHANNEL = "desktop:screen-share-remove-grant";
+export const SCREEN_SHARE_SET_VIEWING_CHANNEL = "desktop:screen-share-set-viewing";
+/** From the prompt and banner windows only; never exposed on the app's bridge. */
+export const SCREEN_SHARE_WINDOW_CHANNEL = "desktop:screen-share-window";

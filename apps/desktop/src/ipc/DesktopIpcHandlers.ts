@@ -7,6 +7,7 @@ import { installThreadNotifications } from "./methods/threadNotifications.ts";
 import { installKeepAwake } from "./methods/keepAwake.ts";
 import { commandLineTool } from "./methods/commandLineTool.ts";
 import { installComputerUse } from "./methods/computerUse.ts";
+import { installScreenShare } from "./methods/screenShare.ts";
 import { installServiceUpdates } from "./methods/serviceUpdates.ts";
 import { requestManagedUpdateConsent } from "./methods/managedUpdates.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
@@ -112,6 +113,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* installKeepAwake();
   yield* ipc.handle(commandLineTool);
   yield* installComputerUse();
+  yield* installScreenShare();
   yield* installVoice();
   yield* installServiceUpdates();
   yield* ipc.handle(requestManagedUpdateConsent);
