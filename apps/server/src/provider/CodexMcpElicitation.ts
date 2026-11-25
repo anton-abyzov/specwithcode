@@ -183,8 +183,11 @@ export function toMcpElicitationResponse(
     return { action: decision };
   }
 
+  // The app cannot answer these itself. Cancel rather than decline: a decline
+  // reads as the person's refusal, which a browser tool can save as a lasting
+  // denial for the site, while a cancel leaves nothing saved.
   if (payload.mode === "url") {
-    return { action: "decline" };
+    return { action: "cancel" };
   }
 
   const persist =
@@ -214,7 +217,7 @@ export function toMcpElicitationResponse(
   }
 
   if (form?.required?.some((key) => !Object.hasOwn(content, key))) {
-    return { action: "decline" };
+    return { action: "cancel" };
   }
 
   return {

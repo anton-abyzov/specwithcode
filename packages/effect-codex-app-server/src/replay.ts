@@ -177,6 +177,21 @@ function normalizeContextHandoffText(value: string): string {
   return `${value.slice(0, headerEndIndex + 2)}<dynamic-summary>${value.slice(userMessageIndex)}`;
 }
 
+function isFullAccessGranularPolicy(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const granular = (value as { readonly granular?: unknown }).granular;
+  if (typeof granular !== "object" || granular === null) return false;
+  const flags = granular as Record<string, unknown>;
+  return (
+    Object.keys(flags).length === 5 &&
+    flags.mcp_elicitations === true &&
+    flags.request_permissions === false &&
+    flags.rules === false &&
+    flags.sandbox_approval === false &&
+    flags.skill_approval === false
+  );
+}
+
 function normalizeReplayFrame(value: unknown): unknown {
   if (typeof value === "string") {
     return normalizeContextHandoffText(value);
@@ -216,7 +231,9 @@ function normalizeReplayFrame(value: unknown): unknown {
     normalized.params !== null
   ) {
     const params = { ...(normalized.params as Record<string, unknown>) };
-    if (params.approvalPolicy === "never") {
+    // Full access was recorded as "never" before MCP access prompts were let
+    // through; both spellings mean Full access, so recordings of either match.
+    if (params.approvalPolicy === "never" || isFullAccessGranularPolicy(params.approvalPolicy)) {
       delete params.approvalPolicy;
     }
     if (

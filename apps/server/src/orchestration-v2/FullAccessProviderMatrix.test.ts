@@ -38,7 +38,7 @@ describe("Full access runs without prompts on every provider", () => {
     assert.equal(providerRuntimeMode("full-access", GROK_SUPPORTED_RUNTIME_MODES), "full-access");
   });
 
-  it.effect("Codex: approval policy never with the full-access sandbox", () =>
+  it.effect("Codex: only MCP access prompts reach the app with the full-access sandbox", () =>
     Effect.gen(function* () {
       const build = (runtimeMode: RuntimeMode) =>
         buildCodexTurnStartParams({
@@ -49,7 +49,15 @@ describe("Full access runs without prompts on every provider", () => {
           hasStudioMcp: true,
         });
       const fullAccess = yield* build("full-access");
-      assert.equal(fullAccess.approvalPolicy, "never");
+      assert.deepEqual(fullAccess.approvalPolicy, {
+        granular: {
+          mcp_elicitations: true,
+          request_permissions: false,
+          rules: false,
+          sandbox_approval: false,
+          skill_approval: false,
+        },
+      });
       assert.deepEqual(fullAccess.sandboxPolicy, { type: "dangerFullAccess" });
       // What a Supervised turn sends; the October 17 worker ran a turn like this.
       const supervised = yield* build("approval-required");
