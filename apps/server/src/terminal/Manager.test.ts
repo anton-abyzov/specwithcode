@@ -2314,6 +2314,34 @@ it.layer(
     }),
   );
 
+  // A bare name is looked up in the terminal's folder before PATH.
+  it.effect("falls back on Windows only to the System32 copies of PowerShell and cmd", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        shellResolver: () => "C:\\missing\\custom-shell.exe",
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        ptyAdapter.spawnFailures.push(new Error("spawn ENOENT"));
+      }
+
+      yield* Effect.exit(manager.open(openInput()));
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "C:\\missing\\custom-shell.exe",
+        "pwsh.exe",
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "C:\\Windows\\System32\\cmd.exe",
+      ]);
+    }),
+  );
+
   it.effect.each(["linux", "darwin", "win32"] as const)(
     "advertises truecolor before the PTY backend on %s without replacing explicit values",
     (platform) =>

@@ -15,6 +15,13 @@ describe("windowsSystemTools", () => {
     expect(windowsSystemRoot({ SystemRoot: "D:\\Windows", windir: "E:\\Win" })).toBe("D:\\Windows");
     expect(windowsSystemRoot({ windir: "E:\\Win" })).toBe("E:\\Win");
     expect(windowsSystemRoot({ SystemRoot: "  " })).toBe("C:\\Windows");
+    // A relative value would make every tool path relative to the working folder.
+    expect(windowsSystemRoot({ SystemRoot: "Windows", windir: "E:\\Win" })).toBe("E:\\Win");
+    expect(windowsSystemRoot({ SystemRoot: "\\Windows", windir: ".\\Win" })).toBe("C:\\Windows");
+    expect(windowsSystemRoot({ SystemRoot: "C:Windows" })).toBe("C:\\Windows");
+    expect(windowsSystem32Path("reg.exe", { SystemRoot: "Windows" })).toBe(
+      "C:\\Windows\\System32\\reg.exe",
+    );
     expect(windowsSystem32Path("taskkill.exe", { SystemRoot: "D:\\Windows" })).toBe(
       "D:\\Windows\\System32\\taskkill.exe",
     );

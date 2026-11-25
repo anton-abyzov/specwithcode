@@ -702,14 +702,14 @@ function resolveShellCandidates(
   );
 
   if (platform === "win32") {
+    // PowerShell and cmd only from System32: a bare name is looked up in the
+    // terminal's folder first. pwsh lives outside System32 and comes from PATH.
     return uniqueShellCandidates([
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
-      shellCandidateFromCommand("powershell.exe", platform),
       shellCandidateFromCommand(env.ComSpec ?? null, platform),
       shellCandidateFromCommand(windowsCmdPath(env), platform),
-      shellCandidateFromCommand("cmd.exe", platform),
     ]);
   }
 
