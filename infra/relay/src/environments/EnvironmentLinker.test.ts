@@ -600,6 +600,32 @@ describe("EnvironmentLinker", () => {
       },
     );
 
+    it.effect("a refused publish-only link leaves the winning link's tunnel alone", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const error = yield* linker.link({ userId: "user_123", request }).pipe(Effect.flip);
+        expect(error).toMatchObject({ reason: "descriptor_mismatch" });
+        // The winner's managed link committed after this link's read check.
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            upsert: (upsertInput) =>
+              Effect.fail(
+                new EnvironmentLinks.EnvironmentLinkKeyConflict({
+                  userId: upsertInput.userId,
+                  environmentId: upsertInput.proof.environmentId,
+                }),
+              ),
+            deprovision: (target) =>
+              Effect.sync(() => (calls.push(`deprovision:${target.userId}`), true)),
+          }),
+        ),
+      );
+    });
+
     it.effect("relinks an active link proven by the same key", () =>
       Effect.gen(function* () {
         const { request, payload } = yield* makeRequest;

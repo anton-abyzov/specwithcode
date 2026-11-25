@@ -390,27 +390,6 @@ const make = Effect.gen(function* () {
           replacedEnvironmentIds,
         });
       }
-      // Downgrading a managed link to publish-only must release the tunnel and
-      // DNS that were provisioned for it — nothing else cleans them up until a
-      // full unlink. Best effort: a cleanup failure must not block the link
-      // itself, and the provider treats an absent allocation as already
-      // deprovisioned, so retrying on every non-tunnel link is cheap.
-      if (!input.request.managedTunnelsEnabled) {
-        yield* managedEndpointProvider
-          .deprovision({
-            userId: input.userId,
-            environmentId: verified.environmentId,
-          })
-          .pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("managed endpoint deprovision on publish-only link failed", {
-                environmentId: verified.environmentId,
-                errorTag: error._tag,
-              }),
-            ),
-            Effect.ignore,
-          );
-      }
       // Another key's link can commit after the read above. The provider reads
       // again right before it writes the tunnel's ingress, so a request that
       // lost that race never points the winner's tunnel at its own local port.
@@ -475,6 +454,29 @@ const make = Effect.gen(function* () {
           // A link under another key landed after the read above: same refusal.
           Effect.catchTags({ EnvironmentLinkKeyConflict: () => refuseOtherKey }),
         );
+      // Downgrading a managed link to publish-only must release the tunnel and
+      // DNS that were provisioned for it — nothing else cleans them up until a
+      // full unlink. It runs after the guarded link write: a link refused there
+      // (another key committed after the read check) must not remove the
+      // winner's tunnel and DNS. Best effort: a cleanup failure must not block the link
+      // itself, and the provider treats an absent allocation as already
+      // deprovisioned, so retrying on every non-tunnel link is cheap.
+      if (!input.request.managedTunnelsEnabled) {
+        yield* managedEndpointProvider
+          .deprovision({
+            userId: input.userId,
+            environmentId: verified.environmentId,
+          })
+          .pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("managed endpoint deprovision on publish-only link failed", {
+                environmentId: verified.environmentId,
+                errorTag: error._tag,
+              }),
+            ),
+            Effect.ignore,
+          );
+      }
       for (const previous of previousAccounts) {
         // Best effort, as for a replaced machine link: a tunnel left behind is
         // offline once the machine reconnects under its new account, and the
