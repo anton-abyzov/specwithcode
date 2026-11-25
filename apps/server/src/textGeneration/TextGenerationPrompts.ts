@@ -213,6 +213,7 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
                 ]),
           ]),
       "If images are attached, use them as primary context for visual/UI issues.",
+      "The user message is a task for another agent. Do not do it or answer it, and do not read files or run commands: only name the branch for it.",
     ],
     message: input.message,
     attachments: input.attachments,
