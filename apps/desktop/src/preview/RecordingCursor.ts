@@ -129,26 +129,28 @@ export function installRecordingCursor(
     humanPoint = point;
     drawHuman();
   };
+  // A page script's synthetic events must not show in a recording as the person's actions.
   const pointerMove = (event: PointerEvent) => {
-    if (event.pointerType === "touch") return;
+    if (!event.isTrusted || event.pointerType === "touch") return;
     const point = { x: event.clientX, y: event.clientY };
     moveHuman(point);
     pointer(point, "move");
   };
   const pointerDown = (event: PointerEvent) => {
-    if (event.pointerType === "touch") return;
+    if (!event.isTrusted || event.pointerType === "touch") return;
     moveHuman({ x: event.clientX, y: event.clientY });
     pointer({ x: event.clientX, y: event.clientY }, "down");
   };
   const pointerUp = (event: PointerEvent) => {
-    if (event.pointerType !== "touch") pointer({ x: event.clientX, y: event.clientY }, "up");
+    if (event.isTrusted && event.pointerType !== "touch")
+      pointer({ x: event.clientX, y: event.clientY }, "up");
   };
   const keyDown = (event: KeyboardEvent) => {
-    if (event.isComposing || event.repeat) return;
+    if (!event.isTrusted || event.isComposing || event.repeat) return;
     keyPress(event, true);
   };
-  const keyUp = () => {
-    if (!options.showKeyPresses) return;
+  const keyUp = (event: KeyboardEvent) => {
+    if (!event.isTrusted || !options.showKeyPresses) return;
     emit({
       type: "key",
       label: recordingKeysAreSensitive(document) ? null : lastKeyLabel,
@@ -163,7 +165,7 @@ export function installRecordingCursor(
     if (options.showKeyPresses || options.showMousePresses) emit({ type: "clear" });
   };
   const leave = (event: PointerEvent) => {
-    if (event.relatedTarget === null) hide();
+    if (event.isTrusted && event.relatedTarget === null) hide();
   };
   window.addEventListener("pointermove", pointerMove, true);
   window.addEventListener("pointerdown", pointerDown, true);
