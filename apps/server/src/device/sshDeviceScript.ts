@@ -182,12 +182,19 @@ async function install(name, version, entry) {
   }) : [];
   const emulatorExtraArgs = [cameraArgs.join(' '), process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
+  // A hub recorded without a token was started before hubs required one; it is replaced.
+  if (!hub || hub.owner !== owner || !hub.token || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
-      const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
+      // The hub prints its session token in its startup link, so its log is owner-only and is read
+      // for the token from where this start begins.
+      const logFile = path.join(state, 'hub.log');
+      const log = fs.openSync(logFile, 'a', 0o600);
+      fs.fchmodSync(log, 0o600);
+      const logStart = fs.fstatSync(log).size;
+      const printedToken = () => /[?&]token=([A-Za-z0-9_-]+)/.exec(fs.readFileSync(logFile, 'utf8').slice(logStart))?.[1];
+      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--require-token', '--hide-sidebar', '--hide-boot-device', ...(hubPlatform ? ['--platform', hubPlatform] : [])], {
         cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: emulatorExtraArgs, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
@@ -198,7 +205,7 @@ async function install(name, version, entry) {
       const deadline = Date.now() + 30000;
       let listening = false;
       while (child.exitCode === null && child.signalCode === null) {
-        if (await healthy(hub.port, '/readyz')) { listening = true; break; }
+        if (await healthy(hub.port, '/readyz') && (hub.token = printedToken())) { write(hubFile, hub); listening = true; break; }
         if (Date.now() > deadline) { stopHub(hub); throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log')); }
         await sleep(200);
       }
@@ -233,7 +240,7 @@ async function install(name, version, entry) {
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
   await pruneTools(path.join(root, 'tools'), [['expo-device-hub', hubVersion], ...(mode === 'agent-start' ? [['agent-device', agentVersion]] : [])], true).catch(() => {});
-  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
+  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, hubToken: hub.token, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
   } finally { releaseHost(); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

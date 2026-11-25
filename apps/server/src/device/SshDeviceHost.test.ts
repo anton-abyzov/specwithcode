@@ -73,6 +73,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             nodePath: "/node",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
+            hubToken: "remote-hub-token",
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             ...(mode === "agent-start"
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
@@ -133,6 +134,8 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     expect(modes.filter((mode) => mode === "start")).toHaveLength(2);
     const ready = yield* host.current;
     expect(ready).not.toBeNull();
+    // The remote hub's token is used for the forward to it.
+    expect(ready?.hub.token).toBe("remote-hub-token");
     if (ready) {
       const failed = yield* ready.run("emulator", ["-list-avds"]);
       expect(failed.code).toBe(1);
