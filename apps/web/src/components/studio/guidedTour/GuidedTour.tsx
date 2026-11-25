@@ -382,7 +382,7 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" variant="ghost-muted" onClick={finish}>
+          <Button type="button" size="sm" variant="outline" onClick={finish}>
             {tx(GUIDED_TOUR_SKIP)}
           </Button>
           <span className="flex-1" />
