@@ -229,10 +229,11 @@ export class GitHubDiffFileContentsUnavailableError extends Schema.TaggedError<G
     command: Schema.Literal("gh"),
     cwd: Schema.String,
     path: Schema.String,
-    reason: Schema.Literals(["oversized", "binary"]),
+    reason: Schema.Literals(["oversized", "binary", "path"]),
   },
 ) {
   override get message(): string {
+    if (this.reason === "path") return `The diff file '${this.path}' is not a repository path.`;
     return this.reason === "oversized"
       ? `The diff file '${this.path}' exceeds the 1 MB expansion limit.`
       : `The diff file '${this.path}' is binary.`;
@@ -1469,6 +1470,21 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if (input.commit !== undefined && !isCommitSha(input.commit)) {
           return yield* new GitHubDiffCommitError({ command: "gh", cwd: input.cwd });
+        }
+        // Each segment is percent-encoded, but `.` and `..` pass through encoding unchanged, so
+        // a path made of them would climb out of the contents route into another endpoint.
+        const strayPath = [input.oldPath, input.newPath].find((filePath) =>
+          filePath
+            .split("/")
+            .some((segment) => segment === "" || segment === "." || segment === ".."),
+        );
+        if (strayPath !== undefined) {
+          return yield* new GitHubDiffFileContentsUnavailableError({
+            command: "gh",
+            cwd: input.cwd,
+            path: strayPath,
+            reason: "path",
+          });
         }
         const { owner, name } = parseRepositorySelector(input.repository);
         const refsResponse = yield* api.rest({
