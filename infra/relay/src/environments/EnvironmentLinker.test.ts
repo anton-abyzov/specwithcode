@@ -117,6 +117,9 @@ function layerTest(input?: {
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
   readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
   readonly ensureAccount?: ConnectAccounts.ConnectAccounts["Service"]["ensureAccount"];
+  readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
+  readonly findActiveManagedForEnvironment?: EnvironmentLinks.EnvironmentLinks["Service"]["findActiveManagedForEnvironment"];
+  readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
@@ -145,8 +148,9 @@ function layerTest(input?: {
           upsert: input?.upsert ?? (() => Effect.void),
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),
           listForUser: () => Effect.succeed([]),
-          getForUser: () => Effect.succeed(null),
-          findActiveManagedForEnvironment: () => Effect.succeed([]),
+          getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
+          findActiveManagedForEnvironment:
+            input?.findActiveManagedForEnvironment ?? (() => Effect.succeed([])),
           setHoldWebhooksWhileOffline: () => Effect.void,
           findActiveForHardware: () => Effect.succeed([]),
           listActiveWithoutHardware: () => Effect.succeed([]),
@@ -161,7 +165,7 @@ function layerTest(input?: {
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           reconcileOrigin: () => Effect.succeed("ready"),
-          prepareDeprovision: () => Effect.succeed(null),
+          prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
           deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
           provision:
@@ -440,5 +444,107 @@ describe("EnvironmentLinker", () => {
         }),
       ),
     );
+  });
+
+  describe("an environment that is already linked", () => {
+    const activeLink = (environmentPublicKey: string) => ({
+      environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+      label: "Link Test Environment",
+      endpoint: {
+        httpBaseUrl: "https://env.example.test/",
+        wsBaseUrl: "wss://env.example.test/",
+        providerKind: "manual" as const,
+      },
+      environmentPublicKey,
+      linkedAt: "2026-11-01T00:00:00.000Z",
+    });
+
+    it.effect("refuses to move an active link to a different key", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const error = yield* linker
+          .link({ userId: "user_123", request: { ...request, managedTunnelsEnabled: true } })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "EnvironmentLinkProofInvalid",
+          reason: "descriptor_mismatch",
+          stage: "validate_existing_link",
+        });
+        // Nothing was written, provisioned or torn down for the refused key.
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            getForUser: () => Effect.succeed(activeLink("-----BEGIN PUBLIC KEY-----\nother")),
+            upsert: () => Effect.sync(() => void calls.push("upsert")),
+            provision: () =>
+              Effect.sync(() => {
+                calls.push("provision");
+                return {
+                  endpoint: {
+                    httpBaseUrl: "https://managed.example.test/",
+                    wsBaseUrl: "wss://managed.example.test/ws",
+                    providerKind: "cloudflare_tunnel",
+                  },
+                  runtime: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+                };
+              }),
+            deprovision: () => Effect.sync(() => (calls.push("deprovision"), true)),
+          }),
+        ),
+      );
+    });
+
+    it.effect("relinks an active link proven by the same key", () =>
+      Effect.gen(function* () {
+        const { request, payload } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const result = yield* linker.link({ userId: "user_123", request });
+        expect(result.environmentId).toBe(payload.environmentId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            getForUser: () => Effect.succeed(activeLink(environmentKeyPair.publicKey.trim())),
+          }),
+        ),
+      ),
+    );
+
+    it.effect("removes the previous account's tunnel after the machine moves accounts", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        yield* linker.link({ userId: "user_123", request });
+        expect(calls).toEqual(["upsert:user_123", "deprovision:user_old"]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            findActiveManagedForEnvironment: (query) =>
+              Effect.succeed(
+                query.environmentPublicKey === environmentKeyPair.publicKey.trim()
+                  ? [
+                      {
+                        ...activeLink(environmentKeyPair.publicKey.trim()),
+                        userId: "user_old",
+                        holdWebhooksWhileOffline: false,
+                      },
+                    ]
+                  : [],
+              ),
+            upsert: (upsertInput) =>
+              Effect.sync(() => void calls.push(`upsert:${upsertInput.userId}`)),
+            deprovision: (target) =>
+              Effect.sync(() => {
+                // The link's own publish-only cleanup is not the move.
+                if (target.userId !== "user_123") calls.push(`deprovision:${target.userId}`);
+                return true;
+              }),
+          }),
+        ),
+      );
+    });
   });
 });

@@ -55,6 +55,7 @@ export class EnvironmentLinkProofInvalid extends Schema.TaggedError<EnvironmentL
       "consume_proof_nonce",
       "consume_challenge_nonce",
       "validate_origin",
+      "validate_existing_link",
       "validate_endpoint",
     ]),
     cause: Schema.optional(Schema.Defect()),
@@ -297,6 +298,28 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
+      // The account bearer alone must not move an active link, with its
+      // tunnel and the key phones trust, to a key the caller holds. The
+      // environment id is public. A machine whose key really changed (its
+      // secret store was reset while its environment id survived) is unlinked
+      // in Connect first. The wire reason is the existing descriptor mismatch,
+      // which older machines can decode.
+      const existing = yield* links.getForUser({
+        userId: input.userId,
+        environmentId: verified.environmentId,
+      });
+      if (existing !== null && existing.environmentPublicKey !== verified.environmentPublicKey) {
+        yield* Effect.logWarning("refused to relink an active environment under another key", {
+          environmentId: verified.environmentId,
+          reason: "environment_key_mismatch",
+        });
+        return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
+          environmentId: verified.environmentId,
+          reason: "descriptor_mismatch",
+          stage: "validate_existing_link",
+        });
+      }
       // A machine that lost its local state (reinstall, reset, wiped home)
       // comes back with a new environment id. Its signed hardware identity
       // says it is the same machine, so the account's older link for it is
@@ -404,6 +427,18 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
+      // Other accounts' managed links proven by this key end with the upsert
+      // below (the machine moved accounts). Read them first so their tunnels
+      // can be removed once the move commits.
+      const previousAccounts = yield* links
+        .findActiveManagedForEnvironment({
+          environmentId: verified.environmentId,
+          environmentPublicKey: verified.environmentPublicKey,
+        })
+        .pipe(
+          Effect.map((rows) => rows.filter((row) => row.userId !== input.userId)),
+          Effect.orElseSucceed(() => []),
+        );
       yield* links.upsert({
         ...input,
         proof: verified,
@@ -411,6 +446,22 @@ const make = Effect.gen(function* () {
         hardwareIdentity,
         inheritHoldWebhooksWhileOffline,
       });
+      for (const previous of previousAccounts) {
+        // Best effort, as for a replaced machine link: a tunnel left behind is
+        // offline once the machine reconnects under its new account, and the
+        // idle-tunnel sweep removes it.
+        const key = { userId: previous.userId, environmentId: verified.environmentId };
+        yield* managedEndpointProvider.prepareDeprovision(key).pipe(
+          Effect.flatMap((target) => managedEndpointProvider.deprovision({ ...key, target })),
+          Effect.tapError((error) =>
+            Effect.logWarning("could not remove the previous account's tunnel", {
+              environmentId: verified.environmentId,
+              errorTag: error._tag,
+            }),
+          ),
+          Effect.ignore,
+        );
+      }
       // Only a managed link that succeeded creates the Connect account and,
       // while seats remain, grants its founder number. A link refused at a cap
       // or failing in provisioning never takes a seat. The limit resolved
