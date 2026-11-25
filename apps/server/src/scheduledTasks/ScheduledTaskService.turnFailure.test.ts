@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  CommandId,
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -143,6 +144,23 @@ it.effect("shows one line of a reason, whichever writer stored it", () =>
       WHERE task_id = ${task.id}`;
     const [stored] = (yield* service.list()).tasks;
     assert.equal(stored?.lastRunError, "Provider unavailable.");
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
+it.effect("replays a run's stored result with a one-line reason", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
+    const service = yield* Service.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    const { task } = yield* service.upsert(taskInput);
+    const commandId = CommandId.make("replayed-run");
+    yield* service.runNow({ id: task.id, commandId });
+    // A receipt written before the one-line rule keeps the provider's whole diagnostic.
+    yield* sql`UPDATE scheduled_task_run_receipts
+      SET result_json = json_set(result_json, '$.lastRunError', ${"Provider unavailable.\nPATH=/Users/someone/private"})
+      WHERE task_id = ${task.id} AND json_extract(result_json, '$.lastRunStatus') IS NOT NULL`;
+    const replayed = yield* service.runNow({ id: task.id, commandId });
+    assert.equal(replayed.task.lastRunError, "Provider unavailable.");
   }).pipe(Effect.provide(serviceLayer)),
 );
 

@@ -133,6 +133,28 @@ const withService = <A, E>(
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory));
 
+it.effect("reads one line of a delivery's stored error, in the list and the detail", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { task } = yield* service.upsert(yield* webhookTaskInput());
+      const result = yield* service.triggerWebhook(requestFor(task));
+      assert.equal(result._tag, "accepted");
+      yield* Queue.take(launches);
+      // An error stored before the one-line rule, or carried in from a handoff reason.
+      yield* sql`UPDATE scheduled_task_webhook_deliveries
+        SET error = ${"Thread moved.\nmachine label line two"} WHERE task_id = ${task.id}`;
+      const { deliveries } = yield* service.listWebhookDeliveries({ id: task.id });
+      assert.equal(deliveries[0]?.error, "Thread moved.");
+      const { delivery } = yield* service.getWebhookDelivery({
+        id: task.id,
+        deliveryId: deliveries[0]!.id,
+      });
+      assert.equal(delivery.error, "Thread moved.");
+    }),
+  ),
+);
+
 it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
   withService(({ service, launches }) =>
     Effect.gen(function* () {
