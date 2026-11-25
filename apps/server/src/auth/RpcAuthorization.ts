@@ -1,5 +1,6 @@
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
+  DOCUMENT_SESSION_RPC_METHODS,
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
@@ -309,6 +310,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
+  // The least a live document session needs; opening to edit also needs filesystem:write
+  // (`clientRpcRequiredScopes`).
+  [DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen]: AuthFilesystemReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

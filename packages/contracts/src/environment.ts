@@ -145,6 +145,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server applies `projectSettingsOverrideChanges` key by key; older servers
       drop that key, so clients replace the whole entry there instead. */
   projectSettingsOverrideChanges: Schema.optionalKey(Schema.Boolean),
+  /** Server holds live document sessions (`documents.session.*`): a sheet open
+      in several windows merges their edits. Older servers save by revision. */
+  documentSessions: Schema.optionalKey(Schema.Boolean),
   /** Server honours `elevation` on `terminal.open`: a code-block run asks for
       the administrator password with the machine's own prompt. */
   terminalElevationPrompt: Schema.optionalKey(Schema.Boolean),

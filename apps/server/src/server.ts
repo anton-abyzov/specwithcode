@@ -270,6 +270,8 @@ import * as ExtrasReceiver from "./handoff/ExtrasReceiver.ts";
 import * as ProjectSync from "./fleet/ProjectSync.ts";
 import * as ProjectSyncExtras from "./fleet/ProjectSyncExtras.ts";
 import * as ProjectSyncRpc from "./fleet/ProjectSyncRpc.ts";
+import * as DocumentSession from "./documents/DocumentSession.ts";
+import * as DocumentSessionRpc from "./documents/DocumentSessionRpc.ts";
 import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
 import * as LinkedPeerRoute from "./project/LinkedPeerRoute.ts";
 import * as CoordinatorMessageReceiver from "./project/CoordinatorMessageReceiver.ts";
@@ -802,6 +804,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     // One store for both: the moves' records and the receiver's verdicts share a file.
     Layer.provide(HandoffTransferStore.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+  ),
+  // Live document sessions (1480): one registry for the windows' calls and the agents' sheet tools.
+  DocumentSessionRpc.layerRpcHandlers.pipe(
+    Layer.provideMerge(DocumentSession.layer),
+    Layer.provide(layerWorkspaceFileSystem),
   ),
   // Project sync (1390): its handlers, and the receiver the peer route lands extras with.
   ProjectSyncRpc.layerRpcHandlers.pipe(

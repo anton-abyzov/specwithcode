@@ -18,6 +18,7 @@ import { PROVISION_RPC_METHODS } from "./provision.ts";
 import { MACHINE_TOOLS_RPC_METHODS } from "./machineTools.ts";
 import { PROJECT_CREDENTIALS_RPC_METHODS } from "./projectCredentials.ts";
 import { PROJECT_SYNC_RPC_METHODS } from "./projectSync.ts";
+import { DOCUMENT_SESSION_RPC_METHODS } from "./documentSession.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -79,6 +80,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [PROJECT_SYNC_RPC_METHODS.projectSyncRun]: AuthSourceControlWriteScope,
   // Writes hidden refs here and sends bundles to the other machine, like a checkpoint.
   [PROJECT_SYNC_RPC_METHODS.projectSyncSendExtras]: AuthSourceControlWriteScope,
+  // Live document sessions (1480): a change to the document is a file write; where a
+  // window is in it is not. Opening is a subscription, widened for "edit" below.
+  [DOCUMENT_SESSION_RPC_METHODS.documentSessionUpdate]: AuthFilesystemWriteScope,
+  [DOCUMENT_SESSION_RPC_METHODS.documentSessionPresence]: AuthFilesystemReadScope,
   // The cleanup list names folders and chats; running it removes folders, like the settings that switch it on.
   [WS_METHODS.serverGetStorageCleanupPlan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
@@ -453,6 +458,13 @@ export function clientRpcRequiredScopes(
     return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
   // A subscription, so not in the unary map.
   if (method === WS_METHODS.designWatch) return [AuthFilesystemReadScope];
+  // Also a subscription. Anything but an explicit "view" is held to the edit scopes.
+  if (method === DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen)
+    return (input as { access?: unknown } | null | undefined)?.access === "view"
+      ? [AuthFilesystemReadScope]
+      : [AuthFilesystemReadScope, AuthFilesystemWriteScope];
+  if (method === DOCUMENT_SESSION_RPC_METHODS.documentSessionUpdate)
+    return [AuthFilesystemReadScope, AuthFilesystemWriteScope];
   if (
     method === WS_METHODS.projectsConnectionSave ||
     method === WS_METHODS.projectsConnectionCheck ||

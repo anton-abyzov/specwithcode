@@ -196,6 +196,10 @@
       "types": "./src/officeSheet/index.ts",
       "import": "./src/officeSheet/index.ts"
     },
+    "./sheetCollab": {
+      "types": "./src/sheetCollab/index.ts",
+      "import": "./src/sheetCollab/index.ts"
+    },
     "./officeWhiteboard": {
       "types": "./src/officeWhiteboard.ts",
       "import": "./src/officeWhiteboard.ts"
@@ -761,7 +765,8 @@
     "@specweave-studio/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "yjs": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
