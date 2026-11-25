@@ -12,7 +12,7 @@ import {
   unsealForSignIn,
 } from "@specweave-studio/shared/signInSeal";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
-import { KeyRoundIcon, LockIcon } from "lucide-react";
+import { GlobeIcon, KeyRoundIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 
@@ -334,7 +334,7 @@ export function SignInViewer(props: {
                   className="inline-flex items-center gap-1.5 rounded-md bg-success/10 px-2 py-1 font-mono text-success-foreground"
                   data-sign-in-origin
                 >
-                  <LockIcon className="size-3" aria-hidden />
+                  <GlobeIcon className="size-3" aria-hidden />
                   {frame?.origin ?? tx("Loading…")}
                 </span>
                 <span>
