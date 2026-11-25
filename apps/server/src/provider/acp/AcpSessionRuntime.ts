@@ -28,7 +28,7 @@ import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import type * as EffectAcpProtocol from "@specweave-studio/effect-acp/protocol";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
-import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import { signalProcessGroup } from "../../process/processGroup.ts";
 import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
@@ -36,6 +36,7 @@ import { agentWorkCgroup } from "../../resourceTelemetry/agentWorkCgroup.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import { normalizeAcpTerminalAuthMethod } from "./AcpTerminalAuthentication.ts";
 import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
+import { withoutAppImageRuntimeEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -93,6 +94,24 @@ export interface AcpSpawnInput {
   readonly env?: NodeJS.ProcessEnv;
   readonly extendEnv?: boolean;
   readonly shell?: false;
+}
+
+/**
+ * The environment an agent starts with. Some launches pass only the variables
+ * they add and let the child extend the server's own environment. On the Linux
+ * AppImage build that would hand the agent the app's launcher variables and
+ * mount folders, so there the server's environment is copied without them and
+ * passed as the complete environment instead.
+ */
+function agentLaunchEnvironment(
+  spawn: AcpSpawnInput,
+  hostEnvironment: NodeJS.ProcessEnv,
+): { readonly env: NodeJS.ProcessEnv | undefined; readonly extendEnv: boolean } {
+  const own = spawn.env === undefined ? undefined : withoutAppImageRuntimeEnvironment(spawn.env);
+  const extendEnv = spawn.extendEnv ?? true;
+  const inherited = withoutAppImageRuntimeEnvironment(hostEnvironment);
+  if (!extendEnv || inherited === hostEnvironment) return { env: own, extendEnv };
+  return { env: { ...inherited, ...own }, extendEnv: false };
 }
 
 export interface AcpSessionRuntimeOptions {
@@ -1557,12 +1576,14 @@ export const make = (
         ),
       );
 
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const launchEnvironment = agentLaunchEnvironment(options.spawn, hostEnvironment);
     const spawnCommand =
       options.spawn.shell === false
         ? { command: options.spawn.command, args: options.spawn.args, shell: false }
         : yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
-            ...(options.spawn.env ? { env: options.spawn.env } : {}),
-            extendEnv: options.spawn.extendEnv ?? true,
+            ...(launchEnvironment.env ? { env: launchEnvironment.env } : {}),
+            extendEnv: launchEnvironment.extendEnv,
           });
     const linuxCgroupLease =
       options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
@@ -1592,7 +1613,9 @@ export const make = (
             const resolved = resolveLinuxCgroupTargetCommand(
               spawnCommand.command,
               options.spawn.cwd ?? options.cwd,
-              { ...process.env, ...options.spawn.env },
+              launchEnvironment.extendEnv
+                ? { ...hostEnvironment, ...launchEnvironment.env }
+                : (launchEnvironment.env ?? {}),
             );
             if (resolved !== undefined) return resolved;
             // The same NotFound shape a direct spawn ENOENT has, so callers
@@ -1620,9 +1643,9 @@ export const make = (
           };
     const spawnEnvironment =
       linuxCgroupLease === undefined
-        ? options.spawn.env
+        ? launchEnvironment.env
         : {
-            ...options.spawn.env,
+            ...launchEnvironment.env,
             ELECTRON_RUN_AS_NODE: "1",
             STUDIO_ACP_CGROUP_WRAPPER: "1",
           };
@@ -1638,7 +1661,7 @@ export const make = (
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...headlessChildProcessEnvironment({
             env: spawnEnvironment,
-            extendEnv: options.spawn.extendEnv ?? true,
+            extendEnv: launchEnvironment.extendEnv,
           }),
           // Windows has no process groups: ownership there is a taskkill /T
           // tree kill, and `detached` would only give the agent (and the
