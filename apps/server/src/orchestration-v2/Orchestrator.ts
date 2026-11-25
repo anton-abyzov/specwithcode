@@ -13568,9 +13568,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (shell !== null) {
         yield* refuseAboveDispatchModeLimit(command, threadId, shell);
         // A steer joins a turn that keeps the modes it started with, which can
-        // be above the thread's since it was lowered. A turn still starting
-        // has not recorded them and may start above the thread's, so it counts
-        // as Full access. A running turn recorded without its modes (before
+        // be above the thread's since it was lowered. Only a running attempt's
+        // modes are its own: one still starting (a requeued attempt carries
+        // the previous one's) may start above the thread's, so it counts as
+        // Full access. A running turn recorded without its modes (before
         // attempts kept them) is checked against the thread's, as before.
         const joins =
           command.type === "queued-message.promote-to-steer"
@@ -13602,10 +13603,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             yield* refuseAboveDispatchModeLimit(
               command,
               threadId,
-              attempt?.startedModes ??
-                (attempt?.status === "running"
-                  ? shell
-                  : { runtimeMode: "full-access", interactionMode: "default" }),
+              attempt?.status === "running"
+                ? (attempt.startedModes ?? shell)
+                : { runtimeMode: "full-access", interactionMode: "default" },
             );
           }
         }

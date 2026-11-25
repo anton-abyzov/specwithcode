@@ -123,8 +123,8 @@ const steeringAdapter = (
  * Starts a turn on a thread at `startedAt`, sets the thread to `loweredTo`
  * for the next turn, and steers the running turn from a sender limited to
  * Supervised. `forgetTurnModes` rewrites the attempt as one recorded before
- * attempts kept their modes; `stillStarting` rewrites it as one whose turn has
- * not started yet.
+ * attempts kept their modes; `stillStarting` rewrites it as a requeued attempt
+ * whose turn has not started yet.
  */
 const steerFromLimitedSender = (input: {
   readonly name: string;
@@ -193,9 +193,11 @@ const steerFromLimitedSender = (input: {
                 threadId,
                 runId,
                 occurredAt: yield* DateTime.now,
+                // A requeued attempt still starting carries the previous
+                // attempt's modes, here within the sender's limit.
                 payload:
                   input.stillStarting === true
-                    ? { ...attempt, status: "pending", startedAt: null }
+                    ? { ...attempt, status: "pending", startedAt: null, startedModes: supervised }
                     : attempt,
               },
             ],
@@ -297,19 +299,21 @@ it.effect("a turn recorded without its modes is checked against the thread's mod
   }),
 );
 
-it.effect("a limited sender cannot steer a turn that has not recorded its modes yet", () =>
-  Effect.gen(function* () {
-    const result = yield* steerFromLimitedSender({
-      name: "still-starting",
-      startedAt: "full-access",
-      loweredTo: "approval-required",
-      stillStarting: true,
-    });
-    assert.equal(result.threadMode, "approval-required");
-    assert.equal(result.steer._tag, "Failure");
-    if (result.steer._tag === "Failure") {
-      assert.include(String(result.steer.cause), "OrchestratorThreadAboveModeLimitError");
-    }
-    assert.deepEqual(result.steered, []);
-  }),
+it.effect(
+  "a limited sender cannot steer a turn still starting, even one carrying earlier modes",
+  () =>
+    Effect.gen(function* () {
+      const result = yield* steerFromLimitedSender({
+        name: "still-starting",
+        startedAt: "full-access",
+        loweredTo: "approval-required",
+        stillStarting: true,
+      });
+      assert.equal(result.threadMode, "approval-required");
+      assert.equal(result.steer._tag, "Failure");
+      if (result.steer._tag === "Failure") {
+        assert.include(String(result.steer.cause), "OrchestratorThreadAboveModeLimitError");
+      }
+      assert.deepEqual(result.steered, []);
+    }),
 );
