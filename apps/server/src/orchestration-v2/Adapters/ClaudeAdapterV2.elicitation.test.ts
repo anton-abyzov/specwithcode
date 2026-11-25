@@ -133,6 +133,10 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
         });
         const onElicitation = openedOptions?.onElicitation;
         assert.isFunction(onElicitation);
+        // The SDK runs Elicitation hooks before onElicitation; the app installs none.
+        const hookEvents = Object.keys(openedOptions?.hooks ?? {});
+        assert.notInclude(hookEvents, "Elicitation");
+        assert.notInclude(hookEvents, "ElicitationResult");
 
         const requestEvents = yield* runtime.events.pipe(
           Stream.takeUntil(

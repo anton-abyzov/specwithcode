@@ -1,4 +1,5 @@
 import { reopensClosedCard, userInputRuntimeRequest } from "./userInputRuntimeRequest.ts";
+import * as ClaudeForms from "./ClaudeFormResponses.ts";
 import * as InactiveThreadArchiveGuard from "./InactiveThreadArchiveGuard.ts";
 import {
   hasCurrentLifecycleAcceptance,
@@ -9024,6 +9025,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Runtime request ${command.requestId} was not found.`,
         });
       }
+      // An MCP server's form in a Claude thread takes the person's checked answers only (1481).
+      const form = ClaudeForms.checkFormResponse(context.item, runtimeRequest.status, command);
+      if (form?.refusal !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: form.refusal,
+        });
+      }
+      const storedAnswers = form === undefined ? command.answers : form.storedAnswers;
       if (runtimeRequest.status !== "pending") {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -9057,7 +9068,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "resolved" as const,
         resolvedAt: now,
         ...(command.decision === undefined ? {} : { decision: command.decision }),
-        ...(command.answers === undefined ? {} : { answers: command.answers }),
+        ...(storedAnswers === undefined ? {} : { answers: storedAnswers }),
       };
       const emitEvent = emit(events, command);
       const requestNode = context.node;
@@ -9243,6 +9254,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       if (providerSessionId === null) return;
+      ClaudeForms.handOffClaudeFormAnswers(command.requestId, form?.handOff);
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
@@ -9254,7 +9266,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionId,
             requestId: command.requestId,
             ...(command.decision === undefined ? {} : { decision: command.decision }),
-            ...(command.answers === undefined ? {} : { answers: command.answers }),
+            ...(storedAnswers === undefined ? {} : { answers: storedAnswers }),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

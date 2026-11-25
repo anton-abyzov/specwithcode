@@ -10,9 +10,13 @@
  *
  * - URL mode is declined with a note in the thread; no link is shown or opened.
  * - A form the card cannot show is cancelled with a note.
- * - A form with fields offers no Approve, so Full access leaves it to the
- *   person (see `isConfirmOnlyElicitation`); a form without fields offers
- *   Submit, which Full access may press.
+ * - A form that asks for a password, token or other secret is declined with a
+ *   note and never shown.
+ * - Every form needs the person, even one without fields: the card offers no
+ *   Approve, so Full access never presses it, and the orchestrator refuses an
+ *   answer that is not the person's own (`ClaudeFormResponses.ts`).
+ * - The person's raw answers arrive through an in-process hand-off; the
+ *   thread's records keep only which fields were answered.
  * - Stopping the turn closes the card as cancelled.
  * - A thread nobody watches (a delegated worker, a routine) cancels the card
  *   after {@link UNATTENDED_MCP_ELICITATION_TIMEOUT_MS}.
@@ -20,6 +24,10 @@
  * Exactly one side settles a card: the person's answer, the turn's stop or
  * the timer. Only the side that settles it first is used, and the card is
  * closed here only when the app did not already close it.
+ *
+ * The SDK runs `Elicitation` hooks before this option, and a hook that answers
+ * wins. The app installs none; a hook in the user's or project's own Claude
+ * settings (`settingSources`) can still answer first.
  *
  * @module ClaudeMcpElicitation
  */
@@ -41,6 +49,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { ProviderDriverKind } from "@specweave-studio/contracts";
 import {
+  findMcpElicitationSecretField,
   parseMcpElicitationSchema,
   validateMcpElicitationContent,
   type McpElicitationField,
@@ -50,6 +59,10 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
+import {
+  dropClaudeFormAnswers,
+  takeClaudeFormAnswers,
+} from "../orchestration-v2/ClaudeFormResponses.ts";
 import type * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 
@@ -115,18 +128,14 @@ interface PendingCard {
 const CANCEL: ElicitationResult = { action: "cancel" };
 const DECLINE: ElicitationResult = { action: "decline" };
 
-const FIELD_FORM_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+/**
+ * A card's generic choices. Submit lives on the form itself, never here, so
+ * Full access and the generic approval actions cannot accept a form.
+ */
+export const ELICITATION_CARD_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "decline", label: "Decline" },
   { decision: "cancel", label: "Cancel" },
 ];
-const CONFIRM_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  { decision: "accept", label: "Submit" },
-  ...FIELD_FORM_OPTIONS,
-];
-
-/** A card's choices: Submit only when the form has no fields, so Full access may press it. */
-export const elicitationCardOptions = (fieldCount: number): ReadonlyArray<ProviderApprovalOption> =>
-  fieldCount === 0 ? CONFIRM_OPTIONS : FIELD_FORM_OPTIONS;
 
 /** The person cannot be expected to answer: the thread is a worker's or a routine's. */
 export function isUnattendedClaudeTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput): boolean {
@@ -139,6 +148,8 @@ export const unreadableFormNotice = (serverName: string) =>
   `${serverName} asked for input in a form SpecWithCode can't show yet; it was cancelled.`;
 export const unattendedTimeoutNotice = (serverName: string) =>
   `No one answered ${serverName}'s question in 30 minutes; it was cancelled.`;
+export const secretFieldNotice = (serverName: string, fieldTitle: string) =>
+  `${serverName} asked for a password or secret ("${fieldTitle}"). SpecWithCode doesn't send those through forms, so it was declined.`;
 export const invalidAnswerNotice = (serverName: string) =>
   `The answer to ${serverName}'s question didn't fit its form; it was cancelled.`;
 
@@ -263,6 +274,15 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         );
         return CANCEL;
       }
+      const secret = findMcpElicitationSecretField(form.fields);
+      if (secret !== undefined) {
+        yield* notice(
+          context,
+          `${nativeRequestId}:notice`,
+          secretFieldNotice(request.serverName, secret.title),
+        );
+        return DECLINE;
+      }
       // The CLI waits on this answer, so output held for the prompt echo goes
       // on now, as it does for a tool approval.
       if (context.heldRootFrames.length > 0) yield* deps.releaseHeldRootFrames(context);
@@ -289,7 +309,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           ? {
               ...built.turnItem,
               appName: request.serverName,
-              options: [...elicitationCardOptions(form.fields.length)],
+              options: [...ELICITATION_CARD_OPTIONS],
               elicitation,
             }
           : built.turnItem;
@@ -342,7 +362,14 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
             unattendedTimeoutNotice(request.serverName),
           );
         return CANCEL;
-      }).pipe(Effect.ensuring(Effect.sync(() => pending.delete(id))));
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            pending.delete(id);
+            dropClaudeFormAnswers(artifacts.request.id);
+          }),
+        ),
+      );
     });
 
   const onElicitation: OnElicitation = (request, options) =>
@@ -362,14 +389,16 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
   const respond: ClaudeMcpElicitations["respond"] = (input) =>
     Effect.gen(function* () {
       const id = String(input.requestId as RuntimeRequestId);
+      // The person's raw answers; the effect itself carries only a redacted summary.
+      const answers = takeClaudeFormAnswers(input.requestId) ?? input.answers;
       const card = pending.get(id);
       if (card === undefined) return closed.has(id);
       const decision: ProviderApprovalDecision =
-        input.decision ?? (input.answers === undefined ? "cancel" : "accept");
+        input.decision ?? (answers === undefined ? "cancel" : "accept");
       yield* Deferred.succeed(card.answer, {
         by: "person",
         decision,
-        ...(input.answers === undefined ? {} : { answers: input.answers }),
+        ...(answers === undefined ? {} : { answers }),
       });
       return true;
     });

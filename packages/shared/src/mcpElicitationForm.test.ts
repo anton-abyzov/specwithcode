@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  findMcpElicitationSecretField,
   MCP_ELICITATION_MAX_FIELDS,
   mcpElicitationInitialValues,
   parseMcpElicitationSchema,
@@ -215,5 +216,39 @@ describe("validateMcpElicitationContent", () => {
 
   it("sends empty content for a confirmation", () => {
     expect(validateMcpElicitationContent([], { anything: 1 })).toEqual({ ok: true, content: {} });
+  });
+});
+
+describe("findMcpElicitationSecretField", () => {
+  it("names a field that asks for a password, token or key", () => {
+    for (const [key, title] of [
+      ["password", "Password"],
+      ["github_token", "Token"],
+      ["key", "API key"],
+      ["code", "One-time code"],
+      ["pin", "PIN"],
+      ["field1", "Your passphrase"],
+    ])
+      expect(
+        findMcpElicitationSecretField(
+          fieldsOf({ type: "object", properties: { [key]: { type: "string", title } } }),
+        )?.key,
+      ).toBe(key);
+  });
+
+  it("leaves ordinary fields alone", () => {
+    expect(findMcpElicitationSecretField(fieldsOf(everyType))).toBeUndefined();
+    expect(
+      findMcpElicitationSecretField(
+        fieldsOf({
+          type: "object",
+          properties: {
+            confirm: { type: "string", title: "Type octo/repo to confirm" },
+            spinner: { type: "boolean", title: "Show a spinner" },
+            topic: { type: "string", title: "Topics" },
+          },
+        }),
+      ),
+    ).toBeUndefined();
   });
 });

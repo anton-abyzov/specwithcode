@@ -6,8 +6,14 @@ import * as Effect from "effect/Effect";
 
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 import {
+  handOffClaudeFormAnswers,
+  redactClaudeFormAnswers,
+  takeClaudeFormAnswers,
+} from "../orchestration-v2/ClaudeFormResponses.ts";
+import {
   isUnattendedClaudeTurn,
   makeClaudeMcpElicitations,
+  secretFieldNotice,
   type ClaudeElicitationTurnContext,
   UNATTENDED_MCP_ELICITATION_TIMEOUT_MS,
   unattendedTimeoutNotice,
@@ -173,17 +179,55 @@ describe("ClaudeMcpElicitation", () => {
     ]);
   });
 
-  it("offers Submit on a confirm-only form and accepts it with empty content", async () => {
+  it("offers no Approve even on a form without fields, and accepts the person's Submit", async () => {
     const h = harness();
     const result = h.ask({ requestedSchema: { type: "object", properties: {} } });
     await h.until(() => h.card() !== undefined);
-    expect(h.card().options?.map((option) => option.decision)).toEqual([
-      "accept",
-      "decline",
-      "cancel",
-    ]);
-    await Effect.runPromise(h.elicitations.respond({ requestId: h.requestId, decision: "accept" }));
+    expect(h.card().options?.map((option) => option.decision)).toEqual(["decline", "cancel"]);
+    await Effect.runPromise(
+      h.elicitations.respond({ requestId: h.requestId, decision: "accept", answers: {} }),
+    );
     expect(await result).toEqual({ action: "accept", content: {} });
+  });
+
+  it("takes the person's answers from the in-process hand-off, not the redacted effect", async () => {
+    const h = harness();
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { name: "octo/repo" });
+    await Effect.runPromise(
+      h.elicitations.respond({
+        requestId: h.requestId,
+        decision: "accept",
+        answers: redactClaudeFormAnswers({ name: "octo/repo" }),
+      }),
+    );
+    expect(await result).toEqual({ action: "accept", content: { name: "octo/repo" } });
+    expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
+  });
+
+  it("forgets a hand-off nothing took once the card closes", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { name: "late" });
+    controller.abort();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
+  });
+
+  it("declines a form that asks for a password or token, with a note, and shows no card", async () => {
+    const h = harness();
+    const result = await h.ask({
+      requestedSchema: {
+        type: "object",
+        properties: { token: { type: "string", title: "GitHub token" } },
+      },
+    });
+    expect(result).toEqual({ action: "decline" });
+    expect(h.card()).toBeUndefined();
+    expect(h.notices()).toEqual([secretFieldNotice("github", "GitHub token")]);
   });
 
   it("declines URL mode visibly without a card or a link", async () => {

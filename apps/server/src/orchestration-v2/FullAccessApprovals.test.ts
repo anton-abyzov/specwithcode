@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as FullAccessApprovals from "./FullAccessApprovals.ts";
-import { elicitationCardOptions } from "../provider/ClaudeMcpElicitation.ts";
+import { ELICITATION_CARD_OPTIONS } from "../provider/ClaudeMcpElicitation.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
@@ -345,29 +345,35 @@ describe("FullAccessApprovals", () => {
     }),
   );
 
-  it.effect("leaves a Claude form with fields to the person and accepts a confirm-only one", () =>
+  it.effect("never answers a Claude form, even one without fields", () =>
     Effect.gen(function* () {
       const fields = request("runtime-request:claude-form", "mcp-elicitation");
       const confirm = request("runtime-request:claude-confirm", "mcp-elicitation");
+      const forged = request("runtime-request:claude-forged", "mcp-elicitation");
       // The shapes the Claude adapter gives its form cards (1481).
-      const claudeCard = (requestId: string, fieldCount: number) =>
+      const claudeCard = (requestId: string, options = ELICITATION_CARD_OPTIONS) =>
         ({
           type: "approval_request",
           requestId,
           requestKind: "mcp-elicitation",
           appName: "github",
-          options: elicitationCardOptions(fieldCount),
+          options,
           elicitation: { serverName: "github", mode: "form", message: "Delete octo/repo?" },
         }) as unknown as OrchestrationV2TurnItem;
       const { accepted, use } = harness({
         [workerId]: {
           thread: thread("full-access"),
-          runtimeRequests: [fields, confirm],
-          turnItems: [claudeCard(fields.id, 1), claudeCard(confirm.id, 0)],
+          runtimeRequests: [fields, confirm, forged],
+          turnItems: [
+            claudeCard(fields.id),
+            claudeCard(confirm.id),
+            // Even a Claude card that somehow offers Approve stays with the person.
+            claudeCard(forged.id, [{ decision: "accept", label: "Submit" }]),
+          ],
         },
       });
       yield* use((reactor) => reactor.sweep());
-      assert.deepEqual(accepted(), [[workerId, "runtime-request:claude-confirm"]]);
+      assert.deepEqual(accepted(), []);
     }),
   );
 

@@ -366,3 +366,15 @@ export function validateMcpElicitationContent(
   }
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, content };
 }
+
+// Words that name a credential in a field's key or title. MCP forbids a server
+// from asking for secrets in form mode; a form that does is never shown.
+const SECRET_FIELD =
+  /pass(word|wd|code|phrase)|secret|token|api[\s_-]?key|private[\s_-]?key|access[\s_-]?key|credential|\bpin\b|\botp\b|one[\s_-]?time[\s_-]?(code|password)|2fa|mfa|cvv|cvc|card[\s_-]?number|ssn|social[\s_-]?security/i;
+
+/** The first field that asks for a password, token or other secret, if any. */
+export function findMcpElicitationSecretField(
+  fields: ReadonlyArray<McpElicitationField>,
+): McpElicitationField | undefined {
+  return fields.find((field) => SECRET_FIELD.test(field.key) || SECRET_FIELD.test(field.title));
+}

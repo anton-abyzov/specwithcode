@@ -79,16 +79,17 @@ type ApprovalItem = Extract<OrchestrationV2TurnItem, { readonly type: "approval_
 /**
  * An MCP elicitation the person could only say yes or no to. The Codex adapter
  * declines up front a form whose required fields have no default, and shows
- * the rest as approvals whose Approve submits the form's own defaults. The
- * Claude adapter offers Submit only on a form without fields
- * (`elicitationCardOptions`). So an elicitation approval that offers Approve
- * asks for nothing but a yes; one without Approve asks for fields and is left
- * for the person.
+ * the rest as approvals whose Approve submits the form's own defaults. So a
+ * Codex elicitation approval that offers Approve asks for nothing but a yes;
+ * one without Approve asks for fields and is left for the person. A Claude
+ * form (one that carries `elicitation`) always needs the person, even with no
+ * fields (1481).
  */
 export function isConfirmOnlyElicitation(item: ApprovalItem | undefined): boolean {
   return (
     item !== undefined &&
     item.requestKind === "mcp-elicitation" &&
+    item.elicitation === undefined &&
     (item.options ?? []).some((option) => option.decision === "accept")
   );
 }
