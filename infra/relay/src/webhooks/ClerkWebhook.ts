@@ -94,6 +94,43 @@ const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(ClerkWebhoo
 
 const empty = (status: number) => HttpServerResponse.empty({ status });
 
+/** The longest cause text a deletion warning keeps. */
+const CAUSE_DETAIL_MAX_CHARS = 300;
+
+const causeText = (cause: unknown): string => {
+  const parts: Array<string> = [];
+  let current: unknown = cause;
+  for (let depth = 0; depth < 3 && current !== undefined && current !== null; depth += 1) {
+    if (current instanceof Error) {
+      parts.push(`${current.name}: ${current.message}`);
+      current = (current as { readonly cause?: unknown }).cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.join(" <- ");
+};
+
+/**
+ * What a failed deletion logs: the error's tag, the step that failed and the
+ * underlying cause's text, with the user id taken out and the text capped.
+ */
+export const deletionFailureDetail = (
+  error: { readonly _tag: string; readonly stage?: string; readonly cause?: unknown },
+  userId: string,
+): Record<string, string> => {
+  const detail: Record<string, string> = { errorTag: error._tag };
+  if (error.stage !== undefined) detail.stage = error.stage;
+  if (error.cause !== undefined) {
+    detail.cause = causeText(error.cause)
+      .split(userId)
+      .join("<user>")
+      .slice(0, CAUSE_DETAIL_MAX_CHARS);
+  }
+  return detail;
+};
+
 type DeletionServices = Effect.Services<ReturnType<typeof AccountDeletion.deleteAccountRecords>>;
 
 export const handleClerkWebhook = Effect.fn("relay.webhooks.clerk")(function* (
@@ -158,9 +195,10 @@ export const handleClerkWebhook = Effect.fn("relay.webhooks.clerk")(function* (
   }).pipe(
     Effect.as(empty(204)),
     Effect.catch((error) =>
-      Effect.logWarning("Clerk user deletion left relay records behind", {
-        errorTag: error._tag,
-      }).pipe(Effect.as(empty(500))),
+      Effect.logWarning(
+        "Clerk user deletion left relay records behind",
+        deletionFailureDetail(error, userId),
+      ).pipe(Effect.as(empty(500))),
     ),
   );
 });
