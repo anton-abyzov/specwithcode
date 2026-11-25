@@ -409,11 +409,14 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   const gitSpelling = (path: string) =>
     /^[A-Za-z]:[\\/]/u.test(path) ? path.replaceAll("\\", "/") : path;
   // Git resolves a path one component at a time, following a link before
-  // the `..` after it; Node's realPath collapses `..` first. Undefined when
-  // the links do not settle.
+  // the `..` after it; Node's realPath collapses `..` first. Takes `/` or a
+  // drive root and either separator; undefined when the links do not settle.
   const resolveLikeGit = (path: string) =>
     Effect.gen(function* () {
-      const pending = path.split("/").filter((part) => part.length > 0);
+      const split = (text: string) => text.split(/[\\/]/u).filter((part) => part.length > 0);
+      const rootOf = (text: string) => /^[A-Za-z]:(?=[\\/])/u.exec(text)?.[0] ?? "";
+      let root = rootOf(path);
+      const pending = split(path.slice(root.length));
       let resolved: Array<string> = [];
       for (let hops = 0; pending.length > 0;) {
         const part = pending.shift() as string;
@@ -423,17 +426,20 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
           continue;
         }
         const target = yield* fileSystem
-          .readLink(`/${[...resolved, part].join("/")}`)
+          .readLink(`${root}/${[...resolved, part].join("/")}`)
           .pipe(Effect.option);
         if (Option.isNone(target)) {
           resolved.push(part);
           continue;
         }
         if ((hops += 1) > 40) return undefined;
-        if (target.value.startsWith("/")) resolved = [];
-        pending.unshift(...target.value.split("/").filter((piece) => piece.length > 0));
+        const targetRoot = rootOf(target.value);
+        // An absolute target starts over; one without a drive stays on this one.
+        if (targetRoot !== "") root = targetRoot;
+        if (targetRoot !== "" || /^[\\/]/u.test(target.value)) resolved = [];
+        pending.unshift(...split(target.value.slice(targetRoot.length)));
       }
-      return `/${resolved.join("/")}`;
+      return `${root}/${resolved.join("/")}`;
     });
   const ownsCheckout = (commonDir: string, isMain: boolean) =>
     Effect.gen(function* () {
@@ -482,20 +488,24 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
           .readFile(`${slots}${other}/gitdir`)
           .pipe(Effect.option);
         if (Option.isNone(otherRecord)) continue;
-        const trimmed = new TextDecoder().decode(otherRecord.value).trimEnd();
-        const folder = trimmed.endsWith("/.git") ? trimmed.slice(0, -"/.git".length) : trimmed;
+        // Git reads the record as a C string: it stops at a NUL byte.
+        const text = new TextDecoder().decode(otherRecord.value);
+        const trimmed = text.split("\0")[0]!.trimEnd();
+        const folder = trimmed.replace(/[\\/]\.git$/u, "");
         const absolute =
           folder.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(folder)
             ? folder
             : `${slots}${other}/${folder}`;
-        const resolved = absolute.startsWith("/")
-          ? yield* resolveLikeGit(absolute)
-          : gitSpelling(yield* real(absolute));
+        const resolved = yield* resolveLikeGit(absolute);
+        // Case is ignored here: on a case-insensitive disk Git matches paths
+        // that way, and elsewhere this only refuses more.
+        const same = (path: string) =>
+          gitSpelling(path).toLowerCase() === gitSpelling(asked).toLowerCase();
         if (
           namesThisFolder(otherRecord.value) ||
-          gitSpelling(folder) === gitSpelling(asked) ||
+          same(folder) ||
           resolved === undefined ||
-          resolved === gitSpelling(asked)
+          same(resolved)
         )
           naming += 1;
       }

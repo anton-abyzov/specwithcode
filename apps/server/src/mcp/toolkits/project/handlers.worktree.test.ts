@@ -182,7 +182,9 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
-    yield* fileSystem.writeFileString(path.join(spareSlot, "gitdir"), `${locked}/.git\n`);
+    // Git writes records with `/` on every platform.
+    const gitLocked = locked.replaceAll("\\", "/");
+    yield* fileSystem.writeFileString(path.join(spareSlot, "gitdir"), `${gitLocked}/.git\n`);
     yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${spareSlot} \n`);
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
@@ -204,7 +206,14 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     });
     // Git trims a record's line ending and resolves its path before the
     // lookup, so a twin spelled with CRLF or through a link counts too.
-    for (const spelling of [`${locked}/.git\r\n`, `${root}/hop/../../locked/.git\n`]) {
+    // It also stops reading at a NUL byte, and on a case-insensitive disk
+    // matches paths regardless of case.
+    for (const spelling of [
+      `${gitLocked}/.git\r\n`,
+      `${root}/hop/../../locked/.git\n`,
+      `${gitLocked}\0/.git\n`,
+      `${gitLocked.toUpperCase()}/.git\n`,
+    ]) {
       yield* fileSystem.writeFileString(path.join(twin, "gitdir"), spelling);
       expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
         code: "invalid_request",
