@@ -208,6 +208,9 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     // lookup, so a twin spelled with CRLF or through a link counts too.
     // It also stops reading at a NUL byte, and on a case-insensitive disk
     // matches paths regardless of case.
+    if (process.platform !== "win32") {
+      yield* fileSystem.makeDirectory(path.join(root, "odd\\name"));
+    }
     for (const spelling of [
       `${gitLocked}/.git\r\n`,
       `${root}/hop/../../locked/.git\n`,
