@@ -104,3 +104,46 @@ describe("removeAgentCredits", () => {
     expect(isAgentCreditLine("Generated with [Claude Code](https://example.com)")).toBe(false);
   });
 });
+
+describe("credit parsing on hostile text", () => {
+  // Pull request titles and bodies come from anyone who can open one, so parsing them must
+  // stay linear: each of these took seconds or more with backtracking patterns.
+  const within = (limitMs: number, run: () => unknown) => {
+    const started = performance.now();
+    run();
+    return performance.now() - started < limitMs;
+  };
+
+  it("reads a co-author line padded with whitespace in linear time", () => {
+    const line = `Co-authored-by: ${" ".repeat(2_500)}x`;
+    expect(within(100, () => isAgentCreditLine(line))).toBe(true);
+    expect(isAgentCreditLine(line)).toBe(false);
+  });
+
+  it("handles a long run of blank-looking lines in linear time", () => {
+    const run = "\n ".repeat(40_000);
+    // Blank-looking lines that do not end the message must not be rescanned from each one.
+    const inside = `Body${run}\nEnd\nCo-authored-by: Claude <noreply@anthropic.com>`;
+    let cleaned = "";
+    expect(within(100, () => (cleaned = removeAgentCredits(inside)))).toBe(true);
+    expect(cleaned).toBe(`Body${run}\nEnd`);
+    // Ones that do end it are dropped.
+    const trailing = `Body\nCo-authored-by: Claude <noreply@anthropic.com>${run}`;
+    expect(within(100, () => (cleaned = removeAgentCredits(trailing)))).toBe(true);
+    expect(cleaned).toBe("Body");
+  });
+
+  it("scans a run of unmatched brackets in linear time", () => {
+    const line = `${"[".repeat(40_000)}](https://claude.ai`;
+    expect(within(100, () => isAgentCreditLine(line))).toBe(true);
+    expect(isAgentCreditLine(line)).toBe(false);
+  });
+
+  it("still recognizes credits with unusual spacing and case", () => {
+    expect(isAgentCreditLine("Co-Authored-By:\tGitHub Copilot   <NOREPLY@GITHUB.COM>")).toBe(true);
+    expect(isAgentCreditLine("co-authored-by: Claude<noreply@anthropic.com>")).toBe(true);
+    expect(isAgentCreditLine("Co-authored-by: Someone <noreply@github.com>")).toBe(false);
+    expect(isAgentCreditLine("Co-authored-by: <noreply@anthropic.com> trailing")).toBe(false);
+    expect(isAgentCreditLine("Co-authored-by: a <b> <noreply@anthropic.com>")).toBe(true);
+  });
+});

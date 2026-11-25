@@ -2260,6 +2260,31 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each(["merge", "enable-auto-merge"] as const)(
+    "pins a %s to the head it read, even with GitHub's own message",
+    (action) =>
+      Effect.gen(function* () {
+        route(["query PullRequestActionState", actionState({ headRefOid: "head-at-read" })]);
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        yield* cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action,
+          mergeMethod: "squash",
+        });
+        // A commit pushed after the read makes GitHub refuse the merge instead of landing it.
+        expect(
+          variablesOf(action === "merge" ? "mergePullRequest(" : "enablePullRequestAutoMerge("),
+        ).toEqual([
+          {
+            input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "head-at-read" },
+          },
+        ]);
+      }),
+  );
+
   it.effect("passes an explicitly empty body when the proposed message only credits an agent", () =>
     Effect.gen(function* () {
       route(
@@ -3337,6 +3362,59 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect([varsAt(0), varsAt(1)]).toEqual([{ threadId: "PRRT_1" }, { threadId: "PRRT_1" }]);
       // A GitHub Enterprise thread is resolved on its own host, not on github.com.
       expect([callAt(0).host, callAt(1).host]).toEqual(["github.acme.dev", "github.acme.dev"]);
+    }),
+  );
+
+  const reviewThreadScope = (threadPullRequestId: string) => ({
+    data: {
+      repository: { pullRequest: { id: "PR_thisOne" } },
+      node: { id: "PRRT_x", reviewThreadPullRequest: { id: threadPullRequestId } },
+    },
+  });
+  const threadTarget = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "github.com",
+    number: 7,
+    threadId: "PRRT_x",
+  };
+
+  it.effect.each([
+    { mutation: "addPullRequestReviewThreadReply(", body: "Done." },
+    { mutation: "resolveReviewThread(", resolved: true },
+    { mutation: "unresolveReviewThread(", resolved: false },
+  ] as const)("refuses $mutation on a review thread of another pull request", (write) =>
+    Effect.gen(function* () {
+      route([SUBJECT_SCOPE_QUERY, reviewThreadScope("PR_someOtherOne")]);
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        "body" in write
+          ? cli.replyToReviewThread({ ...threadTarget, body: write.body })
+          : cli.setReviewThreadResolution({ ...threadTarget, resolved: write.resolved }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubSubjectScopeError");
+      expect(variablesOf(SUBJECT_SCOPE_QUERY)).toEqual([
+        { owner: "acme", name: "web", number: 7, subjectId: "PRRT_x" },
+      ]);
+      // Refused before any write reached GitHub.
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("replies to and resolves a review thread of the named pull request", () =>
+    Effect.gen(function* () {
+      route([SUBJECT_SCOPE_QUERY, reviewThreadScope("PR_thisOne")]);
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.replyToReviewThread({ ...threadTarget, body: "Done." });
+      yield* cli.setReviewThreadResolution({ ...threadTarget, resolved: true });
+
+      expect(variablesOf("addPullRequestReviewThreadReply(")).toEqual([
+        { threadId: "PRRT_x", body: "Done." },
+      ]);
+      expect(variablesOf("resolveReviewThread(")).toEqual([{ threadId: "PRRT_x" }]);
     }),
   );
 
