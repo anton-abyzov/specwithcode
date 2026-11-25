@@ -18,7 +18,10 @@ import { AuthAccessWriteScope } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
-import { isValidScreenShareHostProof } from "@specweave-studio/shared/desktopBootstrapToken";
+import {
+  isValidScreenShareHostProof,
+  SCREEN_SHARE_HOST_PROOF_WINDOW_MS,
+} from "@specweave-studio/shared/desktopBootstrapToken";
 
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
@@ -98,20 +101,16 @@ export const personDeviceOf = (
     const name = yield* approvedName(candidate.device.key);
     if (name === null) return { refusal: "not_approved" };
     const { label: claimed, ...device } = candidate.device;
+    // A blank stored name would leave the prompt with nothing a person can read.
+    const label = name.trim().length > 0 ? name : `Device ${device.shortId}`;
     return {
       device: {
         ...device,
-        label: name,
-        ...(claimed === name ? {} : { claimedLabel: claimed }),
+        label,
+        ...(claimed === label ? {} : { claimedLabel: claimed }),
       },
     };
   });
-
-/** A name a person can read at the prompt. A blank one is no name: the device is refused. */
-const approvedLabel = (label: string | undefined): string | null => {
-  const name = label?.trim() ?? "";
-  return name.length > 0 ? name : null;
-};
 
 /** `approvedName` from the approved list: a damaged or unreadable list approves no one. */
 export const approvedNameFrom =
@@ -120,7 +119,7 @@ export const approvedNameFrom =
     trust.snapshot.pipe(
       Effect.map((snapshot) =>
         snapshot.health === "ok"
-          ? approvedLabel(snapshot.devices.find((device) => device.key === key)?.label)
+          ? (snapshot.devices.find((device) => device.key === key)?.label ?? null)
           : null,
       ),
       Effect.orElseSucceed(() => null),
@@ -173,8 +172,8 @@ const MAX_OWN_APP_PROOF_LENGTH = 512;
  * - `owner`: the desktop owner proof, against the verifier file. The file can
  *   change later.
  *
- * The caller keeps the proof and checks it again when a viewer opens, whichever
- * kind it was.
+ * The proof itself is not kept after this: `ownAppStanding` gives what is
+ * needed to check later that it still holds.
  *
  * Null for anything else. A process that rewrites this user's files can make
  * its own proof match the verifier; that is the limit `deviceApprover.ts` names.
@@ -195,4 +194,38 @@ export const ownAppProofKind = (input: {
   return input.verifier !== null && desktopOwnerProofMatches(input.proof, input.verifier)
     ? "owner"
     : null;
+};
+
+/**
+ * What is kept of an accepted proof, to check later that it still holds. Never
+ * the proof: an owner proof can be spent to get the app's kind of session, so
+ * the server keeps only what the verifier file held when it matched (a digest
+ * it cannot spend), and for a launch proof only the time it runs out.
+ */
+export type OwnAppStanding =
+  | { readonly kind: "owner"; readonly verifier: Uint8Array }
+  | { readonly kind: "launch"; readonly untilMs: number };
+
+export const ownAppStanding = (
+  input: Parameters<typeof ownAppProofKind>[0],
+): OwnAppStanding | null => {
+  const kind = ownAppProofKind(input);
+  if (kind === null) return null;
+  return kind === "launch"
+    ? { kind, untilMs: input.nowMs + SCREEN_SHARE_HOST_PROOF_WINDOW_MS }
+    : { kind, verifier: Uint8Array.from(input.verifier ?? []) };
+};
+
+/** Whether an accepted proof still holds: the verifier file is unchanged, or the launch proof has not run out. */
+export const ownAppStandingHolds = (
+  standing: OwnAppStanding,
+  now: { readonly verifier: Uint8Array | null; readonly nowMs: number },
+): boolean => {
+  if (standing.kind === "launch") return now.nowMs <= standing.untilMs;
+  const { verifier } = now;
+  if (verifier === null || verifier.byteLength !== standing.verifier.byteLength) return false;
+  let different = 0;
+  for (let index = 0; index < verifier.byteLength; index += 1)
+    different |= verifier[index]! ^ standing.verifier[index]!;
+  return different === 0 && verifier.byteLength > 0;
 };

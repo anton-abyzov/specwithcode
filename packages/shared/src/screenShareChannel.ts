@@ -308,6 +308,18 @@ export const newScreenShareMachineKey = (): ScreenShareMachineKey => {
   return { secret: toBase64Url(secret), publicKey: toBase64Url(ed25519.getPublicKey(secret)) };
 };
 
+/** Whether both halves decode to 32 bytes and the public half is the secret's own. */
+export const isScreenShareMachineKey = (key: ScreenShareMachineKey): boolean => {
+  try {
+    const secret = keyBytes(key.secret, 32);
+    const publicKey = keyBytes(key.publicKey, 32);
+    const derived = ed25519.getPublicKey(secret);
+    return derived.every((byte, index) => byte === publicKey[index]);
+  } catch {
+    return false;
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Viewer side.
 

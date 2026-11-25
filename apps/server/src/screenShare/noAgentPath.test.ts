@@ -74,7 +74,9 @@ describe("screen sharing has no agent path", () => {
     expect(guard).toBeLessThan(http.indexOf("request.upgrade"));
     expect(http.match(/request\.upgrade/g)).toHaveLength(1);
     expect(http).toContain("personDeviceOf(session, approvedNameFrom(trust))");
-    expect(http).toContain("ownAppProofKind(");
+    expect(http).toContain("ownAppStanding(");
+    // The proof is checked and dropped: the routes keep nothing they could spend.
+    expect(http).not.toMatch(/attachHost\(peer, proof\)|reprove\(proof\)/);
   });
 
   it("answers only the two socket paths, and only as a WebSocket", () => {
@@ -143,7 +145,9 @@ describe("screen sharing has no agent path", () => {
     // The relay is made once, inside the route layer, and handed to nothing else.
     const made = filesUnder(serverSource)
       .filter((file) => !file.endsWith(".test.ts"))
-      .flatMap((file) => NodeFs.readFileSync(file, "utf8").match(/new ScreenShareRelay\(/g) ?? []);
+      .flatMap(
+        (file) => NodeFs.readFileSync(file, "utf8").match(/new ScreenShareRelay[<(]/g) ?? [],
+      );
     expect(made).toHaveLength(1);
     const http = NodeFs.readFileSync(
       NodePath.join(serverSource, "screenShare", "ScreenShareHttp.ts"),

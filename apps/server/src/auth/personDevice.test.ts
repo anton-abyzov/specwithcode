@@ -16,6 +16,8 @@ import {
   approvedNameFrom,
   isOwnApp,
   ownAppProofKind,
+  ownAppStanding,
+  ownAppStandingHolds,
   personDeviceCandidate,
   personDeviceOf,
 } from "./personDevice.ts";
@@ -84,12 +86,10 @@ describe("personDeviceOf", () => {
       ).toBeNull();
       expect(yield* fromList(Effect.fail("unreadable"))(KEY)).toBeNull();
       expect(yield* fromList(Effect.succeed({ health: "ok", devices: [] }))(KEY)).toBeNull();
-      // A blank name is nothing a person could recognise at the prompt.
-      expect(
-        yield* fromList(Effect.succeed({ health: "ok", devices: [{ ...listed, label: "  " }] }))(
-          KEY,
-        ),
-      ).toBeNull();
+      // A blank stored name is still an approval; the prompt then says "Device <ID>".
+      const blank = yield* personDeviceOf(connect, () => Effect.succeed("  "));
+      expect(blank).toMatchObject({ device: { claimedLabel: "Work laptop" } });
+      expect("device" in blank ? blank.device.label : "").toMatch(/^Device [0-9A-Z]{4,}$/);
     }),
   );
 
@@ -283,5 +283,56 @@ describe("ownAppProofKind", () => {
       },
     ];
     for (const input of refused) expect(ownAppProofKind(input)).toBeNull();
+  });
+});
+
+describe("ownAppStanding", () => {
+  const NOW = Date.parse("2026-11-25T12:00:00Z");
+  const verifierOf = (proof: string) =>
+    new Uint8Array(createHash("sha256").update(proof, "utf8").digest());
+  const OWNER_PROOF = "b3duZXItcHJvb2Ytb2YtNDMtY2hhcmFjdGVycy1sb25nLQ";
+  const secret = "launch-secret";
+
+  it("keeps nothing of an owner proof that could be spent, and holds while the file is unchanged", () => {
+    const verifier = verifierOf(OWNER_PROOF);
+    const standing = ownAppStanding({
+      proof: OWNER_PROOF,
+      launchSecret: undefined,
+      verifier,
+      nowMs: NOW,
+    })!;
+    expect(standing.kind).toBe("owner");
+    expect(JSON.stringify(standing)).not.toContain(OWNER_PROOF);
+    expect(ownAppStandingHolds(standing, { verifier, nowMs: NOW + 86_400_000 })).toBe(true);
+    // The app restarted and wrote a new verifier, or the file is gone or unreadable.
+    expect(ownAppStandingHolds(standing, { verifier: verifierOf("another"), nowMs: NOW })).toBe(
+      false,
+    );
+    expect(ownAppStandingHolds(standing, { verifier: null, nowMs: NOW })).toBe(false);
+    expect(ownAppStandingHolds(standing, { verifier: new Uint8Array(), nowMs: NOW })).toBe(false);
+  });
+
+  it("keeps only an end time for a launch proof, which runs out unless the app sends a new one", () => {
+    const proof = currentScreenShareHostProof(secret, NOW);
+    const standing = ownAppStanding({ proof, launchSecret: secret, verifier: null, nowMs: NOW })!;
+    expect(standing).toEqual({ kind: "launch", untilMs: NOW + SCREEN_SHARE_HOST_PROOF_WINDOW_MS });
+    expect(ownAppStandingHolds(standing, { verifier: null, nowMs: NOW + 60_000 })).toBe(true);
+    expect(
+      ownAppStandingHolds(standing, {
+        verifier: null,
+        nowMs: NOW + SCREEN_SHARE_HOST_PROOF_WINDOW_MS + 1,
+      }),
+    ).toBe(false);
+  });
+
+  it("gives nothing for a proof that does not hold", () => {
+    expect(
+      ownAppStanding({
+        proof: currentDesktopBootstrapToken(secret, NOW),
+        launchSecret: secret,
+        verifier: verifierOf(OWNER_PROOF),
+        nowMs: NOW,
+      }),
+    ).toBeNull();
   });
 });

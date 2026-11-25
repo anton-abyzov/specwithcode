@@ -117,7 +117,9 @@ describe("ScreenShareRelay", () => {
     const relay = new ScreenShareRelay();
     const host = peer();
     const hostIn = relay.attachHost(host.end, "proof-1");
-    // An app that has said nothing counts as unsupported and off.
+    // An app that attached and has not yet said where it stands is not there yet.
+    expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "no_host" });
+    hostIn.text(status({ enabled: true, supported: false, busy: false }));
     expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "unsupported" });
     hostIn.text(status({ enabled: false, supported: true, busy: false }));
     expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "off" });
@@ -270,15 +272,15 @@ describe("ScreenShareRelay", () => {
     expect(source).not.toMatch(/screenShareChannel|decodeScreenShareFrame|subtle|createDecipher/);
   });
 
-  it("remembers what the app proved itself with, and drops an app whose proof went stale", () => {
+  it("keeps what the routes gave it of the app's proof, and drops an app whose proof went stale", () => {
     const { relay, host } = ready();
-    expect(relay.hostCredential()).toBe("proof-1");
+    expect(relay.hostStanding()).toBe("proof-1");
     const viewer = peer();
     relay.openViewer(viewer.end, DEVICE, "env");
     relay.dropHost("proof_stale");
     expect(host.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_REFUSED, reason: "proof_stale" }]);
     expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_REFUSED, reason: "no_host" }]);
-    expect(relay.hostCredential()).toBeUndefined();
+    expect(relay.hostStanding()).toBeUndefined();
     expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "no_host" });
   });
 
@@ -453,16 +455,16 @@ describe("ScreenShareRelay", () => {
     expect(second.host.json().at(-1)).toEqual({ t: "closed", sid: SID });
   });
 
-  it("keeps the app's latest proof for the routes to check again", () => {
+  it("keeps what the routes made of the app's latest proof for them to check again", () => {
     const { relay, hostIn } = ready();
-    expect(relay.hostCredential()).toBe("proof-1");
+    expect(relay.hostStanding()).toBe("proof-1");
     hostIn.reprove("proof-2");
-    expect(relay.hostCredential()).toBe("proof-2");
+    expect(relay.hostStanding()).toBe("proof-2");
     const next = peer();
     relay.attachHost(next.end, "proof-3");
     // The replaced socket can no longer change what is checked.
     hostIn.reprove("proof-4");
-    expect(relay.hostCredential()).toBe("proof-3");
+    expect(relay.hostStanding()).toBe("proof-3");
     // Nor can its failed proof drop the app that replaced it.
     hostIn.drop("proof_stale");
     expect(relay.status().host).toBe(true);

@@ -104,11 +104,12 @@ interface Session {
   cancelLife: () => void;
 }
 
-interface Host {
+interface Host<Standing> {
   readonly peer: ScreenSharePeer;
-  /** The latest proof the app sent; the routes check it again when a viewer opens. */
-  credential: string;
-  status: ScreenShareHostStatus;
+  /** What the routes kept of the app's latest proof, to check again when a viewer opens. Never the proof. */
+  standing: Standing;
+  /** Null until the app said where it stands: an app that just attached is not yet "off". */
+  status: ScreenShareHostStatus | null;
 }
 
 export interface ScreenShareRelayOptions {
@@ -119,8 +120,8 @@ export interface ScreenShareRelayOptions {
   readonly now?: () => number;
 }
 
-export class ScreenShareRelay {
-  private host: Host | null = null;
+export class ScreenShareRelay<Standing = unknown> {
+  private host: Host<Standing> | null = null;
   private readonly sessions = new Map<string, Session>();
   private readonly newSessionId: () => string;
   private readonly maxBufferBytes: number;
@@ -155,9 +156,9 @@ export class ScreenShareRelay {
     };
   }
 
-  /** The attached app's latest proof, for the routes to check again. */
-  hostCredential(): string | undefined {
-    return this.host?.credential;
+  /** What the routes kept of the attached app's latest proof, for them to check again. */
+  hostStanding(): Standing | undefined {
+    return this.host?.standing;
   }
 
   /** Drops the attached app (its proof no longer holds) and ends its sessions. */
@@ -176,10 +177,10 @@ export class ScreenShareRelay {
    */
   attachHost(
     peer: ScreenSharePeer,
-    credential: string,
+    standing: Standing,
   ): {
     /** A newer proof from the same app, already checked by the routes. */
-    readonly reprove: (credential: string) => void;
+    readonly reprove: (standing: Standing) => void;
     /** Drops this app, if it is still the one attached: its newer proof did not hold. */
     readonly drop: (reason: string) => void;
     readonly text: (message: string) => void;
@@ -191,14 +192,14 @@ export class ScreenShareRelay {
       this.endAll("no_host");
       previous.peer.close(1012, "replaced");
     }
-    const host: Host = { peer, credential, status: OFF };
+    const host: Host<Standing> = { peer, standing, status: null };
     this.host = host;
     const attached: ScreenShareHostInbound = { t: "attached" };
     peer.sendText(JSON.stringify(attached));
     const current = () => this.host === host;
     return {
       reprove: (next) => {
-        if (current()) host.credential = next;
+        if (current()) host.standing = next;
       },
       drop: (reason) => {
         if (current()) this.dropHost(reason);
@@ -221,7 +222,7 @@ export class ScreenShareRelay {
             busy: envelope.status.busy,
           };
           // Turned off while a session runs: the app ends it too, this is the belt.
-          if (!host.status.enabled) this.endAll("turned_off");
+          if (!envelope.status.enabled) this.endAll("turned_off");
         } else if (
           envelope.t === "close" &&
           typeof envelope.sid === "string" &&
@@ -274,7 +275,8 @@ export class ScreenShareRelay {
         readonly closed: () => void;
       } {
     const host = this.host;
-    if (host === null) return { refused: "no_host" };
+    // An app that attached a moment ago and has not said where it stands is not there yet.
+    if (host === null || host.status === null) return { refused: "no_host" };
     if (!host.status.supported) return { refused: "unsupported" };
     if (!host.status.enabled) return { refused: "off" };
     if (host.status.busy || this.sessions.size > 0) return { refused: "busy" };

@@ -268,4 +268,36 @@ describe("ScreenShareStore", () => {
     expect(reread.enabled).toBe(true);
     expect(reread.knowsDevice("t1")).toBe(false);
   });
+
+  it("reads a file whose key is not a real pair as off, and says when a write did not happen", () => {
+    const { io, file } = disk();
+    const first = new ScreenShareStore(io);
+    first.setEnabled(true);
+    const stored = JSON.parse(new TextDecoder().decode(file.bytes!).slice(3)) as {
+      machineKey: { secret: string; publicKey: string };
+    };
+    const other = new ScreenShareStore(disk().io).machineKey.publicKey;
+    file.bytes = new TextEncoder().encode(
+      `m1:${JSON.stringify({ ...stored, machineKey: { ...stored.machineKey, publicKey: other } })}`,
+    );
+    const mismatched = new ScreenShareStore(io);
+    expect(mismatched.storeHealthy).toBe(false);
+    expect(mismatched.enabled).toBe(false);
+
+    const failing = disk();
+    const store = new ScreenShareStore(failing.io);
+    store.setEnabled(true);
+    failing.setSealing(false);
+    const entry = {
+      id: "s1",
+      at: "2026-11-25T12:00:00.000Z",
+      label: "Work laptop",
+      shortId: "7F3A",
+      mode: "view",
+      outcome: "refused",
+    } as const;
+    expect(store.recordAudit(entry)).toBe(false);
+    expect(store.touchGrant("t1")).toBe(false);
+    expect(store.audit).toEqual([]);
+  });
 });

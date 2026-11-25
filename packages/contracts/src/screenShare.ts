@@ -62,12 +62,18 @@ export const SCREEN_SHARE_CODE_TRIES = 3;
 /** With no frame for this long while live, the viewer says the display may be asleep. */
 export const SCREEN_SHARE_NO_PICTURE_MS = 10_000;
 
-/** The first byte of a binary message on the viewer socket, and after the session id on the host socket. */
+/**
+ * The first byte of a binary message on the viewer socket, and after the
+ * session id on the host socket. What follows it: for hello, challenge and
+ * proof, the message as UTF-8 JSON; for sealed, one sealed record, whose own
+ * first byte inside the seal is a `SCREEN_SHARE_RECORD` type. The two number
+ * spaces are separate on purpose and share no value.
+ */
 export const SCREEN_SHARE_WIRE = {
   hello: 1,
   challenge: 2,
   proof: 3,
-  sealed: 16,
+  sealed: 4,
 } as const;
 
 /** Record types inside the sealed session. Slice 1 has no others. */
@@ -250,6 +256,36 @@ export const decodeScreenShareFrame = (
   if (length > 4096 || 4 + length > body.length) throw new Error("Not a frame.");
   const header = decodeFrameHeader(JSON.parse(decoder.decode(body.subarray(4, 4 + length))));
   return { header, jpeg: body.subarray(4 + length) };
+};
+
+/** One wire message: the type byte, then the body. */
+export const encodeScreenShareWire = (type: number, body: Uint8Array): Uint8Array<ArrayBuffer> => {
+  const out = new Uint8Array(1 + body.length);
+  out[0] = type;
+  out.set(body, 1);
+  return out;
+};
+
+/** A hello, challenge or proof: the type byte, then the message as UTF-8 JSON. */
+export const encodeScreenShareWireJson = (type: number, value: unknown): Uint8Array<ArrayBuffer> =>
+  encodeScreenShareWire(type, encoder.encode(JSON.stringify(value)));
+
+/** The type byte and the body of a wire message; null for an empty one. */
+export const decodeScreenShareWire = (
+  message: Uint8Array,
+): { readonly type: number; readonly body: Uint8Array } | null =>
+  message.length === 0 ? null : { type: message[0]!, body: message.subarray(1) };
+
+/** A body that is one JSON object, or null for anything else. */
+export const decodeScreenShareJson = (body: Uint8Array): Record<string, unknown> | null => {
+  try {
+    const value: unknown = JSON.parse(decoder.decode(body));
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 };
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

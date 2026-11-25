@@ -25,6 +25,7 @@
  *   It is not what protects this machine; the prompt and the system's
  *   authentication are.
  * - The banner comes before the first frame. No banner, no session.
+ * - The session is written to the list before the first frame. No entry, no session.
  * - From the viewer only four records are read; anything else ends the session.
  */
 import {
@@ -36,7 +37,10 @@ import {
   SCREEN_SHARE_SESSION_MAX_MS,
   SCREEN_SHARE_SILENCE_MS,
   SCREEN_SHARE_WIRE,
+  decodeScreenShareJson,
   encodeScreenShareFrame,
+  encodeScreenShareWire,
+  encodeScreenShareWireJson,
   type ScreenShareAuditEntry,
   type ScreenShareAuditOutcome,
   type ScreenShareDisplay,
@@ -143,6 +147,8 @@ interface Session {
   outcome: ScreenShareAuditOutcome;
   grantOnLive: boolean;
   codeTriesLeft: number;
+  /** System dialogs for this prompt that ended without a person. */
+  authTries: number;
   startedAt?: number;
   displays: ReadonlyArray<ScreenShareDisplay>;
   displayId: string;
@@ -162,25 +168,13 @@ interface Session {
 }
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const wire = encodeScreenShareWire;
+const jsonBody = decodeScreenShareJson;
 
-const wire = (type: number, body: Uint8Array): Uint8Array => {
-  const out = new Uint8Array(1 + body.length);
-  out[0] = type;
-  out.set(body, 1);
-  return out;
-};
-
-const jsonBody = (bytes: Uint8Array): Record<string, unknown> | null => {
-  try {
-    const value: unknown = JSON.parse(decoder.decode(bytes));
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-};
+/** After the system's dialog ended without a person, how long before another may be put up. */
+export const AUTHENTICATE_PAUSE_MS = 3_000;
+/** System dialogs one prompt may put up that end without a person, before it counts as Deny. */
+export const AUTHENTICATE_TRIES = 3;
 
 /** Refusals that count toward a device's quiet time. */
 const STRIKES: ReadonlySet<ScreenShareEndReason> = new Set([
@@ -195,6 +189,8 @@ export class ScreenShareSessions {
   private pending: Promise<unknown> = Promise.resolve();
   /** The system's dialog is up. A second one is never put over it. */
   private asking = false;
+  /** When the system's dialog last ended without a person: no new one for a moment after. */
+  private notPresentAt = Number.NEGATIVE_INFINITY;
   /** Counts every use of the switch, so an old answer cannot undo a newer choice. */
   private switchUses = 0;
   private readonly deps: ScreenShareSessionDeps;
@@ -278,6 +274,7 @@ export class ScreenShareSessions {
       outcome: "refused",
       grantOnLive: false,
       codeTriesLeft: SCREEN_SHARE_CODE_TRIES,
+      authTries: 0,
       displays: [],
       displayId: "",
       seq: 0,
@@ -326,16 +323,22 @@ export class ScreenShareSessions {
    * they are not, when it cannot be asked, or when another such dialog is up:
    * two dialogs at once would let one be answered in place of the other.
    */
-  private async personPresent(reason: string): Promise<boolean> {
-    if (this.asking) return false;
+  private async personPresent(reason: string): Promise<"present" | "absent" | "not_asked"> {
+    if (this.asking) return "not_asked";
+    // A dialog that was just cancelled or failed is not put straight back up:
+    // a click that keeps summoning it gets one dialog every few seconds at most.
+    if (this.deps.now() - this.notPresentAt < AUTHENTICATE_PAUSE_MS) return "not_asked";
     this.asking = true;
+    let present = false;
     try {
-      return (await this.deps.authenticate(reason)) === true;
+      present = (await this.deps.authenticate(reason)) === true;
     } catch {
-      return false;
+      present = false;
     } finally {
       this.asking = false;
     }
+    if (!present) this.notPresentAt = this.deps.now();
+    return present ? "present" : "absent";
   }
 
   /** A button in the prompt window. Only the window's own frame may call this. */
@@ -360,8 +363,11 @@ export class ScreenShareSessions {
     // The session may have timed out, been denied or ended while the dialog was up:
     // then the answer is for nothing, and is dropped.
     if (this.session !== session || session.phase !== "authenticating") return;
-    if (!present) {
-      // Not allowed, not denied: the prompt stays until someone answers or its time runs out.
+    if (present !== "present") {
+      // Not allowed, not denied: the prompt stays until someone answers or its time
+      // runs out. A few dialogs that came to nothing are a refusal.
+      if (present === "absent") session.authTries += 1;
+      if (session.authTries >= AUTHENTICATE_TRIES) return this.end(session, "denied");
       session.phase = "prompt";
       return;
     }
@@ -406,7 +412,7 @@ export class ScreenShareSessions {
     const use = this.switchUses;
     const present = await this.personPresent("turn on screen sharing for this Mac");
     // Turned off, or asked again, while the dialog was up: this answer is stale.
-    const saved = present && use === this.switchUses && store.setEnabled(true);
+    const saved = present === "present" && use === this.switchUses && store.setEnabled(true);
     this.deps.changed();
     return saved;
   }
@@ -459,7 +465,7 @@ export class ScreenShareSessions {
     session.phase = "proof";
     this.deps.send(
       session.sid,
-      wire(SCREEN_SHARE_WIRE.challenge, encoder.encode(JSON.stringify(session.start.challenge))),
+      encodeScreenShareWireJson(SCREEN_SHARE_WIRE.challenge, session.start.challenge),
     );
   }
 
@@ -472,10 +478,13 @@ export class ScreenShareSessions {
         sessionId: session.sid,
         nowEpochSeconds: Math.floor(this.deps.now() / 1000),
       });
+      // One start answers one proof. It is gone whether the proof held or not.
+      delete session.start;
       session.code = accepted.code;
       session.sealer = makeScreenShareSealer(accepted.keys.toViewer, session.sid);
       session.opener = makeScreenShareOpener(accepted.keys.toTarget, session.sid);
     } catch {
+      delete session.start;
       return this.end(session, "handshake_failed");
     }
     session.cancelStage?.();
@@ -556,6 +565,14 @@ export class ScreenShareSessions {
     // The banner goes up first. If it cannot, nothing is shown to anyone.
     if (!banner.show({ label: session.device.label, shortId: session.device.shortId, startedAt }))
       return this.end(session, "banner_lost");
+    // The list of sessions is the record of who saw this screen. One that cannot
+    // be written is one that would not be on it, so it does not start.
+    if (
+      !this.audit({ id: session.sid, device: session.device, outcome: session.outcome, startedAt })
+    ) {
+      banner.hide();
+      return this.end(session, "unsupported");
+    }
     session.phase = "live";
     session.startedAt = startedAt;
     session.lastHeard = startedAt;
@@ -564,7 +581,6 @@ export class ScreenShareSessions {
     const { thumbprint, label, shortId } = session.device;
     if (session.grantOnLive) store.addGrant({ thumbprint, label, shortId });
     else if (session.outcome === "allowed_by_grant") store.touchGrant(thumbprint);
-    this.audit({ id: session.sid, device: session.device, outcome: session.outcome, startedAt });
     capture.keepAwake(true);
     session.cancelLimit = this.deps.after(SCREEN_SHARE_SESSION_MAX_MS, () =>
       this.end(session, "time_limit"),
@@ -665,7 +681,10 @@ export class ScreenShareSessions {
       banner.hide();
     } else {
       prompt.hide();
-      if (STRIKES.has(reason)) store.addStrike(session.device.thumbprint);
+      // A viewer that leaves while a person is being asked has still made them look.
+      const asked = session.phase !== "hello" && session.phase !== "proof";
+      if (STRIKES.has(reason) || (reason === "viewer_ended" && asked))
+        store.addStrike(session.device.thumbprint);
     }
     this.audit({
       id: session.sid,
@@ -697,7 +716,7 @@ export class ScreenShareSessions {
     readonly startedAt?: number;
     readonly endedAt?: number;
     readonly frames?: number;
-  }): void {
+  }): boolean {
     const iso = (at: number) => new Date(at).toISOString();
     const previous = this.deps.store.audit.find((entry) => entry.id === input.id);
     const entry: ScreenShareAuditEntry = {
@@ -712,6 +731,6 @@ export class ScreenShareSessions {
       ...(input.reason === undefined ? {} : { reason: input.reason }),
       ...(input.frames === undefined ? {} : { frames: input.frames }),
     };
-    this.deps.store.recordAudit(entry);
+    return this.deps.store.recordAudit(entry);
   }
 }

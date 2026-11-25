@@ -22,6 +22,8 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  AUTHENTICATE_PAUSE_MS,
+  AUTHENTICATE_TRIES,
   ScreenShareSessions,
   type ScreenShareBannerView,
   type ScreenShareGrab,
@@ -64,10 +66,14 @@ const frame = (digest: string): ScreenShareGrab => ({
 function rig(options?: { readonly enabled?: boolean; readonly supported?: boolean }) {
   let now = START;
   const timers: Array<{ at: number; run: () => void; live: boolean }> = [];
-  const file: { bytes: Uint8Array | null } = { bytes: null };
+  const file: { bytes: Uint8Array | null; failWrites: boolean } = {
+    bytes: null,
+    failWrites: false,
+  };
   const io: ScreenShareStoreIo = {
     read: () => file.bytes,
     write: (bytes) => {
+      if (file.failWrites) throw new Error("disk full");
       file.bytes = bytes;
     },
     canSeal: () => true,
@@ -172,6 +178,7 @@ function rig(options?: { readonly enabled?: boolean; readonly supported?: boolea
   return {
     sessions,
     store,
+    file,
     state,
     sent,
     closes,
@@ -353,6 +360,7 @@ describe("the prompt", () => {
     const viewer = (await connect(r, device))!;
     r.state.auth = () => Promise.resolve(false);
     await r.sessions.answerPrompt(SID, "once");
+    await r.advance(AUTHENTICATE_PAUSE_MS);
     await r.sessions.answerPrompt(SID, "always");
     await viewer.drain();
     expect(r.authReasons).toHaveLength(2);
@@ -810,6 +818,42 @@ describe("a live session", () => {
   });
 });
 
+describe("the list of sessions", () => {
+  it("a session that cannot be written to the list does not start", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    const viewer = (await connect(r, device))!;
+    r.state.grabs.push(frame("a"));
+    r.file.failWrites = true;
+    await r.sessions.answerPrompt(SID, "once");
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS * 3);
+    await viewer.drain();
+    expect(r.closes).toEqual([{ sid: SID, reason: "unsupported" }]);
+    expect(r.state.bannerVisible).toBe(false);
+    expect(r.state.grabbed).toEqual([]);
+    expect(viewer.frames).toEqual([]);
+  });
+
+  it("a viewer that leaves while a person is being asked counts toward its quiet time", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    for (const sid of [SID, SID2, "2f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9"]) {
+      await connect(r, device, { sid });
+      r.sessions.closed(sid);
+      await settle(r);
+    }
+    expect(r.store.inCooldown(device.device.thumbprint)).toBe(true);
+    // Leaving before anyone was asked does not.
+    const quiet = rig();
+    for (const sid of [SID, SID2, "2f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9"]) {
+      quiet.sessions.opened(sid, ENV, device.device);
+      quiet.sessions.closed(sid);
+      await settle(quiet);
+    }
+    expect(quiet.store.inCooldown(device.device.thumbprint)).toBe(false);
+  });
+});
+
 describe("the system's authentication", () => {
   /** An authentication the test answers when it chooses. */
   const held = (r: Rig) => {
@@ -896,6 +940,38 @@ describe("the system's authentication", () => {
     expect(next.prompts.at(-1)).toMatchObject({ sid: SID2, stage: "ask" });
   });
 
+  it("after three dialogs that came to nothing the prompt is a refusal, and a dialog is not put straight back up", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    r.state.auth = () => Promise.resolve(false);
+    await connect(r, device);
+    await r.sessions.answerPrompt(SID, "once");
+    // Pressed again at once: no second dialog yet.
+    await r.sessions.answerPrompt(SID, "once");
+    expect(r.authReasons).toHaveLength(1);
+    await r.advance(AUTHENTICATE_PAUSE_MS);
+    await r.sessions.answerPrompt(SID, "once");
+    await r.advance(AUTHENTICATE_PAUSE_MS);
+    expect(r.closes).toEqual([]);
+    await r.sessions.answerPrompt(SID, "always");
+    await settle(r);
+    expect(r.authReasons).toHaveLength(AUTHENTICATE_TRIES);
+    expect(r.closes).toEqual([{ sid: SID, reason: "denied" }]);
+    expect(r.banners).toEqual([]);
+    expect(r.store.grants).toEqual([]);
+  });
+
+  it("changes nothing on disk when the person is not there", async () => {
+    const r = rig({ enabled: false });
+    const before = r.file.bytes;
+    r.state.auth = () => Promise.resolve(false);
+    expect(await r.sessions.setEnabled(true)).toBe(false);
+    r.state.auth = () => Promise.reject(new Error("cancelled"));
+    await r.advance(AUTHENTICATE_PAUSE_MS);
+    expect(await r.sessions.setEnabled(true)).toBe(false);
+    expect(r.file.bytes).toBe(before);
+  });
+
   it("puts one dialog up at a time: the switch and a prompt do not overlap", async () => {
     const r = rig();
     const device = await makeDevice();
@@ -930,8 +1006,10 @@ describe("the switch", () => {
     expect(await r.sessions.setEnabled(true)).toBe(false);
     expect(r.store.enabled).toBe(false);
     r.state.auth = () => Promise.reject(new Error("no sensor"));
+    await r.advance(AUTHENTICATE_PAUSE_MS);
     expect(await r.sessions.setEnabled(true)).toBe(false);
     r.state.auth = () => Promise.resolve(true);
+    await r.advance(AUTHENTICATE_PAUSE_MS);
     expect(await r.sessions.setEnabled(true)).toBe(true);
     expect(r.store.enabled).toBe(true);
     expect(r.authReasons).toEqual(Array(3).fill("turn on screen sharing for this Mac"));

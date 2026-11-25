@@ -39,8 +39,10 @@ import { authenticateMediaRequest, serveSocketUntilSessionEnds } from "../auth/h
 import {
   approvedNameFrom,
   isOwnApp,
-  ownAppProofKind,
+  ownAppStanding,
+  ownAppStandingHolds,
   personDeviceOf,
+  type OwnAppStanding,
 } from "../auth/personDevice.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -96,7 +98,7 @@ export const viewerSessionEnd = (expiresAt: DateTime.DateTime | undefined): numb
   expiresAt === undefined ? null : DateTime.toEpochMillis(expiresAt);
 
 interface Services {
-  readonly relay: ScreenShareRelay;
+  readonly relay: ScreenShareRelay<OwnAppStanding>;
   readonly trust: ConnectDeviceTrust.ConnectDeviceTrustShape;
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
@@ -105,16 +107,24 @@ interface Services {
 
 const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Services) => {
   /** Read each time: the app writes a new verifier when it starts. Unreadable means no. */
-  const proofKind = (proof: string) =>
+  const verifierNow = secrets.get(DESKTOP_OWNER_VERIFIER_SECRET).pipe(
+    Effect.map(Option.getOrNull),
+    Effect.orElseSucceed(() => null),
+  );
+  /** What to keep of a proof that holds right now, or null. The proof itself is not kept. */
+  const standingOf = (proof: string) =>
     Effect.gen(function* () {
-      const verifier = yield* secrets.get(DESKTOP_OWNER_VERIFIER_SECRET).pipe(
-        Effect.map(Option.getOrNull),
-        Effect.orElseSucceed(() => null),
-      );
-      return ownAppProofKind({
+      return ownAppStanding({
         proof,
         launchSecret,
-        verifier,
+        verifier: yield* verifierNow,
+        nowMs: yield* Clock.currentTimeMillis,
+      });
+    });
+  const stillHolds = (standing: OwnAppStanding) =>
+    Effect.gen(function* () {
+      return ownAppStandingHolds(standing, {
+        verifier: yield* verifierNow,
         nowMs: yield* Clock.currentTimeMillis,
       });
     });
@@ -189,7 +199,7 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
         let untilOver: Effect.Effect<void> = Effect.never;
 
         if (device === null) {
-          let host: ReturnType<ScreenShareRelay["attachHost"]> | null = null;
+          let host: ReturnType<ScreenShareRelay<OwnAppStanding>["attachHost"]> | null = null;
           const refuse = (reason: string) =>
             Effect.sync(() => peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason));
           onChunk = (chunk) =>
@@ -199,8 +209,8 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
               if (host !== null && proof === null) return host.text(chunk as string);
               // Nothing is heard from this socket until it has proved it is the app,
               // and a later proof that does not hold ends it.
-              const kind = proof === null ? null : yield* proofKind(proof);
-              if (proof === null || kind === null) {
+              const standing = proof === null ? null : yield* standingOf(proof);
+              if (standing === null) {
                 yield* Effect.logWarning(
                   "Refused a screen sharing host that did not prove it is this machine's app.",
                 );
@@ -208,12 +218,14 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
                 if (host !== null) return host.drop("proof_stale");
                 return yield* refuse("not_this_machines_app");
               }
-              if (host !== null) return host.reprove(proof);
-              // The proof is kept and checked again when a viewer opens: a launch
-              // proof runs out in minutes, an owner proof when its file is rewritten.
-              host = relay.attachHost(peer, proof);
+              if (host !== null) return host.reprove(standing);
+              // Checked again when a viewer opens: a launch proof runs out in minutes,
+              // an owner proof when its file is rewritten.
+              host = relay.attachHost(peer, standing);
               onClosed = host.closed;
-              yield* Effect.logInfo("This machine's app attached for screen sharing.", { kind });
+              yield* Effect.logInfo("This machine's app attached for screen sharing.", {
+                kind: standing.kind,
+              });
             });
           untilOver = Effect.sleep(SCREEN_SHARE_HOST_HELLO_MS).pipe(
             Effect.andThen(
@@ -224,8 +236,8 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
         } else if ("device" in device && expiresAtMs !== null) {
           // The app that attached may no longer be the app: its latest proof ran out, or
           // the file it is checked against was rewritten since.
-          const credential = relay.hostCredential();
-          if (credential !== undefined && (yield* proofKind(credential)) === null) {
+          const standing = relay.hostStanding();
+          if (standing !== undefined && !(yield* stillHolds(standing))) {
             yield* Effect.logWarning("Dropped a screen sharing host whose proof no longer holds.");
             relay.dropHost("proof_stale");
           }
@@ -285,7 +297,7 @@ export const routeLayer = HttpRouter.use((router) =>
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const config = yield* ServerConfig.ServerConfig;
-    const relay = new ScreenShareRelay();
+    const relay = new ScreenShareRelay<OwnAppStanding>();
     yield* router.add(
       "GET",
       `${SCREEN_SHARE_ROUTE_PREFIX}/*`,

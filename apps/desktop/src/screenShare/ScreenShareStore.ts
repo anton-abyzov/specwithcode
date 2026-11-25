@@ -21,6 +21,7 @@ import {
   type ScreenShareGrant,
 } from "@specweave-studio/contracts";
 import {
+  isScreenShareMachineKey,
   newScreenShareMachineKey,
   type ScreenShareMachineKey,
 } from "@specweave-studio/shared/screenShareChannel";
@@ -114,6 +115,8 @@ const parseStored = (text: string): Stored | null => {
     !Array.isArray(stored.audit)
   )
     return null;
+  // A key that is not a real pair would only fail later, as a handshake nobody can explain.
+  if (!isScreenShareMachineKey({ secret: key.secret, publicKey: key.publicKey })) return null;
   const grants = stored.grants.map(parseGrant);
   // One bad grant spoils the file: a half-read list is not a list a person approved.
   if (grants.some((grant) => grant === null)) return null;
@@ -236,9 +239,10 @@ export class ScreenShareStore {
     });
   }
 
-  touchGrant(thumbprint: string): void {
+  /** False when the use could not be written; the grant then ends on its old date. */
+  touchGrant(thumbprint: string): boolean {
     const at = new Date(this.io.now()).toISOString();
-    this.save({
+    return this.save({
       ...this.state,
       grants: this.liveGrants().map((grant) =>
         grant.thumbprint === thumbprint ? { ...grant, lastUsedAt: at } : grant,
@@ -273,10 +277,16 @@ export class ScreenShareStore {
     return this.state.audit;
   }
 
-  /** Adds an entry, or replaces the one with the same id. The newest come last. */
-  recordAudit(entry: ScreenShareAuditEntry): void {
+  /**
+   * Adds an entry, or replaces the one with the same id. The newest come last.
+   * False when it could not be written: the caller must not go on as if it was.
+   */
+  recordAudit(entry: ScreenShareAuditEntry): boolean {
     const others = this.state.audit.filter((existing) => existing.id !== entry.id);
-    this.save({ ...this.state, audit: [...others, entry].slice(-SCREEN_SHARE_AUDIT_LIMIT) });
+    return this.save({
+      ...this.state,
+      audit: [...others, entry].slice(-SCREEN_SHARE_AUDIT_LIMIT),
+    });
   }
 
   /** True while this device is not to be asked about: it was refused too often lately. */
