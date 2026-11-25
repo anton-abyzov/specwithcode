@@ -61,6 +61,7 @@ import * as Effect from "effect/Effect";
 
 import {
   dropClaudeFormAnswers,
+  isClaudeFormAnswered,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
@@ -69,6 +70,9 @@ import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 
 /** How long a card in a thread nobody watches waits before it is cancelled. */
 export const UNATTENDED_MCP_ELICITATION_TIMEOUT_MS = 30 * 60 * 1_000;
+
+/** How long the timer waits for an answer the app recorded but has not delivered yet. */
+export const ANSWER_IN_FLIGHT_GRACE_MS = 2 * 60 * 1_000;
 
 const DRIVER = ProviderDriverKind.make("claudeAgent");
 
@@ -103,6 +107,8 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
   readonly runPromise: <A>(effect: Effect.Effect<A>) => Promise<A>;
   /** Waits out the unattended timeout; tests pass their own. */
   readonly unattendedTimer?: Effect.Effect<void>;
+  /** Waits out {@link ANSWER_IN_FLIGHT_GRACE_MS}; tests pass their own. */
+  readonly answerInFlightGrace?: Effect.Effect<void>;
 }
 
 export interface ClaudeMcpElicitations {
@@ -153,6 +159,8 @@ export const unattendedTimeoutNotice = (serverName: string) =>
   `No one answered ${serverName}'s question in 30 minutes; it was cancelled.`;
 export const secretFieldNotice = (serverName: string, fieldTitle: string) =>
   `${serverName} asked for a password or secret ("${fieldTitle}"). SpecWithCode doesn't send those through forms, so it was declined.`;
+export const undeliveredAnswerNotice = (serverName: string) =>
+  `The answer to ${serverName}'s question didn't reach it in time; it was cancelled.`;
 export const invalidAnswerNotice = (serverName: string) =>
   `The answer to ${serverName}'s question didn't fit its form; it was cancelled.`;
 
@@ -197,6 +205,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
   };
   const timer =
     deps.unattendedTimer ?? Effect.sleep(Duration.millis(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS));
+  const grace =
+    deps.answerInFlightGrace ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
 
   const notice = (context: C, nativeItemId: string, message: string) =>
     Effect.gen(function* () {
@@ -338,10 +348,18 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
             unattended ? timer.pipe(Effect.as({ by: "timeout" } as const)) : Effect.never,
           ),
         );
+        // The app may already have recorded the person's answer while its
+        // delivery is still on the way. The timer then waits a little for it,
+        // and neither side overwrites the recorded answer as cancelled.
+        const committed = raced.by !== "person" && isClaudeFormAnswered(artifacts.request.id);
+        const awaited =
+          committed && raced.by === "timeout"
+            ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
+            : raced;
         // The first to settle the card wins; a person's answer that came in
         // at the same moment as a stop or the timer is kept.
-        const won = raced.by === "person" ? true : yield* Deferred.succeed(answer, raced);
-        const settled = won ? raced : yield* Deferred.await(answer);
+        const won = awaited.by === "person" ? true : yield* Deferred.succeed(answer, awaited);
+        const settled = won ? awaited : yield* Deferred.await(answer);
         if (settled.by === "person") {
           const result =
             settled.lost === true && settled.decision !== "decline" && settled.decision !== "cancel"
@@ -356,6 +374,16 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           return CANCEL;
         }
         remember(id);
+        if (committed) {
+          // The record keeps the person's answer; the call itself ends here.
+          if (settled.by === "timeout")
+            yield* notice(
+              context,
+              `${nativeRequestId}:undelivered`,
+              undeliveredAnswerNotice(request.serverName),
+            );
+          return CANCEL;
+        }
         yield* closeCard(artifacts);
         if (settled.by === "timeout")
           yield* notice(

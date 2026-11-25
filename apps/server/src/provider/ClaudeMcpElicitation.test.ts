@@ -15,6 +15,7 @@ import {
   makeClaudeMcpElicitations,
   secretFieldNotice,
   type ClaudeElicitationTurnContext,
+  undeliveredAnswerNotice,
   UNATTENDED_MCP_ELICITATION_TIMEOUT_MS,
   unattendedTimeoutNotice,
   unreadableFormNotice,
@@ -52,6 +53,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     heldRootFrames: options.held === true ? [{}] : [],
   };
   const timer = Effect.runSync(Deferred.make<void>());
+  const grace = Effect.runSync(Deferred.make<void>());
   const elicitations = makeClaudeMcpElicitations({
     activeTurn: Effect.succeed(options.noTurn === true ? null : context),
     buildApprovalRequestArtifacts: (input) =>
@@ -81,6 +83,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     } as never,
     runPromise: Effect.runPromise,
     unattendedTimer: Deferred.await(timer),
+    answerInFlightGrace: Deferred.await(grace),
   });
   const ask = (request: Partial<ElicitationRequest>, signal = new AbortController().signal) =>
     elicitations.onElicitation(
@@ -116,6 +119,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     until,
     requestId,
     fireTimer: () => Effect.runSync(Deferred.succeed(timer, undefined)),
+    endGrace: () => Effect.runSync(Deferred.succeed(grace, undefined)),
     released: () => released,
   };
 }
@@ -194,7 +198,7 @@ describe("ClaudeMcpElicitation", () => {
     const h = harness();
     const result = h.ask({ requestedSchema: confirmSchema });
     await h.until(() => h.card() !== undefined);
-    handOffClaudeFormAnswers(h.requestId, { name: "octo/repo" });
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
     await Effect.runPromise(
       h.elicitations.respond({
         requestId: h.requestId,
@@ -230,7 +234,7 @@ describe("ClaudeMcpElicitation", () => {
     const controller = new AbortController();
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
-    handOffClaudeFormAnswers(h.requestId, { name: "late" });
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } });
     controller.abort();
     expect(await result).toEqual({ action: "cancel" });
     expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
@@ -310,6 +314,54 @@ describe("ClaudeMcpElicitation", () => {
       "No one answered github's question in 30 minutes; it was cancelled.",
     );
     expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(30 * 60 * 1_000);
+  });
+
+  it("waits for an answer the app recorded when the timer fires before it arrives", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    // The orchestrator recorded Submit; its delivery is still queued.
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    await new Promise((resolve) => setImmediate(resolve));
+    await Effect.runPromise(
+      h.elicitations.respond({
+        requestId: h.requestId,
+        decision: "accept",
+        answers: redactClaudeFormAnswers({ name: "octo/repo" }),
+      }),
+    );
+    expect(await result).toEqual({ action: "accept", content: { name: "octo/repo" } });
+    expect(h.notices()).toEqual([]);
+    expect(h.events.some((event) => event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled")).toBe(false);
+  });
+
+  it("never overwrites a recorded answer as cancelled", async () => {
+    // Stop while the answer is on its way.
+    const stopped = harness();
+    const controller = new AbortController();
+    const first = stopped.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await stopped.until(() => stopped.card() !== undefined);
+    handOffClaudeFormAnswers(stopped.requestId, { handOff: { name: "octo/repo" } });
+    controller.abort();
+    expect(await first).toEqual({ action: "cancel" });
+    // The timer and its grace both run out before the answer arrives.
+    const lost = harness({ thread: "agent" });
+    const second = lost.ask({ requestedSchema: confirmSchema });
+    await lost.until(() => lost.card() !== undefined);
+    handOffClaudeFormAnswers(lost.requestId, { handOff: { name: "octo/repo" } });
+    lost.fireTimer();
+    lost.endGrace();
+    expect(await second).toEqual({ action: "cancel" });
+    expect(lost.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    for (const h of [stopped, lost])
+      expect(
+        h.events.filter(
+          (event) =>
+            (event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled") ||
+            (event.type === "turn_item.updated" && event.turnItem.status === "cancelled"),
+        ),
+      ).toEqual([]);
   });
 
   it("keeps a watched thread's card open past the timer", async () => {

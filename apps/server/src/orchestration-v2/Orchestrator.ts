@@ -9254,7 +9254,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       if (providerSessionId === null) return;
-      ClaudeForms.handOffClaudeFormAnswers(command.requestId, form?.handOff);
+      ClaudeForms.handOffClaudeFormAnswers(command.requestId, form);
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {

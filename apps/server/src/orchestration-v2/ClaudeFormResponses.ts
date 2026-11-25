@@ -39,13 +39,27 @@ export const FORM_OPENING = "This form is still opening. Try again in a moment."
 export const CLAUDE_FORM_NATIVE_PREFIX = "mcp-elicitation:";
 
 const handedOff = new Map<string, ProviderUserInputAnswers>();
+// Forms whose answer the app has recorded and is delivering to the adapter.
+const answered = new Set<string>();
 
-/** Holds a person's validated answers for the adapter that is waiting for them. */
+/**
+ * Notes that the app recorded an answer to a Claude form, and holds the
+ * person's validated content for the adapter that is waiting for it. Called
+ * as the answer is recorded, before its delivery is queued, so a Stop or the
+ * unattended timer that fires in between knows an answer is on its way.
+ */
 export function handOffClaudeFormAnswers(
   requestId: RuntimeRequestId,
-  answers: ProviderUserInputAnswers | undefined,
+  check: ClaudeFormResponseCheck | undefined,
 ): void {
-  if (answers !== undefined) handedOff.set(requestId, answers);
+  if (check === undefined) return;
+  answered.add(requestId);
+  if (check.handOff !== undefined) handedOff.set(requestId, check.handOff);
+}
+
+/** The app has recorded an answer to this form that may not have arrived yet. */
+export function isClaudeFormAnswered(requestId: RuntimeRequestId): boolean {
+  return answered.has(requestId);
 }
 
 /** The raw answers for a request, once; later calls get nothing. */
@@ -60,6 +74,7 @@ export function takeClaudeFormAnswers(
 /** Forgets a closed card's answers that nothing took. */
 export function dropClaudeFormAnswers(requestId: RuntimeRequestId): void {
   handedOff.delete(requestId);
+  answered.delete(requestId);
 }
 
 /** Which fields were answered, never what was entered. */
