@@ -33,9 +33,6 @@ catalogs:
     typescript:
       specifier: 7.0.2
       version: 7.0.2
-    yjs:
-      specifier: 13.6.33
-      version: 13.6.33
 
 overrides:
   '@exodus/bytes>@noble/hashes': 1.8.0
@@ -1117,7 +1114,7 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
       yjs:
-        specifier: 'catalog:'
+        specifier: 13.6.33
         version: 13.6.33
     devDependencies:
       '@effect/platform-node':

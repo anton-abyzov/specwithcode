@@ -56,7 +56,6 @@ catalog:
   vite-plus: 1.6.0
   ws: 8.22.0
   yaml: ^2.9.0
-  yjs: 13.6.33
 
 minimumReleaseAgeExclude:
   - "@muse-code/sdk@1.4.11"

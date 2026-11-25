@@ -766,7 +766,7 @@
     "effect": "catalog:",
     "jose": "catalog:",
     "yaml": "catalog:",
-    "yjs": "catalog:"
+    "yjs": "13.6.33"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
