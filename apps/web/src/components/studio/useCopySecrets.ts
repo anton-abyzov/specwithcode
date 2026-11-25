@@ -100,8 +100,12 @@ export function useCopySecrets({
   /** The choice with every exclusion a window recorded: what may leave this one. */
   const settled = (choice?: SecretsChoice | null) =>
     settledSecrets(storageKey, choice ?? chosenNow.current);
-  const choose = (next: SecretsChoice) => {
-    recordExclusions(storageKey, settled(), next);
+  /**
+   * Saves the person's change. Only what differs from the choice they saw is recorded, so a
+   * file another window left out after this one last drew stays out.
+   */
+  const choose = (next: SecretsChoice, seen: SecretsChoice = choice) => {
+    recordExclusions(storageKey, seen, next);
     setChosen(next);
     keep(next);
   };
@@ -122,7 +126,7 @@ export function useCopySecrets({
     const stored = mine ? readPendingCopy(storageKey) : null;
     const saved = stored && stored.operationId === mine?.operationId ? pendingSecrets(stored) : null;
     const next = untickedSecrets(saved, current, paths);
-    if (JSON.stringify(next) !== JSON.stringify(current)) choose(next);
+    if (JSON.stringify(next) !== JSON.stringify(current)) choose(next, current);
   };
 
   /**
@@ -130,7 +134,40 @@ export function useCopySecrets({
    * Included secrets are never approved blind: a summary a reopened copy has not read yet is
    * read first, and when it cannot be read nothing is approved.
    */
+  /** The list this window would send for the copy now, from every window's choice. */
+  const listNow = () => {
+    const saved = latestPending.current;
+    const destination = saved?.environmentId ?? machine;
+    const wanted = settled(saved ? pendingSecrets(saved) : null);
+    return sendableSecrets({
+      summary: summaryNow.current,
+      plan: copyNow.current,
+      repositories: repositoryDraft.current,
+      machine: machinesNow.current.find(({ id }) => id === destination),
+      choice: secretsBlockedNow(source, destination) ? withoutSecrets(wanted) : wanted,
+    });
+  };
+  const sameList = (a: ReadonlyArray<string> | null, b: ReadonlyArray<string> | null) =>
+    JSON.stringify(a && [...a].sort()) === JSON.stringify(b && [...b].sort());
+  /**
+   * Stages the list, again while another window changed the choice during the send, so the
+   * approval that follows names only what every window still lets travel.
+   */
   const sendTicked = async (operationId: string) => {
+    for (let round = 0; round < 3; round += 1) {
+      await sendOnce(operationId);
+      if (sameList(sent.current?.operationId === operationId ? sent.current.paths : null, listNow()))
+        return;
+    }
+    throw new Error("The secrets choice kept changing in another window. Review it again.");
+  };
+  /** Staged unless the list already sent for it is still the one every window's choice gives. */
+  const sendCurrent = async (operationId: string, maySkip: boolean) => {
+    if (maySkip && sent.current?.operationId === operationId && sameList(sent.current.paths, listNow()))
+      return;
+    await sendTicked(operationId);
+  };
+  const sendOnce = async (operationId: string) => {
     const saved = latestPending.current;
     const destination = saved?.environmentId ?? machine;
     const there = machinesNow.current.find(({ id }) => id === destination);
@@ -138,9 +175,11 @@ export function useCopySecrets({
     // access, nor on an older answer about the sealed way to that machine.
     await refreshSealedRoute(source, destination, askRoute);
     const blocked = secretsBlockedNow(source, destination);
+    const promised = settled(saved ? pendingSecrets(saved) : null);
+    if (!summaryNow.current && !blocked && promised.included && saved) await readSummary(saved);
+    // Read after any wait for the summary: an exclusion saved meanwhile counts.
     const wanted = settled(saved ? pendingSecrets(saved) : null);
     const sending = blocked ? withoutSecrets(wanted) : wanted;
-    if (!summaryNow.current && sending.included && saved) await readSummary(saved);
     if (!summaryNow.current && sending.included) throw new Error(secretsUnreadText(sourceLabel));
     const list = sendableSecrets({
       summary: summaryNow.current,
@@ -190,6 +229,7 @@ export function useCopySecrets({
     untick,
     settled,
     sendTicked,
+    sendCurrent,
     /** The secret files this dialog sent for that copy, or null when it sent none. */
     sentFor: (operationId: string): ReadonlyArray<string> | null =>
       sent.current?.operationId === operationId ? sent.current.paths : null,

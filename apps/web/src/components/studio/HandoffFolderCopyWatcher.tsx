@@ -417,6 +417,8 @@ export function HandoffFolderCopyWatcher({
       homeSecretFiles: latest.current.homeSecrets(saved.environmentId) === true,
     });
 
+    /** Every window's choice the last staged list was made from; null before one is staged. */
+    let stagedWith: string | null = null;
     /**
      * Sends the copy's saved secrets choice (What comes along showed it) before an approval
      * here: every file the dialog would send, `~/` files included when that machine takes
@@ -433,6 +435,7 @@ export function HandoffFolderCopyWatcher({
       const blocked = secretsBlockedNow(environmentId, saved.environmentId);
       // Every window's exclusions count, whichever saved the pointer last.
       const wanted = settledSecrets(key, pendingSecrets(saved));
+      stagedWith = JSON.stringify(wanted);
       const choice = blocked ? withoutSecrets(wanted) : wanted;
       // Never leave `~/` files out on a guess: the person decides at the review.
       if (
@@ -492,28 +495,36 @@ export function HandoffFolderCopyWatcher({
         // Another tab changed the choice, and may have approved, while this list was on its way:
         // put the current choice back on the source and leave the copy to the person.
         const now = readPendingCopy(key);
+        const settled = now ? settledSecrets(key, pendingSecrets(now)) : null;
         const current =
           now?.operationId === operationId &&
+          settled &&
           sendableSecrets({
             summary,
             plan: previewed,
             repositories: null,
             machine: destinationOf(now),
-            choice: pendingSecrets(now),
+            choice: secretsBlockedNow(environmentId, now.environmentId)
+              ? withoutSecrets(settled)
+              : settled,
           });
         if (now && current) await send(now, current);
         return false;
       }
       return !stopped && sent._tag === "Success" ? paths : false;
     };
-    /** The pointer still says what this run acted on: same copy, Replace all and secrets. */
+    /**
+     * The pointer still says what this run acted on: same copy, Replace all and secrets, and
+     * no window has left out a file since the list was staged.
+     */
     const unchanged = (acted: PendingCopy) => {
       const now = readPendingCopy(key);
       const choice = (copy: PendingCopy) => JSON.stringify(pendingSecrets(copy));
       return (
         now?.operationId === operationId &&
         Boolean(now.replaceAll) === Boolean(acted.replaceAll) &&
-        choice(now) === choice(acted)
+        choice(now) === choice(acted) &&
+        (stagedWith === null || JSON.stringify(settledSecrets(key, pendingSecrets(now))) === stagedWith)
       );
     };
 

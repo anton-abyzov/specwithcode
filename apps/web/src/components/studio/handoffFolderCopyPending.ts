@@ -348,8 +348,8 @@ export function recordExclusions(
       if (!before.out.includes(path)) localStorage.setItem(`${prefix}file:${path}`, "1");
     for (const path of before.out)
       if (!next.out.includes(path)) localStorage.removeItem(`${prefix}file:${path}`);
-    if (!next.included) localStorage.setItem(`${prefix}off`, "1");
-    else if (!before.included) localStorage.removeItem(`${prefix}off`);
+    if (before.included && !next.included) localStorage.setItem(`${prefix}off`, "1");
+    else if (!before.included && next.included) localStorage.removeItem(`${prefix}off`);
   } catch {
     /* Without storage only this window's own choice applies. */
   }

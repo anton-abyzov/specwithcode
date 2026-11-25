@@ -1285,7 +1285,11 @@ export class DestinationCopies {
     checked?: Plan["cloneOrigins"],
   ): Promise<Plan> {
     const client = this.client(record, signal);
-    const destination = await scanDestination(record.targetFolder, manifest.entries);
+    const destination = await scanDestination(
+      record.targetFolder,
+      manifest.entries,
+      manifest.header.repositories,
+    );
     const relations = await repositoryRelations(
       record.targetFolder,
       manifest.header.repositories,
