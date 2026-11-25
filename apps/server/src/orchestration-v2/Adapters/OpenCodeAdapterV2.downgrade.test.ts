@@ -1,9 +1,36 @@
 import { assert, describe, it } from "@effect/vitest";
+import {
+  MessageId,
+  NodeId,
+  OpenCodeSettings,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
+import type * as ServerConfig from "../../config.ts";
+import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
-import { openCodeChildPermissionRules, openCodePermissionRules } from "./OpenCodeAdapterV2.ts";
+import {
+  makeOpenCodeAdapterV2,
+  openCodeAppRuleSets,
+  openCodeChildPermissionRules,
+  openCodeDeniesAddedDuringUpdate,
+  openCodePermissionRules,
+  openCodeSessionHoldsPolicy,
+  openCodeSessionPermissionUpdate,
+} from "./OpenCodeAdapterV2.ts";
 
 type Rules = ReturnType<typeof openCodePermissionRules>;
+
+const settings = Schema.decodeSync(OpenCodeSettings)({ serverUrl: "http://test.invalid" });
 
 const policy = (runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"]) =>
   ProviderAdapterV2RuntimePolicy.make({
@@ -16,8 +43,8 @@ const policy = (runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"]) =>
 const action = (rules: Rules, permission: string) =>
   rules.findLast((rule) => rule.permission === "*" || rule.permission === permission)?.action;
 
-describe("OpenCode Task child after a thread is lowered", () => {
-  it("does not keep the external_directory allow its parent once had", () => {
+describe("OpenCode after a thread is lowered from Full access", () => {
+  it("a Task child does not keep the external_directory allow its parent once had", () => {
     // A child session copies its parent's external_directory and deny rules;
     // a parent created in a wider mode carries the allow.
     const inherited = [
@@ -28,15 +55,215 @@ describe("OpenCode Task child after a thread is lowered", () => {
     assert.equal(action(child, "bash"), "ask");
   });
 
-  it("keeps its own external_directory deny under Full access", () => {
+  it("a Task child keeps its own external_directory deny under Full access", () => {
     const deny = { permission: "external_directory", pattern: "*", action: "deny" } as const;
     const child = openCodeChildPermissionRules(policy("full-access"), [deny]);
     assert.equal(action(child, "external_directory"), "deny");
   });
 
-  it("keeps its own external_directory ask under Full access", () => {
+  it("a Task child keeps its own external_directory ask under Full access", () => {
     const ask = { permission: "external_directory", pattern: "*", action: "ask" } as const;
     const child = openCodeChildPermissionRules(policy("full-access"), [ask]);
     assert.equal(action(child, "external_directory"), "ask");
   });
+
+  it("a session resumed in the same mode keeps the denies it holds", () => {
+    const fullAccess = openCodePermissionRules(policy("full-access"));
+    const deny = { permission: "edit", pattern: "*", action: "deny" } as const;
+    assert.isTrue(openCodeSessionHoldsPolicy(fullAccess, [...fullAccess, deny]));
+    assert.isTrue(openCodeSessionHoldsPolicy(fullAccess, fullAccess));
+    // Lowered, raised again, or holding a later allow: the mode is installed.
+    const supervised = openCodePermissionRules(policy("approval-required"));
+    assert.isFalse(openCodeSessionHoldsPolicy(supervised, fullAccess));
+    assert.isFalse(openCodeSessionHoldsPolicy(fullAccess, [...fullAccess, ...supervised]));
+    assert.isTrue(openCodeSessionHoldsPolicy(fullAccess, [...supervised, ...fullAccess]));
+  });
+
+  it("a session keeps a deny the app did not write when a wider mode is installed", () => {
+    const foreign = { permission: "bash", pattern: "rm *", action: "deny" } as const;
+    const session = [...openCodePermissionRules(policy("approval-required")), foreign];
+    const update = openCodeSessionPermissionUpdate(
+      openCodePermissionRules(policy("full-access")),
+      [...session, foreign],
+      openCodeAppRuleSets(policy("full-access")),
+    );
+    // OpenCode appends the update, so the app's old Supervised denies end up
+    // before the new allow and stop applying; the other deny stays last.
+    assert.deepEqual(update.at(-1), foreign);
+    assert.equal(update.filter((rule) => rule.action === "deny").length, 1);
+    assert.equal(action(update, "bash"), "deny");
+    assert.equal(action(update.slice(0, -1), "bash"), "allow");
+  });
+
+  it("keeps a deny in the app's own shape that the app did not write", () => {
+    // Full access was installed, then someone else added an allow and an
+    // `edit *` deny: the allow means the policy is installed again, and the
+    // deny must stay after it.
+    const fullAccess = openCodePermissionRules(policy("full-access"));
+    const deny = { permission: "edit", pattern: "*", action: "deny" } as const;
+    const session = [
+      ...openCodePermissionRules(policy("approval-required")),
+      ...fullAccess,
+      { permission: "read", pattern: "notes/*", action: "allow" } as const,
+      deny,
+    ];
+    assert.isFalse(openCodeSessionHoldsPolicy(fullAccess, session));
+    const update = openCodeSessionPermissionUpdate(
+      fullAccess,
+      session,
+      openCodeAppRuleSets(policy("full-access")),
+    );
+    assert.deepEqual(update, [...fullAccess, deny]);
+    assert.equal(action(update, "edit"), "deny");
+  });
+
+  it("appends again a deny added between the turn's read and its update", () => {
+    const fullAccess = openCodePermissionRules(policy("full-access"));
+    const supervised = openCodePermissionRules(policy("approval-required"));
+    const appRuleSets = openCodeAppRuleSets(policy("full-access"));
+    const sent = openCodeSessionPermissionUpdate(fullAccess, supervised, appRuleSets);
+    const late = { permission: "edit", pattern: "*", action: "deny" } as const;
+    // OpenCode returns the session's rules with the update appended after the
+    // deny that arrived in between.
+    const merged = [...supervised, late, ...sent];
+    assert.equal(action(merged, "edit"), "allow");
+    const missed = openCodeDeniesAddedDuringUpdate(sent, merged, fullAccess, appRuleSets);
+    assert.deepEqual(missed, [late]);
+    assert.equal(action([...merged, ...missed], "edit"), "deny");
+    assert.deepEqual(
+      openCodeDeniesAddedDuringUpdate(sent, [...supervised, ...sent], fullAccess, appRuleSets),
+      [],
+    );
+  });
+
+  it.effect("a resumed session gets the current mode's rules before the next prompt", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly method: string; readonly permission?: Rules }> = [];
+      const foreign = { permission: "bash", pattern: "rm *", action: "deny" } as const;
+      const session = {
+        id: "root",
+        time: { created: 1, updated: 1 },
+        permission: [...openCodePermissionRules(policy("full-access")), foreign],
+      };
+      const client = {
+        // The event stream stays open: an ended stream fails the turn first.
+        event: {
+          subscribe: async () => ({
+            stream: (async function* () {
+              await new Promise<never>(() => {});
+            })(),
+          }),
+        },
+        session: {
+          create: async (input: { permission: Rules }) => {
+            calls.push({ method: "create", permission: input.permission });
+            return { data: session };
+          },
+          get: async () => ({ data: session }),
+          update: async (input: { permission: Rules }) => {
+            calls.push({ method: "update", permission: input.permission });
+            return { data: session };
+          },
+          promptAsync: async () => {
+            calls.push({ method: "prompt" });
+            return { data: true };
+          },
+          messages: async () => ({ data: [] }),
+        },
+      };
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const instanceId = ProviderInstanceId.make("opencode-downgrade");
+      const threadId = ThreadId.make("thread-opencode-downgrade");
+      const modelSelection = { instanceId, model: "anthropic/claude-sonnet", options: [] };
+      const adapter = makeOpenCodeAdapterV2({
+        instanceId,
+        settings,
+        environment: {},
+        runtime: {
+          connectToOpenCodeServer: () =>
+            Effect.succeed({ url: "http://test.invalid", external: true }),
+          createOpenCodeSdkClient: () => client,
+        } as unknown as OpenCodeRuntimeShape,
+        idAllocator,
+        serverConfig: {
+          cwd: "/workspace",
+          attachmentsDir: "/tmp/attachments",
+        } as ServerConfig.ServerConfig["Service"],
+      });
+      const open = (mode: ProviderAdapterV2RuntimePolicy["runtimeMode"], suffix: string) =>
+        adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-opencode-downgrade-${suffix}`),
+          modelSelection,
+          runtimePolicy: policy(mode),
+        });
+      // The thread ran on Full access: its native session holds those rules.
+      const first = yield* open("full-access", "first");
+      const created = yield* first.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy("full-access"),
+      });
+      // Lowered to Supervised, the next session resumes the same native session.
+      const lowered = policy("approval-required");
+      const second = yield* open("approval-required", "second");
+      const providerThread = yield* second.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: lowered,
+        existingProviderThread: created,
+      });
+      const now = yield* DateTime.now;
+      yield* second.startTurn({
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("project-opencode-downgrade"),
+          title: "downgrade",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("run-opencode-downgrade"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-opencode-downgrade"),
+        rootNodeId: NodeId.make("node-opencode-downgrade"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-opencode-downgrade"),
+          text: "hello",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy: lowered,
+      });
+      const prompt = calls.findIndex((call) => call.method === "prompt");
+      const update = calls.findIndex((call) => call.method === "update");
+      assert.isAtLeast(prompt, 0);
+      assert.isAtLeast(update, 0, "the resumed session's rules are replaced");
+      assert.isBelow(update, prompt);
+      const installed = calls[update]!.permission!;
+      assert.deepEqual(installed.at(-1), foreign);
+      assert.equal(action(installed.slice(0, -1), "bash"), "ask");
+      assert.equal(action(installed, "external_directory"), "ask");
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+  );
 });
