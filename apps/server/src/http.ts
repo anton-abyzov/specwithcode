@@ -316,9 +316,22 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
+/**
+ * The path the router matches: without the query, the scheme and host of an
+ * absolute-form target (`GET http://host/mcp`), or trailing slashes, which the
+ * router ignores too.
+ */
 const pathOf = (request: HttpServerRequest.HttpServerRequest) => {
   const queryIndex = request.url.indexOf("?");
-  return queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+  let path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+  if (!path.startsWith("/")) {
+    try {
+      path = new URL(path).pathname;
+    } catch {
+      return path;
+    }
+  }
+  return path.length > 1 ? path.replace(/\/+$/u, "") || "/" : path;
 };
 
 /** The MCP transport's path; McpHttpServer serves it. */
