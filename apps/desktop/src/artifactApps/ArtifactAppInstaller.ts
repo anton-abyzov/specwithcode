@@ -40,6 +40,7 @@ import {
   type LauncherFile,
 } from "./ArtifactAppLaunchers.ts";
 import { resolveArtifactAppName } from "./ArtifactAppName.ts";
+import * as ArtifactAppGrants from "./ArtifactAppGrants.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import {
   artifactAppLaunchUrl,
@@ -273,6 +274,7 @@ const make = Effect.gen(function* () {
   const host = yield* ArtifactAppInstallerHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const records = yield* ArtifactAppRecords.ArtifactAppRecords;
+  const grants = yield* ArtifactAppGrants.ArtifactAppGrants;
   const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
   // One install at a time, so the same page asked twice cannot be installed twice.
   const installLock = yield* Semaphore.make(1);
@@ -866,6 +868,16 @@ const make = Effect.gen(function* () {
       }
     }
     yield* records.remove(installId);
+    // The install is gone and its id is never used again; its answers go with it. A failure
+    // here leaves answers nothing can use: every power needs a recorded install.
+    yield* grants.forget(installId).pipe(
+      Effect.catchCause((cause) =>
+        logWarning("installed page grants could not be forgotten", {
+          installId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
     yield* windows.close(installId);
     yield* logInfo("uninstalled page", { installId });
     return true;

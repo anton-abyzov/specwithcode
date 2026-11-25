@@ -55,7 +55,7 @@ export const DesktopArtifactAppUninstallInputSchema = Schema.Struct({
 export type DesktopArtifactAppUninstallInput = typeof DesktopArtifactAppUninstallInputSchema.Type;
 
 /** The bridge methods for installed pages. Absent on builds predating them and outside desktop. */
-export interface DesktopArtifactAppsBridge {
+export interface DesktopArtifactAppsBridge extends DesktopArtifactAppPowersBridge {
   /** Asks the person to confirm, writes the launcher and opens the app. */
   installArtifactApp?: (
     input: DesktopArtifactAppInstallInput,
@@ -67,4 +67,100 @@ export interface DesktopArtifactAppsBridge {
   getArtifactApp?: () => Promise<DesktopArtifactApp | null>;
   /** Shows the launcher in Finder, Explorer or the file manager. */
   revealArtifactApp?: (input: DesktopArtifactAppUninstallInput) => Promise<boolean>;
+}
+
+/**
+ * Desktop powers. A page declares the ones it wants in a manifest inside its
+ * own file, the person allows them in a native dialog, and the answer holds
+ * for one version of the page only: the install, the attachment and the
+ * sha256 of the file's bytes. The page asks through the frame's JSON-RPC
+ * channel; the shell decides every request.
+ */
+export const ARTIFACT_APP_POWERS = [
+  "notifications",
+  "tray",
+  "always-on-top",
+  "global-shortcuts",
+] as const;
+export const ArtifactAppPowerSchema = Schema.Literals(ARTIFACT_APP_POWERS);
+export type ArtifactAppPower = typeof ArtifactAppPowerSchema.Type;
+
+/** What the installed page's window shows in its Permissions menu. */
+export const DesktopArtifactAppPermissionsSchema = Schema.Struct({
+  /** The version the window has open; null when none is. */
+  attachmentId: Schema.NullOr(Schema.String),
+  /** The powers the version's file declares. */
+  declared: Schema.Array(ArtifactAppPowerSchema),
+  /** The declared powers the person allowed for exactly these bytes. */
+  granted: Schema.Array(ArtifactAppPowerSchema),
+});
+export type DesktopArtifactAppPermissions = typeof DesktopArtifactAppPermissionsSchema.Type;
+
+/**
+ * - `open`: the window is about to show this version at this URL. The shell
+ *   asks for consent when the version declares powers it has no answer for.
+ * - `get`: the current state.
+ * - `ask`: show the consent dialog again for the open version.
+ * - `turn-off`: end the grant and release everything it held.
+ * - `close`: the window no longer shows a version.
+ */
+export const DesktopArtifactAppPermissionsInputSchema = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("open"),
+    attachmentId: BoundedId,
+    url: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(8192)),
+  }),
+  Schema.Struct({ action: Schema.Literals(["get", "ask", "turn-off", "close"]) }),
+]);
+export type DesktopArtifactAppPermissionsInput =
+  typeof DesktopArtifactAppPermissionsInputSchema.Type;
+
+/** One request from the page, as the window forwards it. The shell validates `params`. */
+export const DesktopArtifactAppPowerInputSchema = Schema.Struct({
+  /** The version whose frame asked. A request for any other version is refused. */
+  attachmentId: BoundedId,
+  method: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  params: Schema.Unknown,
+});
+export type DesktopArtifactAppPowerInput = typeof DesktopArtifactAppPowerInputSchema.Type;
+
+const ARTIFACT_APP_POWER_ERRORS = [
+  /** No grant for this power on this version, or the shell could not prove one. */
+  "not-allowed",
+  "invalid-request",
+  "rate-limited",
+  /** Another app, the app itself or another installed page uses the accelerator. */
+  "shortcut-taken",
+  "shortcut-limit",
+  /** The operating system refused, such as a desktop without a tray. */
+  "unavailable",
+] as const;
+export const DesktopArtifactAppPowerReplySchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true) }),
+  Schema.Struct({ ok: Schema.Literal(false), error: Schema.Literals(ARTIFACT_APP_POWER_ERRORS) }),
+]);
+export type DesktopArtifactAppPowerReply = typeof DesktopArtifactAppPowerReplySchema.Type;
+
+/** What the shell tells the page: a tray item was clicked or a shortcut pressed. */
+export const DesktopArtifactAppPowerEventSchema = Schema.Union([
+  Schema.Struct({
+    attachmentId: Schema.String,
+    method: Schema.Literal("app/tray/clicked"),
+    params: Schema.Struct({ id: Schema.String }),
+  }),
+  Schema.Struct({
+    attachmentId: Schema.String,
+    method: Schema.Literal("app/shortcut/pressed"),
+    params: Schema.Struct({ accelerator: Schema.String }),
+  }),
+]);
+export type DesktopArtifactAppPowerEvent = typeof DesktopArtifactAppPowerEventSchema.Type;
+
+/** The bridge methods for desktop powers; answered only inside an installed page's window. */
+export interface DesktopArtifactAppPowersBridge {
+  artifactAppPermissions?: (
+    input: DesktopArtifactAppPermissionsInput,
+  ) => Promise<DesktopArtifactAppPermissions>;
+  artifactAppPower?: (input: DesktopArtifactAppPowerInput) => Promise<DesktopArtifactAppPowerReply>;
+  onArtifactAppPowerEvent?: (listener: (event: DesktopArtifactAppPowerEvent) => void) => () => void;
 }

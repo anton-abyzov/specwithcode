@@ -14,6 +14,7 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
 
+import * as ArtifactAppGrants from "./ArtifactAppGrants.ts";
 import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import * as ArtifactAppWindows from "./ArtifactAppWindows.ts";
@@ -148,6 +149,11 @@ const windowsLayer = (opened: Array<string>, closed: Array<string>) =>
           return "opened" as const;
         }),
       installIdForWebContents: () => Effect.succeedNone,
+      windowForInstall: () => Effect.succeedNone,
+      setVersionUrl: () => Effect.void,
+      isFrameOnVersion: () => Effect.succeed(false),
+      onClosed: () => Effect.void,
+      onFrameStrayed: () => Effect.void,
       close: (installId) =>
         Effect.sync(() => {
           closed.push(installId);
@@ -159,6 +165,7 @@ const windowsLayer = (opened: Array<string>, closed: Array<string>) =>
 interface Harness {
   readonly installer: ArtifactAppInstaller.ArtifactAppInstaller["Service"];
   readonly records: ArtifactAppRecords.ArtifactAppRecords["Service"];
+  readonly grants: ArtifactAppGrants.ArtifactAppGrants["Service"];
   readonly calls: HostCalls;
   readonly opened: Array<string>;
   readonly closed: Array<string>;
@@ -189,6 +196,8 @@ const harness = (
             hostLayer({ ...options, home, calls, fileSystem }),
             windowsLayer(opened, closed),
             ArtifactAppRecords.layer(recordsPath),
+            // Beside the records, in the same private test home.
+            ArtifactAppGrants.layer(`${recordsPath}.grants.json`),
           ),
         ),
         Layer.provide(Layer.succeed(FileSystem.FileSystem, fileSystem)),
@@ -197,6 +206,7 @@ const harness = (
     return {
       installer: Context.get(context, ArtifactAppInstaller.ArtifactAppInstaller),
       records: Context.get(context, ArtifactAppRecords.ArtifactAppRecords),
+      grants: Context.get(context, ArtifactAppGrants.ArtifactAppGrants),
       calls,
       opened,
       closed,
@@ -419,7 +429,23 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.isTrue(yield* h.installer.reveal(result.app.installId));
         assert.deepEqual(h.calls.revealed, [bundle]);
 
+        // The person allowed this install some powers, and another install too.
+        const version = "thread-1-0f8fad5b-d9cb-469f-a165-70867728950e-html";
+        const otherInstall = "f".repeat(32);
+        const grant = {
+          installId: result.app.installId,
+          attachmentId: version,
+          sha256: "1".repeat(64),
+          powers: ["notifications" as const],
+          answeredAt: "2026-11-25T12:00:00.000Z",
+        };
+        yield* h.grants.record(grant);
+        yield* h.grants.record({ ...grant, installId: otherInstall });
+
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        // Uninstalling forgets this install's grants and nobody else's.
+        assert.isTrue(Option.isNone(yield* h.grants.find(result.app.installId, version)));
+        assert.isTrue(Option.isSome(yield* h.grants.find(otherInstall, version)));
         // Moved to a random private name and checked there before it goes to the Trash.
         assert.equal(h.calls.trashed.length, 1);
         assert.equal(path.dirname(h.calls.trashed[0]!), path.dirname(bundle));

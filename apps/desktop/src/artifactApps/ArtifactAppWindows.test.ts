@@ -68,6 +68,43 @@ describe("isArtifactAppWindowNavigationAllowed", () => {
   });
 });
 
+describe("isArtifactAppFrameNavigationAllowed", () => {
+  const VERSION = "http://127.0.0.1:3773/assets/page?token=t";
+  const allowed = (targetUrl: string, versionUrl: string | null = VERSION) =>
+    ArtifactAppWindows.isArtifactAppFrameNavigationAllowed({ versionUrl, targetUrl });
+
+  it("allows only the version's own address, whatever its fragment", () => {
+    assert.isTrue(allowed(VERSION));
+    assert.isTrue(allowed(`${VERSION}#theme=dark`));
+  });
+
+  it("refuses every other address and everything when no version is set", () => {
+    for (const target of [
+      "http://127.0.0.1:3773/assets/page",
+      "http://127.0.0.1:3773/assets/page?token=other",
+      "http://127.0.0.1:3773/assets/page?token=t&x=1",
+      "http://127.0.0.1:3773/assets/other?token=t",
+      "http://127.0.0.1:3774/assets/page?token=t",
+      "https://127.0.0.1:3773/assets/page?token=t",
+      "http://localhost:3773/assets/page?token=t",
+      "http://user@127.0.0.1:3773/assets/page?token=t",
+      "https://example.com/",
+      "data:text/html,<p>x</p>",
+      "blob:null/0f8fad5b-d9cb-469f-a165-70867728950e",
+      "about:blank",
+      "about:srcdoc",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "studio://app/",
+      "not a url",
+      "",
+    ]) {
+      assert.isFalse(allowed(target), target);
+    }
+    assert.isFalse(allowed(VERSION, null));
+  });
+});
+
 describe("artifactAppExternalUrl", () => {
   it("passes web addresses only", () => {
     assert.equal(
@@ -286,21 +323,22 @@ describe("ArtifactAppWindows", () => {
         { ...event, url: "studio://app/#/", isMainFrame: true },
         "studio://app/#/",
       );
-      // A frame inside the page redirecting is left alone and opens nothing.
+      // A frame inside the page redirecting is stopped and opens nothing.
       emit(
         fake.contentsListeners,
         "will-redirect",
         { ...event, url: "https://example.com/framed", isMainFrame: false },
         "https://example.com/framed",
       );
-      emit(fake.contentsListeners, "will-navigate", event, "file:///etc/hosts");
       assert.equal(prevented, 3);
+      emit(fake.contentsListeners, "will-navigate", event, "file:///etc/hosts");
+      assert.equal(prevented, 4);
       assert.deepEqual(fake.openHandler?.({ url: "https://example.com/popup" }), {
         action: "deny",
       });
       assert.deepEqual(fake.openHandler?.({ url: "vscode://file/x" }), { action: "deny" });
       emit(fake.windowListeners, "page-title-updated", event);
-      assert.equal(prevented, 4);
+      assert.equal(prevented, 5);
       yield* Effect.yieldNow;
       assert.deepEqual(fixture.external, ["https://example.com/next", "https://example.com/popup"]);
 
@@ -323,6 +361,170 @@ describe("ArtifactAppWindows", () => {
       );
       assert.equal(yield* windows.open(ID), "opened");
       assert.equal(fixture.created.length, 2);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("holds every frame in the window to the version it shows", () => {
+    const fixture = setup({ known: [ID] });
+    const VERSION = "http://127.0.0.1:3773/assets/page?token=t";
+    return Effect.gen(function* () {
+      const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
+      yield* windows.open(ID);
+      const [fake] = fixture.created;
+      if (fake === undefined) return assert.fail("no window");
+      const blocked = (eventName: string, url: string, isMainFrame: unknown = false) => {
+        let prevented = false;
+        emit(fake.contentsListeners, eventName, {
+          url,
+          isMainFrame,
+          preventDefault: () => {
+            prevented = true;
+          },
+        });
+        return prevented;
+      };
+      const landed = (url: unknown, isMainFrame = false) =>
+        emit(fake.contentsListeners, "did-frame-navigate", {}, url, 200, "OK", isMainFrame);
+
+      // Before a version is set no frame may load anything, the page's own address included.
+      assert.isTrue(blocked("will-frame-navigate", VERSION));
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+
+      yield* windows.setVersionUrl(ID, Option.some(`${VERSION}#theme=dark`));
+      assert.isTrue(yield* windows.isFrameOnVersion(ID));
+      // The frame's own load, a reload and a theme fragment are the version.
+      assert.isFalse(blocked("will-frame-navigate", VERSION));
+      assert.isFalse(blocked("will-frame-navigate", `${VERSION}#theme=light`));
+      assert.isFalse(blocked("will-redirect", VERSION));
+      // A script, a form, a refresh or a nested frame going anywhere else is stopped.
+      for (const target of [
+        "https://example.com/next",
+        "http://127.0.0.1:3773/assets/other?token=t",
+        "http://127.0.0.1:3773/assets/page",
+        "data:text/html,<p>x</p>",
+        "blob:null/0f8fad5b-d9cb-469f-a165-70867728950e",
+        "about:blank",
+        "not a url",
+      ]) {
+        assert.isTrue(blocked("will-frame-navigate", target), target);
+        assert.isTrue(blocked("will-redirect", target), target);
+      }
+      // An event that does not say which frame it is for is treated as a frame's.
+      for (const unknown of [null, "yes", 0, 1]) {
+        assert.isTrue(blocked("will-frame-navigate", "https://example.com/next", unknown));
+        assert.isTrue(blocked("will-redirect", "https://example.com/next", unknown));
+      }
+      // The window's own document is not this guard's: `will-navigate` decides it.
+      assert.isFalse(blocked("will-frame-navigate", "https://example.com/next", true));
+      // Stopped frame navigations open nothing in the browser.
+      yield* Effect.yieldNow;
+      assert.deepEqual(fixture.external, []);
+
+      // The version loading, and inline frames, leave the window on its version.
+      landed(`${VERSION}#theme=dark`);
+      landed("about:srcdoc");
+      landed("about:blank");
+      assert.isTrue(yield* windows.isFrameOnVersion(ID));
+      // A frame seen anywhere else ends it, until a version is set again, and says so once.
+      const strayed: Array<string> = [];
+      yield* windows.onFrameStrayed(() => {
+        throw new Error("a listener that fails");
+      });
+      yield* windows.onFrameStrayed((installId) => strayed.push(installId));
+      landed("https://example.com/next");
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID]);
+      landed(VERSION);
+      landed("https://example.com/again");
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID]);
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      assert.isTrue(yield* windows.isFrameOnVersion(ID));
+      landed(undefined);
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID, ID]);
+      // A page process that ended is a new document: the version is over as well.
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      emit(fake.contentsListeners, "render-process-gone", {}, { reason: "crashed" });
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID, ID, ID]);
+      // So is a window whose own document was replaced, by a reload say: the view that named
+      // the version is gone, and no frame may load until the new view names one.
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      landed(WINDOW_URL, true);
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.isTrue(blocked("will-frame-navigate", VERSION));
+      assert.deepEqual(strayed, [ID, ID, ID, ID]);
+      // The version's address answering with an error, or failing to load, is not the version.
+      const failed = (code: number, isMainFrame = false) =>
+        emit(fake.contentsListeners, "did-fail-load", {}, code, "x", VERSION, isMainFrame);
+      for (const lost of [
+        () => emit(fake.contentsListeners, "did-frame-navigate", {}, VERSION, 404, "x", false),
+        () => emit(fake.contentsListeners, "did-frame-navigate", {}, VERSION, undefined, "", false),
+        () => failed(-105),
+        () => failed(-105, true),
+      ]) {
+        yield* windows.setVersionUrl(ID, Option.some(VERSION));
+        strayed.length = 0;
+        lost();
+        assert.isFalse(yield* windows.isFrameOnVersion(ID));
+        assert.deepEqual(strayed, [ID]);
+      }
+      // A navigation that was only stopped leaves the document where it was.
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      strayed.length = 0;
+      failed(-3);
+      failed(-3, true);
+      assert.isTrue(yield* windows.isFrameOnVersion(ID));
+      yield* windows.setVersionUrl(ID, Option.none());
+      strayed.push(ID, ID, ID, ID);
+      // With no version named there is nothing to end.
+      landed(WINDOW_URL, true);
+      assert.deepEqual(strayed, [ID, ID, ID, ID]);
+
+      // An address that is not a web address sets no version at all.
+      for (const bad of ["file:///etc/passwd", "studio://app/", "data:text/html,x", "nope"]) {
+        yield* windows.setVersionUrl(ID, Option.some(bad));
+        assert.isFalse(yield* windows.isFrameOnVersion(ID), bad);
+        assert.isTrue(blocked("will-frame-navigate", bad), bad);
+      }
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      yield* windows.setVersionUrl(ID, Option.none());
+      assert.isTrue(blocked("will-frame-navigate", VERSION));
+
+      // Unknown installs have no window and no version.
+      const other = "b".repeat(32);
+      yield* windows.setVersionUrl(other, Option.some(VERSION));
+      assert.isFalse(yield* windows.isFrameOnVersion(other));
+      assert.deepEqual(yield* windows.windowForInstall(other), Option.none());
+      assert.deepEqual(yield* windows.windowForInstall(ID), Option.some(fake.window));
+
+      // Closing tells the listeners once and forgets the version.
+      const closed: Array<string> = [];
+      yield* windows.onClosed(() => {
+        throw new Error("a listener that fails");
+      });
+      yield* windows.onClosed((installId) => closed.push(installId));
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      fake.window.close();
+      assert.deepEqual(closed, [ID]);
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.isTrue(blocked("will-frame-navigate", VERSION));
+
+      // The install's next window starts with no version: the closed one's does not carry over.
+      assert.equal(yield* windows.open(ID), "opened");
+      const next = fixture.created[1];
+      if (next === undefined) return assert.fail("no second window");
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      let prevented = false;
+      emit(next.contentsListeners, "will-frame-navigate", {
+        url: VERSION,
+        isMainFrame: false,
+        preventDefault: () => {
+          prevented = true;
+        },
+      });
+      assert.isTrue(prevented);
     }).pipe(Effect.provide(fixture.layer));
   });
 

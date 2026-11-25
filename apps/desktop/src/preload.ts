@@ -1,4 +1,5 @@
 import type {
+  DesktopArtifactAppPowerEvent,
   DesktopBridge,
   DesktopConnectSignInState,
   DesktopPreviewPointerEvent,
@@ -269,6 +270,26 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   listArtifactApps: () => ipcRenderer.invoke(IpcChannels.LIST_ARTIFACT_APPS_CHANNEL),
   getArtifactApp: () => ipcRenderer.invoke(IpcChannels.GET_ARTIFACT_APP_CHANNEL),
   revealArtifactApp: (input) => ipcRenderer.invoke(IpcChannels.REVEAL_ARTIFACT_APP_CHANNEL, input),
+  artifactAppPermissions: (input) =>
+    ipcRenderer.invoke(IpcChannels.ARTIFACT_APP_PERMISSIONS_CHANNEL, input),
+  artifactAppPower: (input) => ipcRenderer.invoke(IpcChannels.ARTIFACT_APP_POWER_CHANNEL, input),
+  onArtifactAppPowerEvent: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      // The shell only sends these two; anything else is dropped here.
+      const event = payload as DesktopArtifactAppPowerEvent | null;
+      if (
+        typeof event !== "object" ||
+        event === null ||
+        typeof event.attachmentId !== "string" ||
+        (event.method !== "app/tray/clicked" && event.method !== "app/shortcut/pressed")
+      ) {
+        return;
+      }
+      listener(event);
+    };
+    ipcRenderer.on(IpcChannels.ARTIFACT_APP_POWER_EVENT_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.ARTIFACT_APP_POWER_EVENT_CHANNEL, handler);
+  },
   startFileDrag: (path) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, { path }),
   printDocumentPdf: (input) => ipcRenderer.invoke(IpcChannels.PRINT_DOCUMENT_PDF_CHANNEL, input),
   onNotificationBadgeClear: (listener) => {

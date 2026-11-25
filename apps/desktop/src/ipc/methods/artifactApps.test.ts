@@ -9,10 +9,13 @@ import { vi } from "vite-plus/test";
 vi.mock("electron", () => ({}));
 
 import * as ArtifactAppInstaller from "../../artifactApps/ArtifactAppInstaller.ts";
+import * as ArtifactAppPowerService from "../../artifactApps/ArtifactAppPowerService.ts";
 import * as ArtifactAppRecords from "../../artifactApps/ArtifactAppRecords.ts";
 import * as ArtifactAppWindows from "../../artifactApps/ArtifactAppWindows.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
+  artifactAppPermissions,
+  artifactAppPower,
   getArtifactApp,
   installArtifactApp,
   listArtifactApps,
@@ -36,7 +39,21 @@ const setup = () => {
   const installs: Array<{ readonly title: string; readonly owner: unknown }> = [];
   const uninstalled: Array<string> = [];
   const revealed: Array<string> = [];
+  const permissionCalls: Array<readonly [number, unknown]> = [];
+  const powerCalls: Array<readonly [number, unknown]> = [];
   const layer = Layer.mergeAll(
+    Layer.mock(ArtifactAppPowerService.ArtifactAppPowerService)({
+      permissions: (webContentsId, input) =>
+        Effect.sync(() => {
+          permissionCalls.push([webContentsId, input]);
+          return { attachmentId: "v-1", declared: ["tray" as const], granted: [] };
+        }),
+      power: (webContentsId, input) =>
+        Effect.sync(() => {
+          powerCalls.push([webContentsId, input]);
+          return { ok: true as const };
+        }),
+    }),
     Layer.mock(ArtifactAppInstaller.ArtifactAppInstaller)({
       install: (input, options) =>
         Effect.sync(() => {
@@ -66,7 +83,7 @@ const setup = () => {
         Effect.succeed(id === 42 ? Option.some(callingWindow) : Option.none()),
     }),
   );
-  return { layer, installs, uninstalled, revealed };
+  return { layer, installs, uninstalled, revealed, permissionCalls, powerCalls };
 };
 
 const event = (id: number) => ({ sender: { id } });
@@ -136,6 +153,68 @@ describe("artifact app IPC", () => {
       assert.deepEqual(yield* getArtifactApp.handler(undefined, event(42)), app);
       assert.isNull(yield* getArtifactApp.handler(undefined, event(1)));
       assert.isNull(yield* getArtifactApp.handler(undefined));
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("hands power and permission requests to the service with the calling window", () => {
+    const fixture = setup();
+    return Effect.gen(function* () {
+      const open = { action: "open", attachmentId: "v-1", url: "http://127.0.0.1:1/a" };
+      assert.deepEqual(yield* artifactAppPermissions.handler(open, event(42)), {
+        attachmentId: "v-1",
+        declared: ["tray"],
+        granted: [],
+      });
+      const request = { attachmentId: "v-1", method: "app/notify", params: { title: "t" } };
+      assert.deepEqual(yield* artifactAppPower.handler(request, event(42)), { ok: true });
+      // The service decides from the sender; the payload carries no install.
+      assert.deepEqual(fixture.permissionCalls, [[42, open]]);
+      assert.deepEqual(fixture.powerCalls, [[42, request]]);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("refuses power and permission requests with no sender or a malformed payload", () => {
+    const fixture = setup();
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* artifactAppPermissions.handler({ action: "turn-off" }), {
+        attachmentId: null,
+        declared: [],
+        granted: [],
+      });
+      assert.deepEqual(
+        yield* artifactAppPower.handler({ attachmentId: "v-1", method: "app/notify", params: {} }),
+        { ok: false, error: "not-allowed" },
+      );
+      for (const payload of [
+        undefined,
+        {},
+        { action: "grant" },
+        { action: "open" },
+        { action: "open", attachmentId: "", url: "http://127.0.0.1:1/a" },
+        { action: "open", attachmentId: "v-1", url: "" },
+        { action: "open", attachmentId: "v-1", url: "x".repeat(8193) },
+      ]) {
+        assert.equal(
+          (yield* Effect.exit(artifactAppPermissions.handler(payload, event(42))))._tag,
+          "Failure",
+        );
+      }
+      for (const payload of [
+        undefined,
+        {},
+        { method: "app/notify", params: {} },
+        { attachmentId: "", method: "app/notify", params: {} },
+        { attachmentId: "v-1", method: "", params: {} },
+        { attachmentId: "v-1", method: "x".repeat(65), params: {} },
+        { attachmentId: "v-1", method: 7, params: {} },
+      ]) {
+        assert.equal(
+          (yield* Effect.exit(artifactAppPower.handler(payload, event(42))))._tag,
+          "Failure",
+        );
+      }
+      assert.deepEqual(fixture.permissionCalls, []);
+      assert.deepEqual(fixture.powerCalls, []);
     }).pipe(Effect.provide(fixture.layer));
   });
 });

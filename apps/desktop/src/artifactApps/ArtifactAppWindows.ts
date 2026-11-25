@@ -3,7 +3,9 @@
  * built with the same sandbox, context isolation and preload as a project
  * window, locked to its own route: any other document navigation and every
  * new window goes to the system browser, so a page can never turn its window
- * into a browser for the app's own origin.
+ * into a browser for the app's own origin. The frame the page runs in is held
+ * to the one version the window was told to show: any other frame navigation
+ * is stopped, so content from elsewhere never stands where the page stood.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -21,6 +23,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as ExternalBrowsers from "../preview/ExternalBrowsers.ts";
+import { artifactAppVersionUrl } from "./ArtifactAppPowers.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import {
   ARTIFACT_APP_WINDOW_ARGUMENT,
@@ -71,6 +74,27 @@ export function isArtifactAppWindowNavigationAllowed(input: {
   }
 }
 
+/**
+ * Whether a frame inside the window may go to `targetUrl`. Only the version
+ * the window shows is allowed, at exactly its address (the fragment aside,
+ * which carries the theme). With no version set, or an address that does not
+ * parse, nothing is allowed.
+ */
+export function isArtifactAppFrameNavigationAllowed(input: {
+  readonly versionUrl: string | null;
+  readonly targetUrl: string;
+}): boolean {
+  if (input.versionUrl === null) return false;
+  const target = artifactAppVersionUrl(input.targetUrl);
+  return target !== null && target === input.versionUrl;
+}
+
+// Chromium's ERR_ABORTED: the navigation was stopped before anything loaded.
+const NAVIGATION_ABORTED = -3;
+
+// A frame's empty first document and inline `srcdoc` content: no address was loaded.
+const INLINE_FRAME_URLS: ReadonlySet<string> = new Set(["about:blank", "about:srcdoc"]);
+
 /** The web address a blocked navigation or popup may open in the browser, or null. */
 export function artifactAppExternalUrl(rawUrl: string): string | null {
   try {
@@ -92,6 +116,29 @@ export class ArtifactAppWindows extends Context.Service<
     readonly installIdForWebContents: (
       webContentsId: number,
     ) => Effect.Effect<Option.Option<string>>;
+    /** The install's open window. */
+    readonly windowForInstall: (
+      installId: string,
+    ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    /**
+     * Names the one address the window's page frame may be at, or none. Until
+     * it is set, and after it is cleared, every frame navigation is stopped.
+     */
+    readonly setVersionUrl: (installId: string, url: Option.Option<string>) => Effect.Effect<void>;
+    /**
+     * Whether every frame in the window has stayed on the version since it was
+     * set. False when unknown, when no version is set, or once any frame has
+     * been seen at another address.
+     */
+    readonly isFrameOnVersion: (installId: string) => Effect.Effect<boolean>;
+    /** Calls `listener` with the install id each time one of these windows has closed. */
+    readonly onClosed: (listener: (installId: string) => void) => Effect.Effect<void>;
+    /**
+     * Calls `listener` with the install id the moment a window stops being on
+     * its version: a frame was seen at another address, the window's own
+     * document was replaced, or its page process ended.
+     */
+    readonly onFrameStrayed: (listener: (installId: string) => void) => Effect.Effect<void>;
     /** Closes the install's window after the current IPC reply has gone out. */
     readonly close: (installId: string) => Effect.Effect<void>;
     readonly closeAll: Effect.Effect<void>;
@@ -151,6 +198,22 @@ const make = Effect.gen(function* () {
   const openLock = yield* Semaphore.make(1);
   const windows = new Map<string, Electron.BrowserWindow>();
   const installIdsByWebContents = new Map<number, string>();
+  // The address each window's page frame may be at, without its fragment.
+  const versionUrls = new Map<string, string>();
+  // Windows where a frame was seen somewhere else since the version was set.
+  const strayedFrames = new Set<string>();
+  const closedListeners: Array<(installId: string) => void> = [];
+  const strayedListeners: Array<(installId: string) => void> = [];
+  const tell = (listeners: ReadonlyArray<(installId: string) => void>, installId: string) => {
+    for (const listener of listeners) {
+      // One listener failing must not keep the others from releasing what they hold.
+      try {
+        listener(installId);
+      } catch {
+        // Nothing to do here: the listener owns its own failure.
+      }
+    }
+  };
 
   const openExternally = (rawUrl: string) => {
     const url = artifactAppExternalUrl(rawUrl);
@@ -219,8 +282,13 @@ const make = Effect.gen(function* () {
     windows.set(installId, window);
     installIdsByWebContents.set(webContentsId, installId);
     window.once("closed", () => {
-      if (windows.get(installId) === window) windows.delete(installId);
+      const current = windows.get(installId) === window;
+      if (current) windows.delete(installId);
       installIdsByWebContents.delete(webContentsId);
+      if (!current) return;
+      versionUrls.delete(installId);
+      strayedFrames.delete(installId);
+      tell(closedListeners, installId);
     });
     yield* electronWindow.registerSecondary(window, { role: "page" });
 
@@ -238,13 +306,54 @@ const make = Effect.gen(function* () {
       openExternally(url);
     };
     window.webContents.on("will-navigate", guardNavigation);
-    // Only the window's own document. A frame inside the page (the report's
-    // sandboxed iframe or anything it embeds) may redirect without the person
-    // asking, and that must never open the system browser.
-    window.webContents.on("will-redirect", (event) => {
-      if (!event.isMainFrame) return;
-      guardNavigation(event, event.url);
+    // Frames inside the window: the page's sandboxed frame and anything it
+    // embeds. Each may only be at the version this window shows, whether the
+    // move comes from a script, a form, a refresh or a redirect. A stopped
+    // frame navigation opens nothing: no person asked for it.
+    const frameMayGoTo = (url: string) =>
+      // The live window only: a window that was replaced has no version.
+      windows.get(installId) === window &&
+      isArtifactAppFrameNavigationAllowed({
+        versionUrl: versionUrls.get(installId) ?? null,
+        targetUrl: url,
+      });
+    const stray = () => {
+      if (windows.get(installId) !== window || strayedFrames.has(installId)) return;
+      strayedFrames.add(installId);
+      tell(strayedListeners, installId);
+    };
+    window.webContents.on("will-frame-navigate", (event) => {
+      // The window's own document is `will-navigate`'s.
+      if (event.isMainFrame === true) return;
+      if (!frameMayGoTo(event.url)) event.preventDefault();
     });
+    window.webContents.on("will-redirect", (event) => {
+      if (event.isMainFrame === true) return guardNavigation(event, event.url);
+      if (!frameMayGoTo(event.url)) event.preventDefault();
+    });
+    // What actually loaded. A frame that arrives anywhere else, by a road the
+    // two guards above did not see, ends this version's powers.
+    // The window's own document was replaced (a reload, say) or failed to load. The view
+    // that named the version is gone with it, so the version is over until a new view names one.
+    const windowDocumentGone = () => {
+      if (windows.get(installId) === window && versionUrls.delete(installId)) stray();
+    };
+    window.webContents.on("did-frame-navigate", (_event, url, code, _status, isMainFrame) => {
+      if (isMainFrame === true) return windowDocumentGone();
+      if (typeof url === "string" && INLINE_FRAME_URLS.has(url)) return;
+      if (typeof url !== "string" || !frameMayGoTo(url)) return stray();
+      // The right address with an error answer (an expired link, say) is not the version.
+      if (typeof code !== "number" || !(code >= 200 && code < 400)) stray();
+    });
+    // A load that failed left an error page where the document was. A navigation that was
+    // only stopped (ours are) leaves the document in place and is not one of these.
+    window.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
+      if (code === NAVIGATION_ABORTED) return;
+      if (isMainFrame === true) return windowDocumentGone();
+      stray();
+    });
+    // A page process that ended holds no version: what comes back is a new document.
+    window.webContents.on("render-process-gone", stray);
     window.webContents.setWindowOpenHandler(({ url }) => {
       openExternally(url);
       return { action: "deny" };
@@ -315,6 +424,33 @@ const make = Effect.gen(function* () {
         return installId !== undefined && liveWindow(installId) !== undefined
           ? Option.some(installId)
           : Option.none();
+      }),
+    windowForInstall: (installId) =>
+      Effect.sync(() => Option.fromUndefinedOr(liveWindow(installId))),
+    setVersionUrl: (installId, url) =>
+      Effect.sync(() => {
+        strayedFrames.delete(installId);
+        const versionUrl = Option.isSome(url) ? artifactAppVersionUrl(url.value) : null;
+        if (versionUrl === null || liveWindow(installId) === undefined) {
+          versionUrls.delete(installId);
+        } else {
+          versionUrls.set(installId, versionUrl);
+        }
+      }),
+    isFrameOnVersion: (installId) =>
+      Effect.sync(
+        () =>
+          liveWindow(installId) !== undefined &&
+          versionUrls.has(installId) &&
+          !strayedFrames.has(installId),
+      ),
+    onClosed: (listener) =>
+      Effect.sync(() => {
+        closedListeners.push(listener);
+      }),
+    onFrameStrayed: (listener) =>
+      Effect.sync(() => {
+        strayedListeners.push(listener);
       }),
     close: (installId) =>
       Effect.suspend(() => {
