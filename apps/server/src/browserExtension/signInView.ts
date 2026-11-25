@@ -297,7 +297,10 @@ export class SignInViews {
     await this.cdp(view, tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(
       () => {},
     );
-    // Passkey requests are reported to the view; the call itself is left alone.
+    // Passkey requests are reported to the view; the call itself is left alone. Chrome puts a
+    // binding into pages loaded later only while the Runtime domain is on (checked on real
+    // Chrome); its events stay between the extension and this server.
+    await this.cdp(view, tabId, "Runtime.enable").catch(() => {});
     await this.cdp(view, tabId, "Runtime.addBinding", { name: PASSKEY_BINDING }).catch(() => {});
     await this.cdp(view, tabId, "Page.addScriptToEvaluateOnNewDocument", {
       source: PASSKEY_WATCH_SCRIPT,
