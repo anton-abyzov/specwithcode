@@ -1,13 +1,12 @@
 import { PullRequestOperationError } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
-const ABBREVIATED_SHA = /^[0-9a-f]{7,64}$/i;
-
-/** True when `current` is the commit `expected` names, in full or by a hex prefix. */
+/**
+ * True when `current` is the commit `expected` names. Only the full id counts: a short prefix can
+ * name two commits, and the check would then hand the host the wrong one to enforce.
+ */
 export function isSameHead(current: string, expected: string): boolean {
-  const left = current.toLowerCase();
-  const right = expected.toLowerCase();
-  return left === right || (ABBREVIATED_SHA.test(right) && left.startsWith(right));
+  return current.toLowerCase() === expected.toLowerCase();
 }
 
 /**

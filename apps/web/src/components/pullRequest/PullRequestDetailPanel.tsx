@@ -698,23 +698,29 @@ export function PullRequestDetailPanel({
     [resolvedCoreDetail, sharedSummary],
   );
   const activity = activityQuery.data;
-  // The head on screen when the reader first saw this pull request. A background refresh does
-  // not move it: a merge or review stays on those commits until the reader loads newer ones.
+  // The head on screen when the reader first saw this pull request, cached or fresh. A refresh
+  // does not move it: a merge or review stays on those commits until the reader loads newer
+  // ones. Only a server that refuses a moved head is sent one, and only then is the promise made.
+  const supportsHeadPin =
+    environmentConfigs.get(environmentId)?.environment.capabilities.pullRequestHeadPin === true;
   const seenHeadKey = `${environmentId}:${pullRequestKey}`;
   const [storedSeenHead, setSeenHead] = useState<SeenPullRequestHead | null>(null);
   const seenHead = seenPullRequestHead(
     storedSeenHead,
     seenHeadKey,
-    detailQuery.isPending ? undefined : (coreDetail?.headSha ?? undefined),
+    coreDetail?.headSha ?? undefined,
   );
   if (seenHead !== storedSeenHead) setSeenHead(seenHead);
-  const shownHeadSha = seenHead.sha ?? coreDetail?.headSha ?? undefined;
+  const shownHeadSha = supportsHeadPin ? seenHead.sha : undefined;
   const unseenHeadSha =
+    shownHeadSha !== undefined &&
     coreDetail?.state === "open" &&
     coreDetail.headSha !== undefined &&
     coreDetail.headSha !== shownHeadSha
       ? coreDetail.headSha
       : undefined;
+  // "Load new commits" moves the pin only once the reload has finished, to the head it painted.
+  const [reloadingHeadKey, setReloadingHeadKey] = useState<string | null>(null);
   const detail = useMemo(
     () =>
       coreDetail === null
@@ -890,6 +896,10 @@ export function PullRequestDetailPanel({
   // One word for "the host is being asked again", whichever of the two halves is in flight:
   // the invalidation round trip, then the detail read it kicks off.
   const refreshing = isInvalidating || detailQuery.isPending;
+  if (reloadingHeadKey === seenHeadKey && !refreshing) {
+    setReloadingHeadKey(null);
+    setSeenHead({ key: seenHeadKey, sha: coreDetail?.headSha ?? undefined });
+  }
   const refreshFromHost = useCallback(async () => {
     setIsInvalidating(true);
     try {
@@ -2472,8 +2482,9 @@ export function PullRequestDetailPanel({
                     <Button
                       size="xs"
                       variant="outline"
+                      disabled={reloadingHeadKey === seenHeadKey}
                       onClick={() => {
-                        setSeenHead({ key: seenHeadKey, sha: unseenHeadSha });
+                        setReloadingHeadKey(seenHeadKey);
                         void refreshFromHost();
                       }}
                     >

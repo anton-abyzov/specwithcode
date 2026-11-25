@@ -151,7 +151,12 @@ export function usePullRequestActionRunner({
   const [actionPending, setActionPending] = useState(false);
   const pendingRef = useRef(false);
 
-  const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod) => {
+  /** `pinnedHead` overrides the head on screen, for a confirmation that captured its own. */
+  const perform = async (
+    action: PullRequestAction,
+    method?: PullRequestMergeMethod,
+    pinnedHead: string | undefined = headSha,
+  ) => {
     if (pendingRef.current || reference === null) return;
     pendingRef.current = true;
     setActionPending(true);
@@ -162,7 +167,7 @@ export function usePullRequestActionRunner({
           ...reference,
           action,
           ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
-          ...mergeHeadPin(action, headSha),
+          ...mergeHeadPin(action, pinnedHead),
         },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
