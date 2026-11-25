@@ -109,6 +109,11 @@ export function useCopySecrets({
     setChosen(next);
     keep(next);
   };
+  /** The person asked for every secret ("Sync again with secrets"): no exclusion stays recorded. */
+  const includeAll = (): SecretsChoice => {
+    recordExclusions(storageKey, settled(), ALL_SECRETS);
+    return ALL_SECRETS;
+  };
   // Another window recorded an exclusion: show it here too.
   const [, heard] = useState(0);
   useEffect(() => {
@@ -234,6 +239,7 @@ export function useCopySecrets({
     settled,
     sendTicked,
     sendCurrent,
+    includeAll,
     /** The secret files this dialog sent for that copy, or null when it sent none. */
     sentFor: (operationId: string): ReadonlyArray<string> | null =>
       sent.current?.operationId === operationId ? sent.current.paths : null,

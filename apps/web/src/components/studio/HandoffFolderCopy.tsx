@@ -1389,7 +1389,7 @@ export function HandoffFolderCopy({
             secretsNote={secrets.leftNote}
             onSendSecrets={
               secrets.canSendLeft && pending && !transferRecovery
-                ? () => void copyAgainNow(false, ALL_SECRETS)
+                ? () => void copyAgainNow(false, secrets.includeAll())
                 : null
             }
             secretsLocked={secrets.gate.note}
