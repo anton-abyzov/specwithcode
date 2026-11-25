@@ -160,3 +160,17 @@ describe("session cookie isolation", () => {
     expect(isRemoteReachableHost("192.168.1.50")).toBe(true);
   });
 });
+
+// A loopback peer may be a local proxy, but the address recorded for a client is the
+// socket's: a forwarded header from a local process cannot name another address.
+describe("deriveAuthClientMetadata behind a loopback peer", () => {
+  it("records the socket address, not X-Forwarded-For", () => {
+    const metadata = deriveAuthClientMetadata({
+      request: {
+        headers: { "x-forwarded-for": "203.0.113.9" },
+        source: { remoteAddress: "127.0.0.1" },
+      } as never,
+    });
+    expect(metadata.ipAddress).toBe("127.0.0.1");
+  });
+});
