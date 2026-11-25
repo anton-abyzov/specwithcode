@@ -638,6 +638,12 @@ const make = Effect.gen(function* () {
         // is written into what took its place.
         const unsaved = session.dirty && session.authorized;
         if (unsaved) yield* setAside(session);
+        else if (session.authorized && !session.unmerged) {
+          // Nothing unsaved in it: the log goes, so the file that is here now starts its own.
+          yield* Effect.promise(() =>
+            removeSheetSidecar(session.sidecarPath).catch(() => undefined),
+          );
+        }
         yield* endSession(
           session,
           unsaved

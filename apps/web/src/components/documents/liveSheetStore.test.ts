@@ -414,6 +414,23 @@ describe("a session that ends", () => {
     expect(machine.sent("w1")).toBe(1);
   });
 
+  it("ignores a late answer to the ended session once the sheet is open again", async () => {
+    const machine = home(sheet({ A1: "Item" }));
+    const first = machine.join("w1", "edit");
+    // The old session's edit is refused, but its answer arrives only after the reopen.
+    machine.refuse("refused");
+    expect(edit(first, "A2", "Rent")).toBe(true);
+    first.receive({ type: "closed", reason: "The sheet was replaced by another file." });
+    machine.startOver(sheet({ A1: "Another sheet" }));
+    first.reopen();
+    expect(edit(first, "A3", "New")).toBe(true);
+    await settle();
+    // Only the reopen started the sheet over; the new edit stands.
+    expect(machine.restarts).toEqual(["w1"]);
+    expect(first.getState().problem).toBeNull();
+    expect(cells(first)).toEqual({ A1: "Another sheet", A3: "New" });
+  });
+
   it("stops being editable", () => {
     const machine = home(sheet({ A1: "Item" }));
     const first = machine.join("w1", "edit");

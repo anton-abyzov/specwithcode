@@ -700,6 +700,10 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           .pipe(Effect.flip);
         expect(refused.code).toBe("not_open");
         expect(read()).toBe(TEXT);
+        // Opened again, the file that is here now is a sheet of its own: nothing of the old one's.
+        const again = yield* openWindow(target, "window-bbbb");
+        expect(again.first.epoch).not.toBe(window.first.epoch);
+        expect(readSheetYDoc(again.doc).tabIds).not.toEqual(readSheetYDoc(window.doc).tabIds);
       }),
     );
 

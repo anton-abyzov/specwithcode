@@ -229,11 +229,11 @@ export class LiveSheetStore {
     this.#unsent += 1;
     void this.#transport.update(sheetUpdateToBase64(update)).then(
       (result) => {
-        // An answer for a document this window has since replaced counts for nothing.
-        if (doc === this.#doc) {
-          this.#unsent -= 1;
-          if (result === "failed" || result === "not_open") this.#undelivered = true;
-        }
+        // An answer for a document this window has since replaced counts for nothing: it
+        // neither marks an edit of the new one undelivered nor starts the new one over.
+        if (doc !== this.#doc) return;
+        this.#unsent -= 1;
+        if (result === "failed" || result === "not_open") this.#undelivered = true;
         if (result === "merged" || this.#state.status === "closed") return;
         if (result === "failed" || result === "not_open") {
           // Not delivered: the next snapshot brings the two together again.
@@ -247,7 +247,9 @@ export class LiveSheetStore {
         });
         this.#transport.restart();
       },
-      () => this.#transport.restart(),
+      () => {
+        if (doc === this.#doc) this.#transport.restart();
+      },
     );
   }
 

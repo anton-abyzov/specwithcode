@@ -107,6 +107,8 @@ export function SheetFileView(props: {
   const { environmentId, cwd, path } = props;
   // Live when the machine can hold a session on the file; otherwise saved by revision.
   const live = useLiveSheet({ environmentId, cwd, relativePath });
+  /** How many times the sheet was opened again after its live session ended. */
+  const [opened, setOpened] = useState(0);
   const reload = useCallback(async (): Promise<void> => {
     clearProjectFileQueryData(environmentId, cwd, path);
     file.refresh();
@@ -203,6 +205,7 @@ export function SheetFileView(props: {
             data-testid="sheet-live-reopen"
             onClick={() => {
               void reload();
+              setOpened((count) => count + 1);
               live.reopen();
             }}
           >
@@ -211,6 +214,9 @@ export function SheetFileView(props: {
         </p>
       ) : null}
       <SheetView
+        // A new view when the session ends and when the sheet is opened again: text still in a
+        // cell editor belongs to the sheet that was open, and is not carried into another.
+        key={`${ended ? "ended" : "open"}-${opened}`}
         text={file.data.contents}
         mode={mode}
         themeSource={themeSource}
