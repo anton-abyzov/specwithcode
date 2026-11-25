@@ -2331,7 +2331,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
       expect(variablesOf("query PullRequestMergeMessage")).toEqual([]);
       expect(variablesOf("mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "REBASE" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "REBASE", expectedHeadOid: "abc123" } },
       ]);
     }),
   );
@@ -2381,8 +2381,8 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
-        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "abc123" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE", expectedHeadOid: "abc123" } },
       ]);
       expect(variablesOf("mergePullRequest(")).toEqual([]);
     }),
@@ -2403,7 +2403,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       expect(variablesOf("mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "abc123" } },
       ]);
       expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
     }),
