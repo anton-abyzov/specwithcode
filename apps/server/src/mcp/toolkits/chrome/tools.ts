@@ -15,6 +15,8 @@ import {
   ChromeProfilesResult,
   ChromeScreenshotInput,
   ChromeScreenshotResult,
+  ChromeSignInNeededInput,
+  ChromeSignInNeededResult,
   ChromeSnapshotInput,
   ChromeSnapshotResult,
   ChromeTabsInput,
@@ -30,6 +32,7 @@ import * as BrowserExtension from "../../../browserExtension/BrowserExtension.ts
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
 const dependencies = [
@@ -185,6 +188,20 @@ const ChromePeerTool = make(
   ACT,
 );
 
+/** Raises a card in the caller's thread, so it also needs the orchestrator. */
+const ChromeSignInNeededTool = Tool.make("chrome_sign_in_needed", {
+  description: `Ask the user to sign in to a site themselves, in this machine's Chrome, when a page you need asks for a password, a code or a passkey. A card in this thread opens a live view of a new tab that only the user can see and type into, from any of their devices; you cannot see or use that tab, and you never get the password. The call waits up to 4 minutes and returns done, cancelled, timed_out, tab_closed, declined, expired, or signing_in (call again with the same clientRequestId to keep waiting). Never type a password yourself, read one from a file, or ask for one in chat. ${USER_CHROME}`,
+  parameters: ChromeSignInNeededInput,
+  success: ChromeSignInNeededResult,
+  failure: ChromeToolFailure,
+  dependencies: [...dependencies, OrchestratorMcpService.OrchestratorMcpService],
+})
+  .annotate(Tool.Title, "Ask the user to sign in")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const ChromeStandardToolkit = Toolkit.make(
   ChromeProfilesTool,
   ChromeTabsTool,
@@ -197,6 +214,7 @@ export const ChromeStandardToolkit = Toolkit.make(
   ChromeUploadTool,
   ChromeEvaluateTool,
   ChromeCloseTool,
+  ChromeSignInNeededTool,
   ChromePeerTool,
 );
 
@@ -215,5 +233,6 @@ export const ChromeToolkit = Toolkit.make(
   ChromeScreenshotTool,
   ChromeEvaluateTool,
   ChromeCloseTool,
+  ChromeSignInNeededTool,
   ChromePeerTool,
 );

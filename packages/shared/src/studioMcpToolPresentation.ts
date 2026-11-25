@@ -316,6 +316,11 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "browser",
   ),
   chrome_close: tool(["Close", "Closing", "Closed", "a Chrome tab"], "browser", "browser"),
+  chrome_sign_in_needed: tool(
+    ["Ask", "Waiting for", "Waited for", "you to sign in"],
+    "browser",
+    "browser",
+  ),
   device_list: tool(["List", "Listing", "Listed", "simulators and emulators"], "device", "device"),
   device_open: tool(
     ["Open", "Opening", "Opened", "a device in the Device panel"],

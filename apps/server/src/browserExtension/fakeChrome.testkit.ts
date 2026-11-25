@@ -18,6 +18,20 @@ export interface FakeChrome {
   readonly session: RelaySession;
   /** CDP method -> error the next call to it fails with, once. */
   readonly failNext: Map<string, string>;
+  /** Open tabs by id; tests add popups or change a tab's address here. */
+  readonly tabs: Map<number, FakeTab>;
+  /** CDP method -> runs before the fake answers it, with the tab it targets. */
+  readonly before: Map<string, (tab: FakeTab | undefined) => void>;
+}
+
+export interface FakeTab {
+  id: number;
+  url: string;
+  title: string;
+  active: boolean;
+  openerTabId?: number;
+  /** Navigation entry id; every navigation makes a new one. */
+  entry?: number;
 }
 
 /** A paired profile that answers chrome.* calls the way the extension would. */
@@ -32,8 +46,9 @@ export function connectFake(
   const closed: FakeChrome["closed"] = [];
   const notifications: FakeChrome["notifications"] = [];
   const failNext: FakeChrome["failNext"] = new Map();
+  const before: FakeChrome["before"] = new Map();
   let nextTab = 100;
-  const tabs = new Map<number, { id: number; url: string; title: string; active: boolean }>([
+  const tabs = new Map<number, FakeTab>([
     [1, { id: 1, url: "https://mail.example.com/", title: "Mail", active: true }],
   ]);
   const reply = (id: number, body: { result?: unknown; error?: string }) =>
@@ -47,6 +62,14 @@ export function connectFake(
       }
       const params = message.params as unknown[];
       calls.push({ method: message.method, params });
+      // failNext also takes chrome.tabs.* names, for one failed call each.
+      const tabsFailure = message.method.startsWith("chrome.tabs.")
+        ? failNext.get(message.method)
+        : undefined;
+      if (tabsFailure !== undefined) {
+        failNext.delete(message.method);
+        return reply(message.id, { error: tabsFailure });
+      }
       switch (message.method) {
         case "chrome.tabs.query":
           return reply(message.id, { result: [...tabs.values()] });
@@ -67,7 +90,12 @@ export function connectFake(
         case "chrome.debugger.detach":
           return reply(message.id, { result: {} });
         case "chrome.debugger.sendCommand": {
-          const [, method, args] = params as [unknown, string, Record<string, unknown>];
+          const [target, method, args] = params as [
+            { tabId?: number } | undefined,
+            string,
+            Record<string, unknown>,
+          ];
+          before.get(method)?.(target?.tabId === undefined ? undefined : tabs.get(target.tabId));
           const failure = failNext.get(method);
           if (failure !== undefined) {
             failNext.delete(method);
@@ -110,6 +138,25 @@ export function connectFake(
           }
           if (method === "Page.captureScreenshot")
             return reply(message.id, { result: { data: PNG_1x1 } });
+          const tabId = (params[0] as { tabId?: number } | undefined)?.tabId;
+          const tab = tabId === undefined ? undefined : tabs.get(tabId);
+          if (method === "Page.navigate" && tab) {
+            tab.url = String(args.url);
+            tab.entry = (tab.entry ?? 0) + 1;
+          }
+          if (method === "Page.getNavigationHistory")
+            return reply(message.id, {
+              result: {
+                currentIndex: 0,
+                entries: [{ id: tab?.entry ?? 0, url: tab?.url ?? "", title: tab?.title ?? "" }],
+              },
+            });
+          if (method === "Page.getLayoutMetrics")
+            return reply(message.id, {
+              result: {
+                cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 0, pageY: 0 },
+              },
+            });
           return reply(message.id, { result: {} });
         }
       }
@@ -134,7 +181,7 @@ export function connectFake(
       },
     }),
   );
-  return { calls, closed, notifications, session, failNext };
+  return { calls, closed, notifications, session, failNext, tabs, before };
 }
 
 export function setup() {

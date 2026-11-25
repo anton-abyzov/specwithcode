@@ -4,6 +4,10 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./signInSeal": {
+      "types": "./src/signInSeal.ts",
+      "import": "./src/signInSeal.ts"
+    },
     "./maskEmail": {
       "types": "./src/maskEmail.ts",
       "import": "./src/maskEmail.ts"

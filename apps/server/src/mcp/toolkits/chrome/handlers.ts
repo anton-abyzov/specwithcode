@@ -38,6 +38,7 @@ import { workerClientName } from "../../../fleet/workerGrantMint.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
+import { signInNeeded } from "./signInTool.ts";
 import { ChromeScreenshotToolkit, ChromeStandardToolkit, ChromeToolkit } from "./tools.ts";
 
 const toolsByHub = new WeakMap<object, ChromeTools>();
@@ -544,6 +545,10 @@ const handlers = {
   chrome_screenshot: McpToolAccess.readsAsCaller((input) => run("chrome_screenshot", input)),
   chrome_evaluate: McpToolAccess.actsAsCaller((input) => run("chrome_evaluate", input)),
   chrome_close: McpToolAccess.actsAsCaller((input) => run("chrome_close", input)),
+  // This machine's Chrome only: the card and the view are for the machine with the tab.
+  chrome_sign_in_needed: McpToolAccess.actsAsCaller((input) =>
+    requireChromeAccess.pipe(Effect.flatMap((scope) => signInNeeded(scope, input))),
+  ),
   // Checks its own caller: another machine, never an agent.
   chrome_peer: McpToolAccess.reads(peer),
 } satisfies McpToolAccess.Handlers<typeof ChromeToolkit.tools>;

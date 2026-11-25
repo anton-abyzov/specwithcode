@@ -427,6 +427,18 @@ export const TEAM_USAGE_OWNER_RPC_METHODS: ReadonlyArray<string> = [
   WS_METHODS.teamUsageOrgs,
 ];
 
+/**
+ * The sign-in view (1488): a person types a password into a Chrome tab here
+ * from another device. Another machine's key that reached this socket never
+ * opens, watches or types into it; the owner's own windows over Connect do.
+ */
+export const SIGN_IN_VIEW_RPC_METHODS: ReadonlyArray<string> = [
+  WS_METHODS.browserSignInStart,
+  WS_METHODS.browserSignInFrame,
+  WS_METHODS.browserSignInInput,
+  WS_METHODS.browserSignInEnd,
+];
+
 const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayDecideAccess,
   // Away moves this machine's threads, routines and coordinator to another
@@ -444,6 +456,7 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   // The kept messages between this project's coordinators and every linked machine are
   // for the owner's window; a peer's key reads its own copy on its own machine.
   WS_METHODS.projectsCoordinatorMessages,
+  ...SIGN_IN_VIEW_RPC_METHODS,
   ...PERSONAL_DATA_RPC_METHODS,
   ...TEAM_USAGE_OWNER_RPC_METHODS,
 ]);
@@ -455,11 +468,13 @@ const ownerOnlyRpcMessage = (method: string) =>
       ? "Only a person running the copy can send this machine's secret files."
       : method === WS_METHODS.projectsCoordinatorMessages
         ? "Only this machine's owner can read the messages between its coordinators."
-        : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
-          ? "Only a person on this machine can change what it shares with a team."
-          : PERSONAL_DATA_RPC_METHODS.includes(method)
-            ? "Only this machine's owner can see or change personal data access here."
-            : "Only this machine's owner can start, stop or change Away here.";
+        : SIGN_IN_VIEW_RPC_METHODS.includes(method)
+          ? "Only this machine's owner can open or drive a sign-in view here."
+          : TEAM_USAGE_OWNER_RPC_METHODS.includes(method)
+            ? "Only a person on this machine can change what it shares with a team."
+            : PERSONAL_DATA_RPC_METHODS.includes(method)
+              ? "Only this machine's owner can see or change personal data access here."
+              : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);

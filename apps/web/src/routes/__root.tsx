@@ -32,6 +32,7 @@ import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDial
 import { AwayDialogHost } from "../components/away/AwayDialog";
 import { MachineToolInstallDialogHost } from "../components/machineTools/MachineToolInstallDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
+import { SignInViewerHost } from "../components/signIn/SignInViewer";
 import {
   DeviceApprovalNoticesHost,
   DeviceApprovalPromptHost,
@@ -248,6 +249,7 @@ function RootRouteView() {
           <AwayDialogHost />
           {/* Setup can start Restart to update, which asks before stopping running work. */}
           <ConfirmDialogHost />
+          <SignInViewerHost />
           {/* 1327: a device can ask this machine, or wait on another, during setup too. */}
           {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
           <DeviceWaitingForApprovalHost />
@@ -319,6 +321,7 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
+          <SignInViewerHost />
           {primaryEnvironmentAuthenticated ? <DeviceApprovalPromptHost /> : null}
           <DeviceWaitingForApprovalHost />
           <DeviceApprovalNoticesHost />

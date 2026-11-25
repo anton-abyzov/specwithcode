@@ -243,6 +243,35 @@ it.effect("a permission card cannot be allowed from the card, only declined", ()
   ),
 );
 
+it.effect("a sign-in card records allowed and leaves no grant behind (1488)", () =>
+  withStateDir(
+    withService(
+      ({ service, dispatched }) =>
+        Effect.gen(function* () {
+          yield* service.answer({
+            threadId,
+            turnItemId,
+            answer: { type: "allow", scope: "machine" },
+          });
+          assert.include(recorded(dispatched)[0] as object, { accessStatus: "allowed" });
+          assert.isFalse(yield* service.isAllowed(threadId, "sign-in:sign-in-abc"));
+          assert.isFalse(yield* service.hasAnyGrant(threadId, "sign-in"));
+          assert.deepEqual((yield* service.listMachineGrants).grants, []);
+        }),
+      {
+        subjects: [
+          {
+            kind: "sign-in",
+            key: "sign-in:sign-in-abc",
+            label: "app.squareup.com",
+            detail: "You type the password yourself.",
+          },
+        ],
+      },
+    ),
+  ),
+);
+
 it.effect("refuses a card that is gone", () =>
   withStateDir(
     withService(
