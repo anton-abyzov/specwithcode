@@ -649,6 +649,29 @@ const make = Effect.gen(function* () {
       Effect.mapError(writeError("remove-launcher", path)),
     );
 
+  /**
+   * Copies of a macOS bundle a failed Trash left under a private removal name:
+   * exactly `.<name>.app.removing-<32 hex>`, nothing looser. A folder that
+   * cannot be listed fails, so a pending removal is never mistaken for none.
+   */
+  const pendingRemovals = (location: LauncherLocation) =>
+    Effect.gen(function* () {
+      if (location.kind !== "mac-bundle") return [] as ReadonlyArray<string>;
+      const prefix = `.${rules.basename(location.path)}.removing-`;
+      const entries = yield* fileSystem.readDirectory(location.folder).pipe(
+        Effect.catchTags({
+          PlatformError: (error) =>
+            isNotFound(error) ? Effect.succeed<ReadonlyArray<string>>([]) : Effect.fail(error),
+        }),
+        Effect.mapError(writeError("remove-launcher", location.folder)),
+      );
+      return entries
+        .filter(
+          (entry) => entry.startsWith(prefix) && /^[0-9a-f]{32}$/.test(entry.slice(prefix.length)),
+        )
+        .map((entry) => rules.join(location.folder, entry));
+    });
+
   // Removes only what is still this install's launcher; anything else at the path is left alone.
   const removeLauncher = (location: LauncherLocation, installId: string) =>
     Effect.gen(function* () {
@@ -668,13 +691,7 @@ const make = Effect.gen(function* () {
           // alone. A copy a failed Trash left under a private name is found
           // and trashed by the next uninstall, and its record stays until then.
           const prefix = `.${rules.basename(location.path)}.removing-`;
-          const leftovers = (yield* fileSystem
-            .readDirectory(location.folder)
-            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((entry) =>
-            entry.startsWith(prefix),
-          );
-          const candidates: Array<string> = [];
-          for (const entry of leftovers) candidates.push(rules.join(location.folder, entry));
+          const candidates = [...(yield* pendingRemovals(location))];
           if (yield* owned(location.path)) {
             const claimed = rules.join(location.folder, `${prefix}${newArtifactAppInstallId()}`);
             // A random name nothing uses yet: a rename over an empty folder would replace it.
@@ -732,6 +749,11 @@ const make = Effect.gen(function* () {
       ) {
         yield* windows.open(existing.installId);
         return { status: "already-installed", app: existing } as const;
+      }
+      // A removal a failed Trash left pending is finished first; when it cannot
+      // be, the install fails and the record stays for uninstall to retry.
+      if (Option.isSome(location) && (yield* pendingRemovals(location.value)).length > 0) {
+        yield* removeLauncher(location.value, existing.installId);
       }
       // The launcher was deleted or replaced by hand: forget the stale record and install again.
       yield* logInfo("forgetting an install whose launcher is gone", {

@@ -17,6 +17,7 @@ vi.mock("electron", () => ({}));
 import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import * as ArtifactAppWindows from "./ArtifactAppWindows.ts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 const input: DesktopArtifactAppInstallInput = {
   environmentId: "environment-1",
@@ -547,6 +548,58 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
         assert.deepEqual(yield* retry.records.list, []);
       }),
     ),
+  );
+
+  it.effect("finishes a pending removal before installing again, or keeps the install", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const failing = yield* harness(
+          { platform: "darwin", fileSystem, trashFails: true },
+          home,
+          recordsPath,
+        );
+        const result = yield* failing.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        assert.isFalse(yield* failing.installer.uninstall(result.app.installId));
+
+        // The Trash still fails: installing again neither forgets nor asks.
+        const again = yield* failing.installer.install(input);
+        assert.equal(again.status, "failed");
+        assert.equal((yield* failing.records.list).length, 1);
+
+        // An exact copy kept under another hidden name is not a pending removal.
+        const [pending] = yield* fileSystem.readDirectory(folder);
+        const backup = path.join(folder, ".Morning dashboard.app.removing-backup");
+        yield* fileSystem.copy(path.join(folder, pending!), backup);
+
+        const working = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const reinstalled = yield* working.installer.install(input);
+        assert.equal(reinstalled.status, "installed");
+        assert.deepEqual(working.calls.trashed, [path.join(folder, pending!)]);
+        assert.isTrue(yield* fileSystem.exists(backup));
+      }),
+    ),
+  );
+
+  // Folder modes do not stop Windows or root from listing it.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "keeps the install when its apps folder cannot be listed",
+    () =>
+      withHome(({ home, recordsPath, fileSystem, path }) =>
+        Effect.gen(function* () {
+          const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+          const result = yield* h.installer.install(input);
+          if (result.status !== "installed") return assert.fail("not installed");
+          const folder = path.join(home, "Applications", "SpecWithCode Apps");
+          yield* fileSystem.chmod(folder, 0o000);
+          const uninstalled = yield* h.installer
+            .uninstall(result.app.installId)
+            .pipe(Effect.ensuring(fileSystem.chmod(folder, 0o755).pipe(Effect.orDie)));
+          assert.isFalse(uninstalled);
+          assert.equal((yield* h.records.list).length, 1);
+        }),
+      ),
   );
 
   it.effect("never removes through an apps folder that became a link", () =>
