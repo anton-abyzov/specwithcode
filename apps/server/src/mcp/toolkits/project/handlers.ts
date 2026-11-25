@@ -400,8 +400,9 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   // reads: the folder's own `.git` entry (never a link) is either the
   // repository's git folder itself (the main checkout), or a file whose
   // `gitdir:` line names a slot directly under `<common dir>/worktrees/`
-  // whose `gitdir` record names this folder's `.git` exactly. Nothing is
-  // trimmed, decoded loosely or resolved past what Git itself resolves.
+  // whose `gitdir` record names this folder's `.git` exactly. That match is
+  // never trimmed, decoded loosely or resolved past what Git resolves; only
+  // the count of other slots naming the folder reads records loosely.
   const encoder = new TextEncoder();
   const sameBytes = (left: Uint8Array, right: Uint8Array) =>
     left.length === right.length && left.every((byte, index) => byte === right[index]);
@@ -532,7 +533,7 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   return yield* new OrchestratorMcpFailure({
     code: "invalid_request",
     message: listedButChanged
-      ? `git still lists ${worktreePath} as one of ${owner} worktrees, but the folder there is no longer that worktree. \`git worktree repair\` reconnects a moved worktree; to drop the record, unlock it if locked, move the folder away and run \`git worktree prune\`.`
+      ? `git still lists ${worktreePath} as one of ${owner} worktrees, but the folder there is no longer that worktree, or more than one of git's worktree records names it. \`git worktree repair\` reconnects a moved worktree; to drop the record, unlock it if locked, move the folder away and run \`git worktree prune\`.`
       : `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
   });
 });
