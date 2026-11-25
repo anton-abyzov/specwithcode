@@ -1026,7 +1026,11 @@ describe("AssetAccess", () => {
         // A file named only ".png" has no extension at all, whatever its name looks like.
         yield* fs.writeFileString(path.join(root, ".png"), "<p>page</p>");
         yield* fs.symlink(path.join(root, ".png"), path.join(root, "dotted.png"));
-        for (const linked of ["page.html", "pic.png", "doc.html", "dotted.png"]) {
+        // Nor does a link named only ".png", even over a page named only ".html".
+        yield* fs.makeDirectory(path.join(root, "bare"));
+        yield* fs.writeFileString(path.join(root, "bare", ".html"), "<p>page</p>");
+        yield* fs.symlink(path.join(root, "bare", ".html"), path.join(root, "bare", ".png"));
+        for (const linked of ["page.html", "pic.png", "doc.html", "dotted.png", "bare/.png"]) {
           const refused = yield* issueAssetUrl({
             resource: { _tag: "workspace-file", threadId, path: linked },
             workspaceRoot: root,
