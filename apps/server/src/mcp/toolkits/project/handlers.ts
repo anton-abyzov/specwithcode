@@ -393,18 +393,26 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         }),
         Effect.orElseSucceed(() => undefined),
       );
-  // A linked worktree's own Git folder names the checkout it belongs to, as Git
-  // itself checks: a .git file copied from another worktree points elsewhere.
+  // The checkout's own `.git` entry, never a link to another one, must be the
+  // repository's git folder (the main checkout) or name this path back from
+  // the linked worktree's git folder, as Git itself checks. A `.git` file or
+  // link copied from elsewhere points at a checkout that is not this one.
   const ownsCheckout = (gitDir: string, commonDir: string) =>
-    gitDir === commonDir
-      ? Effect.succeed(true)
-      : fileSystem.readFileString(`${gitDir}/gitdir`).pipe(
-          Effect.flatMap((backlink) => real(backlink.trim())),
-          Effect.flatMap((backlink) =>
-            real(`${asked}/.git`).pipe(Effect.map((dotGit) => backlink === dotGit)),
-          ),
-          Effect.orElseSucceed(() => false),
-        );
+    Effect.gen(function* () {
+      const entry = `${asked}/.git`;
+      const isLink = yield* fileSystem.readLink(entry).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isLink) return false;
+      const dotGit = yield* real(entry);
+      if (gitDir === commonDir) return dotGit === commonDir;
+      const backlink = yield* fileSystem.readFileString(`${gitDir}/gitdir`).pipe(
+        Effect.flatMap((text) => real(text.trim())),
+        Effect.orElseSucceed(() => undefined),
+      );
+      return backlink === dotGit;
+    });
   const project = yield* checkoutOf(workspaceRoot);
   for (const path of registered) {
     // The registered path, not the caller's spelling: a symlink that resolves

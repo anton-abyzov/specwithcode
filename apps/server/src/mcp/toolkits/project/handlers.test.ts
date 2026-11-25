@@ -1115,6 +1115,21 @@ it.effect("a launch binds only an existing checkout that is one of the project's
       code: "invalid_request",
     });
     expect((yield* launchInto(other)).at(-1)?.result).toMatchObject({ projectId });
+    // A .git file naming the repository's own git folder, or a link to the
+    // other worktree's .git file, is not this checkout either.
+    yield* fileSystem.remove(path.join(locked, ".git"));
+    yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${repo}/.git\n`);
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    yield* fileSystem.remove(path.join(locked, ".git"));
+    yield* fileSystem.symlink(path.join(other, ".git"), path.join(locked, ".git"));
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    // The project's own checkout and its worktrees still launch.
+    expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
+    expect((yield* launchInto(other)).at(-1)?.result).toMatchObject({ projectId });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
