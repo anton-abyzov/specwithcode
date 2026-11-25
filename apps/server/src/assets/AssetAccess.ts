@@ -129,9 +129,12 @@ const fileExtension = (filePath: string) => {
 /**
  * Whether a link leads to a file of the type its name says. The response's type follows the
  * target, so a picture name over a page, or a page name over a document, would change what runs.
+ * Two names with no extension are not the same type: ".png" over ".html" would serve the page.
  */
-const sameFileType = (target: string, requested: string) =>
-  fileExtension(target) === fileExtension(requested);
+const sameFileType = (target: string, requested: string) => {
+  const extension = fileExtension(target);
+  return extension !== "" && extension === fileExtension(requested);
+};
 const htmlFilePreview = (filePath: string) =>
   /\.html?$/i.test(filePath) ? ({ htmlPreview: "file" as const }) : {};
 
