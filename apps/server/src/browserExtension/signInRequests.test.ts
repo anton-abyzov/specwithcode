@@ -124,13 +124,13 @@ describe("sign-in requests (1488)", () => {
     const { requests, viewer, fake } = start({ allowWaitMs: 60_000 });
     const { requestId } = ask(requests);
     // Allowed on the card while the tab opens, then declined from another window.
+    // Declined from another window while Chrome attaches to the new tab.
+    fake.before.set("Runtime.enable", () => requests.decline(requestId, "declined"));
     const opening = requests.start(requestId, viewer.publicKey);
     requests.allow(requestId);
-    await Promise.resolve();
-    requests.decline(requestId, "declined");
     await expect(opening).rejects.toThrow(/has ended/);
     const removed = fake.calls.filter((call) => call.method === "chrome.tabs.remove");
-    expect(removed.length).toBeLessThanOrEqual(1);
+    expect(removed.length).toBe(1);
     expect(requests.views.open()).toEqual([]);
   });
 
@@ -143,6 +143,17 @@ describe("sign-in requests (1488)", () => {
     const waitingStart = requests.start(requestId, viewer.publicKey);
     setTimeout(() => requests.allow(requestId), 5);
     expect((await waitingStart).viewId).toEqual(expect.any(String));
+  });
+
+  it("a start waiting for the Allow hears a decline at once, and opens nothing", async () => {
+    const { requests, viewer, fake } = start({ allowWaitMs: 60_000 });
+    const { requestId } = ask(requests);
+    const waiting = requests.start(requestId, viewer.publicKey);
+    requests.decline(requestId, "declined");
+    await expect(waiting).rejects.toThrow(/has ended/);
+    expect(fake.calls.some((call) => call.method === "chrome.tabs.create")).toBe(false);
+    // The claim is released, and a later start hears the same.
+    await expect(requests.start(requestId, viewer.publicKey)).rejects.toThrow(/has ended/);
   });
 
   it("lets only the window that opens the frames type or press Done", async () => {

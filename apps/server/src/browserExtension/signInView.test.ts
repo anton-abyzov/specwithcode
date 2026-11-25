@@ -517,7 +517,10 @@ describe("sign-in view (1488)", () => {
         viewerKey: viewer.publicKey,
       });
       const tabC = newestTab(fake);
-      await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+      // Pulling frames is not activity: only input keeps a view open.
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await views.frame(c.viewId);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
       expect(fake.calls.findLast((call) => call.method === "chrome.tabs.remove")?.params).toEqual([
         tabC,
       ]);

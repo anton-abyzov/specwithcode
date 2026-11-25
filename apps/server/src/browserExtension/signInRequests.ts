@@ -162,7 +162,7 @@ export class SignInRequests {
     return new Promise<boolean>((resolve) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve(true);
+        resolve(request.allowed);
       };
       const timer = setTimeout(() => {
         request.allowWaiters.delete(waiter);
@@ -222,10 +222,11 @@ export class SignInRequests {
     request.viewId = "";
     try {
       // Nothing opens in the person's Chrome until they allowed it on the card.
-      if (!(await this.allowedSoon(request, this.allowWaitMs)))
-        throw new BrowserRelayError("invalid_request", "Allow the sign-in on its card first.");
+      const allowed = await this.allowedSoon(request, this.allowWaitMs);
       if (request.outcome !== null)
         throw new BrowserRelayError("invalid_request", "That sign-in has ended.");
+      if (!allowed)
+        throw new BrowserRelayError("invalid_request", "Allow the sign-in on its card first.");
       const started = await this.views.start({
         url: request.url,
         viewerKey,
@@ -289,6 +290,9 @@ export class SignInRequests {
     request.timer = null;
     for (const waiter of request.waiters) waiter(outcome);
     request.waiters.clear();
+    // A start waiting for the Allow hears at once that the request ended.
+    for (const waiter of request.allowWaiters) waiter();
+    request.allowWaiters.clear();
   }
 
   /** Forgets the oldest ended requests; open ones are always kept. */
