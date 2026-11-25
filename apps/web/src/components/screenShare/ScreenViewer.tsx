@@ -7,7 +7,7 @@
  * session and the overlay.
  */
 import type { ScreenShareFrameHeader } from "@specweave-studio/contracts";
-import { LockIcon, MonitorIcon, ShieldAlertIcon } from "lucide-react";
+import { MonitorIcon, MonitorOffIcon, ShieldAlertIcon } from "lucide-react";
 import { type FormEvent, type RefObject, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -198,7 +198,7 @@ export function ScreenViewerView({
                 role="radio"
                 aria-checked={display.id === phase.displayId}
                 size="compact"
-                variant={display.id === phase.displayId ? "secondary" : "ghost"}
+                variant={display.id === phase.displayId ? "secondary" : "outline"}
                 onClick={() => onChooseDisplay(display.id)}
               >
                 {display.label}
@@ -264,7 +264,10 @@ export function ScreenViewerView({
             ) : (
               <>
                 {live && phase.locked ? (
-                  <LockIcon className="mx-auto mb-2 size-5 text-muted-foreground" aria-hidden />
+                  <MonitorOffIcon
+                    className="mx-auto mb-2 size-5 text-muted-foreground"
+                    aria-hidden
+                  />
                 ) : phase.kind === "needs_code" && !phase.sent ? null : (
                   <Spinner className="mx-auto mb-2 size-4" />
                 )}
