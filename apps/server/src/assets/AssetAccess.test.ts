@@ -1008,6 +1008,29 @@ describe("AssetAccess", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
+    "refuses a linked preview whose target is another kind of preview",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-asset-linked-kind-" });
+        const threadId = ThreadId.make("thread-1");
+        yield* fs.writeFileString(path.join(root, "real.png"), "png");
+        yield* fs.writeFileString(path.join(root, "real.html"), "<p>page</p>");
+        // A page name would earn a token for the whole folder; a picture behind it must not.
+        yield* fs.symlink(path.join(root, "real.png"), path.join(root, "page.html"));
+        yield* fs.symlink(path.join(root, "real.html"), path.join(root, "pic.png"));
+        for (const linked of ["page.html", "pic.png"]) {
+          const refused = yield* issueAssetUrl({
+            resource: { _tag: "workspace-file", threadId, path: linked },
+            workspaceRoot: root,
+          }).pipe(Effect.flip);
+          expect(refused).toBeInstanceOf(AssetPreviewTypeValidationError);
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
     "serves an HTML preview's linked dependency only when its target is a preview asset",
     () =>
       Effect.gen(function* () {
