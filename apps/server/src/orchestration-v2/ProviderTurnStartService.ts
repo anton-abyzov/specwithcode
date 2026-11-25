@@ -88,6 +88,7 @@ import {
 } from "./ProviderFailure.ts";
 import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./settleRunBeforeStart.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
+import { messageSentByPerson, withMessageSenderNote } from "./messageSenderNote.ts";
 import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { missedBeforeRun } from "./startOnlyDispatch.ts";
@@ -557,6 +558,7 @@ export const layer: Layer.Layer<
                   records: message.context?.records ?? [],
                 }),
                 hasAttachments: false,
+                sentByPerson: messageSentByPerson(message),
               }),
             );
         if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {
@@ -1361,10 +1363,14 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const composedUserText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      // An agent's, a routine's or a tool's message names its sender to the model.
+      const composedUserText = withMessageSenderNote(
+        message,
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+      );
       // An answer to a question reads, for the agent, with the questions it answers.
       const userText = yield* withAskedQuestions(projectionStore, message, composedUserText);
       // Inside the environment runtime: a fenced project or a moved folder is refused before
