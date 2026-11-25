@@ -17,7 +17,9 @@ it("loads up front only the five measured core tools", () => {
   expect([...ALWAYS_LOAD_TOOLS].sort()).toEqual(
     ["advisor", "ask_user", "delegate_task", "request_secret", "studio_thread_send"].sort(),
   );
-  expect(toolMeta("ask_user")).toEqual({ [ALWAYS_LOAD_KEY]: true });
+  // The wire key Claude Code reads, spelled out so a typo in the constant fails here.
+  expect(ALWAYS_LOAD_KEY).toBe("anthropic/alwaysLoad");
+  expect(toolMeta("ask_user")).toEqual({ "anthropic/alwaysLoad": true });
   expect(toolMeta("studio_report_save")).toEqual({});
   expect(toolMeta("chrome_click")).toEqual({});
 });
@@ -43,14 +45,14 @@ it.effect(
         // Every toolkit registers through registerToolkit; the image tools by hand.
         expect(tools.length).toBeGreaterThan(160);
         const loaded = tools
-          .filter((tool) => tool._meta?.[ALWAYS_LOAD_KEY] === true)
+          .filter((tool) => tool._meta?.["anthropic/alwaysLoad"] === true)
           .map((tool) => tool.name)
           .sort();
         expect(loaded).toEqual([...ALWAYS_LOAD_TOOLS].sort());
         for (const tool of tools) {
           const keys = Object.keys(tool._meta ?? {});
           expect(keys, tool.name).toEqual(
-            ALWAYS_LOAD_TOOLS.has(tool.name) ? [ALWAYS_LOAD_KEY] : [],
+            ALWAYS_LOAD_TOOLS.has(tool.name) ? ["anthropic/alwaysLoad"] : [],
           );
         }
         // In a SpecWeave worktree the two read-only SpecWeave tools are listed.

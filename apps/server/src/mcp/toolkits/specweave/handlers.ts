@@ -73,7 +73,14 @@ export function liveClaimsOf(listData: unknown): ReadonlyArray<ListedTask> | nul
         typeof task === "object" &&
         ((task as ListedTask).status === "claimed" || (task as ListedTask).status === "blocked"),
     )
-    .map(({ id, title, status, by, since }) => ({ id, title, status, by, since }));
+    .map((task) =>
+      // Absent fields stay absent: an `undefined` value cannot be sent as JSON.
+      Object.fromEntries(
+        (["id", "title", "status", "by", "since"] as const)
+          .filter((key) => task[key] !== undefined)
+          .map((key) => [key, task[key]]),
+      ),
+    );
 }
 
 export const layer = Access.toLayer(SpecweaveToolkit, {

@@ -54,7 +54,7 @@ const STAND_IN = `#!/usr/bin/env node
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
-const base = { argv, cwd: process.cwd(), noColor: process.env.NO_COLOR, agent: process.env.SPECWEAVE_AGENT };
+const base = { argv, cwd: process.cwd(), noColor: process.env.NO_COLOR, noCwdLookup: process.env.NoDefaultCurrentDirectoryInExePath, agent: process.env.SPECWEAVE_AGENT };
 if (argv.includes("2222")) {
   const child = spawn("sleep", ["60"], { stdio: "ignore" });
   fs.writeFileSync(process.env.STAND_IN_PIDS, JSON.stringify([process.pid, child.pid]));
@@ -266,6 +266,7 @@ it.live(
           argv: ["--workspace", fixture.workspace, "task", "list", "1483", "--json"],
           cwd: fixture.workspace,
           noColor: "1",
+          noCwdLookup: "1",
           agent: SPECWEAVE_VIEW_AGENT,
         });
       }),

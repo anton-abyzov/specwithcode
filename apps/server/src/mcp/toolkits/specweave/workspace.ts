@@ -4,6 +4,12 @@
  * worktree, and nothing else. A thread without one (it works in the project's
  * shared folder) is refused, and so is a worktree that is recorded but
  * missing: neither is ever swapped for the project's checkout.
+ *
+ * The link checks guard against mistakes, not against the thread itself: the
+ * CLI reopens these paths after the check and follows links inside
+ * `.specweave/`, so an agent that can already rename files in its own worktree
+ * could point a read elsewhere. It could read that place with its shell anyway,
+ * and the tools only read. Write tools need a stronger boundary.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";

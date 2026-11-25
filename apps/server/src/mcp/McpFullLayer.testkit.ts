@@ -111,8 +111,8 @@ export const serveFullLayer = (shell: StubShell | null) =>
     Layer.build,
   );
 
-/** `initialize`, then `tools/list`, as a thread's provider session would. */
-export const listToolsAsThread = Effect.gen(function* () {
+/** `initialize` as a thread's provider session would; returns a poster for later requests. */
+const threadSession = Effect.gen(function* () {
   const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
     threadId: ThreadId.make("thread-scratch"),
     providerInstanceId: ProviderInstanceId.make("claudeAgent"),
@@ -127,21 +127,60 @@ export const listToolsAsThread = Effect.gen(function* () {
     ),
   });
   const sessionId = initResponse.headers["mcp-session-id"];
-  const listResponse = yield* httpClient.post("/mcp", {
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: auth,
-      "mcp-protocol-version": "2025-06-18",
-      ...(sessionId ? { "mcp-session-id": sessionId } : {}),
-    },
-    body: HttpBody.text(
-      `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
-      "application/json",
-    ),
-  });
-  const json = (yield* listResponse.text).match(/\{.*\}/s)![0];
+  /** Posts one JSON-RPC request and returns the JSON of its answer. */
+  return (body: HttpBody.HttpBody) =>
+    httpClient
+      .post("/mcp", {
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: auth,
+          "mcp-protocol-version": "2025-06-18",
+          ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+        },
+        body,
+      })
+      .pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.map((text) => text.match(/\{.*\}/s)![0]),
+      );
+});
+
+/** `initialize`, then `tools/list`, as a thread's provider session would. */
+export const listToolsAsThread = Effect.gen(function* () {
+  const post = yield* threadSession;
+  const json = yield* post(
+    HttpBody.text(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`, "application/json"),
+  );
   return (yield* decodeToolsList(json)).result.tools;
 });
+
+const ToolCallAnswer = Schema.fromJsonString(
+  Schema.Struct({
+    result: Schema.optional(
+      Schema.Struct({
+        isError: Schema.optional(Schema.Boolean),
+        structuredContent: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+        content: Schema.optional(Schema.Array(Schema.Unknown)),
+      }),
+    ),
+  }),
+);
+const decodeToolCallAnswer = Schema.decodeUnknownEffect(ToolCallAnswer);
+
+/** `initialize`, then `tools/call`, as a thread's provider session would. */
+export const callToolAsThread = (name: string, args: Record<string, unknown>) =>
+  Effect.gen(function* () {
+    const post = yield* threadSession;
+    const json = yield* post(
+      HttpBody.jsonUnsafe({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    );
+    return yield* decodeToolCallAnswer(json);
+  });
 
 export const fullLayerTestServices = Layer.mergeAll(
   NodeHttpServer.layerTest,
