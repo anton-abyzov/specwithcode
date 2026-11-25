@@ -123,7 +123,8 @@ export function useCopySecrets({
     const here = destinationNow();
     clearExclusions(
       storageKey,
-      (recorded) => recorded === `${windowId.current}|${here}` || recorded === `${windowId.current}|`,
+      (recorded) =>
+        recorded === `${windowId.current}|${here}` || recorded === `${windowId.current}|`,
     );
     return ALL_SECRETS;
   };
@@ -142,7 +143,8 @@ export function useCopySecrets({
     const current = mine ? pendingSecrets(mine) : chosenNow.current;
     // Merged onto the saved copy: another window's exclusions stay out.
     const stored = mine ? readPendingCopy(storageKey) : null;
-    const saved = stored && stored.operationId === mine?.operationId ? pendingSecrets(stored) : null;
+    const saved =
+      stored && stored.operationId === mine?.operationId ? pendingSecrets(stored) : null;
     const next = untickedSecrets(saved, current, paths);
     if (JSON.stringify(next) !== JSON.stringify(current)) choose(next, current);
   };
@@ -160,9 +162,9 @@ export function useCopySecrets({
     return (
       sendableSecrets({
         summary: summaryNow.current,
-      plan: copyNow.current,
-      repositories: repositoryDraft.current,
-      machine: machinesNow.current.find(({ id }) => id === destination),
+        plan: copyNow.current,
+        repositories: repositoryDraft.current,
+        machine: machinesNow.current.find(({ id }) => id === destination),
         choice: secretsBlockedNow(source, destination) ? withoutSecrets(wanted) : wanted,
       }) ?? []
     );
@@ -176,14 +178,20 @@ export function useCopySecrets({
   const sendTicked = async (operationId: string) => {
     for (let round = 0; round < 3; round += 1) {
       await sendOnce(operationId);
-      if (sameList(sent.current?.operationId === operationId ? sent.current.paths : null, listNow()))
+      if (
+        sameList(sent.current?.operationId === operationId ? sent.current.paths : null, listNow())
+      )
         return;
     }
     throw new Error("The secrets choice kept changing in another window. Review it again.");
   };
   /** Staged unless the list already sent for it is still the one every window's choice gives. */
   const sendCurrent = async (operationId: string, maySkip: boolean) => {
-    if (maySkip && sent.current?.operationId === operationId && sameList(sent.current.paths, listNow()))
+    if (
+      maySkip &&
+      sent.current?.operationId === operationId &&
+      sameList(sent.current.paths, listNow())
+    )
       return;
     await sendTicked(operationId);
   };

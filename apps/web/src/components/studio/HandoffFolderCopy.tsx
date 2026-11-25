@@ -910,7 +910,10 @@ export function HandoffFolderCopy({
       throw new Error(secrets.gate.note ?? secretsSourceOnlyText(sourceLabel));
     }
     // Staged again unless the list sent still matches every window's choice (and a reopen).
-    await secrets.sendCurrent(operationId, secretsSent && !secretsBlockedNow(project.environmentId, environmentId));
+    await secrets.sendCurrent(
+      operationId,
+      secretsSent && !secretsBlockedNow(project.environmentId, environmentId),
+    );
     setStage("copying");
     try {
       const input = approveInput(
