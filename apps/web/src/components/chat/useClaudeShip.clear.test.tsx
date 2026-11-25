@@ -25,7 +25,7 @@ function Harness({ thread = "thread-a" }: { readonly thread?: string }) {
     threadId: thread as ThreadId,
     threadTarget: { environmentId: "env", threadId: thread } as unknown as ScopedThreadRef,
     cwd: `/work/${thread}`,
-    fallbackCwd: null,
+    fallbackCwd: "/work/project-root",
     worktreePath: null,
     providerInstanceId: null,
     sessionId: null,
@@ -79,6 +79,8 @@ it("clears the draft of the thread that asked, not the one shown when the termin
   });
 
   expect(clearThreadA).toHaveBeenCalledTimes(1);
+  // The composer checks this text, so a newer draft typed meanwhile is kept.
+  expect(clearThreadA).toHaveBeenCalledWith("/ship");
   expect(clearThreadB).not.toHaveBeenCalled();
 });
 
@@ -122,4 +124,21 @@ it("leaves a card opened on the next thread alone when the last thread's open fi
   });
   expect(document.querySelector('[data-testid="claude-ship-dialog"]')).not.toBeNull();
   expect(openButton()?.disabled).toBe(false);
+});
+
+it("opens only in the thread's own folder, never the project root as a fallback", async () => {
+  act(() => {
+    hook.intercept("/ship", vi.fn());
+  });
+  act(() =>
+    document
+      .querySelector<HTMLButtonElement>('[data-testid="claude-ship-open-terminal"]')
+      ?.click(),
+  );
+  const request = (openTerminal.mock.calls[0] as unknown as [{ input: Record<string, unknown> }])[0];
+  expect(request.input.cwd).toBe("/work/thread-a");
+  expect(request.input).not.toHaveProperty("fallbackCwd");
+  await act(async () => {
+    resolveOpen?.({ _tag: "Success", value: undefined });
+  });
 });
