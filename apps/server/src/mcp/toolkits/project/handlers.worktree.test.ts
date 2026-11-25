@@ -213,6 +213,8 @@ it.effect("a launch binds only an existing checkout that is one of the project's
       `${root}/hop/../../locked/.git\n`,
       `${gitLocked}\0/.git\n`,
       `${gitLocked.toUpperCase()}/.git\n`,
+      // Outside Windows a `\\` is part of a folder name, not a separator.
+      ...(process.platform === "win32" ? [] : [`${root}/odd\\name/../locked/.git\n`]),
     ]) {
       yield* fileSystem.writeFileString(path.join(twin, "gitdir"), spelling);
       expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({

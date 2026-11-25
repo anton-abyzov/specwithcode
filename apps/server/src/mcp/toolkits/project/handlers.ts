@@ -414,9 +414,11 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   // drive root and either separator; undefined when the links do not settle.
   const resolveLikeGit = (path: string) =>
     Effect.gen(function* () {
-      const split = (text: string) => text.split(/[\\/]/u).filter((part) => part.length > 0);
       const rootOf = (text: string) => /^[A-Za-z]:(?=[\\/])/u.exec(text)?.[0] ?? "";
       let root = rootOf(path);
+      // `\` separates only on a drive path; elsewhere it is part of a name.
+      const split = (text: string) =>
+        text.split(root === "" ? "/" : /[\\/]/u).filter((part) => part.length > 0);
       const pending = split(path.slice(root.length));
       let resolved: Array<string> = [];
       for (let hops = 0; pending.length > 0;) {
@@ -437,7 +439,8 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         const targetRoot = rootOf(target.value);
         // An absolute target starts over; one without a drive stays on this one.
         if (targetRoot !== "") root = targetRoot;
-        if (targetRoot !== "" || /^[\\/]/u.test(target.value)) resolved = [];
+        const rooted = root === "" ? target.value.startsWith("/") : /^[\\/]/u.test(target.value);
+        if (targetRoot !== "" || rooted) resolved = [];
         pending.unshift(...split(target.value.slice(targetRoot.length)));
       }
       return `${root}/${resolved.join("/")}`;
