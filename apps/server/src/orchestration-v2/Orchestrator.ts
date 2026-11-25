@@ -13565,7 +13565,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const shell = yield* projectionStore
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
-      if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+      if (shell !== null) {
+        yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+        // A steer joins a turn that keeps the modes it started with, which can
+        // be above the thread's since it was lowered. A turn recorded without
+        // its modes is checked against the thread's, as before.
+        const joins =
+          command.type === "queued-message.promote-to-steer"
+            ? { runId: command.targetRunId }
+            : command.type !== "message.dispatch"
+              ? undefined
+              : command.dispatchMode.type === "steer_active"
+                ? { runId: command.dispatchMode.targetRunId }
+                : command.deliveryIntent === "steer" || command.deliveryIntent === "auto"
+                  ? { intent: command.deliveryIntent }
+                  : undefined;
+        if (joins !== undefined) {
+          const { runs, attempts } = yield* projectionStore
+            .getThreadRecords(threadId, ["runs", "attempts"])
+            .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+          const target =
+            "runId" in joins
+              ? runs.find((run) => run.id === joins.runId)
+              : runs.findLast((run) =>
+                  joins.intent === "steer"
+                    ? run.status === "preparing" ||
+                      run.status === "starting" ||
+                      run.status === "running" ||
+                      run.status === "waiting"
+                    : run.status === "running" || run.status === "waiting",
+                );
+          if (target !== undefined) {
+            const startedModes = attempts.find(
+              (attempt) => attempt.id === target.activeAttemptId,
+            )?.startedModes;
+            yield* refuseAboveDispatchModeLimit(command, threadId, startedModes ?? shell);
+          }
+        }
+      }
     }
     yield* refuseCommandByTeamRules(command);
 
