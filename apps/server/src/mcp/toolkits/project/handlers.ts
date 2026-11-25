@@ -368,10 +368,38 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     .listWorktreePaths(workspaceRoot)
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   const asked = yield* real(worktreePath);
+  // Git keeps a locked worktree listed after its folder is gone, so whatever
+  // directory now sits at that path must itself be a checkout of this repository.
+  const checkoutOf = (cwd: string) =>
+    git
+      .execute({
+        operation: "mcp.assertProjectWorktree.checkout",
+        cwd,
+        args: ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        allowNonZeroExit: true,
+      })
+      .pipe(
+        Effect.flatMap((result) => {
+          const [toplevel = "", commonDir = ""] = result.stdout.trim().split("\n");
+          return result.exitCode === 0 && toplevel.length > 0 && commonDir.length > 0
+            ? Effect.all([real(toplevel), real(commonDir)])
+            : Effect.succeed(undefined);
+        }),
+        Effect.orElseSucceed(() => undefined),
+      );
+  const project = yield* checkoutOf(workspaceRoot);
   for (const path of registered) {
     // The registered path, not the caller's spelling: a symlink that resolves
     // here now could point somewhere else by the time the thread starts.
-    if ((yield* real(path)) === asked) return path;
+    if ((yield* real(path)) !== asked) continue;
+    const checkout = yield* checkoutOf(path);
+    if (
+      project !== undefined &&
+      checkout !== undefined &&
+      checkout[0] === asked &&
+      checkout[1] === project[1]
+    )
+      return path;
   }
   return yield* new OrchestratorMcpFailure({
     code: "invalid_request",
