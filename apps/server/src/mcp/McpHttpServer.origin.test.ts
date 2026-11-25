@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as NodeHttp from "node:http";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -16,6 +17,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpRouter,
+  HttpServer,
   HttpServerResponse,
 } from "effect/http";
 
@@ -117,9 +119,12 @@ it.effect("refuses /mcp from any browser origin before credentials, with no CORS
           ["POST", undefined],
           ["OPTIONS", undefined],
         ] as const) {
-          const response = yield* call(method, "/mcp", { origin, token });
-          expect(response.status, `${method} ${origin} ${token ?? "no token"}`).toBe(403);
-          expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+          // The router ignores a trailing slash and the query, so the check does too.
+          for (const path of ["/mcp", "/mcp/", "/mcp?x=1", "/mcp//"]) {
+            const response = yield* call(method, path, { origin, token });
+            expect(response.status, `${method} ${path} ${origin} ${token ?? "no token"}`).toBe(403);
+            expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+          }
         }
       }
     }),
@@ -135,6 +140,44 @@ it.effect("still serves an agent's bearer request, and other routes keep their C
       expect((yield* call("POST", "/mcp", {})).status).toBe(401);
       const preflight = yield* call("OPTIONS", "/api/probe", { origin: "https://app.example" });
       expect(preflight.headers["access-control-allow-origin"]).toBe("*");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("gives an absolute-form /mcp preflight no CORS answer either", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* serve;
+      const server = yield* HttpServer.HttpServer;
+      const address = server.address as HttpServer.TcpAddress;
+      for (const target of [
+        `http://127.0.0.1:${address.port}/mcp`,
+        `http://127.0.0.1:${address.port}/mcp/`,
+      ]) {
+        const response = yield* Effect.promise(
+          () =>
+            new Promise<NodeHttp.IncomingMessage>((resolve, reject) => {
+              const request = NodeHttp.request({
+                host: "127.0.0.1",
+                port: address.port,
+                method: "OPTIONS",
+                path: target,
+                headers: {
+                  origin: "https://untrusted.invalid",
+                  "access-control-request-method": "POST",
+                },
+              });
+              request.on("response", (message) => {
+                message.resume();
+                resolve(message);
+              });
+              request.on("error", reject);
+              request.end();
+            }),
+        );
+        expect(response.statusCode, target).toBe(403);
+        expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+      }
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
