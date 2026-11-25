@@ -44,6 +44,8 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
+  /** Where the stub writes its argv as JSON. */
+  argsLogPath?: string;
 }
 
 // The stub walks argv the way the shell script it replaced did: `--image`,
@@ -60,6 +62,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     forbidArg: input.forbidArg ?? null,
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
+    argsLogPath: input.argsLogPath ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -73,6 +76,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         'import * as NodeFS from "node:fs";',
         `const check = ${check};`,
         "const args = process.argv.slice(2);",
+        "if (check.argsLogPath !== null) NodeFS.writeFileSync(check.argsLogPath, JSON.stringify(args));",
         'const originalArgs = ` ${args.join(" ")} `;',
         "let outputPath = null;",
         "let seenImage = false;",
@@ -312,6 +316,48 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
         }),
     ),
+  );
+
+  it.effect("keeps plugins, apps, connectors and hooks off even when launch args enable them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const logDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-codex-text-args-" });
+      const argsLogPath = path.join(logDir, "args.json");
+      yield* withFakeCodexEnv(
+        {
+          output: JSON.stringify({ subject: "Add important change", body: "" }),
+          launchArgs:
+            "--enable plugins --enable=apps --enable connectors --enable hooks --enable=codex_hooks --enable web_search -c features.plugins=true",
+          argsLogPath,
+        },
+        (textGeneration) =>
+          textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/codex-effect",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          }),
+      );
+      const args: Array<string> = JSON.parse(yield* fs.readFileString(argsLogPath));
+      const enabled = args.flatMap((arg, index) =>
+        arg === "--enable"
+          ? [args[index + 1]]
+          : arg.startsWith("--enable=")
+            ? [arg.slice("--enable=".length)]
+            : [],
+      );
+      expect(enabled).toEqual(["web_search"]);
+      const lastConfig = (key: string) =>
+        args.findLastIndex((arg, index) => args[index - 1] === "--config" && arg.startsWith(key));
+      const userOverride = args.indexOf("features.plugins=true");
+      for (const feature of ["plugins", "apps", "connectors", "hooks", "codex_hooks"]) {
+        const index = lastConfig(`features.${feature}=`);
+        expect(args[index]).toBe(`features.${feature}=false`);
+        expect(index).toBeGreaterThan(userOverride);
+      }
+    }),
   );
 
   it.effect("uses STUDIO_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
