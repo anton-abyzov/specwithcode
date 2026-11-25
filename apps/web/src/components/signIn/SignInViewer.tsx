@@ -443,7 +443,7 @@ export function SignInViewer(props: {
           ) : (
             <>
               <Button
-                variant="ghost"
+                variant="outline"
                 onClick={() => void finish("cancel")}
                 data-sign-in-end="cancel"
               >
