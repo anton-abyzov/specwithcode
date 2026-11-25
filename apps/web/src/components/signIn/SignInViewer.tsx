@@ -45,11 +45,14 @@ export interface SignInViewerRequest {
   readonly site: string;
 }
 
-const useViewer = create<{ request: SignInViewerRequest | null }>(() => ({ request: null }));
+const useViewer = create<{ request: SignInViewerRequest | null; attempt: number }>(() => ({
+  request: null,
+  attempt: 0,
+}));
 
 /** Opens the view for an allowed sign-in card. One view at a time. */
 export function openSignInViewer(request: SignInViewerRequest) {
-  useViewer.setState({ request });
+  useViewer.setState((state) => ({ request, attempt: state.attempt + 1 }));
 }
 
 /** The view's four calls to the machine with the tab. */
@@ -78,13 +81,16 @@ export type SignInViewApi = ReturnType<typeof useSignInViewApi>;
 
 export function SignInViewerHost() {
   const request = useViewer((state) => state.request);
+  const attempt = useViewer((state) => state.attempt);
   const api = useSignInViewApi();
   return request ? (
     <SignInViewer
-      key={request.requestId}
+      // A new attempt mounts a new view, with a new key.
+      key={`${request.requestId}:${attempt}`}
       request={request}
       api={api}
       onClose={() => useViewer.setState({ request: null })}
+      onRetry={() => openSignInViewer(request)}
     />
   ) : null;
 }
@@ -96,6 +102,8 @@ interface ShownFrame {
   readonly height: number;
   readonly origin: string;
   readonly title: string;
+  /** Proves to the machine that input comes from the window that opened this view. */
+  readonly token: string;
   readonly dialog?: string;
   readonly passkey?: { readonly kind: string; readonly rpId: string; readonly notice: string };
 }
@@ -125,6 +133,8 @@ export function SignInViewer(props: {
   readonly request: SignInViewerRequest;
   readonly api: SignInViewApi;
   readonly onClose: () => void;
+  /** Opens the view again after it failed to start. */
+  readonly onRetry?: () => void;
 }) {
   const tx = useTx();
   const { request } = props;
@@ -135,6 +145,7 @@ export function SignInViewer(props: {
   const keyRef = useRef<SignInViewerKey | null>(null);
   const senderRef = useRef<SignInSender | null>(null);
   const frameRef = useRef<ShownFrame | null>(null);
+  const [retryable, setRetryable] = useState(false);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const environmentId = request.environmentId;
@@ -161,8 +172,9 @@ export function SignInViewer(props: {
         environmentId,
         input: { requestId: request.requestId, viewerKey: key.publicKey },
       });
-      if (!alive) return;
       if (started._tag !== "Success") {
+        if (!alive) return;
+        setRetryable(true);
         setPhase({
           kind: "failed",
           message: failureText(started, tx("Could not open the sign-in.")),
@@ -170,6 +182,11 @@ export function SignInViewer(props: {
         return;
       }
       const opened = started.value;
+      // This window closed while the tab opened: cancel it, so it never stays held for nobody.
+      if (!alive) {
+        void end({ environmentId, input: { viewId: opened.viewId, end: "cancel" } });
+        return;
+      }
       viewId = opened.viewId;
       // The key the server reported must be the one it seals with; show its short form.
       const fingerprint = await signInKeyFingerprint(opened.publicKey);
@@ -186,7 +203,11 @@ export function SignInViewer(props: {
         sendText: async (sealed) => {
           const sent = await send({
             environmentId,
-            input: { viewId: opened.viewId, input: { type: "text", sealed } },
+            input: {
+              viewId: opened.viewId,
+              token: frameRef.current?.token ?? "",
+              input: { type: "text", sealed },
+            },
           });
           if (sent._tag !== "Success")
             setNotice(
@@ -196,7 +217,11 @@ export function SignInViewer(props: {
         sendKey: async (frameId, keyName) => {
           const sent = await send({
             environmentId,
-            input: { viewId: opened.viewId, input: { type: "key", frame: frameId, key: keyName } },
+            input: {
+              viewId: opened.viewId,
+              token: frameRef.current?.token ?? "",
+              input: { type: "key", frame: frameId, key: keyName },
+            },
           });
           if (sent._tag !== "Success") setNotice(failureText(sent, tx("That key was not sent.")));
         },
@@ -257,7 +282,12 @@ export function SignInViewer(props: {
   const finish = async (how: "done" | "cancel") => {
     if (viewId === null) return props.onClose();
     senderRef.current?.flush();
-    const result = await end({ environmentId, input: { viewId, end: how } });
+    const token = frameRef.current?.token;
+    const result = await end({
+      environmentId,
+      input:
+        how === "done" && token !== undefined ? { viewId, end: how, token } : { viewId, end: how },
+    });
     if (result._tag !== "Success") {
       setNotice(failureText(result, tx("Could not end the sign-in. Try again.")));
       return;
@@ -393,6 +423,7 @@ export function SignInViewer(props: {
                         environmentId,
                         input: {
                           viewId,
+                          token: at.shown.token,
                           input: { type: "click", frame: at.shown.frame, ...at.point },
                         },
                       });
@@ -410,6 +441,7 @@ export function SignInViewer(props: {
                         environmentId,
                         input: {
                           viewId,
+                          token: at.shown.token,
                           input: {
                             type: "scroll",
                             frame: at.shown.frame,
@@ -439,7 +471,14 @@ export function SignInViewer(props: {
             </span>
           ) : null}
           {ended ? (
-            <Button onClick={props.onClose}>{tx("Close")}</Button>
+            <>
+              {phase.kind === "failed" && retryable && props.onRetry ? (
+                <Button variant="outline" onClick={props.onRetry} data-sign-in-retry>
+                  {tx("Try again")}
+                </Button>
+              ) : null}
+              <Button onClick={props.onClose}>{tx("Close")}</Button>
+            </>
           ) : (
             <>
               <Button

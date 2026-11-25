@@ -85,6 +85,8 @@ async function picture(): Promise<{ data: string; width: number; height: number 
 const success = <A,>(value: A) => ({ _tag: "Success" as const, value });
 const sent: unknown[] = [];
 (globalThis as { __signInSent?: unknown[] }).__signInSent = sent;
+const tokens: unknown[] = [];
+(globalThis as { __signInTokens?: unknown[] }).__signInTokens = tokens;
 
 function standIn(): SignInViewApi {
   let viewerKey = "";
@@ -115,6 +117,7 @@ function standIn(): SignInViewApi {
         height,
         origin: "https://app.example.com",
         title: "Sign in",
+        token: "token-fixture",
         at: Date.now(),
         ...(kind === "passkey"
           ? {
@@ -131,7 +134,8 @@ function standIn(): SignInViewApi {
         sealed: await sealForSignIn(new TextEncoder().encode(JSON.stringify(frame)), viewerKey),
       });
     },
-    input: async ({ input }: { input: unknown }) => {
+    input: async ({ input }: { input: { token: unknown; input: unknown } }) => {
+      tokens.push(input.token);
       sent.push(input);
       return success({});
     },

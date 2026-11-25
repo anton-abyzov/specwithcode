@@ -51,6 +51,7 @@ export class BrowserSignInError extends Schema.TaggedError<BrowserSignInError>()
 
 const RpcError = Schema.Union([BrowserSignInError, EnvironmentAuthorizationError]);
 const ViewId = Schema.String.check(Schema.isMaxLength(100));
+const ViewToken = Schema.String.check(Schema.isMaxLength(100));
 const FrameRef = Schema.String.check(Schema.isMaxLength(100));
 const Coordinate = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 20_000 }));
 
@@ -113,13 +114,19 @@ export const browserSignInRpcs = [
     error: RpcError,
   }),
   Rpc.make(BROWSER_SIGN_IN_RPC_METHODS.browserSignInInput, {
-    payload: Schema.Struct({ viewId: ViewId, input: BrowserSignInInput }),
+    /** `token` comes inside the sealed frames, so only the viewing device has it. */
+    payload: Schema.Struct({ viewId: ViewId, token: ViewToken, input: BrowserSignInInput }),
     success: Schema.Struct({}),
     error: RpcError,
   }),
   /** Done keeps the signed-in tab and hands it back; cancel closes it. */
   Rpc.make(BROWSER_SIGN_IN_RPC_METHODS.browserSignInEnd, {
-    payload: Schema.Struct({ viewId: ViewId, end: Schema.Literals(["done", "cancel"]) }),
+    payload: Schema.Struct({
+      viewId: ViewId,
+      end: Schema.Literals(["done", "cancel"]),
+      /** Required for done, which hands the tab back to threads. */
+      token: Schema.optional(ViewToken),
+    }),
     success: Schema.Struct({}),
     error: RpcError,
   }),

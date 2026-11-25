@@ -27,6 +27,10 @@ import {
 export const SIGN_IN_REQUEST_START_MS = 15 * 60_000;
 /** Ended requests kept so a late retry or a frame pull hears how they ended. */
 const KEEP_ENDED = 100;
+/** Sign-ins one thread may have waiting at once. */
+export const MAX_OPEN_PER_THREAD = 5;
+/** How long `start` waits for the card's Allow to reach the agent's call. */
+export const ALLOW_WAIT_MS = 10_000;
 
 interface SignInRequest {
   readonly id: string;
@@ -37,6 +41,7 @@ interface SignInRequest {
   viewId: string | null;
   /** The person allowed it on the card; a retry of the tool waits without a new card. */
   allowed: boolean;
+  readonly allowWaiters: Set<() => void>;
   outcome: BrowserSignInOutcome | null;
   timer: ReturnType<typeof setTimeout> | null;
   readonly waiters: Set<(outcome: BrowserSignInOutcome) => void>;
@@ -44,6 +49,7 @@ interface SignInRequest {
 
 export interface SignInRequestsOptions extends Omit<SignInViewsOptions, "onEnd"> {
   readonly startMs?: number;
+  readonly allowWaitMs?: number;
 }
 
 /** The request id a thread's own id for a sign-in maps to; a retry finds the same request. */
@@ -54,6 +60,12 @@ export function signInRequestId(threadId: string, clientRequestId: string): stri
     .slice(0, 24)}`;
 }
 
+const tokenRefused = () =>
+  new BrowserRelayError(
+    "invalid_request",
+    "This window is not the one showing that sign-in. Use the window that opened it.",
+  );
+
 const notFound = () =>
   new BrowserRelayError("invalid_request", "That sign-in request does not exist any more.");
 
@@ -62,9 +74,11 @@ export class SignInRequests {
   private readonly requests = new Map<string, SignInRequest>();
   private readonly byView = new Map<string, SignInRequest>();
   private readonly startMs: number;
+  private readonly allowWaitMs: number;
 
   constructor(hub: BrowserRelayHub, options: SignInRequestsOptions = {}) {
     this.startMs = options.startMs ?? SIGN_IN_REQUEST_START_MS;
+    this.allowWaitMs = options.allowWaitMs ?? ALLOW_WAIT_MS;
     this.views = new SignInViews(hub, {
       ...options,
       onEnd: (viewId, end) => this.viewEnded(viewId, end),
@@ -105,6 +119,14 @@ export class SignInRequests {
         outcome: known.outcome,
       };
     }
+    const open = [...this.requests.values()].filter(
+      (other) => other.threadId === input.threadId && other.outcome === null,
+    ).length;
+    if (open >= MAX_OPEN_PER_THREAD)
+      throw new BrowserRelayError(
+        "invalid_request",
+        "This thread already has several sign-ins waiting. Wait for them to end first.",
+      );
     const request: SignInRequest = {
       id,
       threadId: input.threadId,
@@ -113,6 +135,7 @@ export class SignInRequests {
       profile: input.profile,
       viewId: null,
       allowed: false,
+      allowWaiters: new Set(),
       outcome: null,
       timer: null,
       waiters: new Set(),
@@ -127,7 +150,27 @@ export class SignInRequests {
   /** The person pressed Allow on the card. */
   allow(requestId: string) {
     const request = this.requests.get(requestId);
-    if (request) request.allowed = true;
+    if (!request) return;
+    request.allowed = true;
+    for (const waiter of request.allowWaiters) waiter();
+    request.allowWaiters.clear();
+  }
+
+  /** Waits for the card's Allow, which reaches the agent's call a moment after the person's click. */
+  private allowedSoon(request: SignInRequest, timeoutMs: number) {
+    if (request.allowed) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const waiter = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        request.allowWaiters.delete(waiter);
+        resolve(request.allowed);
+      }, timeoutMs);
+      timer.unref?.();
+      request.allowWaiters.add(waiter);
+    });
   }
 
   /** The person said no on the card, or the card closed unanswered. */
@@ -178,6 +221,11 @@ export class SignInRequests {
     // Claimed before the tab opens, so a second device cannot start a second view meanwhile.
     request.viewId = "";
     try {
+      // Nothing opens in the person's Chrome until they allowed it on the card.
+      if (!(await this.allowedSoon(request, this.allowWaitMs)))
+        throw new BrowserRelayError("invalid_request", "Allow the sign-in on its card first.");
+      if (request.outcome !== null)
+        throw new BrowserRelayError("invalid_request", "That sign-in has ended.");
       const started = await this.views.start({
         url: request.url,
         viewerKey,
@@ -212,16 +260,21 @@ export class SignInRequests {
     }
   }
 
-  input(viewId: string, input: SignInInput) {
+  /** Input needs the view's token, which only the device that opens its frames has. */
+  input(viewId: string, token: string, input: SignInInput) {
     if (!this.byView.has(viewId)) throw notFound();
+    if (!this.views.tokenMatches(viewId, token)) throw tokenRefused();
     return this.views.input(viewId, input);
   }
 
-  end(viewId: string, end: "done" | "cancel") {
+  /** Done releases the tab to threads, so it needs the token; Cancel only closes it. */
+  end(viewId: string, end: "done" | "cancel", token?: string) {
     const request = this.byView.get(viewId);
     if (!request) throw notFound();
     if (request.outcome !== null) return Promise.resolve();
-    return end === "done" ? this.views.done(viewId) : this.views.cancel(viewId);
+    if (end === "cancel") return this.views.cancel(viewId);
+    if (!this.views.tokenMatches(viewId, token)) throw tokenRefused();
+    return this.views.done(viewId);
   }
 
   private viewEnded(viewId: string, end: SignInViewEnd) {

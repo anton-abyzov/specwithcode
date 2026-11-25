@@ -78,6 +78,9 @@ for (const [kind, theme, width] of [
         input.type === "text" ? { type: "text", sealedChars: input.sealed.length } : input,
       ),
     );
+    const tokens = await page.evaluate(() => globalThis.__signInTokens ?? []);
+    if (tokens.length === 0 || tokens.some((token) => token !== "token-fixture"))
+      problems.push(`${kind}/${theme}/${width}: input sent without the view's token`);
     if (!facts.sent.some((input) => input.type === "text"))
       problems.push(`${kind}/${theme}/${width}: no sealed text`);
     if (JSON.stringify(facts.sent).includes("hunter2"))

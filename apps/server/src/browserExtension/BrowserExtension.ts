@@ -640,12 +640,12 @@ export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrum
         signInCall(() => extension.signIn.frame(payload.viewId)),
       [WS_METHODS.browserSignInInput]: (payload) =>
         signInCall(async () => {
-          await extension.signIn.input(payload.viewId, payload.input);
+          await extension.signIn.input(payload.viewId, payload.token, payload.input);
           return {};
         }),
       [WS_METHODS.browserSignInEnd]: (payload) =>
         signInCall(async () => {
-          await extension.signIn.end(payload.viewId, payload.end);
+          await extension.signIn.end(payload.viewId, payload.end, payload.token);
           return {};
         }),
     };

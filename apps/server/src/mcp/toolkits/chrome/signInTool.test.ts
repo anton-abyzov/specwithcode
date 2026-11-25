@@ -13,7 +13,8 @@ import { describe, expect, it } from "@effect/vitest";
 import type { AccessRequestCardResult } from "../../../access/accessRequestCard.ts";
 import * as BrowserExtension from "../../../browserExtension/BrowserExtension.ts";
 import { connectFake, setup } from "../../../browserExtension/fakeChrome.testkit.ts";
-import { newReceivingKey } from "../../../fleet/fileTransfer/seal.ts";
+import { newReceivingKey, unseal } from "../../../fleet/fileTransfer/seal.ts";
+import { SIGN_IN_SEAL_INFO } from "../../../browserExtension/signInView.ts";
 import type * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { SIGN_IN_SUBJECT_DETAIL, signInNeeded } from "./signInTool.ts";
@@ -88,8 +89,11 @@ describe("chrome_sign_in_needed (1488)", () => {
       const waiting = yield* Effect.forkChild(call());
       while (cards.length === 0) yield* Effect.yieldNow;
       yield* Effect.promise(async () => {
-        const started = await extension.signIn.start(requestId(), newReceivingKey().publicKey);
-        await extension.signIn.end(started.viewId, "done");
+        const viewer = newReceivingKey();
+        const started = await extension.signIn.start(requestId(), viewer.publicKey);
+        const { sealed } = await extension.signIn.frame(started.viewId);
+        const frame = JSON.parse(unseal(sealed!, viewer, SIGN_IN_SEAL_INFO).toString("utf8"));
+        await extension.signIn.end(started.viewId, "done", frame.token);
       });
       const result = yield* Fiber.join(waiting);
       expect(result).toEqual({ status: "done", message: expect.stringContaining("signed in") });

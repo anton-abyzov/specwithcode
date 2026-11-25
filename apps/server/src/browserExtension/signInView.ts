@@ -109,6 +109,11 @@ export interface SignInFrame {
   readonly at: number;
   /** A dialog the page showed since the last frame, already answered. */
   readonly dialog?: string;
+  /**
+   * The view's token. Input and Done must carry it, so only the device that
+   * holds the viewer key (and so can open frames) can drive or release the tab.
+   */
+  readonly token: string;
   /** Set while the shown page has asked for a passkey. */
   readonly passkey?: {
     readonly kind: "get" | "create";
@@ -156,6 +161,8 @@ interface View {
   /** Popups the sign-in opened, newest last; the view shows the newest. */
   readonly popups: number[];
   readonly key: ReceivingKey;
+  /** Sent only inside sealed frames; see SignInFrame.token. */
+  readonly token: string;
   readonly viewerKey: string;
   readonly attached: Set<number>;
   /** Calls in flight; teardown waits for them. */
@@ -213,6 +220,8 @@ export const tabGone = (error: unknown) =>
 
 /** Orphaned teardowns are tried again this often, as well as on reconnect. */
 const ORPHAN_RETRY_MS = 30_000;
+/** Popups a view follows; more stay held and close or are let go with the view. */
+const MAX_VIEW_POPUPS = 10;
 /** Frames a person may still act on, per view. */
 const SHOWN_FRAMES = 20;
 
@@ -399,6 +408,7 @@ export class SignInViews {
       dialog: null,
       passkey: null,
       lastSeq: 0,
+      token: NodeCrypto.randomBytes(24).toString("base64url"),
       shown: new Map(),
       ended: false,
     };
@@ -500,8 +510,8 @@ export class SignInViews {
 
   /** The newest frame of the tab, sealed to the viewer's key. */
   async frame(viewId: string): Promise<{ sealed: string }> {
+    // Watching is not using: only input keeps the view from its idle end.
     const view = this.view(viewId);
-    this.touch(view);
     if (view.lastFrame && this.now() - view.lastFrame.at < SIGN_IN_FRAME_MIN_MS)
       return { sealed: view.lastFrame.sealed };
     if (view.capturing) return view.capturing;
@@ -544,6 +554,7 @@ export class SignInViews {
         origin: after.origin,
         title: after.title,
         at: this.now(),
+        token: view.token,
         ...(dialog ? { dialog } : {}),
         ...(passkey
           ? { passkey: { kind: passkey.kind, rpId: passkey.rpId, notice: PASSKEY_NOTICE } }
@@ -680,6 +691,15 @@ export class SignInViews {
     return this.end(this.view(viewId), "cancelled", true);
   }
 
+  /** Whether `token` is the view's own (timing-safe); false for an ended or unknown view. */
+  tokenMatches(viewId: string, token: unknown): boolean {
+    const view = this.views.get(viewId);
+    if (!view || view.ended || typeof token !== "string") return false;
+    const a = Buffer.from(view.token);
+    const b = Buffer.from(token);
+    return a.length === b.length && NodeCrypto.timingSafeEqual(a, b);
+  }
+
   /** Views that are still open, with no address or frame. */
   open(): Array<{ viewId: string; profile: string }> {
     return [...this.views.values()]
@@ -772,6 +792,8 @@ export class SignInViews {
     switch (event.kind) {
       case "popup":
         if (view.popups.includes(event.tabId) || event.tabId === view.mainTab) return;
+        // Held either way; a page that opens more than this is not followed in the view.
+        if (view.popups.length >= MAX_VIEW_POPUPS) return;
         view.popups.push(event.tabId);
         view.lastFrame = null;
         // Attach at once, so the popup's own popups and its closing are reported too.
