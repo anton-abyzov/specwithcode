@@ -7567,14 +7567,18 @@ describe("a merge or review pinned to the head the person saw", () => {
         Effect.sync(() => {
           sent.push({
             operation: input.action,
-            ...(input.expectedHeadSha === undefined ? {} : { expectedHeadSha: input.expectedHeadSha }),
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
           });
         }),
       submitReview: (input) =>
         Effect.sync(() => {
           sent.push({
             operation: "review",
-            ...(input.expectedHeadSha === undefined ? {} : { expectedHeadSha: input.expectedHeadSha }),
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
           });
         }),
     });
@@ -7623,7 +7627,11 @@ describe("a merge or review pinned to the head the person saw", () => {
     Effect.gen(function* () {
       const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
       const service = yield* serviceWith(pinnedProvider(HEAD, sent));
-      yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD.toUpperCase() });
+      yield* service.runAction({
+        ...reference,
+        action: "merge",
+        expectedHeadSha: HEAD.toUpperCase(),
+      });
       yield* service.submitReview({
         ...reference,
         verdict: "approve",
