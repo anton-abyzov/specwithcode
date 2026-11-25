@@ -375,49 +375,62 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       .execute({
         operation: "mcp.assertProjectWorktree.checkout",
         cwd,
-        args: [
-          "rev-parse",
-          "--path-format=absolute",
-          "--show-toplevel",
-          "--git-common-dir",
-          "--absolute-git-dir",
-        ],
+        args: ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
         allowNonZeroExit: true,
       })
       .pipe(
         Effect.flatMap((result) => {
-          const [toplevel = "", commonDir = "", gitDir = ""] = result.stdout.trim().split("\n");
+          const [toplevel = "", commonDir = ""] = result.stdout.trim().split("\n");
           return result.exitCode === 0 && toplevel.length > 0 && commonDir.length > 0
-            ? Effect.all([real(toplevel), real(commonDir), real(gitDir)])
+            ? Effect.all([real(toplevel), real(commonDir)])
             : Effect.succeed(undefined);
         }),
         Effect.orElseSucceed(() => undefined),
       );
-  // The checkout's own `.git` entry, never a link to another one, must be the
-  // repository's git folder (the main checkout) or name this path back from
-  // the linked worktree's git folder, as Git itself checks. A `.git` file or
-  // link copied from elsewhere points at a checkout that is not this one.
-  const ownsCheckout = (gitDir: string, commonDir: string) =>
+  // Git's own test for "the worktree registered at this path", on the bytes it
+  // reads: the folder's own `.git` entry (never a link) is either the
+  // repository's git folder itself (the main checkout), or a file whose
+  // `gitdir:` line names a slot directly under `<common dir>/worktrees/`
+  // whose `gitdir` record names this folder's `.git` exactly. Nothing is
+  // trimmed, decoded loosely or resolved past what Git itself resolves.
+  const encoder = new TextEncoder();
+  const sameBytes = (left: Uint8Array, right: Uint8Array) =>
+    left.length === right.length && left.every((byte, index) => byte === right[index]);
+  // Windows paths come back from Node with `\`; Git writes them with `/`.
+  const gitSpelling = (path: string) =>
+    /^[A-Za-z]:[\\/]/u.test(path) ? path.replaceAll("\\", "/") : path;
+  const ownsCheckout = (commonDir: string) =>
     Effect.gen(function* () {
+      if (asked.includes("\n")) return false;
       const entry = `${asked}/.git`;
       const isLink = yield* fileSystem.readLink(entry).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
       if (isLink) return false;
-      const dotGit = yield* real(entry);
-      if (gitDir === commonDir) return dotGit === commonDir;
-      // Git registers a linked worktree only under the repository's own
-      // `worktrees/` folder; metadata kept anywhere else is not a registration.
-      const registry = yield* real(`${commonDir}/worktrees`);
-      if ((yield* real(`${gitDir}/..`)) !== registry) return false;
-      // The back-link names a worktree's `.git`; only its folder is resolved, so
-      // a `.git` link elsewhere cannot make another worktree's record name this path.
-      const backlink = yield* fileSystem
-        .readFileString(`${gitDir}/gitdir`)
-        .pipe(Effect.orElseSucceed(() => ""));
-      const named = /^(.*)[\\/]\.git$/u.exec(backlink.trim())?.[1];
-      return named !== undefined && named.length > 0 && (yield* real(named)) === asked;
+      const info = yield* fileSystem.stat(entry).pipe(Effect.option);
+      if (Option.isNone(info)) return false;
+      if (info.value.type === "Directory") return (yield* real(entry)) === commonDir;
+      if (info.value.type !== "File") return false;
+      const pointer = yield* fileSystem.readFile(entry).pipe(Effect.option);
+      if (Option.isNone(pointer)) return false;
+      const slots = `${gitSpelling(commonDir)}/worktrees/`;
+      // Only text that survives decoding unchanged: a path Git keeps as raw
+      // bytes is never matched against a decoded spelling of it.
+      const text = new TextDecoder().decode(pointer.value);
+      if (!sameBytes(encoder.encode(text), pointer.value)) return false;
+      const line = /^gitdir: ([^\r\n]+)\r?\n?$/u.exec(text)?.[1];
+      if (line === undefined) return false;
+      const slot = gitSpelling(line);
+      const id = slot.startsWith(slots) ? slot.slice(slots.length) : "";
+      if (!/^[^/\\\n]+$/u.test(id) || id === "." || id === "..") return false;
+      // The slot itself must be a plain folder there, not a link elsewhere.
+      if (gitSpelling(yield* real(slot)) !== slot) return false;
+      const record = yield* fileSystem.readFile(`${slot}/gitdir`).pipe(Effect.option);
+      if (Option.isNone(record)) return false;
+      const named = encoder.encode(gitSpelling(entry));
+      const withNewline = encoder.encode(`${gitSpelling(entry)}\n`);
+      return sameBytes(record.value, named) || sameBytes(record.value, withNewline);
     });
   const project = yield* checkoutOf(workspaceRoot);
   for (const path of registered) {
@@ -430,7 +443,7 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       checkout !== undefined &&
       checkout[0] === asked &&
       checkout[1] === project[1] &&
-      (yield* ownsCheckout(checkout[2], checkout[1]))
+      (yield* ownsCheckout(project[1]))
     )
       return path;
   }
