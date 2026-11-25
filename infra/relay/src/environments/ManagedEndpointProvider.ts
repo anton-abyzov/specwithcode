@@ -1216,31 +1216,19 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const owned = yield* (input.ownsOrigin ?? Effect.succeed(true)).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ManagedEndpointProvisioningFailed({
-              userId: input.userId,
-              environmentId: input.environmentId,
-              stage: "configure-tunnel",
-              hostname,
-              tunnelName,
-              tunnelId: tunnel.id,
-              cause,
-            }),
-        ),
-      );
-      if (!owned) {
-        return yield* new ManagedEndpointProvisioningFailed({
+      const configureFailed = (fields: {
+        readonly cause?: unknown;
+        readonly reason?: "key-conflict";
+      }) =>
+        new ManagedEndpointProvisioningFailed({
           userId: input.userId,
           environmentId: input.environmentId,
           stage: "configure-tunnel",
-          reason: "key-conflict",
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
+          ...fields,
         });
-      }
       const configured = yield* allocations
         .withClaimedTunnel(
           {
@@ -1249,30 +1237,25 @@ export const make = Effect.gen(function* () {
             tunnelId: tunnel.id,
             generation: tunnelGeneration,
           },
-          tunnels
-            .putConfiguration(tunnel.id, {
-              ingress: [
-                {
-                  hostname,
-                  service: formatOriginService(input.origin),
-                },
-                { service: "http_status:404" },
-              ],
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointProvisioningFailed({
-                    userId: input.userId,
-                    environmentId: input.environmentId,
-                    stage: "configure-tunnel",
-                    hostname,
-                    tunnelName,
-                    tunnelId: tunnel.id,
-                    cause,
-                  }),
-              ),
+          // Ownership is read inside the claim, after its generation read: a
+          // link commit leaves that generation alone, so only this read sees it.
+          (input.ownsOrigin ?? Effect.succeed(true)).pipe(
+            Effect.mapError((cause) => configureFailed({ cause })),
+            Effect.filterOrFail(
+              (owned) => owned,
+              () => configureFailed({ reason: "key-conflict" }),
             ),
+            Effect.andThen(
+              tunnels
+                .putConfiguration(tunnel.id, {
+                  ingress: [
+                    { hostname, service: formatOriginService(input.origin) },
+                    { service: "http_status:404" },
+                  ],
+                })
+                .pipe(Effect.mapError((cause) => configureFailed({ cause }))),
+            ),
+          ),
         )
         .pipe(
           Effect.catchTags({

@@ -53,29 +53,51 @@ const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
   delete: () => Effect.void,
 });
 
-const layer = Layer.mergeAll(ManagedEndpointProvider.layer, EnvironmentLinks.layer).pipe(
-  Layer.provide(ManagedEndpointProvider.layerTunnelClient(tunnelClient)),
-  Layer.provide(
-    ManagedEndpointProvider.layerDnsClient(
-      ManagedEndpointProvider.ManagedEndpointDnsClient.of({
-        listRecords: () => Effect.succeed([]),
-        createRecord: () => Effect.succeed({ id: "dns-1" }),
-        updateRecord: () => Effect.void,
-        deleteRecord: () => Effect.void,
-      }),
-    ),
-  ),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      ManagedEndpointAllocations.layer,
-      ManagedTunnelLimits.layer,
-      ConnectAccounts.layer,
-    ),
-  ),
-  Layer.provideMerge(
-    Layer.mergeAll(layerSqliteRelayDb(), RelayConfiguration.layer(config), NodeServices.layer),
-  ),
+/**
+ * Something that lands once, inside the next claimed allocation write, after
+ * the claim's generation read: where a racing link's commit can fall.
+ */
+const claimHook: { landing: Effect.Effect<void> | null } = { landing: null };
+const layerAllocations = Layer.effect(
+  ManagedEndpointAllocations.ManagedEndpointAllocations,
+  Effect.gen(function* () {
+    const real = yield* ManagedEndpointAllocations.make;
+    return ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+      ...real,
+      withClaimedTunnel: (input, effect) =>
+        real.withClaimedTunnel(
+          input,
+          Effect.suspend(() => {
+            const landing = claimHook.landing;
+            claimHook.landing = null;
+            return landing === null ? effect : Effect.andThen(landing, effect);
+          }),
+        ),
+    });
+  }),
 );
+
+/** A fresh database per test. */
+const makeLayer = () =>
+  Layer.mergeAll(ManagedEndpointProvider.layer, EnvironmentLinks.layer).pipe(
+    Layer.provide(ManagedEndpointProvider.layerTunnelClient(tunnelClient)),
+    Layer.provide(
+      ManagedEndpointProvider.layerDnsClient(
+        ManagedEndpointProvider.ManagedEndpointDnsClient.of({
+          listRecords: () => Effect.succeed([]),
+          createRecord: () => Effect.succeed({ id: "dns-1" }),
+          updateRecord: () => Effect.void,
+          deleteRecord: () => Effect.void,
+        }),
+      ),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(layerAllocations, ManagedTunnelLimits.layer, ConnectAccounts.layer),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(layerSqliteRelayDb(), RelayConfiguration.layer(config), NodeServices.layer),
+    ),
+  );
 
 const request: RelayEnvironmentLinkRequest = {
   proof: "unused",
@@ -122,6 +144,8 @@ const ownsOrigin = (environmentPublicKey: string) =>
 describe("a link that loses the race for an environment", () => {
   it.effect("does not change the tunnel's ingress", () =>
     Effect.gen(function* () {
+      ingressWrites.length = 0;
+      tunnels.created = false;
       const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
       const links = yield* EnvironmentLinks.EnvironmentLinks;
       const guard = yield* Effect.context<EnvironmentLinks.EnvironmentLinks>();
@@ -148,6 +172,37 @@ describe("a link that loses the race for an environment", () => {
         reason: "key-conflict",
       });
       expect(ingressWrites).toEqual(["http://127.0.0.1:8319"]);
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  // The winner's tunnel exists, but its link commits only while the loser is
+  // inside its configure claim, after the claim's generation read: a link
+  // commit does not change that generation, so the claim alone cannot see it.
+  it.effect("does not change the ingress when the winner commits during the loser's claim", () =>
+    Effect.gen(function* () {
+      ingressWrites.length = 0;
+      tunnels.created = false;
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      const guard = yield* Effect.context<EnvironmentLinks.EnvironmentLinks>();
+      const provisioned = yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 8319 },
+        ownsOrigin: ownsOrigin("key-1").pipe(Effect.provideContext(guard)),
+      });
+      expect(yield* links.getForUser(key)).toBeNull();
+      claimHook.landing = links
+        .upsert({ ...key, request, proof: proof("key-1"), endpoint: provisioned.endpoint })
+        .pipe(Effect.orDie);
+      const refused = yield* provider
+        .provision({
+          ...key,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 9999 },
+          ownsOrigin: ownsOrigin("key-2").pipe(Effect.provideContext(guard)),
+        })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({ reason: "key-conflict" });
+      expect(ingressWrites).toEqual(["http://127.0.0.1:8319"]);
+    }).pipe(Effect.provide(makeLayer())),
   );
 });
