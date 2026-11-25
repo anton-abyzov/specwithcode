@@ -254,12 +254,19 @@ describe("ACP registry permission answers", () => {
     ),
   );
 
-  it.live("another agent's approval answers its first allow-once option as before", () =>
-    answerPlanExit("gemini", "approval-required", "accept").pipe(
-      Effect.map((sent) => assert.equal(sent, "plan_bypass")),
-      Effect.provide(layerTest),
-      Effect.scoped,
-    ),
+  // Any agent, not only one recognised as Devin (a wrapper script, another
+  // registry agent), may list the bypass option first.
+  it.live.each([
+    { label: "another registry agent", agent: "gemini" },
+    {
+      label: "Devin behind a wrapper",
+      agent: { source: "local", commandPath: "/opt/bin/agent-run" },
+    },
+  ] as const)("$label never answers with the bypass option", ({ agent }) =>
+    Effect.gen(function* () {
+      assert.equal(yield* answerPlanExit(agent, "approval-required", "accept"), "plan_approve");
+      assert.equal(yield* answerPlanExit(agent, "full-access", "accept"), "plan_approve");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("an approval sends the agent's option ID exactly as offered", () =>

@@ -132,9 +132,10 @@ export function codexArgvCommandLine(argv: ReadonlyArray<string>): string {
 }
 
 /**
- * What a command approval runs: the command first, then where and what it
- * reaches. Without any command text the card says so before the reason, so
- * the agent's explanation never reads as the thing being approved.
+ * What a command approval runs: the command first, then the agent's parse of
+ * it (labelled, never in its place), then where and what it reaches. Without
+ * command text there is nothing to judge: undefined, so the approval is
+ * declined instead of shown.
  */
 export function codexCommandApprovalPrompt(input: {
   readonly command?: string | null | undefined;
@@ -146,23 +147,24 @@ export function codexCommandApprovalPrompt(input: {
     | null
     | undefined;
   readonly reason?: string | null | undefined;
-}): string {
-  const actionCommands = (input.commandActions ?? [])
-    .map((action) => action.command.trim())
-    .filter((command) => command.length > 0);
+}): string | undefined {
   const command =
     input.command?.trim() ||
-    (input.argv && input.argv.length > 0 ? codexArgvCommandLine(input.argv) : "") ||
-    actionCommands.join("\n");
+    (input.argv && input.argv.length > 0 ? codexArgvCommandLine(input.argv) : "");
+  if (!command) return undefined;
+  const actions = (input.commandActions ?? [])
+    .map((action) => action.command.trim())
+    .filter((action) => action.length > 0 && action !== command)
+    .map((action) => `Parsed action: ${action}`);
   const cwd = input.cwd?.trim();
   const network = input.networkApprovalContext;
-  const lines = [
-    command || "Command not shown by the agent",
+  return [
+    command,
+    ...actions,
     ...(cwd ? [`cwd ${cwd}`] : []),
     ...(network ? [`network ${network.protocol} ${network.host}`] : []),
     ...approvalReasonLine(input.reason),
-  ];
-  return lines.join("\n");
+  ].join("\n");
 }
 
 type PermissionPath = CodexSchema.PermissionsRequestApprovalParams__FileSystemPath;

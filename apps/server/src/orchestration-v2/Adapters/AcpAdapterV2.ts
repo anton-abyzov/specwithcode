@@ -1358,6 +1358,9 @@ interface SelectedPermissionOption {
 }
 
 /** The first offered option of the decision's kind whose ID is not blank. */
+/** Option IDs that switch an agent's own permission checks off for the rest of its session. */
+const NEVER_ANSWERED_PERMISSION_OPTION_IDS: ReadonlySet<string> = new Set(["plan_bypass"]);
+
 function selectPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
@@ -6255,10 +6258,21 @@ export function makeAcpAdapterV2(
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
+              // No agent's option that turns its own permission checks off is ever
+              // chosen, whichever flavor runs it (a wrapper hides who the agent is).
+              const withoutBypass = {
+                ...params,
+                options: params.options.filter(
+                  (option) => !NEVER_ANSWERED_PERMISSION_OPTION_IDS.has(option.optionId.trim()),
+                ),
+              };
               const answerable =
                 flavor.answerablePermissionOptions === undefined
-                  ? params
-                  : { ...params, options: [...flavor.answerablePermissionOptions(params)] };
+                  ? withoutBypass
+                  : {
+                      ...withoutBypass,
+                      options: [...flavor.answerablePermissionOptions(withoutBypass)],
+                    };
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {

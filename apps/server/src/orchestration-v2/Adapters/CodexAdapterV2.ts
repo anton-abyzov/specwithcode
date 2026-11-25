@@ -5580,12 +5580,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             const nativeRequestId = payload.approvalId ?? payload.itemId;
+            const prompt = codexCommandApprovalPrompt(payload);
+            if (prompt === undefined) {
+              yield* Effect.logWarning("orchestration-v2.codex-command-approval-without-command", {
+                itemId: payload.itemId,
+              });
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId,
               requestKind: "command",
-              prompt: codexCommandApprovalPrompt(payload),
+              prompt,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5865,16 +5874,25 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             const nativeRequestId = payload.approvalId ?? payload.callId;
+            const prompt = codexCommandApprovalPrompt({
+              argv: payload.command,
+              cwd: payload.cwd,
+              reason: payload.reason,
+            });
+            if (prompt === undefined) {
+              yield* Effect.logWarning("orchestration-v2.codex-command-approval-without-command", {
+                callId: payload.callId,
+              });
+              return {
+                decision: approvalDecisionToLegacyReviewDecision("decline"),
+              } satisfies CodexSchema.ExecCommandApprovalResponse;
+            }
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.callId,
               nativeRequestId,
               requestKind: "command",
-              prompt: codexCommandApprovalPrompt({
-                argv: payload.command,
-                cwd: payload.cwd,
-                reason: payload.reason,
-              }),
+              prompt,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
