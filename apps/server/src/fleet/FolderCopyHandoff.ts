@@ -300,7 +300,12 @@ export function copyStatus(record: DestinationRecord, plan: Plan | null): Folder
     ...(lanPathOf(record.lan) ? { transport: lanPathOf(record.lan)! } : {}),
     disk: record.disk,
     ...(record.state === "previewed" && !record.undoIncomplete && plan
-      ? { previewRevision: previewRevision(record, plan) }
+      ? {
+          previewRevision: previewRevision(record, plan),
+          ...(plan.destinationFingerprint !== undefined
+            ? { destinationRevision: plan.destinationFingerprint }
+            : {}),
+        }
       : {}),
     rows: plan ? plan.rows.map(row) : [],
     totals: plan

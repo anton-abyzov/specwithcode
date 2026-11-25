@@ -499,6 +499,12 @@ export const FolderCopyStatus = Schema.Struct({
   disk: Schema.NullOr(Schema.Struct({ needed: count, free: count })),
   /** Identity of the preview shown, only while previewed; approve names it. Older destinations omit it. */
   previewRevision: Schema.optional(bounded(128)),
+  /**
+   * Identity of the destination contents the preview compared against, only while previewed.
+   * It moves when anything there changes and not when a choice does, so a "Replace all"
+   * click approves only the contents it saw. Older destinations omit it.
+   */
+  destinationRevision: Schema.optional(bounded(128)),
   rows: Schema.Array(FolderCopyRow),
   totals: Schema.NullOr(
     Schema.Struct({

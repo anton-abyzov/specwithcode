@@ -413,6 +413,10 @@ export async function captureSourceFiles(input: {
       );
       try {
         const before = await source.stat({ bigint: true });
+        // Stamped as the read starts: a streamed read writes the pack as it goes, and a slow
+        // writer must not age the file past the racy-stamp guard. The earliest moment is the
+        // one the bytes can be trusted from.
+        const readAtNs = BigInt(Math.trunc(now())) * 1_000_000n;
         await admit(input.sourceRoot(entry), before.dev);
         const size = Number(before.size);
         // The wrong route for the size found now: read it again on the other one.
@@ -444,8 +448,6 @@ export async function captureSourceFiles(input: {
           }
         }
         const after = await source.stat({ bigint: true });
-        // Stamped as the read ends, before any wait on the pack writer can age the file.
-        const readAtNs = BigInt(Math.trunc(now())) * 1_000_000n;
         const moved =
           position !== size ||
           after.size !== before.size ||

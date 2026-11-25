@@ -326,7 +326,11 @@ export const receiveAgentCopy = Effect.fn("fleet.agentCopy.receive")(function* (
         `${status.targetFolder} changed while the copy was being compared, so nothing was copied. Pass a destinationPath that does not exist yet.`,
       );
     }
-    status = yield* handoff.copyApprove({ operationId }).pipe(Effect.mapError(copyFailure));
+    // Approve the preview checked clean, not one a replan published since.
+    const seen = status.previewRevision;
+    status = yield* handoff
+      .copyApprove({ operationId, ...(seen !== undefined ? { previewRevision: seen } : {}) })
+      .pipe(Effect.mapError(copyFailure));
   }
   if (status.state === "failed" || status.state === "cancelled" || status.state === "undone")
     return yield* failed(

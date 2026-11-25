@@ -86,10 +86,18 @@ export function replacesNothing(status: FolderCopyStatus): boolean {
  * What a "Replace all" click saw and asks for: whether files only here are mirrored away,
  * which file classes travel, which repositories are cloned or left out, and the decision
  * each listed row and file conflict ends with once the click's answers are in. Another
- * window changing any of them makes the click no approval of the result.
+ * window changing any of them, or anything changing at the destination, makes the click no
+ * approval of the result.
  */
 export function replaceAllBasis(status: FolderCopyStatus): string {
-  return JSON.stringify({ choices: choicesOf(status), decisions: listedDecisions(status, true) });
+  return JSON.stringify({
+    choices: choicesOf(status),
+    decisions: listedDecisions(status, true),
+    // The destination contents the click saw: a file there edited since is replaced unseen.
+    ...(status.destinationRevision !== undefined
+      ? { destination: status.destinationRevision }
+      : {}),
+  });
 }
 
 function choicesOf(status: FolderCopyStatus): string {
@@ -130,8 +138,8 @@ function listedDecisions(status: FolderCopyStatus, clicked: boolean): Record<str
 
 /**
  * A re-compared plan "Replace all" can approve: no open choice, room on the destination,
- * and (when the click recorded its basis) the same choices and listed decisions the click
- * asked for. Anything listed now must have been listed then; what went away since is fine.
+ * and (when the click recorded its basis) the same choices, listed decisions and destination
+ * contents the click asked for. Anything listed now must have been listed then; what went away since is fine.
  */
 export function replaceAllReady(status: FolderCopyStatus, basis?: string): boolean {
   if (
@@ -142,7 +150,7 @@ export function replaceAllReady(status: FolderCopyStatus, basis?: string): boole
   )
     return false;
   if (basis === undefined) return true;
-  let asked: { choices?: unknown; decisions?: Record<string, unknown> };
+  let asked: { choices?: unknown; decisions?: Record<string, unknown>; destination?: unknown };
   try {
     asked = JSON.parse(basis) as typeof asked;
   } catch {
@@ -150,6 +158,9 @@ export function replaceAllReady(status: FolderCopyStatus, basis?: string): boole
   }
   const seen = asked.decisions;
   if (asked.choices !== choicesOf(status) || !seen) return false;
+  // A click that saw the destination's contents approves only those contents.
+  if (asked.destination !== undefined && asked.destination !== status.destinationRevision)
+    return false;
   const now = listedDecisions(status, false);
   // A row or listed conflict the click never saw is no part of what it approved, even
   // when it took the place of one that went away; one settled away since is fine.

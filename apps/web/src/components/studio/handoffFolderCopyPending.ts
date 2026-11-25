@@ -313,6 +313,22 @@ export const pendingSecrets = (saved: PendingCopy): SecretsChoice =>
   saved.secrets ?? { included: false, out: [] };
 
 /**
+ * The choice after a refresh leaves out `added`: merged onto the saved choice another window
+ * may have changed since this one read it, never dropping an exclusion either side holds.
+ */
+export function untickedSecrets(
+  saved: SecretsChoice | null,
+  current: SecretsChoice,
+  added: ReadonlyArray<string>,
+): SecretsChoice {
+  const base = saved ?? current;
+  return {
+    included: base.included && current.included,
+    out: [...new Set([...base.out, ...current.out, ...added])],
+  };
+}
+
+/**
  * True when approving this copy without secrets would be unseen: its choice includes them
  * and the form never said this window cannot send them.
  */

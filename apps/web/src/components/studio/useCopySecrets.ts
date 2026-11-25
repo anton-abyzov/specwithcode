@@ -17,6 +17,7 @@ import {
 import {
   ALL_SECRETS,
   pendingSecrets,
+  untickedSecrets,
   type PendingCopy,
   type SecretsChoice,
 } from "./handoffFolderCopyPending";
@@ -53,6 +54,7 @@ export function useCopySecrets({
   done,
   keep,
   readSummary,
+  savedNow,
 }: {
   readonly source: EnvironmentId;
   readonly sourceLabel: string;
@@ -72,6 +74,8 @@ export function useCopySecrets({
   readonly keep: (choice: SecretsChoice) => void;
   /** Reads the source's summary again; null when it cannot be read. */
   readonly readSummary: (saved: PendingCopy) => Promise<FolderCopySourceSummary | null | undefined>;
+  /** The copy's pointer as saved now, which another window may have changed. */
+  readonly savedNow: () => PendingCopy | null;
 }) {
   const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
   const sendSealed = useAtomCommand(machineHandoff.copySealedSecrets, { reportFailure: false });
@@ -96,11 +100,13 @@ export function useCopySecrets({
   };
   /** Leaves out secret files a refresh found that the person never reviewed. */
   const untick = (paths: ReadonlyArray<string>) => {
-    const current = latestPending.current
-      ? pendingSecrets(latestPending.current)
-      : chosenNow.current;
-    const out = [...new Set([...current.out, ...paths])];
-    if (out.length !== current.out.length) choose({ ...current, out });
+    const mine = latestPending.current;
+    const current = mine ? pendingSecrets(mine) : chosenNow.current;
+    // Merged onto the saved copy: another window's exclusions stay out.
+    const stored = mine ? savedNow() : null;
+    const saved = stored && stored.operationId === mine?.operationId ? pendingSecrets(stored) : null;
+    const next = untickedSecrets(saved, current, paths);
+    if (JSON.stringify(next) !== JSON.stringify(current)) choose(next);
   };
 
   /**
