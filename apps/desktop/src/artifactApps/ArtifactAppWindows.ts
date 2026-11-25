@@ -132,8 +132,8 @@ export class ArtifactAppWindows extends Context.Service<
     readonly onClosed: (listener: (installId: string) => void) => Effect.Effect<void>;
     /**
      * Calls `listener` with the install id the moment a window stops being on
-     * its version: a frame was seen at another address, or the window's page
-     * process ended.
+     * its version: a frame was seen at another address, the window's own
+     * document was replaced, or its page process ended.
      */
     readonly onFrameStrayed: (listener: (installId: string) => void) => Effect.Effect<void>;
     /** Closes the install's window after the current IPC reply has gone out. */
@@ -331,7 +331,12 @@ const make = Effect.gen(function* () {
     // What actually loaded. A frame that arrives anywhere else, by a road the
     // two guards above did not see, ends this version's powers.
     window.webContents.on("did-frame-navigate", (_event, url, _code, _status, isMainFrame) => {
-      if (isMainFrame === true) return;
+      if (isMainFrame === true) {
+        // The window's own document was replaced (a reload, say). The view that named the
+        // version is gone with it, so the version is over until the new view names one.
+        if (windows.get(installId) === window && versionUrls.delete(installId)) stray();
+        return;
+      }
       if (typeof url === "string" && INLINE_FRAME_URLS.has(url)) return;
       if (typeof url !== "string" || !frameMayGoTo(url)) stray();
     });

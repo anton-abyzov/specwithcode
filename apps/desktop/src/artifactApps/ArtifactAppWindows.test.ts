@@ -424,7 +424,6 @@ describe("ArtifactAppWindows", () => {
       landed(`${VERSION}#theme=dark`);
       landed("about:srcdoc");
       landed("about:blank");
-      landed("https://example.com/top", true);
       assert.isTrue(yield* windows.isFrameOnVersion(ID));
       // A frame seen anywhere else ends it, until a version is set again, and says so once.
       const strayed: Array<string> = [];
@@ -449,6 +448,16 @@ describe("ArtifactAppWindows", () => {
       emit(fake.contentsListeners, "render-process-gone", {}, { reason: "crashed" });
       assert.isFalse(yield* windows.isFrameOnVersion(ID));
       assert.deepEqual(strayed, [ID, ID, ID]);
+      // So is a window whose own document was replaced, by a reload say: the view that named
+      // the version is gone, and no frame may load until the new view names one.
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      landed(WINDOW_URL, true);
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.isTrue(blocked("will-frame-navigate", VERSION));
+      assert.deepEqual(strayed, [ID, ID, ID, ID]);
+      // With no version named there is nothing to end.
+      landed(WINDOW_URL, true);
+      assert.deepEqual(strayed, [ID, ID, ID, ID]);
 
       // An address that is not a web address sets no version at all.
       for (const bad of ["file:///etc/passwd", "studio://app/", "data:text/html,x", "nope"]) {

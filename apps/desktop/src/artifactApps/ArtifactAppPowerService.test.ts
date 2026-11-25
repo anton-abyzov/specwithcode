@@ -81,6 +81,8 @@ interface Fixture {
   readonly strayedListeners: Array<(installId: string) => void>;
   /** When set, finding the page's file waits on it: a request stays in flight. */
   pagesGate: Deferred.Deferred<void> | undefined;
+  /** When set, reading the saved answer waits on it. */
+  grantsGate: Deferred.Deferred<void> | undefined;
   readonly opened: Array<string>;
   readonly closed: Array<string>;
   readonly notifications: Array<{ title: string; body: string; onClick: () => void }>;
@@ -142,6 +144,7 @@ const withFixture = <A, E>(
       closedListeners: [],
       strayedListeners: [],
       pagesGate: undefined,
+      grantsGate: undefined,
       opened: [],
       closed: [],
       notifications: [],
@@ -274,7 +277,11 @@ const withFixture = <A, E>(
               : effect,
           );
         return ArtifactAppGrants.ArtifactAppGrants.of({
-          find: real.find,
+          find: (installId, attachmentId) =>
+            Effect.gen(function* () {
+              if (state.grantsGate !== undefined) yield* Deferred.await(state.grantsGate);
+              return yield* real.find(installId, attachmentId);
+            }),
           record: (grant) => failing(real.record(grant)),
           forget: (installId) => failing(real.forget(installId)),
         });
@@ -1007,8 +1014,8 @@ describe("ArtifactAppPowerService permissions", () => {
   it.effect.each([
     [
       "its window closed",
+      // Only the listener says so: the session ends with the close, whatever else is known.
       (fixture: Fixture) => {
-        fixture.liveWindows.delete(ID);
         for (const listener of fixture.closedListeners) listener(ID);
       },
     ],
@@ -1039,6 +1046,47 @@ describe("ArtifactAppPowerService permissions", () => {
         assert.deepEqual(yield* Fiber.join(request), REFUSED);
         yield* settle;
         assert.deepEqual(fixture.notifications, []);
+      }),
+    ),
+  );
+
+  it.effect("refuses a request in flight once the person turned everything off", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* granted(fixture);
+        const gate = yield* Deferred.make<void>();
+        fixture.grantsGate = gate;
+        // The request has read the page and is reading the saved Allow.
+        const request = yield* Effect.forkChild(notify(fixture));
+        yield* settle;
+        const off = yield* Effect.forkChild(fixture.powers.permissions(WC, { action: "turn-off" }));
+        yield* settle;
+        yield* Deferred.succeed(gate, undefined);
+        assert.deepEqual(yield* Fiber.join(request), REFUSED);
+        assert.deepEqual((yield* Fiber.join(off)).granted, []);
+        assert.deepEqual(fixture.notifications, []);
+      }),
+    ),
+  );
+
+  it.effect("keeps only a few of a window's requests waiting", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* granted(fixture);
+        const gate = yield* Deferred.make<void>();
+        fixture.pagesGate = gate;
+        const waiting = yield* Effect.forEach(Array.from({ length: 8 }), () =>
+          Effect.forkChild(notify(fixture)),
+        );
+        yield* settle;
+        // The ninth is answered at once, and another window is not held to this one's count.
+        assert.deepEqual(yield* notify(fixture), { ok: false, error: "rate-limited" });
+        const other = yield* Effect.forkChild(notify(fixture, { wc: OTHER_WC }));
+        yield* Deferred.succeed(gate, undefined);
+        for (const fiber of waiting) assert.deepEqual(yield* Fiber.join(fiber), OK);
+        assert.deepEqual(yield* Fiber.join(other), REFUSED);
+        // Once they are answered the window may ask again.
+        assert.deepEqual(yield* notify(fixture), OK);
       }),
     ),
   );

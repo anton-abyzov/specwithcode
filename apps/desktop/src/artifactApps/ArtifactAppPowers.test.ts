@@ -158,7 +158,9 @@ describe("readArtifactAppPowerRequest", () => {
       items: [{ id: "a", label: "Open" }],
     });
     // Text that is nothing else is empty, and refused where text is required.
-    assert.isUndefined(readArtifactAppPowerRequest("app/notify", { title: "\u202e\u200b" }));
+    assert.isUndefined(
+      readArtifactAppPowerRequest("app/notify", { title: "\u202e\u200b", body: "x" }),
+    );
   });
 
   it("refuses unknown methods and malformed parameters", () => {

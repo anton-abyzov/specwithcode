@@ -59,6 +59,7 @@ import * as ArtifactAppWindows from "./ArtifactAppWindows.ts";
 
 // html_render publishes at most 25 MiB; a larger file is not a page this app wrote.
 const PAGE_MAX_BYTES = 32 * 1024 * 1024;
+const REQUESTS_WAITING_LIMIT = 8;
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-artifact-app-powers");
 
@@ -243,6 +244,11 @@ const make = Effect.gen(function* () {
       const current = yield* windows.windowForInstall(installId);
       if (Option.isNone(current) || current.value !== window.value) return Option.none<Verified>();
       if (!(yield* windows.isFrameOnVersion(installId))) return Option.none<Verified>();
+      // So may the person's mind: "Turn off all" or a refusal given while the saved answer
+      // was being read counts from the moment it was given, not from when it is saved.
+      if (isTurnedOff(installId, session.attachmentId, version.value.sha256)) {
+        return Option.none<Verified>();
+      }
       return Option.some<Verified>({ window: window.value, app: version.value.app, powers });
     }).pipe(Effect.catchCause(() => Effect.succeed(Option.none<Verified>())));
 
@@ -366,7 +372,31 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // Requests run one at a time, and each reads the page's file. A window may keep only a few
+  // waiting, so a page cannot hold up "Turn off all" or the other installed pages.
+  const waiting = new Map<number, number>();
+  const admitted = <A>(webContentsId: number, effect: Effect.Effect<A>, refused: A) =>
+    Effect.suspend(() => {
+      const count = waiting.get(webContentsId) ?? 0;
+      if (count >= REQUESTS_WAITING_LIMIT) return Effect.succeed(refused);
+      waiting.set(webContentsId, count + 1);
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            const left = (waiting.get(webContentsId) ?? 1) - 1;
+            if (left > 0) waiting.set(webContentsId, left);
+            else waiting.delete(webContentsId);
+          }),
+        ),
+      );
+    });
+
   const power: ArtifactAppPowerService["Service"]["power"] = (webContentsId, input) =>
+    admitted(webContentsId, answer(webContentsId, input), refuse("rate-limited"));
+  const answer = (
+    webContentsId: number,
+    input: DesktopArtifactAppPowerInput,
+  ): Effect.Effect<DesktopArtifactAppPowerReply> =>
     lock
       .withPermits(1)(
         Effect.gen(function* () {
