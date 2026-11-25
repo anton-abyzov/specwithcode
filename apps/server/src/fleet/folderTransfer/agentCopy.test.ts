@@ -66,6 +66,8 @@ interface World {
   readonly destination: Array<string>;
   readonly link: Array<{ readonly step: string; readonly options?: unknown }>;
   started?: { readonly targetFolder: string; readonly selection: ReadonlyArray<string> };
+  /** What each approval named. */
+  readonly approvals: Array<unknown>;
 }
 
 /** The destination's own config, for the folders it never copies into. */
@@ -89,7 +91,7 @@ const setup = (options: {
   /** The other machine says it keeps its coordinator when it joins; absent, it does. */
   readonly equalPeer?: boolean;
 }) => {
-  const world: World = { source: [], destination: [], link: [] };
+  const world: World = { source: [], destination: [], link: [], approvals: [] };
   let state: FolderCopyStatus["state"] = "planned";
   const sourceStatus = (scanning: boolean): FolderCopySourceStatus => ({
     operationId: "op",
@@ -169,6 +171,7 @@ const setup = (options: {
     warnings: [],
     unstable: [],
     committed: state === "applied",
+    ...(state === "previewed" ? { previewRevision: "revision-seen" } : {}),
     projectId: state === "applied" && !options.unregistered ? copyId : null,
     createdAt: "2026-11-12T00:00:00.000Z",
     updatedAt: "2026-11-12T00:00:00.000Z",
@@ -189,6 +192,7 @@ const setup = (options: {
     },
     copyApprove: (input) => {
       world.destination.push("approve");
+      world.approvals.push(input);
       if (options.diskFull)
         return Effect.fail(new FolderCopyError({ code: "disk_space", detail: "It needs 2 GB." }));
       state = "approved";
@@ -343,6 +347,18 @@ describe("agent folder copy", () => {
         { step: "prepare" },
         { step: "accept", options: { copiedFromKept: true } },
         { step: "commit" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("approves only the preview it checked was clean", () =>
+    Effect.gen(function* () {
+      const there = NodePath.join(yield* tempFolder, "widgets");
+      const { world, run } = setup({ workspaceRoot: yield* plainFolder });
+      yield* run(there);
+      // A replan published between the check and the approval is refused, not approved.
+      expect(world.approvals).toEqual([
+        expect.objectContaining({ previewRevision: "revision-seen" }),
       ]);
     }).pipe(Effect.scoped),
   );

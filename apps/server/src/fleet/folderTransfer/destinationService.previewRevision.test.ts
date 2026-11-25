@@ -147,3 +147,22 @@ it("never puts a shortage measured for an older preview on a newer one", async (
   expect(after?.mirror).toBe(!status.mirror);
   expect(after?.disk).toBeNull();
 }, 120_000);
+
+it("names the destination contents a preview saw, and a new name once they change", async () => {
+  const { copies, operationId, status } = await previewed("contents");
+  const seen = status.destinationRevision;
+  expect(seen).toMatch(/^[a-f0-9]{64}$/);
+  // Choices alone leave the destination's name as it was.
+  await copies.decide(operationId, { mirror: !status.mirror });
+  const chosen = await settle(copies, operationId, "previewed");
+  expect(copyStatus(chosen!, await copies.readPlan(operationId)).destinationRevision).toBe(seen);
+  // Something written there before the next comparison gives it a new one.
+  const target = NodePath.join(base, "targets", "contents");
+  NodeFS.mkdirSync(target, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(target, "README.md"), "edited here");
+  await copies.decide(operationId, { mirror: status.mirror });
+  const edited = await settle(copies, operationId, "previewed");
+  const now = copyStatus(edited!, await copies.readPlan(operationId)).destinationRevision;
+  expect(now).toMatch(/^[a-f0-9]{64}$/);
+  expect(now).not.toBe(seen);
+}, 120_000);
