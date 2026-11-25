@@ -668,7 +668,12 @@ export function openCodePermissionRules(
     sandboxType === undefined && runtimePolicy.runtimeMode === "full-access";
 
   if (!requiresApproval && (externallySandboxed || dangerFullAccess || implicitFullAccess)) {
-    return [{ permission: "*", pattern: "*", action: "allow" }];
+    // A Task child starts from only the parent's external_directory and deny
+    // rules, so name external_directory too or the child asks anyway.
+    return [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "external_directory", pattern: "*", action: "allow" },
+    ];
   }
 
   // Task sessions initially inherit only parent deny rules. Seed explicit
