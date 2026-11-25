@@ -173,16 +173,19 @@ accounts. What keeps that narrow:
 
 - It is off on every machine. Only a person at the machine can turn it on, with Touch ID or the
   account password. No setting, RPC, MCP tool or agent can.
-- Only a device on the machine's approved list can ask, and the first view from a device needs a
-  person at the machine to allow it and a code read off its screen.
+- Only a device on the machine's approved list can ask, and it must show the key it was approved
+  with before the server opens anything: a copied sign-in ticket without that key reaches nothing.
+  The first view from a device needs a person at the machine to allow it and a code read off its
+  screen.
 - The picture is sealed between the two ends. The relay and the server on the machine cannot open
   it.
 - A banner with a Stop button stays up while anyone is viewing, and each session is listed on the
   machine's card.
 
 What it does not cover: a program already running as you on that machine (it can take screenshots
-anyway, and could run code as the app), and a person who approves the system's dialog without
-reading which device it names. Review the "always allowed" devices on each machine's card and
+anyway, and could run code as the app), a person who approves the system's dialog without reading
+which device it names, and a viewer open in a browser tab against a network edge that rewrites the
+page's code (the installed app has no such limit). Review the "always allowed" devices on each machine's card and
 remove the ones you no longer use.
 
 ## Desktop app requirements

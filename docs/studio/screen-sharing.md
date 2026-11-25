@@ -37,6 +37,9 @@ What happens at the machine being viewed:
   time it has been viewing and a Stop button. If the banner cannot be shown, nothing is shown to
   anyone.
 
+A device that is denied, left unanswered, gives up or sends a wrong code three times in 10 minutes,
+after a person here was asked, is not asked about again for 10 minutes.
+
 "Always allow this device" lets that device in later without a prompt. Such a grant ends 30 days
 after its last use, and you can remove it on the machine's card at any time. Removing it also makes
 the next view a first time again, code included.
@@ -63,21 +66,27 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
   machine's screen-sharing key and the session list live in the desktop app's main process, in a
   file sealed with AES-256-GCM under a key that macOS keeps. The server on that machine only checks
   who is calling and passes bytes on. There is no RPC method, no MCP tool and no other HTTP route
-  for any of it; `apps/server/src/screenShare/noAgentPath.test.ts` fails if one is added.
+  for any of it. `apps/server/src/screenShare/noAgentPath.test.ts` checks the MCP tools, the RPC
+  methods and the routes for screen sharing's names and paths; a path added under another name
+  would pass it, so adding one is a review matter too.
 - **Only a person's approved device may view.** The viewing socket is refused for agent threads,
   worker grants, outside MCP clients, management keys, pairing codes, the startup link and the
   local command line (`apps/server/src/auth/personDevice.ts`). The device signs each session with
-  the key that was approved.
+  the key that was approved, and before that it has to answer a number from the server with that
+  key. A copy of the device's sign-in ticket without the key opens nothing, uses up none of the
+  device's tries and is never told to the app.
 - **Only the machine's own app may host.** Its socket must come from the machine itself and prove
   itself on every connection, with a proof the app's own window never holds, renewed every few
-  minutes and checked again when a viewer opens.
+  minutes and checked again when a viewer opens and every minute while one is viewing.
 - **The picture is sealed end to end.** Each session has its own keys (X25519, HKDF-SHA256,
   AES-256-GCM). The relay in between, Cloudflare's edge and the server on the machine carry only
   sealed bytes. The machine signs the handshake with its screen-sharing key; a viewer that has
-  saved that key refuses any other and says the key changed.
+  saved that key refuses any other and says the key changed. For a viewer open in a browser tab
+  this holds as long as the page's own code arrived unchanged (see below).
 - **The server keeps its own limits** whatever the app does: a deadline for the handshake, a
   longest session, a limit on how often one device may ask, and a small size for anything a viewer
-  sends.
+  sends. One WebSocket message is still read whole before its size is known, up to the server's
+  general limit of 100 MB; a message over screen sharing's own limits then ends the session.
 - **Computer use on the viewing machine pauses** while the app shows another machine's screen, so
   that screen does not end up in a thread's screenshots.
 
@@ -95,11 +104,21 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
   app; it does not stop an earlier copy being put back.
 - **What happens on the viewing device.** A viewer open in a browser tab cannot stop something
   else on that device from taking a screenshot of it.
+- **A browser-tab viewer whose code was changed on the way.** In a browser the viewer's code
+  comes through the same network edge as the picture. An edge that rewrote that code could make
+  the tab accept another machine's key or skip the code check. The installed app carries its own
+  code and has no such limit.
+- **Someone on the network path making it fail.** The relay and the edge can drop or delay a
+  session, as they can any connection. They cannot see or change one, and nothing they do counts
+  against a device once they stop.
 
 ## Not verified yet
 
 - Capture on an installed, signed release. The capture path was measured with a development
   build; the first real check is turning the switch on at a Mac with a released build.
+- The banner's Stop on an installed build. It depends on a small file packaged beside the app's
+  main code; the app checks the file is there and shows nothing without it, but that the packaged
+  one loads is first seen on a released build.
 - A Mac with no Touch ID sensor in reach (Mac mini, Mac Studio, a laptop with its lid closed).
   macOS should fall back to the account password there. If it does not, screen sharing cannot be
   turned on at that Mac until a password path is added.
@@ -118,12 +137,16 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
 | The viewer and the settings               | `apps/web/src/components/screenShare/`                                                                |
 
 Focused tests:
-`node node_modules/vite-plus/bin/vp test run packages/shared/src/screenShareChannel.test.ts packages/shared/src/desktopBootstrapToken.test.ts apps/server/src/auth/personDevice.test.ts apps/server/src/screenShare/ apps/desktop/src/screenShare/ apps/web/src/components/screenShare/`.
+`node node_modules/vite-plus/bin/vp test run packages/shared/src/screenShareChannel.test.ts packages/shared/src/desktopBootstrapToken.test.ts apps/server/src/auth/personDevice.test.ts apps/server/src/screenShare/ apps/desktop/src/screenShare/`,
+and from `apps/web`: `node ../../node_modules/vite-plus/bin/vp test run src/components/screenShare/`.
 The headless fixture is listed in `docs/operations/checks.md`.
 
 Rules to keep when changing it:
 
 - Nothing turns sharing on or adds a grant without the system's authentication at the machine.
+- The server opens, counts and tells the app nothing for a viewer socket until it has shown the
+  device's key. A limit keyed on the device that a copied ticket could use up is a way to lock
+  that device out.
 - Agents get no path to it. A new RPC method, MCP tool or HTTP route for screen sharing is a
   product decision, not a refactor.
 - The server stays unable to open a record: it is never given a key.
