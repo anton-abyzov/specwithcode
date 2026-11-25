@@ -68,23 +68,33 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const tornWrite = (filePath: string, written: number) =>
+        PlatformError.systemError({
+          _tag: "WriteZero",
+          module: "FileSystem",
+          method: `write (${String(written)} bytes landed)`,
+          pathOrDescriptor: filePath,
+        });
+      // Every write lands half its bytes and fails, through either way of writing.
       const tornWrites = FileSystem.FileSystem.of({
         ...fileSystem,
         writeFileString: (filePath, data, options) =>
           fileSystem
             .writeFileString(filePath, data.slice(0, Math.floor(data.length / 2)), options)
-            .pipe(
-              Effect.andThen(
-                Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "WriteZero",
-                    module: "FileSystem",
-                    method: "writeFileString",
-                    pathOrDescriptor: filePath,
-                  }),
-                ),
-              ),
+            .pipe(Effect.andThen(Effect.fail(tornWrite(filePath, data.length / 2)))),
+        open: (filePath, options) =>
+          fileSystem.open(filePath, options).pipe(
+            Effect.map((file): FileSystem.File =>
+              Object.create(file, {
+                writeAll: {
+                  value: (bytes: Uint8Array) =>
+                    file
+                      .writeAll(bytes.subarray(0, Math.floor(bytes.length / 2)))
+                      .pipe(Effect.andThen(Effect.fail(tornWrite(filePath, bytes.length / 2)))),
+                },
+              }),
             ),
+          ),
       });
 
       const identifier = yield* Identify.getTelemetryIdentifierForHome(

@@ -350,7 +350,21 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
         ),
       makeDirectory: () => Effect.void,
       makeTempDirectory: () => Effect.succeed("/home/settings.json.abc123"),
-      writeFileString: () => Effect.void,
+      stat: (path) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "FileSystem",
+            method: "stat",
+            pathOrDescriptor: path,
+          }),
+        ),
+      chmod: () => Effect.void,
+      open: () =>
+        Effect.succeed({
+          writeAll: () => Effect.void,
+          sync: Effect.void,
+        } as unknown as FileSystem.File),
       rename: (_from, to) => Effect.sync(() => void renamed.push(to)),
       remove: (path) =>
         Effect.sync(() => void removed.push(path)).pipe(
@@ -376,5 +390,98 @@ it.effect("succeeds when the write lands but its temp directory cannot be remove
     assert.deepStrictEqual(result, Exit.void);
     assert.deepStrictEqual(renamed, ["/home/settings.json"]);
     assert.deepStrictEqual(removed, ["/home/settings.json.abc123"]);
+  }),
+);
+
+it.layer(NodeServices.layer)("writeFileStringAtomically file modes", (it) => {
+  it.effect.skipIf(process.platform === "win32")(
+    "keeps the replaced file's mode and creates a new file owner-only",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-atomic-mode-" });
+        const secret = path.join(root, "secret.json");
+        const shared = path.join(root, "shared.json");
+        const fresh = path.join(root, "fresh.json");
+        const locked = path.join(root, "locked.json");
+        yield* fs.writeFileString(locked, "before");
+        yield* fs.chmod(locked, 0o000);
+        yield* fs.writeFileString(secret, "before");
+        yield* fs.chmod(secret, 0o600);
+        yield* fs.writeFileString(shared, "before");
+        yield* fs.chmod(shared, 0o644);
+
+        for (const filePath of [secret, shared, fresh, locked]) {
+          yield* writeFileStringAtomically({ filePath, contents: "after" });
+          assert.equal(yield* fs.readFileString(filePath), "after");
+        }
+        const mode = (filePath: string) =>
+          fs.stat(filePath).pipe(Effect.map((info) => info.mode & 0o777));
+        assert.equal(yield* mode(secret), 0o600);
+        assert.equal(yield* mode(shared), 0o644);
+        assert.equal(yield* mode(fresh), 0o600);
+        // The owner keeps read and write, so a save repairs a file it could not read.
+        assert.equal(yield* mode(locked), 0o600);
+      }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, process.platform)),
+  );
+});
+
+it.effect("syncs the data before the rename and the folder after, ignoring a refused folder", () =>
+  Effect.gen(function* () {
+    const events: Array<string> = [];
+    const file = (name: string) =>
+      ({
+        writeAll: () => Effect.sync(() => void events.push(`write ${name}`)),
+        sync: Effect.sync(() => void events.push(`sync ${name}`)),
+      }) as unknown as FileSystem.File;
+    const fileSystem = (folderOpen: "ok" | "refused") =>
+      FileSystem.layerNoop({
+        readLink: (path) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "readLink",
+              pathOrDescriptor: path,
+            }),
+          ),
+        makeDirectory: () => Effect.void,
+        makeTempDirectory: () => Effect.succeed("/home/settings.json.abc123"),
+        stat: () => Effect.succeed({ mode: 0o100600 } as unknown as FileSystem.File.Info),
+        chmod: (_path, mode) => Effect.sync(() => void events.push(`chmod ${mode.toString(8)}`)),
+        open: (path) =>
+          path === "/home" && folderOpen === "refused"
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: path,
+                }),
+              )
+            : Effect.succeed(file(path === "/home" ? "folder" : "temp")),
+        rename: () => Effect.sync(() => void events.push("rename")),
+        remove: () => Effect.void,
+      });
+    const save = (folderOpen: "ok" | "refused") =>
+      Effect.exit(
+        writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }).pipe(
+          Effect.provide(Layer.mergeAll(Path.layer, fileSystem(folderOpen))),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        ),
+      );
+
+    assert.deepStrictEqual(yield* save("ok"), Exit.void);
+    assert.deepStrictEqual(events, [
+      "write temp",
+      "chmod 600",
+      "sync temp",
+      "rename",
+      "sync folder",
+    ]);
+    events.length = 0;
+    assert.deepStrictEqual(yield* save("refused"), Exit.void);
+    assert.deepStrictEqual(events, ["write temp", "chmod 600", "sync temp", "rename"]);
   }),
 );
