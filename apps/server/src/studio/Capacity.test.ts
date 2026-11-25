@@ -769,30 +769,44 @@ describe("native session admission", () => {
     ).resolves.toBeUndefined();
     expect(checks).toEqual(["codex:fresh"]);
   });
-  it("reads a cached denial past the probe cache, once a minute per instance", async () => {
-    // A limit lifted by bought credits shows only in a new probe; the cached
-    // one kept refusing every message for five minutes.
-    const now = DateTime.toEpochMillis(DateTime.nowUnsafe()),
-      denied = fundedProvider(now - 1000),
-      allowed = provider("codex", "codex", now);
-    Object.assign(allowed.usageLimits!, {
-      ordinaryUsageAllowed: true,
-      nativeAllowanceObservedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
-    });
-    const checks: string[] = [];
-    const atNow = Clock.clockWith((clock) =>
-      start().pipe(
-        Effect.provideService(Clock.Clock, {
-          ...clock,
-          currentTimeMillis: Effect.succeed(now),
-          currentTimeMillisUnsafe: () => now,
-        }),
-      ),
+  it("probes once a minute for a queue of starts against a denial that holds", async () => {
+    // A limit lifted by bought credits shows only in a new probe, so the first
+    // denied start reads fresh; the starts behind it in the same minute are
+    // refused from that read instead of probing again.
+    const start0 = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    let now = start0;
+    const denied = fundedProvider(start0 - 1000);
+    const probes: string[] = [];
+    const at = (ms: number) =>
+      Effect.sync(() => {
+        now = ms;
+      }).pipe(
+        Effect.andThen(
+          Clock.clockWith((clock) =>
+            start().pipe(
+              Effect.flip,
+              Effect.provideService(Clock.Clock, {
+                ...clock,
+                currentTimeMillis: Effect.sync(() => now),
+                currentTimeMillisUnsafe: () => now,
+              }),
+            ),
+          ),
+        ),
+      );
+    const errors = await run(
+      Effect.all([at(start0), at(start0 + 1000), at(start0 + 30_000), at(start0 + 61_000)]),
+      null,
+      [denied],
+      settings,
+      true,
+      true,
+      [denied],
+      probes,
     );
-    await expect(
-      run(Effect.andThen(atNow, atNow), null, [denied], settings, true, true, [allowed], checks),
-    ).resolves.toBeUndefined();
-    expect(checks).toEqual(["codex:fresh", "codex"]);
+    for (const error of errors) expect(error).toMatchObject({ _tag: "ProviderSetupError" });
+    // Four starts, two minutes: one fresh probe each minute, none in between.
+    expect(probes).toEqual(["codex:fresh", "codex:fresh"]);
   });
   it("admits a Claude Fable start once a fresh read shows its spent weekly lifted", async () => {
     const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
