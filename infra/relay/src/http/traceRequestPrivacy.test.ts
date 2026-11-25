@@ -32,11 +32,25 @@ describe("relay request spans", () => {
     "never record the caller's address or user agent (%s)",
     (path) => {
       const { spans, layer } = recordedSpans();
-      const seen: Array<{ readonly address: string | undefined; readonly agent: unknown }> = [];
+      const seen: Array<{
+        readonly address: string | undefined;
+        readonly agent: unknown;
+        readonly connectingIp: unknown;
+      }> = [];
       const request = HttpServerRequest.fromWeb(
         new Request(`https://relay.test${path}`, {
           method: "POST",
-          headers: { "user-agent": CALLER_AGENT },
+          headers: {
+            "user-agent": CALLER_AGENT,
+            // What Cloudflare and proxies in front of it add about the caller.
+            "cf-connecting-ip": CALLER_ADDRESS,
+            "cf-connecting-ipv6": "2001:db8::9",
+            "cf-pseudo-ipv4": CALLER_ADDRESS,
+            "x-forwarded-for": `${CALLER_ADDRESS}, 198.51.100.7`,
+            "x-real-ip": CALLER_ADDRESS,
+            "true-client-ip": CALLER_ADDRESS,
+            forwarded: `for=${CALLER_ADDRESS};proto=https`,
+          },
         }),
       ).modify({ remoteAddress: Option.some(CALLER_ADDRESS) });
       const route = Effect.gen(function* () {
@@ -44,6 +58,7 @@ describe("relay request spans", () => {
         seen.push({
           address: Option.getOrUndefined(current.remoteAddress),
           agent: current.headers["user-agent"],
+          connectingIp: current.headers["cf-connecting-ip"],
         });
         return HttpServerResponse.empty({ status: 204 });
       });
@@ -60,10 +75,14 @@ describe("relay request spans", () => {
         expect(server!.attributes.has("user_agent.original")).toBe(false);
         for (const span of spans) {
           expect(exported(span)).not.toContain(CALLER_ADDRESS);
+          expect(exported(span)).not.toContain("2001:db8::9");
+          expect(exported(span)).not.toContain("198.51.100.7");
           expect(exported(span)).not.toContain("iPhone");
         }
         // The route itself still gets the caller's real request.
-        expect(seen).toEqual([{ address: CALLER_ADDRESS, agent: CALLER_AGENT }]);
+        expect(seen).toEqual([
+          { address: CALLER_ADDRESS, agent: CALLER_AGENT, connectingIp: CALLER_ADDRESS },
+        ]);
       });
     },
   );

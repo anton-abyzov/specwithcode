@@ -257,6 +257,8 @@ const relayRequestDeadline = <E, R>(
 
 /** Trace context headers in every format the tracer reads (W3C and B3). */
 const SENDER_TRACE_HEADER = /^(traceparent|tracestate|b3|x-b3-.*)$/i;
+const CALLER_IDENTITY_HEADER =
+  /^(user-agent|forwarded|x-forwarded-for|x-real-ip|x-client-ip|x-cluster-client-ip|true-client-ip|fastly-client-ip|cf-connecting-ip(v6)?|cf-pseudo-ipv4)$/i;
 
 export const traceRelayHttpRequest = <E, R>(
   httpEffect: Effect.Effect<
@@ -268,18 +270,16 @@ export const traceRelayHttpRequest = <E, R>(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const isHook = isRelayHookPath(request.url);
-    // The span and the deadline log see a copy of the request without the
-    // caller's address or user agent, which would build a per-user IP history
-    // in the trace store. Hook URLs carry a secret token, so their copy is
-    // redacted too, and a webhook sender's trace context is dropped so it
-    // cannot pick the trace our spans land in. The route gets the original.
+    // The span and the deadline log see a copy of the request without the caller's
+    // address (connection, Cloudflare or proxy headers) or user agent, which would build
+    // a per-user IP history in the trace store. Hook URLs carry a secret token, so their
+    // copy is redacted and a sender's trace context dropped. The route gets the original.
     const spanRequest = request.modify({
       remoteAddress: Option.none(),
       headers: Headers.removeMany(
         request.headers,
         Object.keys(request.headers).filter(
-          (name) =>
-            name.toLowerCase() === "user-agent" || (isHook && SENDER_TRACE_HEADER.test(name)),
+          (name) => CALLER_IDENTITY_HEADER.test(name) || (isHook && SENDER_TRACE_HEADER.test(name)),
         ),
       ),
       ...(isHook ? { url: redactRelayHookUrl(request.url) } : {}),
