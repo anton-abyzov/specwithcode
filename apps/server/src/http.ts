@@ -472,19 +472,35 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([
 // routes. Add paths here instead of providing it again. The query string is
 // ignored, as in routing.
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
-  const queryIndex = request.url.indexOf("?");
-  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  // Signed URLs (webhooks, assets, attachment uploads) carry bearer tokens in
-  // the path, so they never reach a trace.
-  return (
-    UNTRACED_REQUEST_PATHS.has(path) ||
-    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
-  );
+  const path = pathOf(request);
+  return UNTRACED_REQUEST_PATHS.has(path) || isSignedUrlPath(path);
 });
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
+
+const pathOf = (request: HttpServerRequest.HttpServerRequest) => {
+  const queryIndex = request.url.indexOf("?");
+  return queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+};
+
+// Signed URLs (webhooks, assets, attachment uploads) carry bearer tokens in
+// the path itself, where query redaction cannot reach them.
+const isSignedUrlPath = (path: string) =>
+  path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
+  path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
+  path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`);
+
+/**
+ * Leaves signed URLs out of the request log. The logger writes the path of
+ * every request when request logging is on, and a signed path is a credential.
+ */
+export const layerUnloggedSignedRequests = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      isSignedUrlPath(pathOf(request)) ? HttpMiddleware.withLoggerDisabled(httpEffect) : httpEffect,
+    ),
+  { global: true },
+);
 
 export const layerAssetRoute = HttpRouter.add(
   "GET",
