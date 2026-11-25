@@ -7709,4 +7709,30 @@ describe("a whole diff read for the head the reader is pinned to", () => {
       assert.strictEqual(moved._tag, "PullRequestOperationError");
     }),
   );
+
+  it.effect("keeps nothing a push and its revert raced, reading the pin fresh next time", () =>
+    Effect.gen(function* () {
+      // The head moves away and back during the first read, so both head checks see the pin
+      // while the patch itself came from the other commit.
+      let patchHead = NEWER;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequest: () => Effect.succeed({ headSha: HEAD } as never),
+            getDiff: () =>
+              Effect.sync(() => ({ patch: `@@ ${patchHead}`, truncated: false, nextCursor: null })),
+          }),
+        ],
+      });
+      yield* service.diff({ ...reference, headSha: HEAD });
+      patchHead = HEAD;
+      assert.strictEqual(
+        (yield* service.diff({ ...reference, headSha: HEAD })).patch,
+        `@@ ${HEAD}`,
+      );
+    }),
+  );
 });
