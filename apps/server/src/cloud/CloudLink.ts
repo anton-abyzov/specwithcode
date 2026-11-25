@@ -131,7 +131,7 @@ import {
   requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
-import { replayMarkerName } from "./cloudReplayMarkers.ts";
+import { legacyReplayMarkerName, replayMarkerName } from "./cloudReplayMarkers.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -393,6 +393,23 @@ function stringToBytes(value: string): Uint8Array {
 
 /** Records each one-shot marker; false when any already existed, so the request is a replay. */
 export function consumeCloudReplayGuards(input: {
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+  readonly names: ReadonlyArray<string>;
+  /** Markers an earlier build wrote for the same proof: any one present is a replay. */
+  readonly legacyNames?: ReadonlyArray<string | undefined>;
+  readonly value: Uint8Array;
+}) {
+  const legacy = (input.legacyNames ?? []).filter((name) => name !== undefined);
+  return Effect.forEach(legacy, (name) => input.secrets.get(name), {
+    concurrency: legacy.length || 1,
+  }).pipe(
+    Effect.flatMap((found) =>
+      found.some(Option.isSome) ? Effect.succeed(false) : createCloudReplayGuards(input),
+    ),
+  );
+}
+
+function createCloudReplayGuards(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
   readonly value: Uint8Array;
@@ -1719,6 +1736,10 @@ const make = Effect.gen(function* () {
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
+        legacyNames: [
+          legacyReplayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti),
+          legacyReplayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce),
+        ],
         value: stringToBytes(DateTime.formatIso(now)),
       });
       if (!consumedReplayGuards) {
@@ -1825,6 +1846,10 @@ const make = Effect.gen(function* () {
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
+        legacyNames: [
+          legacyReplayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti),
+          legacyReplayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce),
+        ],
         value: stringToBytes(DateTime.formatIso(now)),
       });
       if (!consumedReplayGuards) {
