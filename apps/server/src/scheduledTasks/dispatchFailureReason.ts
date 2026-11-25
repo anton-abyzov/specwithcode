@@ -16,6 +16,12 @@ const MAX_REASON_LENGTH = 500;
  * cause still goes to the server log where the run is reported. An orchestration refusal keeps
  * its reason when the orchestrator gave one as text.
  */
+/** One line of a failure's own message, trimmed and capped, as a task records it. */
+export function shortFailureReason(text: string): string {
+  const firstLine = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  return (firstLine.length > 0 ? firstLine : "The run failed.").slice(0, MAX_REASON_LENGTH);
+}
+
 export function dispatchFailureReason(cause: Cause.Cause<unknown>): string {
   const failure = Cause.squash(cause);
   const text =
@@ -26,6 +32,5 @@ export function dispatchFailureReason(cause: Cause.Cause<unknown>): string {
         : typeof failure === "string"
           ? failure
           : "The run failed.";
-  const firstLine = text.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  return (firstLine.length > 0 ? firstLine : "The run failed.").slice(0, MAX_REASON_LENGTH);
+  return shortFailureReason(text);
 }

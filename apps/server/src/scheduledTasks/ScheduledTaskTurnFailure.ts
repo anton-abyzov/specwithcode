@@ -7,6 +7,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 
+import { shortFailureReason } from "./dispatchFailureReason.ts";
 import { iso, taskError } from "./ScheduledTaskStorage.ts";
 
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
@@ -33,7 +34,7 @@ export const makeRecordTurnFailure = (deps: {
       UPDATE scheduled_tasks
       SET updated_at = ${iso(now)},
           last_run_status = 'failed',
-          last_run_error = ${input.error}
+          last_run_error = ${shortFailureReason(input.error)}
       WHERE task_id = ${input.id}
         AND last_run_status = 'succeeded'
         AND last_run_at <= ${iso(input.requestedAt)}
