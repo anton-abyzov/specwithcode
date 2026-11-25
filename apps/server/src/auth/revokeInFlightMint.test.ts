@@ -168,14 +168,15 @@ it.effect("a request's other mints are refused once a revoke-all passed it", () 
     const inRequest = <A, E>(mint: Effect.Effect<A, E>) =>
       mint.pipe(Effect.provideService(RequestRevocationEpoch, before), Effect.result);
 
-    for (const mint of [
+    const mints: ReadonlyArray<Effect.Effect<unknown, EnvironmentAuth.ServerAuthInternalError>> = [
       auth.createPairingLink({ label: "Device approval" }),
       auth.createPairingLink({
         label: "Fleet invite",
         principal: { kind: "coordinator", environmentId: EnvironmentId.make("coordinator") },
       }),
       auth.issueSession({ label: "Fleet management" }),
-    ] as const) {
+    ];
+    for (const mint of mints) {
       expect((yield* inRequest(mint))._tag).toBe("Failure");
     }
     expect(yield* auth.listPairingLinks()).toEqual([]);
@@ -195,5 +196,5 @@ it.effect("a request's other mints are refused once a revoke-all passed it", () 
     yield* auth
       .issuePairingCredential({ label: "Phone", revocationEpoch: after })
       .pipe(Effect.provideService(RequestRevocationEpoch, after));
-  }).pipe(Effect.provide(layerEnvironmentAuth), Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(layerEnvironmentAuth.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
