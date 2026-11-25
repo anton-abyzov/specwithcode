@@ -1998,6 +1998,45 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("opens only web links from popups a frame in the app window asks for", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const openedExternalUrls: unknown[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        openedExternalUrls,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        const setWindowOpenHandler = fakeWindow.window.webContents
+          .setWindowOpenHandler as unknown as ReturnType<typeof vi.fn>;
+        const handler = setWindowOpenHandler.mock.calls[0]?.[0] as
+          | ((details: { url: string }) => { action: string })
+          | undefined;
+        assert.isFunction(handler);
+        for (const url of [
+          "https://example.com/docs",
+          "http://localhost:3000/",
+          "vscode://vscode-remote/ssh-remote+host/home/me/project",
+          "zed://ssh/host/home/me/project",
+          "file:///etc/passwd",
+        ]) {
+          assert.deepEqual(handler!({ url }), { action: "deny" }, url);
+        }
+        yield* Effect.promise(() => Promise.resolve());
+        // Editors and other applications open over IPC, never from a popup.
+        assert.deepEqual(openedExternalUrls, [
+          "https://example.com/docs",
+          "http://localhost:3000/",
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect(
     "retries opening the real main on activate when a failed post-readiness open left only the splash",
     () =>
