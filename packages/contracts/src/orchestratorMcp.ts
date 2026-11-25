@@ -157,6 +157,8 @@ export type OrchestratorMcpDelegation = typeof OrchestratorMcpDelegation.Type;
 export const OrchestratorMcpOriginHint = Schema.Struct({
   clientLabel: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
   parentThreadId: Schema.optional(ThreadId),
+  /** The starting thread's project, named for a machine that has no copy of it. */
+  projectLabel: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
 }).annotate({
   description:
     "Set by SpecWithCode between machines; agents never pass it. Who on the sending machine started this launch, shown on the new thread.",

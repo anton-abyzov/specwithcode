@@ -5,6 +5,7 @@ import {
   aggregateProjectAttention,
   threadDependencyWait,
   observeProjectThread,
+  reportsToParentAgent,
   subagentQuestionWait,
   type AttentionMember,
 } from "./projectAttention.js";
@@ -88,6 +89,39 @@ describe("project conversation aggregation", () => {
       aggregateProjectAttention({ members: [member], roots: [root], threads: [root, asking] })
         .roots[0]?.actions,
     ).toMatchObject([{ threadId: "review", reason: "input" }]);
+  });
+  it("leaves a helper's report on another machine with the worker that started it", () => {
+    const helperOf = (parent: string) =>
+      thread(`helper-${parent}`, {
+        reportedBlocker: "On win: run gh auth login --hostname github.com.",
+        source: {
+          creationSource: "mcp",
+          pendingRuntimeRequest: null,
+          origin: {
+            kind: "fleet_machine",
+            label: "SpecWithCode",
+            machineLabel: "M5",
+            environmentId: "m5",
+            parentThreadRef: { environmentId: "m5", threadId: parent },
+          },
+        },
+      } as unknown as Partial<EnvironmentThreadShell>);
+    const helper = helperOf("thread:delegated-task:worker");
+    expect(reportsToParentAgent(helper)).toBe(true);
+    expect(classifyProjectActions(observeProjectThread(helper))).toEqual([]);
+    expect(
+      aggregateProjectAttention({ members: [member], roots: [helper], threads: [helper] }),
+    ).toMatchObject({ count: 0 });
+    // A coordinator's own helper reports to the person, like its workers here.
+    const coordinatorHelper = helperOf("project-coordinator:project");
+    expect(reportsToParentAgent(coordinatorHelper)).toBe(false);
+    expect(
+      aggregateProjectAttention({
+        members: [member],
+        roots: [coordinatorHelper],
+        threads: [coordinatorHelper],
+      }),
+    ).toMatchObject({ count: 1 });
   });
   it("keeps a coordinator worker's report blocker waiting on the person", () => {
     const worker = child("worker", "project-coordinator:project", {

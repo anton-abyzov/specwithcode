@@ -146,7 +146,7 @@ import { checkProjectName, renameTargets, type NamedProject } from "../../../stu
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 import {
   asStandaloneChat,
-  requesterProject,
+  chatRequester,
   standaloneChatKeys,
 } from "../../../studio/standaloneChats";
 import { requestThreadMove } from "../../ThreadMoveDialog";
@@ -468,33 +468,31 @@ export default function StudioSidebar() {
     const automated = automatedProjects.find((group) => group.projectKey === activeProjectKey);
     return automated ? { group: automated, archived: false } : null;
   })();
-  // A chat another machine's project thread asked for groups with that project.
+  // A chat another machine's project thread asked for groups with that project, or
+  // under "From <project> on <machine>" while that thread is not loaded here.
   const requestedBy = useCallback(
     (thread: EnvironmentThreadShell) =>
-      isStandaloneChat(thread)
-        ? requesterProject(thread, {
-            thread: (key) => threadByKey.get(key),
-            project: (requester) =>
-              isStandaloneChat(requester)
-                ? undefined
-                : projectByMember.get(`${requester.environmentId}:${requester.projectId}`),
-          })
-        : undefined,
+      chatRequester(thread, {
+        isChat: isStandaloneChat,
+        thread: (key) => threadByKey.get(key),
+        project: (t) => projectByMember.get(`${t.environmentId}:${t.projectId}`),
+      }),
     [isStandaloneChat, projectByMember, threadByKey],
   );
   const chatGroupInput = useMemo(
     () => ({
       now,
       projectLabel: (thread: EnvironmentThreadShell) =>
-        (requestedBy(thread) ?? projectByMember.get(`${thread.environmentId}:${thread.projectId}`))
-          ?.displayName ?? "No project",
+        requestedBy(thread)?.label ??
+        projectByMember.get(`${thread.environmentId}:${thread.projectId}`)?.displayName ??
+        "No project",
       machine: (thread: EnvironmentThreadShell) => {
         const location = locateChat(thread);
         return { id: location.executionMachineId, label: location.label.split(" → ").at(-1)! };
       },
       // Threads a project started open from its project row, not from the chat list.
       isProjectThread: (thread: EnvironmentThreadShell) => {
-        if (requestedBy(thread) !== undefined) return true;
+        if (requestedBy(thread)?.group !== undefined) return true;
         const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
         return isProjectOwnedChat(thread, group, {
           displayedCheckout: group ? displayedCheckouts.get(group.projectKey) : undefined,

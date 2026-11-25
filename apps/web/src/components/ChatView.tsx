@@ -36,7 +36,7 @@ import {
   useHostReach,
   useUnreachableHosts,
 } from "../studio/unreachableHosts";
-import { threadBlocker } from "../studio/projectWorkspaceModel";
+import { threadOwnBlocker } from "../studio/projectWorkspaceModel";
 import {
   machineNickname as machineNicknameNow,
   useMachineNicknames,
@@ -824,6 +824,7 @@ import { NotOnBoardNote, SpecweaveOffer } from "./chat/SpecweaveOffer";
 import { useUnplannedNoticeShown } from "../studio/unplannedNotice";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
+import { HelperChatBlockers } from "./chat/HelperChatBlockers";
 import { ThreadHeaderLine, ThreadProgressDock } from "./chat/ThreadProgressDock";
 import {
   LinkIncrementDialogHost,
@@ -10327,8 +10328,9 @@ export default function ChatView(props: ChatViewProps) {
     isThisMachineCatchingUp:
       activeEnvironmentIsThisMachine && isThisMachineCatchingUp(activeEnvironmentConnectionPhase),
   });
-  // The same rule that files the thread under Blocked, so the two never disagree.
-  const activeThreadBlocker = activeThreadShell ? threadBlocker(activeThreadShell) : null;
+  // The same rule that files the thread under Blocked, so the two never disagree; a
+  // helper another machine's worker started still shows what it waits on here.
+  const activeThreadBlocker = activeThreadShell ? threadOwnBlocker(activeThreadShell) : null;
   const {
     claudeShip,
     acknowledgeActiveThreadWoke,
@@ -15981,6 +15983,7 @@ export default function ChatView(props: ChatViewProps) {
                   ) : null}
                 </ThreadProgressDock>
               ) : null}
+              <HelperChatBlockers thread={activeThreadShell ?? null} />
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">

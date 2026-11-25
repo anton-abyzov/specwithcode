@@ -36,17 +36,34 @@ const COORDINATOR_THREAD_PREFIX = "project-coordinator:";
  * whose report is its parent's tool result, or a delegate_task child of a
  * worker, whose report is delivered to that worker. A coordinator's workers
  * report to the person (the coordinator never repeats their results), so their
- * blockers still count.
+ * blockers still count. A helper another machine's worker started here reports
+ * back to that worker too: its blocker is the worker's to relay.
  */
 export const reportsToParentAgent = (thread: {
   readonly lineage?: EnvironmentThreadShell["lineage"] | undefined;
-  readonly source?: Pick<EnvironmentThreadShell["source"], "creationSource"> | undefined;
+  readonly source?:
+    | (Pick<EnvironmentThreadShell["source"], "creationSource"> & {
+        readonly origin?: EnvironmentThreadShell["source"]["origin"];
+      })
+    | undefined;
 }): boolean => {
+  if (helperReportsToWorker(thread.source?.origin)) return true;
   if (thread.lineage?.relationshipToParent !== "subagent") return false;
   if (thread.source?.creationSource === "provider") return true;
   const parent = thread.lineage.parentThreadId;
   return typeof parent === "string" && !parent.startsWith(COORDINATOR_THREAD_PREFIX);
 };
+/**
+ * Whether a thread another machine started reports to an agent there: its
+ * origin names a starting thread that is not a project's coordinator.
+ */
+export function helperReportsToWorker(
+  origin: EnvironmentThreadShell["source"]["origin"] | undefined,
+): boolean {
+  const parent = origin?.kind === "fleet_machine" ? origin.parentThreadRef?.threadId : undefined;
+  return typeof parent === "string" && !parent.startsWith(COORDINATOR_THREAD_PREFIX);
+}
+
 /** Accepts a presented thread or a wire shell, whose dates are not yet strings. */
 type BackgroundWaitInput = {
   readonly archivedAt?: unknown;

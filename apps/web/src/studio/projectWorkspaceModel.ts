@@ -1,5 +1,6 @@
 import { classifyProjectActions } from "@specweave-studio/shared/projectAttention";
 import {
+  helperReportsToWorker,
   observeProjectThread,
   reportsToParentAgent,
   threadDependencyWait,
@@ -44,6 +45,21 @@ export function threadBlocker(thread: EnvironmentThreadShell): string | null {
   if (!thread.reportedBlocker || thread.archivedAt !== null) return null;
   if (reportsToParentAgent(thread) || threadDependencyWait(thread)) return null;
   if (thread.settledOverride === "settled" || threadRuntimeIsActive(thread.runtime)) return null;
+  return thread.reportedBlocker;
+}
+
+/**
+ * The blocker a thread's own page shows. Same as `threadBlocker`, except that a
+ * helper another machine's worker started still shows what it waits on here,
+ * although that worker relays it and lists do not count it.
+ */
+export function threadOwnBlocker(thread: EnvironmentThreadShell): string | null {
+  const blocker = threadBlocker(thread);
+  if (blocker !== null || !helperReportsToWorker(thread.source.origin)) return blocker;
+  if (!thread.reportedBlocker || thread.archivedAt !== null) return null;
+  if (thread.settledOverride === "settled" || threadRuntimeIsActive(thread.runtime)) return null;
+  if (thread.lineage?.relationshipToParent === "subagent") return null;
+  if (threadDependencyWait(thread) !== null) return null;
   return thread.reportedBlocker;
 }
 
