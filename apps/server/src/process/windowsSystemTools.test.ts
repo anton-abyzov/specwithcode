@@ -32,10 +32,18 @@ describe("windowsSystemTools", () => {
     "cloud/runtimeVersionRetention.ts",
     "cloud/MachineHardwareIdentity.ts",
     "cli/uninstall.ts",
+    "fleet/folderTransfer/git.ts",
+    "fleet/folderTransfer/lanInterfaces.ts",
+    "fleet/folderTransfer/confinement.ts",
+    "provider/acp/AcpSessionRuntime.ts",
+    "orchestration-v2/Adapters/PiRpc.ts",
+    "preview/PortScanner.ts",
+    "terminal/Manager.ts",
+    "serverPath.ts",
   ])("%s starts no Windows system tool by bare name", (file) => {
     const source = NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8");
     expect(source).not.toMatch(
-      /(?:spawn|run|execText|runProbe|probe|command:)\s*\(?\s*"(?:powershell|taskkill|schtasks|reg|cmd|ping)(?:\.exe)?"/i,
+      /(?:spawn|run|make|execText|runProbe|probe|command:)\s*\(?\s*"(?:powershell|taskkill|schtasks|reg|cmd|ping|icacls)(?:\.exe)?"\s*[,)]/i,
     );
   });
 });
