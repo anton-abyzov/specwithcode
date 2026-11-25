@@ -44,9 +44,6 @@ export const CODEX_TEXT_GENERATION_FEATURES_OFF = [...TEXT_GENERATION_OFF_FEATUR
   (feature) => ["--config", `features.${feature}=false`],
 );
 
-/** A `--config` value that declares or changes an MCP server. */
-const isMcpServerConfig = (value: string): boolean => /^\s*mcp_servers\b/.test(value);
-
 export const codexExecLaunchArgs = (launchArgs?: string) => {
   const args = codexLaunchArgv(launchArgs);
   const execArgs: Array<string> = [];
@@ -55,18 +52,12 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
     const arg = args[index];
     if (arg === undefined) continue;
 
-    if (arg.startsWith("--config=") || arg.startsWith("-c=")) {
-      // Text generation never adds MCP servers, whatever the launch args say.
-      if (!isMcpServerConfig(arg.slice(arg.indexOf("=") + 1))) execArgs.push(arg);
-    } else if (arg === "--strict-config") {
+    if (arg === "--strict-config" || arg.startsWith("--config=") || arg.startsWith("-c=")) {
       execArgs.push(arg);
     } else if (arg === "--config" || arg === "-c" || arg === "--enable" || arg === "--disable") {
       const value = args[index + 1];
       if (value !== undefined && !value.startsWith("-")) {
-        if (
-          !(arg === "--enable" && TEXT_GENERATION_OFF_FEATURES.has(value)) &&
-          !((arg === "--config" || arg === "-c") && isMcpServerConfig(value))
-        ) {
+        if (!(arg === "--enable" && TEXT_GENERATION_OFF_FEATURES.has(value))) {
           execArgs.push(arg, value);
         }
         index++;

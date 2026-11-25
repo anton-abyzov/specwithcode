@@ -66,12 +66,18 @@ describe("codexExecLaunchArgs", () => {
     ]);
   });
 
-  it("drops launch args that add or change an MCP server, in either form", () => {
+  it("passes MCP server overrides through unchanged, so a server the user turned off stays off", () => {
     NodeAssert.deepStrictEqual(
       codexExecLaunchArgs(
-        "-c mcp_servers.planted.command=evil --config=mcp_servers.x.url=https://x.invalid -c=mcp_servers={} --config model_verbosity=low",
+        "-c mcp_servers.docs.enabled=false --config=mcp_servers.x.enabled=false --config model_verbosity=low",
       ),
-      ["--config", "model_verbosity=low"],
+      [
+        "-c",
+        "mcp_servers.docs.enabled=false",
+        "--config=mcp_servers.x.enabled=false",
+        "--config",
+        "model_verbosity=low",
+      ],
     );
   });
 });
