@@ -499,7 +499,9 @@ const cases: ReadonlyArray<GrantCase> = [
     terminalAllowedAfterTurn: false,
   },
   {
-    label: "shared ID, reject listed first: an approval",
+    // An ID a reject also uses could be read as a refusal or an approval, so
+    // the request is cancelled instead.
+    label: "shared ID, reject listed first: cancelled",
     toolKind: "execute",
     decision: "accept",
     offered: [
@@ -507,7 +509,7 @@ const cases: ReadonlyArray<GrantCase> = [
       { optionId: "shared", name: "Allow once", kind: "allow_once" },
     ],
     cardKind: "command",
-    sentOptionId: "shared",
+    sentOptionId: null,
     terminalAllowed: false,
     terminalAllowedAfterTurn: false,
   },
