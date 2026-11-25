@@ -139,6 +139,27 @@ const PRIVATE_FAVICON_SUFFIXES = [
   ".test",
 ];
 
+/**
+ * Labels that name an internal zone. Under a public domain (`build.corp.example.com`) they
+ * mark split DNS, answered only inside one network. The last two labels are left out, so a
+ * registrable domain spelled the same (`corp.com`) stays public.
+ */
+const PRIVATE_ZONE_LABELS = new Set([
+  "corp",
+  "home",
+  "internal",
+  "intranet",
+  "lan",
+  "localdomain",
+  "private",
+]);
+
+const hasPrivateZoneLabel = (host: string): boolean =>
+  host
+    .split(".")
+    .slice(0, -2)
+    .some((label) => PRIVATE_ZONE_LABELS.has(label));
+
 /** Whether a hostname is eligible to be disclosed to a public favicon provider. */
 export const isPublicFaviconHost = (host: string): boolean => {
   // A single trailing dot is a valid absolute DNS name. Repeated trailing
@@ -155,6 +176,7 @@ export const isPublicFaviconHost = (host: string): boolean => {
   }
   const ipv4 = parseIpv4Address(normalized) ?? parseIpv4MappedIpv6Address(normalized);
   if (ipv4) return !isSpecialPurposeIpv4Address(ipv4);
+  if (!normalized.includes(":") && hasPrivateZoneLabel(normalized)) return false;
   if (!normalized.includes(":")) return true;
   const ipv6 = parseIpv6Address(normalized);
   if (!ipv6) return false;

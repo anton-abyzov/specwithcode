@@ -58,7 +58,34 @@ describe("isPublicFaviconHost", () => {
     ]) {
       expect(isPublicFaviconHost(host), host).toBe(false);
     }
-    for (const host of ["lan.example.co.uk", "corp.com", "private.dev", "home.page"]) {
+    // A registrable domain spelled like a private name is public.
+    for (const host of ["lanes.example.co.uk", "corp.com", "private.dev", "home.page"]) {
+      expect(isPublicFaviconHost(host), host).toBe(true);
+    }
+  });
+
+  it("keeps split-DNS names under a public suffix away from the favicon service", () => {
+    // A private label anywhere in the name marks an internal zone served only inside a network.
+    for (const host of [
+      "build.corp.example.com",
+      "jenkins.internal.example.org",
+      "wiki.intranet.example.net",
+      "nas.lan.example.com",
+      "home.example",
+      "db.private.example.io",
+      "box.localdomain.example.com",
+      "lan.example.co.uk",
+    ]) {
+      expect(isPublicFaviconHost(host), host).toBe(false);
+    }
+    for (const host of [
+      "example.com",
+      "homedepot.com",
+      "corporate.example.com",
+      "internals.example.com",
+      "lanes.example.com",
+      "privateer.example.com",
+    ]) {
       expect(isPublicFaviconHost(host), host).toBe(true);
     }
   });
