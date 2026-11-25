@@ -13,6 +13,7 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   ProviderInstanceId,
+  type ServerProvider,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -25,9 +26,11 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/model";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as CrashReporter from "../telemetry/CrashReporter.ts";
 import * as EventSink from "./EventSink.ts";
@@ -154,10 +157,51 @@ export const layerFailureReports = Layer.effect(
   }),
 );
 
+/**
+ * Drivers whose model lists come from the vendor. The others (OpenCode, Pi,
+ * ACP Registry agents, local model servers) list the person's own
+ * configuration: local tags, file paths or gateway names.
+ */
+const VENDOR_MODEL_LIST_DRIVERS: ReadonlySet<string> = new Set([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "antigravity",
+  "muse",
+]);
+
+/**
+ * The model name analytics and error reports may carry. A model the vendor
+ * itself lists for that instance (by slug or alias) reports its slug. Any
+ * other name can identify a person, a deployment or a file on disk, so it
+ * reports only the driver, as `custom:<driver>`.
+ */
+export function analyticsModelLabel(
+  providers: ReadonlyArray<ServerProvider>,
+  input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: string;
+    readonly model: string;
+  },
+): string {
+  const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
+  if (provider !== undefined && VENDOR_MODEL_LIST_DRIVERS.has(provider.driver)) {
+    const listed = provider.models.find(
+      (entry) =>
+        !entry.isCustom &&
+        (entry.slug === input.model || entry.aliases?.includes(input.model) === true),
+    );
+    if (listed !== undefined) return listed.slug;
+  }
+  return `custom:${input.driver}`;
+}
+
 function providerTurnAnalyticsProperties(input: {
   readonly driver: ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;
+  readonly modelLabel?: string;
 }): Readonly<Record<string, unknown>> {
   const usage = input.providerTurn.turnTokenUsage;
   const modelSelection = input.context?.modelSelection;
@@ -180,7 +224,9 @@ function providerTurnAnalyticsProperties(input: {
       : { cacheCreationTokens: usage.cacheCreationTokens }),
     ...(usage?.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
     ...(usage?.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }),
-    ...(modelSelection ? { model: modelSelection.model, mixedModels: false } : {}),
+    ...(modelSelection && input.modelLabel !== undefined
+      ? { model: input.modelLabel, mixedModels: false }
+      : {}),
     ...(effort ? { effort } : {}),
     ...(input.context?.runtimeMode ? { runtimeMode: input.context.runtimeMode } : {}),
     ...(input.context?.interactionMode ? { interactionMode: input.context.interactionMode } : {}),
@@ -344,6 +390,21 @@ export const layer: Layer.Layer<
     const completedTurnAnalytics = new Set<string>();
     const failureReports = yield* ProviderTurnFailureReports;
     const reportedTurnFailures = new Set<string>();
+    // Optional so services and tests without a provider registry still run;
+    // without one every model reports as custom.
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    const labelModel = (input: ProviderEventIngestInput) =>
+      Effect.gen(function* () {
+        const modelSelection = input.analyticsContext?.modelSelection;
+        if (modelSelection === undefined) return undefined;
+        const providers =
+          Option.isSome(providerRegistry) ? yield* providerRegistry.value.getProviders : [];
+        return analyticsModelLabel(providers, {
+          instanceId: modelSelection.instanceId,
+          driver: input.event.driver,
+          model: modelSelection.model,
+        });
+      });
 
     const makeDomainEvent = (
       input: ProviderEventIngestInput,
@@ -794,7 +855,7 @@ export const layer: Layer.Layer<
                 const oldest = reportedTurnFailures.values().next().value;
                 if (oldest !== undefined) reportedTurnFailures.delete(oldest);
               }
-              const model = input.analyticsContext?.modelSelection.model;
+              const model = yield* labelModel(input);
               yield* failureReports.report({
                 driver: event.driver,
                 failure: event.failure,
@@ -821,10 +882,12 @@ export const layer: Layer.Layer<
                 const oldest = completedTurnAnalytics.values().next().value;
                 if (oldest !== undefined) completedTurnAnalytics.delete(oldest);
               }
+              const modelLabel = yield* labelModel(input);
               yield* analytics.record(
                 providerTurnAnalyticsProperties({
                   driver: input.event.driver,
                   providerTurn,
+                  ...(modelLabel === undefined ? {} : { modelLabel }),
                   ...(input.analyticsContext === undefined
                     ? {}
                     : { context: input.analyticsContext }),

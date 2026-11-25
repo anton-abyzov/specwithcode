@@ -20,6 +20,7 @@ import {
   RunId,
   RuntimeRequestId,
   TurnItemId,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -30,6 +31,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -139,14 +141,43 @@ function threadCreatedEvent(
 
 const layer = it.layer(layerTest);
 
+const codexProvider: ServerProvider = {
+  instanceId: modelSelection.instanceId,
+  driver: CODEX_DRIVER,
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-11-24T00:00:00.000Z",
+  models: [
+    { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null },
+    { slug: "my-gateway-deployment", name: "Gateway", isCustom: true, capabilities: null },
+  ],
+  slashCommands: [],
+  skills: [],
+};
+const openCodeProvider: ServerProvider = {
+  ...codexProvider,
+  instanceId: ProviderInstanceId.make("opencode"),
+  driver: ProviderDriverKind.make("opencode"),
+  models: [{ slug: "/Users/x/models/foo.gguf", name: "foo", isCustom: false, capabilities: null }],
+};
+const layerProviderRegistry = Layer.mock(ProviderRegistry.ProviderRegistry)({
+  getProviders: Effect.succeed([codexProvider, openCodeProvider]),
+});
+
 it.effect("records accepted billed turn usage once without billing the context window", () => {
   const recorded: Array<Readonly<Record<string, unknown>>> = [];
-  const layerAnalytics = Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
-    record: (properties: Readonly<Record<string, unknown>>) =>
-      Effect.sync(() => {
-        recorded.push(properties);
-      }),
-  });
+  const layerAnalytics = Layer.merge(
+    Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+      record: (properties: Readonly<Record<string, unknown>>) =>
+        Effect.sync(() => {
+          recorded.push(properties);
+        }),
+    }),
+    layerProviderRegistry,
+  );
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
     const eventSink = yield* EventSink.EventSinkV2;
@@ -236,6 +267,79 @@ it.effect("records accepted billed turn usage once without billing the context w
       interactionMode: "default",
       durationMs: 120,
     });
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
+});
+
+it.effect.each([
+  {
+    label: "a local file model on a driver that lists the user's own models",
+    driver: "opencode",
+    selection: { instanceId: ProviderInstanceId.make("opencode"), model: "/Users/x/models/foo.gguf" },
+    expected: "custom:opencode",
+  },
+  {
+    label: "a custom model on a vendor driver",
+    driver: "codex",
+    selection: { instanceId: modelSelection.instanceId, model: "my-gateway-deployment" },
+    expected: "custom:codex",
+  },
+  {
+    label: "a model the vendor never listed",
+    driver: "codex",
+    selection: { instanceId: modelSelection.instanceId, model: "acme-internal-7b" },
+    expected: "custom:codex",
+  },
+])("reports $label to analytics as $expected", ({ driver, selection, expected }) => {
+  const recorded: Array<Readonly<Record<string, unknown>>> = [];
+  const layerAnalytics = Layer.merge(
+    Layer.succeed(ProviderEventIngestor.ProviderTurnAnalytics, {
+      record: (properties: Readonly<Record<string, unknown>>) =>
+        Effect.sync(() => {
+          recorded.push(properties);
+        }),
+    }),
+    layerProviderRegistry,
+  );
+  const driverKind = ProviderDriverKind.make(driver);
+  return Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const threadEvent = yield* threadCreatedEvent(now);
+    yield* eventSink.write({ events: [threadEvent] });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: selection.instanceId,
+      threadId: threadEvent.threadId,
+    });
+    const providerThreadId = idAllocator.derive.providerThread({
+      driver: driverKind,
+      nativeThreadId: "custom-model-thread",
+    });
+    yield* ingestor.ingestNormalized({
+      providerSessionId,
+      providerInstanceId: selection.instanceId,
+      threadId: threadEvent.threadId,
+      analyticsContext: { modelSelection: selection },
+      event: {
+        type: "provider_turn.updated" as const,
+        driver: driverKind,
+        providerTurn: {
+          id: idAllocator.derive.providerTurn({ driver: driverKind, nativeTurnId: "custom-turn" }),
+          providerThreadId,
+          nodeId: NodeId.make("node:custom-turn"),
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+        },
+      },
+    });
+    assert.lengthOf(recorded, 1);
+    assert.equal(recorded[0]?.model, expected);
+    assert.notInclude(JSON.stringify(recorded[0]), selection.model);
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
 
