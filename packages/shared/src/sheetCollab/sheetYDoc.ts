@@ -233,12 +233,6 @@ export function writeSheetChange(
   before: SheetSnapshot | null,
   after: SheetDocument,
   origin: unknown,
-  /**
-   * The id to give each tab of `after` that is new, by its place. An edit made
-   * again on another document names the ids its tabs had, so the same edit made
-   * again by two writers adds each tab once.
-   */
-  newTabIds?: ReadonlyArray<string | undefined>,
 ): void {
   const { sheet, order, tabs } = roots(doc);
   doc.transact(() => {
@@ -271,21 +265,7 @@ export function writeSheetChange(
         if (target instanceof Y.Map) writeTab(target, before!.document.tabs[match], tab);
         return;
       }
-      const named = newTabIds?.[index];
-      const held = named === undefined || used.has(named) ? undefined : tabs.get(named);
-      if (named !== undefined && held instanceof Y.Map) {
-        // Another writer made the same edit again first: the tab is there, and takes this one's values.
-        used.add(named);
-        afterIds.push(named);
-        added.add(named);
-        writeTab(held, undefined, tab);
-        return;
-      }
-      const id =
-        named !== undefined && !used.has(named) && !removed.has(named)
-          ? named
-          : newTabId(doc, tabs, used);
-      used.add(id);
+      const id = newTabId(doc, tabs, used);
       const target = new Y.Map<unknown>();
       tabs.set(id, target);
       writeTab(target, undefined, tab);
@@ -304,7 +284,7 @@ export function writeSheetChange(
       return;
     }
     afterIds.forEach((id, index) => {
-      if (!added.has(id) || order.toArray().includes(id)) return;
+      if (!added.has(id)) return;
       const previous = index === 0 ? null : afterIds[index - 1]!;
       const at = previous === null ? -1 : order.toArray().indexOf(previous);
       order.insert(previous === null ? 0 : at < 0 ? order.length : at + 1, [id]);

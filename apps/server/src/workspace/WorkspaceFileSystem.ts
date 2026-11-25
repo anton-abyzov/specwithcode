@@ -137,6 +137,8 @@ export class WorkspaceFileSystem extends Context.Service<
      */
     readonly writeFile: (
       input: ProjectWriteFileInput,
+      /** `destination`: the real file the caller means; a path that leads elsewhere now is not written. */
+      options?: { readonly destination?: string },
     ) => Effect.Effect<
       ProjectWriteFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
@@ -697,7 +699,7 @@ export const make = Effect.gen(function* () {
 
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
     "WorkspaceFileSystem.writeFile",
-  )(function* (input) {
+  )(function* (input, options) {
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
@@ -724,6 +726,18 @@ export const make = Effect.gen(function* () {
       ))
     ) {
       return yield* sensitivePathError(input, target.absolutePath, "write-file");
+    }
+    // The caller holds one file open (a live session): a link on the way that was pointed at
+    // another file since is caught here, on the destination this write goes to.
+    if (options?.destination !== undefined && options.destination !== destination) {
+      return yield* new WorkspaceFileSystemOperationError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: target.absolutePath,
+        operationPath: destination,
+        operation: "open",
+        cause: Object.assign(new Error("The path now leads to another file."), { code: "EXDEV" }),
+      });
     }
     const checkedStat = yield* Effect.promise(
       () =>

@@ -92,8 +92,6 @@ export const DocumentSessionEvent = Schema.Union([
     activity: Schema.Array(DocumentSessionActivity),
     /** Why what merged is not in the file yet; left out when the file is current. */
     unsaved: Schema.optionalKey(bounded(400)),
-    /** With `unsaved`: the merge state the file does hold, so what is beyond it is told apart. */
-    saved: Schema.optionalKey(update),
   }),
   Schema.Struct({
     type: Schema.Literal("update"),

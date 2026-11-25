@@ -78,6 +78,7 @@ import {
   readSheetFileText,
   readSheetSidecar,
   removeSheetSidecar,
+  sheetSidecarHoldsUnsaved,
   sheetFileText,
   sheetSidecarLine,
   sheetSidecarMark,
@@ -98,6 +99,8 @@ const AGENT_LINGER_MS = 4_000;
 const FLUSH_RETRY_MS = 5000;
 const UNSAVED_DETAIL =
   "The sheet could not be saved to its file. Your edits are kept while it stays open, and saving is tried again.";
+const NOT_KEPT =
+  "The sheet cannot be saved on its machine right now, so the change was not made. Try again.";
 const WRITE_ATTEMPTS = 3;
 
 const AGENT_ORIGIN = "agent";
@@ -117,7 +120,8 @@ interface Session {
   readonly relativePath: string;
   readonly absolutePath: string;
   readonly sidecarPath: string;
-  readonly doc: SheetYDoc;
+  /** Replaced by the copy a change was tried on, once that change is taken. */
+  doc: SheetYDoc;
   readonly epoch: string;
   readonly lock: Semaphore.Semaphore;
   readonly subscribers: Map<string, Subscriber>;
@@ -132,6 +136,8 @@ interface Session {
   dirty: boolean;
   /** Merged updates the sidecar does not hold yet. */
   pending: Uint8Array[];
+  /** The log beside the file holds unsaved changes this session could not take in. */
+  unmerged: boolean;
   sidecarLines: number;
   sidecarBytes: number;
   activity: DocumentSessionActivity[];
@@ -434,12 +440,15 @@ const make = Effect.gen(function* () {
     const renamed = NodePath.join(NodePath.dirname(session.relativePath), name);
     if (!(yield* bound(session, renamed))) return "kept" as const;
     const written = yield* files
-      .writeFile({
-        cwd: session.cwd,
-        relativePath: renamed,
-        contents: next.text,
-        expectedRevision: session.fileRevision,
-      })
+      .writeFile(
+        {
+          cwd: session.cwd,
+          relativePath: renamed,
+          contents: next.text,
+          expectedRevision: session.fileRevision,
+        },
+        { destination: NodePath.join(folder, name) },
+      )
       .pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
@@ -461,7 +470,7 @@ const make = Effect.gen(function* () {
   const writeLog: (session: Session) => Effect.Effect<boolean> = Effect.fn(
     "DocumentSession.writeLog",
   )(function* (session: Session) {
-    if (session.sidecarLines === 0 && !session.edited) {
+    if (session.sidecarLines === 0 && !session.edited && !session.unmerged) {
       // Nothing merged, nothing to keep: opening a sheet leaves no trace beside it.
       session.pending = [];
       return true;
@@ -473,6 +482,15 @@ const make = Effect.gen(function* () {
       session.sidecarLines + session.pending.length > SHEET_SIDECAR_MAX_LINES ||
       session.sidecarBytes > SHEET_SIDECAR_MAX_BYTES;
     const whole = session.sidecarLines === 0 || (clean && over);
+    if (session.unmerged) {
+      // The log found here holds changes that could not be brought together with the file.
+      // It is put aside under another name before a new one takes its place.
+      session.counter += 1;
+      const aside = `${session.sidecarPath}.unmerged-${session.epoch}-${session.counter}`;
+      if (!(yield* Effect.promise(() => moveSheetSidecar(session.sidecarPath, aside))))
+        return false;
+      session.unmerged = false;
+    }
     if (whole || (over && session.base !== null)) {
       // The whole state: with the file current, one update and its mark; with the file
       // behind, the state it has, its mark, and everything since as one update.
@@ -564,6 +582,12 @@ const make = Effect.gen(function* () {
       if (read === null || !read.ok) return;
       session.fileStat = exists;
       if (read.file.revision === session.fileRevision) return;
+      // Tried on a copy first. Where the file's change and what merged here do not fit in one
+      // sheet (one tab too many), neither is given up: the file stays as it is, the edits stay
+      // in the session and its log, and the windows are told the sheet is not saved.
+      const trial = cloneSheetYDoc(session.doc);
+      writeSheetChange(trial, session.saved, read.file.document, FILE_ORIGIN);
+      if (!sheetFileText(readSheetYDoc(trial, session.saved)).ok) return;
       const before = session.current;
       const updates: Uint8Array[] = [];
       const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
@@ -612,12 +636,16 @@ const make = Effect.gen(function* () {
           return false;
         }
         const written = yield* files
-          .writeFile({
-            cwd: session.cwd,
-            relativePath: session.relativePath,
-            contents: next.text,
-            expectedRevision: session.fileRevision,
-          })
+          .writeFile(
+            {
+              cwd: session.cwd,
+              relativePath: session.relativePath,
+              contents: next.text,
+              expectedRevision: session.fileRevision,
+            },
+            // Checked again by the writer, on the file it is about to write.
+            { destination: session.absolutePath },
+          )
           .pipe(
             Effect.as("written" as const),
             Effect.catch((cause) =>
@@ -641,6 +669,41 @@ const make = Effect.gen(function* () {
     }
     yield* writeLog(session);
     return !session.dirty;
+  });
+
+  /** What a change is about to replace, so one that can be kept nowhere is taken back. */
+  const hold = (session: Session) => ({
+    doc: session.doc,
+    current: session.current,
+    dirty: session.dirty,
+    edited: session.edited,
+    pending: session.pending.length,
+    revision: session.fileRevision,
+  });
+
+  /**
+   * Put a change that just merged into the log, or else the file, before its
+   * writer is answered. False when neither took it: the change is taken back
+   * (nobody else has seen it yet) and its writer is told it was not made, so a
+   * change that was answered as merged is always one a restart finds again.
+   */
+  const keep = Effect.fn("DocumentSession.keep")(function* (
+    session: Session,
+    held: ReturnType<typeof hold>,
+  ) {
+    if ((yield* writeLog(session)) || (yield* flush(session))) return true;
+    if (session.closed) return false;
+    if (session.fileRevision === held.revision) {
+      session.doc = held.doc;
+      session.current = held.current;
+      session.dirty = held.dirty;
+      session.edited = held.edited;
+      session.pending.length = held.pending;
+    } else {
+      // The file's own change merged on top meanwhile: there is no going back to before.
+      yield* endSession(session, NOT_KEPT);
+    }
+    return false;
   });
 
   const locked = <A, E>(session: Session, effect: Effect.Effect<A, E>) =>
@@ -733,6 +796,14 @@ const make = Effect.gen(function* () {
     // Everything beside the file (its sidecar, the watch) uses the one resolved name, so a
     // folder swapped for a link later cannot point them somewhere else.
     const absolutePath = key;
+    // The file is read and written by its resolved name too, where that is inside the folder:
+    // a link in the path it was opened by, pointed elsewhere later, is then not on the way.
+    const folder = yield* Effect.promise(() => NodeFSP.realpath(target.cwd).catch(() => null));
+    const inside = folder === null ? null : NodePath.relative(folder, absolutePath);
+    const resolved =
+      folder !== null && inside !== null && !inside.startsWith("..") && !NodePath.isAbsolute(inside)
+        ? { cwd: folder, relativePath: inside }
+        : { cwd: target.cwd, relativePath: target.relativePath };
     // A sheet that is already open is joined as it stands, even while its file cannot be parsed.
     const existing = sessions.get(key);
     if (existing !== undefined && !existing.closed) return existing;
@@ -756,8 +827,8 @@ const make = Effect.gen(function* () {
     );
     const session: Session = {
       key,
-      cwd: target.cwd,
-      relativePath: target.relativePath,
+      cwd: resolved.cwd,
+      relativePath: resolved.relativePath,
       absolutePath,
       sidecarPath,
       doc: loaded.doc,
@@ -781,6 +852,7 @@ const make = Effect.gen(function* () {
       marked: loaded.marked,
       base: loaded.base,
       edited: false,
+      unmerged: !loaded.restored && sheetSidecarHoldsUnsaved(sidecarText),
       authorized: false,
       agentWrites: new Map(),
       watcher: null,
@@ -853,9 +925,6 @@ const make = Effect.gen(function* () {
                 participants: participantsOf(session),
                 activity: session.activity,
                 ...(session.unsaved === null ? {} : { unsaved: session.unsaved }),
-                ...(session.unsaved === null || session.base === null
-                  ? {}
-                  : { saved: sheetUpdateToBase64(session.base.state) }),
               });
               send(session, { type: "presence", participants: participantsOf(session) }, queue);
               if (access === "edit") {
@@ -936,15 +1005,17 @@ const make = Effect.gen(function* () {
           rememberSaved(session);
           // The log starts from the sheet as the file has it, so the change below is told apart from it.
           if (session.sidecarLines === 0) yield* writeLog(session);
-          applySheetUpdate(session.doc, bytes, WINDOW_ORIGIN);
+          const held = hold(session);
+          // The copy the change was tried on becomes the document, so it can be taken back.
+          session.doc = trial;
           session.current = { document: checked.document, tabIds: trialSnapshot.tabIds };
           canonicalTexts.set(checked.document, checked.text);
           session.pending.push(bytes);
           session.dirty = checked.text !== canonicalText(session.saved.document);
           // In the log before the window is answered: a server that stops now still has it.
           // Where the log cannot be written, the file is, before the answer; and where that
-          // fails too, the windows are told the sheet is not saved.
-          if (!(yield* writeLog(session))) yield* save(session);
+          // fails too, the change is not made and its window is told.
+          if (!(yield* keep(session, held))) return yield* refuse("refused", NOT_KEPT);
           const { id, color } = subscriber.participant;
           const entry = yield* record(
             session,
@@ -1084,11 +1155,29 @@ const make = Effect.gen(function* () {
             session.edited = true;
             yield* writeLog(session);
           }
+          // Written on a copy that then becomes the document, so the write can be taken back.
+          const held = hold(session);
+          const trial = cloneSheetYDoc(session.doc);
           const updates: Uint8Array[] = [];
-          const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
-          writeSheetChange(session.doc, before, checked.document, AGENT_ORIGIN);
+          const stop = onSheetUpdate(trial, (update) => updates.push(update));
+          writeSheetChange(trial, before, checked.document, AGENT_ORIGIN);
           stop();
+          session.doc = trial;
           session.current = readCurrent(session);
+          if (updates.length > 0) {
+            session.pending.push(...updates);
+            const text = sheetFileText(session.current);
+            session.dirty = !text.ok || text.text !== canonicalText(session.saved.document);
+            session.edited = true;
+            // Kept before anyone sees it, as a window's change is.
+            if (!(yield* keep(session, held))) {
+              return yield* new ProjectLibraryError({
+                projectId: input.projectId,
+                code: "operation_failed",
+                detail: NOT_KEPT,
+              });
+            }
+          }
 
           // Where the agent wrote, in the sheet as it reads now: a tab it added has its id only now.
           const written = firstWritten(input.sheet);
@@ -1118,11 +1207,6 @@ const make = Effect.gen(function* () {
           sendPresence(session);
 
           if (updates.length > 0) {
-            session.pending.push(...updates);
-            const text = sheetFileText(session.current);
-            session.dirty = !text.ok || text.text !== canonicalText(session.saved.document);
-            session.edited = true;
-            yield* writeLog(session);
             const entry = yield* record(
               session,
               {

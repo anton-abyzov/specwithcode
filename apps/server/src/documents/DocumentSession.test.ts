@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - The fixture sheet is written and read back with node:fs.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -10,6 +11,7 @@ import {
   ProjectId,
 } from "@specweave-studio/contracts";
 import {
+  SHEET_LIMITS,
   type SheetDocument,
   serializeSheetDocument,
   setCells,
@@ -650,58 +652,135 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
       }),
     );
 
-    it.effect("saves nothing through a link that was pointed at another sheet", () =>
+    it.effect(
+      "saves to the sheet it opened when the link it was opened by is pointed elsewhere",
+      () =>
+        Effect.gen(function* () {
+          const { cwd, file, cells } = yield* project;
+          const sessions = yield* DocumentSession.DocumentSession;
+          const other = NodePath.join(NodePath.dirname(file), "other.sheet.json");
+          NodeFS.writeFileSync(other, TEXT);
+          const link = NodePath.join(NodePath.dirname(file), "link.sheet.json");
+          NodeFS.symlinkSync(file, link);
+          const window = yield* openWindow(
+            { cwd, relativePath: ".specweave/artifacts/link.sheet.json" },
+            "window-aaaa",
+          );
+          yield* window.send(put("A4", "For the first sheet"));
+          // The link now leads to a sheet that reads the same, byte for byte.
+          NodeFS.unlinkSync(link);
+          NodeFS.symlinkSync(other, link);
+          yield* sessions.settleAll;
+          expect(NodeFS.readFileSync(other, "utf8")).toBe(TEXT);
+          expect(cells().A4).toBe("For the first sheet");
+        }),
+    );
+
+    it.effect("does not make a change that neither the log nor the file would take", () =>
       Effect.gen(function* () {
-        const { cwd, file, read } = yield* project;
+        const { target, file, cells } = yield* project;
         const sessions = yield* DocumentSession.DocumentSession;
-        const other = NodePath.join(NodePath.dirname(file), "other.sheet.json");
-        NodeFS.writeFileSync(other, TEXT);
-        const link = NodePath.join(NodePath.dirname(file), "link.sheet.json");
-        NodeFS.symlinkSync(file, link);
-        const window = yield* openWindow(
-          { cwd, relativePath: ".specweave/artifacts/link.sheet.json" },
-          "window-aaaa",
-        );
-        yield* window.send(put("A4", "For the first sheet"));
-        // The link now leads to a sheet that reads the same, byte for byte.
-        NodeFS.unlinkSync(link);
-        NodeFS.symlinkSync(other, link);
+        const window = yield* openWindow(target, "window-aaaa");
+        // Neither the log nor the file can be written.
+        const blocked = NodePath.join(NodePath.dirname(file), SHEET_SIDECAR_DIR);
+        NodeFS.writeFileSync(blocked, "in the way");
+        NodeFS.writeFileSync(file, "{ half written");
+        const refused = yield* window.send(put("A4", "First")).pipe(Effect.flip);
+        expect(refused.code).toBe("refused");
+        expect(refused.detail).toContain("was not made");
+        // Nobody holds it: a window that opens the sheet now sees it as it was.
+        const other = yield* openWindow(target, "window-bbbb");
+        expect(other.cells().A4).toBeUndefined();
+        // The log can be written again: a change is made, and answered as merged.
+        NodeFS.unlinkSync(blocked);
+        expect(yield* other.send(put("A5", "Second"))).toEqual({ merged: true });
+        const loaded = loadSheet(BUDGET, logOf(file).text, "new-epoch", sheetContentRevision(TEXT));
+        expect(loaded.unsaved).toBe(true);
+        const kept = readSheetYDoc(loaded.doc).document.tabs[0]!.cells;
+        expect(kept.A5).toBe("Second");
+        expect(kept.A4).toBeUndefined();
+        NodeFS.writeFileSync(file, TEXT);
         yield* sessions.settleAll;
-        expect((yield* window.nextOf("closed")).reason).toContain("leads to another file");
-        expect(NodeFS.readFileSync(other, "utf8")).toBe(TEXT);
-        expect(read()).toBe(TEXT);
-        // The edit is still beside the sheet it was made in.
-        expect(logOf(file).updates).toBe(2);
+        expect(cells().A5).toBe("Second");
+        expect(cells().A4).toBeUndefined();
       }),
     );
 
     it.effect(
-      "starts a log written late from the sheet the file has, so earlier edits still count as unsaved",
+      "keeps a file change and the edits here apart when both do not fit in one sheet",
       () =>
         Effect.gen(function* () {
-          const { target, file, cells } = yield* project;
+          const { target, file } = yield* project;
           const sessions = yield* DocumentSession.DocumentSession;
+          const tabs = (count: number, last: string) =>
+            sheet({
+              title: "Budget",
+              tabs: [
+                ...Array.from({ length: count - 1 }, (_, index) => ({
+                  name: `Tab ${index + 1}`,
+                  cells: { A1: index },
+                })),
+                { name: last, cells: { A1: "last" } },
+              ],
+            });
+          // One tab short of the most a sheet holds.
+          const start = tabs(SHEET_LIMITS.tabs - 1, "Before");
+          NodeFS.writeFileSync(file, serializeSheetDocument(start));
           const window = yield* openWindow(target, "window-aaaa");
-          // Neither the log nor the file can be written for the first edit.
-          const blocked = NodePath.join(NodePath.dirname(file), SHEET_SIDECAR_DIR);
-          NodeFS.writeFileSync(blocked, "in the way");
-          NodeFS.writeFileSync(file, "{ half written");
-          yield* window.send(put("A4", "First"));
-          expect((yield* window.nextOf("save")).saved).toBe(false);
-          // The log can be written again; the file still cannot.
-          NodeFS.unlinkSync(blocked);
-          yield* window.send(put("A5", "Second"));
-          const log = logOf(file);
-          const loaded = loadSheet(BUDGET, log.text, "new-epoch", sheetContentRevision(TEXT));
-          expect(loaded.unsaved).toBe(true);
-          expect(readSheetYDoc(loaded.doc).document.tabs[0]!.cells).toMatchObject({
-            A4: "First",
-            A5: "Second",
+          yield* window.send((document) => ({
+            ...document,
+            tabs: [...document.tabs, { name: "From the window", cells: { A1: "kept" } }],
+          }));
+          // Someone adds another tab to the file before the window's is saved.
+          const outside = serializeSheetDocument({
+            ...start,
+            tabs: [...start.tabs, { name: "From outside", cells: { A1: "kept too" } }],
           });
-          NodeFS.writeFileSync(file, TEXT);
+          NodeFS.writeFileSync(file, outside);
           yield* sessions.settleAll;
-          expect(cells()).toMatchObject({ A4: "First", A5: "Second" });
+          expect((yield* window.nextOf("save")).saved).toBe(false);
+          // The file is as it was written, and the log still opens with the window's tab in it.
+          expect(NodeFS.readFileSync(file, "utf8")).toBe(outside);
+          const loaded = loadSheet(start, logOf(file).text, "new-epoch");
+          expect(readSheetYDoc(loaded.doc).document.tabs.at(-1)!.name).toBe("From the window");
+
+          // Opened again later, the sheet is the file's. The log that could not be brought
+          // together with it is put aside whole, not written over.
+          yield* Fiber.interrupt(window.fiber);
+          const again = yield* openWindow(target, "window-bbbb");
+          expect(readSheetYDoc(again.doc).document.tabs.at(-1)!.name).toBe("From outside");
+          const folder = NodePath.dirname(sheetSidecarPath(file));
+          const aside = NodeFS.readdirSync(folder).filter((name) => name.includes(".unmerged-"));
+          expect(aside).toHaveLength(1);
+          const set = loadSheet(
+            start,
+            NodeFS.readFileSync(NodePath.join(folder, aside[0]!), "utf8"),
+            "new-epoch",
+          );
+          expect(readSheetYDoc(set.doc).document.tabs.at(-1)!.name).toBe("From the window");
         }),
+    );
+
+    it.effect("leaves a log it cannot read where it is, and a pipe under a log's name", () =>
+      Effect.gen(function* () {
+        const { target, cwd } = yield* project;
+        const folder = NodePath.join(cwd, ".specweave/artifacts", SHEET_SIDECAR_DIR);
+        NodeFS.mkdirSync(folder);
+        const unreadable = NodePath.join(folder, "gone.sheet.json.ylog");
+        NodeFS.writeFileSync(unreadable, "not a log\n");
+        const pipe = NodePath.join(folder, "piped.sheet.json.ylog");
+        // Where the system has no named pipes, only the unreadable log is checked.
+        let piped = true;
+        try {
+          NodeChildProcess.execFileSync("mkfifo", [pipe]);
+        } catch {
+          piped = false;
+        }
+        // Opening a sheet in the folder looks at both and waits on neither.
+        yield* openWindow(target, "window-aaaa");
+        expect(NodeFS.readFileSync(unreadable, "utf8")).toBe("not a log\n");
+        expect(NodeFS.existsSync(pipe)).toBe(piped);
+      }),
     );
 
     it.effect("ends the session and removes the sidecar when the document is deleted", () =>
@@ -753,10 +832,6 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         // A window that joins now is told as well.
         const later = yield* openWindow(target, "window-bbbb");
         expect(later.first.unsaved).toBe(failed.detail);
-        // With it comes the sheet as the file last held it, so the window tells the two apart.
-        const held = createSheetYDoc();
-        applySheetUpdate(held, sheetUpdateFromBase64(later.first.saved!)!, "remote");
-        expect(readSheetYDoc(held).document.tabs[0]!.cells.A4).toBeUndefined();
         expect(later.cells().A4).toBe("Kept");
         // Put right, the file takes the edit and the windows are told.
         NodeFS.writeFileSync(file, TEXT);

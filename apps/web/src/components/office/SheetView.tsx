@@ -20,6 +20,8 @@ import {
   rangeName,
   removeChart,
   resolveOfficeTheme,
+  serializeSheetDocument,
+  SHEET_ARTIFACT_SUFFIX,
   sheetColumnWidth,
 } from "@specweave-studio/shared/officeSheet";
 import { BarChart3Icon, Columns3Icon, CopyIcon, DownloadIcon } from "lucide-react";
@@ -79,6 +81,15 @@ function slugFileName(title: string): string {
   return `${slug || "sheet"}.html`;
 }
 
+/** Save a sheet this window still holds as a sheet file of its own. */
+function downloadSheetDraft(draft: SheetDocument): void {
+  const blob = new Blob([serializeSheetDocument(draft)], { type: "application/json" });
+  downloadBlob(
+    blob,
+    slugFileName(draft.title).replace(/\.html$/, `-recovered${SHEET_ARTIFACT_SUFFIX}`),
+  );
+}
+
 /** Where a window is on a sheet, as it tells the others. */
 export interface SheetLivePlace {
   readonly tab: string;
@@ -109,6 +120,9 @@ export interface SheetLiveBinding {
   /** Why the last edit was not taken. */
   readonly problem: string | null;
   readonly clearProblem: () => void;
+  /** The sheet as this window had it, when some of its edits could not be made again. */
+  readonly draft?: SheetDocument | null;
+  readonly dropDraft?: () => void;
   readonly setPlace: (place: SheetLivePlace | null) => void;
   /** Where everyone else is. */
   readonly others: ReadonlyArray<{
@@ -680,6 +694,22 @@ export function SheetView(props: {
       {saveError ? (
         <p className="office-sheet-note" role="alert">
           {saveError}
+        </p>
+      ) : null}
+      {live?.draft ? (
+        <p className="office-sheet-note" role="alert">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="sheet-draft-download"
+            onClick={() => {
+              downloadSheetDraft(live.draft!);
+              live.dropDraft?.();
+            }}
+          >
+            {tx("Download your version")}
+          </Button>
         </p>
       ) : null}
       {grid.clipped ? (

@@ -369,7 +369,11 @@ export async function readSheetSidecar(sidecarPath: string): Promise<string | nu
   if ((await sidecarFolder(sidecarPath, false)) === null) return null;
   let handle: NodeFSP.FileHandle;
   try {
-    handle = await NodeFSP.open(sidecarPath, NodeFS.constants.O_RDONLY | NO_FOLLOW);
+    // Never waits on what is not a file: a pipe left under the name opens at once and is passed over.
+    handle = await NodeFSP.open(
+      sidecarPath,
+      NodeFS.constants.O_RDONLY | NO_FOLLOW | NodeFS.constants.O_NONBLOCK,
+    );
   } catch {
     return null;
   }
@@ -491,8 +495,10 @@ export function sheetSidecarHoldsUnsaved(text: string | null): boolean {
 
 /**
  * Remove the sidecars in a folder whose documents are gone: a sheet deleted
- * while nobody had it open leaves its merge state behind otherwise. One that
- * holds changes no file has is kept: it is all there is of them.
+ * while nobody had it open leaves its merge state behind otherwise. Only a
+ * log that was read and ends in a saved mark is removed: one that holds
+ * changes no file has is all there is of them, and one that cannot be read
+ * might be.
  */
 export async function sweepSheetSidecars(documentFolder: string): Promise<void> {
   const folder = await sidecarFolder(NodePath.join(documentFolder, SHEET_SIDECAR_DIR, "x"), false);
@@ -507,7 +513,8 @@ export async function sweepSheetSidecars(documentFolder: string): Promise<void> 
     );
     if (!gone) continue;
     const sidecarPath = NodePath.join(folder, name);
-    const text = await NodeFSP.readFile(sidecarPath, "utf8").catch(() => null);
+    const text = await readSheetSidecar(sidecarPath);
+    if (text === null || parseSheetSidecar(text) === null) continue;
     if (!sheetSidecarHoldsUnsaved(text)) await removeSheetSidecar(sidecarPath);
   }
 }

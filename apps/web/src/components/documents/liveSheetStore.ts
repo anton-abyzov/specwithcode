@@ -77,6 +77,12 @@ export interface LiveSheetState {
   readonly problem: string | null;
   /** Why what everyone sees is not in the file yet; null when the file is current. */
   readonly unsaved: string | null;
+  /**
+   * The sheet as this window had it, when the home machine started over and
+   * some of this window's edits could not be made again: kept so they can
+   * still be saved somewhere.
+   */
+  readonly draft: SheetDocument | null;
 }
 
 const sameTab = (left: SheetTab, right: SheetTab): boolean =>
@@ -85,14 +91,13 @@ const sameTab = (left: SheetTab, right: SheetTab): boolean =>
 /**
  * Make a window's unconfirmed edits again on a document the home machine
  * started over: the change from `base` (the sheet as the home machine last
- * had it saved) to `mine` (what the window shows), on top of what `doc` holds.
- * What others changed is in both, so it is not made again. A tab added by the
- * edits keeps the id it had, so two windows making the same edits again add
- * it once.
+ * sent it) to `mine` (what the window shows), on top of what `doc` holds.
+ * What others changed is in both, so it is not made again.
  *
  * Edits to a tab `doc` does not have (renamed or removed in the file) cannot
- * be made there. With `recover` the tab as the window shows it is added under
- * its name and `word` ("Plan (recovered)"); without, those edits are left out.
+ * be made there. With `recover` the tab as the window shows it is added as a
+ * tab of this window's own, under its name and that word ("Plan (recovered)");
+ * without, those edits are left out and "missing" says so.
  */
 function remakeSheetEdits(
   doc: SheetYDoc,
@@ -101,30 +106,21 @@ function remakeSheetEdits(
   recover: string | null,
 ): "made" | "recovered" | "missing" {
   const from = sheetSnapshotByName(doc, base.document);
-  writeSheetChange(doc, from, mine.document, LOCAL, mine.tabIds);
+  writeSheetChange(doc, from, mine.document, LOCAL);
   const now = readSheetYDoc(doc);
   const held = new Set(now.tabIds);
-  const gone: Array<{ readonly id: string; readonly tab: SheetTab }> = [];
+  const gone: SheetTab[] = [];
   base.document.tabs.forEach((tab, index) => {
     if (held.has(from.tabIds[index]!)) return;
     // The same tab in the window, by the id both had before; removed there, nothing is kept.
     const shown = mine.document.tabs[mine.tabIds.indexOf(base.tabIds[index]!)];
-    if (shown !== undefined && !sameTab(shown, tab))
-      gone.push({ id: base.tabIds[index]!, tab: shown });
+    if (shown !== undefined && !sameTab(shown, tab)) gone.push(shown);
   });
   if (gone.length === 0) return "made";
   if (recover === null) return "missing";
   const tabs = [...now.document.tabs];
-  const ids: Array<string | undefined> = tabs.map(() => undefined);
   const names = new Set(tabs.map((tab) => tab.name.trim().toLowerCase()));
-  for (const { id, tab } of gone) {
-    const kept = `r${id}`;
-    const at = now.tabIds.indexOf(kept);
-    if (at >= 0) {
-      // Another window kept the same tab first: this one's values go into it.
-      tabs[at] = { ...tab, name: tabs[at]!.name };
-      continue;
-    }
+  for (const tab of gone) {
     let name = "";
     for (let count = 1; name === "" || names.has(name.trim().toLowerCase()); count += 1) {
       const suffix = count === 1 ? ` (${recover})` : ` (${recover} ${count})`;
@@ -132,9 +128,8 @@ function remakeSheetEdits(
     }
     names.add(name.trim().toLowerCase());
     tabs.push({ ...tab, name });
-    ids.push(kept);
   }
-  writeSheetChange(doc, now, { ...now.document, tabs }, LOCAL, ids);
+  writeSheetChange(doc, now, { ...now.document, tabs }, LOCAL);
   return "recovered";
 }
 
@@ -150,6 +145,7 @@ const INITIAL: LiveSheetState = {
   canRedo: false,
   problem: null,
   unsaved: null,
+  draft: null,
 };
 
 export class LiveSheetStore {
@@ -170,14 +166,9 @@ export class LiveSheetStore {
    * The sheet as the home machine has sent it: every snapshot and change
    * received, and none of this window's edits until they come back. What this
    * window shows beyond it is exactly what the home machine has not confirmed.
+   * A change the home machine sends is one it has kept, in its log or the file.
    */
   #home: SheetYDoc | null = null;
-  /**
-   * Changes received while the home machine said the sheet was not saved.
-   * They are kept out of `#home` until it is: if the home machine starts over
-   * from the file before then, they are part of what is made again.
-   */
-  #unsavedAtHome: Uint8Array[] = [];
   /** Each sheet this store has shown, with its tabs' ids: what an edit built on it started from. */
   #shown = new WeakMap<SheetDocument, SheetSnapshot>();
   readonly #listeners = new Set<() => void>();
@@ -271,7 +262,6 @@ export class LiveSheetStore {
       return;
     }
     if (event.type === "save") {
-      if (event.saved) this.#confirmSaved();
       this.#set({ unsaved: event.saved ? null : (event.detail ?? "") });
       return;
     }
@@ -280,26 +270,18 @@ export class LiveSheetStore {
       if (bytes === null) return;
       const fresh = this.#doc === null || this.#epoch !== event.epoch || this.#discard;
       // The home machine began again from the file (a restart): an edit still on its way is not in it.
-      // So is one the home machine had merged and said it could not save.
       const lost =
         this.#doc !== null &&
         this.#epoch !== event.epoch &&
-        (this.#unsent > 0 || this.#undelivered || this.#unsavedAtHome.length > 0);
+        (this.#unsent > 0 || this.#undelivered);
       this.#undelivered = false;
       if (fresh) {
         const mine = this.#snapshot;
         const base = this.#home === null ? null : readSheetYDoc(this.#home);
         const doc = createSheetYDoc();
         applySheetUpdate(doc, bytes, REMOTE);
-        // A sheet the home machine has not saved comes with the state it has saved: what is
-        // beyond that is kept apart here too, by a window that joins only now.
-        const saved =
-          event.unsaved === undefined || event.saved === undefined
-            ? null
-            : sheetUpdateFromBase64(event.saved);
         this.#home = createSheetYDoc();
-        applySheetUpdate(this.#home, saved ?? bytes, REMOTE);
-        this.#unsavedAtHome = saved === null ? [] : [bytes];
+        applySheetUpdate(this.#home, bytes, REMOTE);
         this.#adopt(doc, event.epoch);
         this.#unsent = 0;
         // What this window changed and the home machine never got is made again on the new sheet.
@@ -308,12 +290,14 @@ export class LiveSheetStore {
           this.#state = {
             ...this.#state,
             problem: remade === "recovered" ? this.#messages.recovered : this.#messages.reloaded,
+            // Not made again: the window's own sheet is kept, to be saved as a file of its own.
+            ...(remade === "missing" && mine !== null ? { draft: mine.document } : {}),
           };
         }
       } else {
         // The same log after a reconnect: merge, then send what the home machine lacks.
         applySheetUpdate(this.#doc!, bytes, REMOTE);
-        this.#heardFromHome(bytes, event.unsaved !== undefined);
+        if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
         const missing =
           event.access === "edit"
             ? encodeSheetMissing(this.#doc!, sheetStateVectorOf(bytes))
@@ -338,27 +322,13 @@ export class LiveSheetStore {
     }
     if (bytes === null || this.#doc === null) return;
     applySheetUpdate(this.#doc, bytes, REMOTE);
-    this.#heardFromHome(bytes, this.#state.unsaved !== null);
+    if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
     this.#set({
       ...(event.activity === undefined
         ? {}
         : { activity: [...this.#state.activity, event.activity].slice(-ACTIVITY_SHOWN) }),
       ...this.#read(),
     });
-  }
-
-  /** A change the home machine sent: part of what it has, once it has it saved. */
-  #heardFromHome(bytes: Uint8Array, unsaved: boolean): void {
-    if (unsaved) this.#unsavedAtHome.push(bytes);
-    else if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
-  }
-
-  /** The home machine saved the sheet: what it sent meanwhile is now part of what it has. */
-  #confirmSaved(): void {
-    for (const bytes of this.#unsavedAtHome) {
-      if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
-    }
-    this.#unsavedAtHome = [];
   }
 
   /**
@@ -424,6 +394,11 @@ export class LiveSheetStore {
 
   clearProblem(): void {
     if (this.#state.problem !== null) this.#set({ problem: null });
+  }
+
+  /** The kept sheet was saved somewhere, or is not wanted. */
+  dropDraft(): void {
+    if (this.#state.draft !== null) this.#set({ draft: null });
   }
 
   /** Tell the others where this window is. Repeats of the same place are not sent. */

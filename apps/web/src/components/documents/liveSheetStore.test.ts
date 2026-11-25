@@ -46,8 +46,6 @@ function home(start: SheetDocument) {
     { readonly store: LiveSheetStore; participant: DocumentSessionParticipant; sent: number }
   >();
   let refuseNext: LiveSheetSendResult | null = null;
-  /** The state the file holds while the home machine cannot save; null while it can. */
-  let savedState: Uint8Array | null = null;
   const everyone = () => [...windows.values()].map((entry) => entry.participant);
   const send = (event: DocumentSessionEvent) => {
     for (const entry of windows.values()) entry.store.receive(event);
@@ -62,9 +60,6 @@ function home(start: SheetDocument) {
       update: sheetUpdateToBase64(encodeSheetState(doc)),
       participants: everyone(),
       activity: [],
-      ...(savedState === null
-        ? {}
-        : { unsaved: "not saved", saved: sheetUpdateToBase64(savedState) }),
     });
   };
   return {
@@ -75,16 +70,6 @@ function home(start: SheetDocument) {
     startOver(file: SheetDocument) {
       doc = sheetYDocFrom(file, "file");
       epoch = "e2";
-      savedState = null;
-    },
-    /** From now on the home machine can write neither its log nor the file, and says so. */
-    stopSaving() {
-      savedState = encodeSheetState(doc);
-      send({ type: "save", saved: false, detail: "not saved" });
-    },
-    /** The window is closed. */
-    leave(id: string) {
-      windows.delete(id);
     },
     restarts: [] as string[],
     refuse(result: LiveSheetSendResult) {
@@ -417,73 +402,35 @@ describe("a session that ends", () => {
 });
 
 describe("a file that cannot be saved", () => {
-  it("makes an edit again that the home machine merged, could not save, and then lost", async () => {
-    const machine = home(sheet({ A1: "Item" }));
+  it("keeps its own sheet for download when an edit can be made again nowhere", async () => {
+    const full = parseSheetDocument(
+      JSON.stringify({
+        v: 1,
+        kind: "sheet",
+        title: "Budget",
+        tabs: Array.from({ length: 50 }, (_, index) => ({
+          name: index === 0 ? "Plan" : `Tab ${index}`,
+          cells: { A1: "Item" },
+        })),
+      }),
+    );
+    if (!full.ok) throw new Error(full.error);
+    const machine = home(full.document);
     const first = machine.join("w1", "edit");
-    // The home machine can write neither its log nor the file, and says so before it answers.
-    first.receive({ type: "save", saved: false, detail: "not saved" });
+    machine.refuse("failed");
+    // The file the server comes back from has the tab under another name, and no room for one more.
+    machine.startOver({
+      ...full.document,
+      tabs: [{ ...full.document.tabs[0]!, name: "Forecast" }, ...full.document.tabs.slice(1)],
+    });
     expect(edit(first, "A2", "Rent")).toBe(true);
     await settle();
-    expect(machine.sent("w1")).toBe(1);
-    // It stops, and comes back from the file, which never got the edit.
-    machine.startOver(sheet({ A1: "Item" }));
-    machine.restart("w1");
-    await settle();
-    expect(readSheetYDoc(machine.doc).document.tabs[0]!.cells).toEqual({ A1: "Item", A2: "Rent" });
-    expect(cells(first)).toEqual({ A1: "Item", A2: "Rent" });
-    expect(machine.sent("w1")).toBe(2);
-
-    // Saved in between, the same restart has nothing to make again.
-    first.receive({ type: "save", saved: false, detail: "not saved" });
-    expect(edit(first, "A3", "Power")).toBe(true);
-    await settle();
-    first.receive({ type: "save", saved: true });
-    machine.restart("w1");
-    await settle();
-    expect(machine.sent("w1")).toBe(3);
-  });
-
-  it("is made again by a window that joined after the edit, when its writer is gone", async () => {
-    const machine = home(sheet({ A1: "Item" }));
-    const first = machine.join("w1", "edit");
-    machine.stopSaving();
-    expect(edit(first, "A2", "Rent")).toBe(true);
-    await settle();
-    // A second window opens the sheet as it is, unsaved edit included; the first one closes.
-    const second = machine.join("w2", "edit");
-    expect(cells(second)).toEqual({ A1: "Item", A2: "Rent" });
-    expect(second.getState().unsaved).toBe("not saved");
-    machine.leave("w1");
-    machine.startOver(sheet({ A1: "Item" }));
-    machine.restart("w2");
-    await settle();
-    expect(readSheetYDoc(machine.doc).document.tabs[0]!.cells).toEqual({ A1: "Item", A2: "Rent" });
-    expect(cells(second)).toEqual({ A1: "Item", A2: "Rent" });
-  });
-
-  it("adds a tab once when two windows make the same unsaved edit again", async () => {
-    const machine = home(sheet({ A1: "Item" }));
-    const first = machine.join("w1", "edit");
-    const second = machine.join("w2", "edit");
-    machine.stopSaving();
-    const before = first.getState().document!;
-    expect(
-      first.commit({ ...before, tabs: [...before.tabs, { name: "Extra", cells: { A1: "kept" } }] }),
-    ).toBe(true);
-    await settle();
-    expect(second.getState().document!.tabs.map((tab) => tab.name)).toEqual(["Plan", "Extra"]);
-    machine.startOver(sheet({ A1: "Item" }));
-    machine.restart("w1");
-    machine.restart("w2");
-    await settle();
-    for (const document of [
-      readSheetYDoc(machine.doc).document,
-      first.getState().document!,
-      second.getState().document!,
-    ]) {
-      expect(document.tabs.map((tab) => tab.name)).toEqual(["Plan", "Extra"]);
-      expect(document.tabs[1]!.cells).toEqual({ A1: "kept" });
-    }
+    expect(first.getState().document!.tabs).toHaveLength(50);
+    expect(first.getState().problem).toBe("reloaded");
+    // The edit is still in what the window keeps.
+    expect(first.getState().draft!.tabs[0]!.cells).toEqual({ A1: "Item", A2: "Rent" });
+    first.dropDraft();
+    expect(first.getState().draft).toBeNull();
   });
 
   it("says so in every window until the file is written again", () => {

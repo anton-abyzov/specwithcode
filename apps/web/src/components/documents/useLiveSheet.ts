@@ -52,6 +52,8 @@ export function liveSheetBinding(
     canRedo: state.canRedo,
     problem: state.problem ?? state.unsaved,
     clearProblem: () => store.clearProblem(),
+    draft: state.draft,
+    dropDraft: () => store.dropDraft(),
     setPlace: store.setPlace,
     others: presence.filter((entry) => !entry.self),
   };
@@ -92,7 +94,7 @@ export function useLiveSheet(input: {
     viewOnly: tx("This window can only view the sheet."),
     refused: tx("That change could not be made. The sheet is back to what everyone sees."),
     reloaded: tx(
-      "The sheet was opened again from its file. An edit that was still on its way may be missing.",
+      "The sheet was opened again from its file, and an edit that was still on its way could not be made again. Download your version to keep it.",
     ),
     recovered: tx(
       "The sheet was opened again from its file. Your changes to a tab the file no longer has are in a new tab marked recovered.",
