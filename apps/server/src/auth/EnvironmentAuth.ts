@@ -187,6 +187,8 @@ export interface AuthenticatedSession extends PrincipalApproval {
   readonly deviceKey?: string;
   /** The device and approval this session was minted for, from its signed claims. */
   readonly boundDevice?: SessionStore.SessionDeviceBinding;
+  /** `revocationEpoch` read before this request's credential was checked (RequestRevocationEpoch). */
+  readonly revocationEpoch?: number;
 }
 
 export * from "./EnvironmentAuthErrors.ts";
@@ -282,6 +284,8 @@ export class EnvironmentAuth extends Context.Service<
       input?: AuthCreatePairingCredentialInput & {
         readonly principalGeneration?: number | undefined;
         readonly creatorDeviceKey?: string | undefined;
+        /** The asking request's `RequestRevocationEpoch`: a revoke-all since refuses the code. */
+        readonly revocationEpoch?: number | undefined;
       },
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
     /** Revokes the unredeemed pairing credentials one device created; answers how many. */
@@ -1507,8 +1511,8 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokeOtherSessionsExcept"),
     );
 
-  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) =>
-    issuePairingCredentialForSubject({
+  const issuePairingCredential: EnvironmentAuth["Service"]["issuePairingCredential"] = (input) => {
+    const issue = issuePairingCredentialForSubject({
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
       principalGeneration: input?.principalGeneration,
@@ -1525,7 +1529,22 @@ export const make = Effect.gen(function* () {
       ...(input?.creatorDeviceKey === undefined
         ? {}
         : { creatorDeviceKey: input.creatorDeviceKey }),
-    }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
+    });
+    return (
+      input?.revocationEpoch === undefined
+        ? issue
+        : revocation.issueIfUnrevoked(
+            input.revocationEpoch,
+            issue,
+            () =>
+              new ServerAuthPairingLinkCreationError({
+                cause: new Error(
+                  "Every other client was signed out while this request was under way.",
+                ),
+              }),
+          )
+    ).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
+  };
 
   const revokeDeviceCredentials: EnvironmentAuth["Service"]["revokeDeviceCredentials"] = (key) =>
     bootstrapCredentials.revokeByCreatorDevice(key).pipe(
@@ -1655,7 +1674,13 @@ export const make = Effect.gen(function* () {
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
   ) =>
-    authenticateSameOriginRequest(request).pipe(
+    // Read first: what the request mints is refused if a revoke-all comes after.
+    revocation.current.pipe(
+      Effect.flatMap((revocationEpoch) =>
+        authenticateSameOriginRequest(request).pipe(
+          Effect.map((session) => ({ ...session, revocationEpoch })),
+        ),
+      ),
       Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"),
     );
 
@@ -2001,6 +2026,8 @@ export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcp
       readonly ttl?: Duration.Duration | undefined;
       /** The approved device asking: the token stays gated by that device. */
       readonly deviceKey?: string | undefined;
+      /** The asking request's `RequestRevocationEpoch`: a revoke-all since refuses the token. */
+      readonly revocationEpoch?: number | undefined;
     },
   ) {
     const label = input.label.trim();
@@ -2032,6 +2059,7 @@ export const mintStaticMcpClientToken = Effect.fn("EnvironmentAuth.mintStaticMcp
       client: { label, deviceType: "bot" },
       ttl,
       ...(input.deviceKey === undefined ? {} : { deviceKey: input.deviceKey }),
+      ...(input.revocationEpoch === undefined ? {} : { revocationEpoch: input.revocationEpoch }),
     });
     yield* Effect.logInfo("Issued a static MCP client token.", {
       sessionId: issued.sessionId,

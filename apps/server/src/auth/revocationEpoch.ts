@@ -1,3 +1,4 @@
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
@@ -44,3 +45,14 @@ export const makeRevocationEpoch: Effect.Effect<RevocationEpoch> = Effect.gen(fu
     revokeAll,
   } satisfies RevocationEpoch;
 });
+
+/**
+ * The counter as an authenticated request read it, before its credential was
+ * checked. What the request mints (a pairing code, an MCP token) is issued
+ * against it, so a client whose session a revoke-all ends cannot leave a new
+ * way in behind it, even with a request already under way.
+ */
+export const RequestRevocationEpoch = Context.Reference<number | undefined>(
+  "studio/auth/RequestRevocationEpoch",
+  { defaultValue: () => undefined },
+);
