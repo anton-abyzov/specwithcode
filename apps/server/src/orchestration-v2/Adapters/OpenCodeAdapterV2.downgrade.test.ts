@@ -22,6 +22,7 @@ import {
   makeOpenCodeAdapterV2,
   openCodeChildPermissionRules,
   openCodePermissionRules,
+  openCodeSessionHoldsPolicy,
   openCodeSessionPermissionUpdate,
 } from "./OpenCodeAdapterV2.ts";
 
@@ -43,10 +44,10 @@ const action = (rules: Rules, permission: string) =>
 describe("OpenCode after a thread is lowered from Full access", () => {
   it("a Task child does not keep the external_directory allow its parent once had", () => {
     // A child session copies its parent's external_directory and deny rules;
-    // a parent created on Full access carries the allow.
-    const inherited = openCodePermissionRules(policy("full-access")).filter(
-      (rule) => rule.permission === "external_directory" || rule.action === "deny",
-    );
+    // a parent created in a wider mode carries the allow.
+    const inherited = [
+      { permission: "external_directory", pattern: "*", action: "allow" } as const,
+    ];
     const child = openCodeChildPermissionRules(policy("approval-required"), inherited);
     assert.equal(action(child, "external_directory"), "ask");
     assert.equal(action(child, "bash"), "ask");
@@ -56,6 +57,24 @@ describe("OpenCode after a thread is lowered from Full access", () => {
     const deny = { permission: "external_directory", pattern: "*", action: "deny" } as const;
     const child = openCodeChildPermissionRules(policy("full-access"), [deny]);
     assert.equal(action(child, "external_directory"), "deny");
+  });
+
+  it("a Task child keeps its own external_directory ask under Full access", () => {
+    const ask = { permission: "external_directory", pattern: "*", action: "ask" } as const;
+    const child = openCodeChildPermissionRules(policy("full-access"), [ask]);
+    assert.equal(action(child, "external_directory"), "ask");
+  });
+
+  it("a session resumed in the same mode keeps the denies it holds", () => {
+    const fullAccess = openCodePermissionRules(policy("full-access"));
+    const deny = { permission: "edit", pattern: "*", action: "deny" } as const;
+    assert.isTrue(openCodeSessionHoldsPolicy(fullAccess, [...fullAccess, deny]));
+    assert.isTrue(openCodeSessionHoldsPolicy(fullAccess, fullAccess));
+    // Lowered, raised again, or holding a later allow: the mode is installed.
+    const supervised = openCodePermissionRules(policy("approval-required"));
+    assert.isFalse(openCodeSessionHoldsPolicy(supervised, fullAccess));
+    assert.isFalse(openCodeSessionHoldsPolicy(fullAccess, [...fullAccess, ...supervised]));
+    assert.isTrue(openCodeSessionHoldsPolicy(fullAccess, [...supervised, ...fullAccess]));
   });
 
   it("a session keeps a deny the app did not write when a wider mode is installed", () => {

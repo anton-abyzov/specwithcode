@@ -2655,14 +2655,16 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
   });
 
-  it("lets a Full access Task child start without approval prompts", () => {
-    // A Task child starts with only the parent's external_directory and deny
-    // rules, so Full access must grant external_directory by name.
+  it("gives a Full access Task child no external_directory allow of its parent's", () => {
+    // A Task child starts with the parent's external_directory and deny rules,
+    // and its session rules beat its own agent's limits, so a named allow here
+    // would lift an agent's external_directory deny. Its prompts are answered
+    // by the parent's Full access instead.
     const childStartRules = (rules: ReturnType<typeof openCodePermissionRules>) =>
       rules.filter((rule) => rule.permission === "external_directory" || rule.action === "deny");
-    const fullAccess = childStartRules(openCodePermissionRules(runtimePolicy("full-access")));
+    const fullAccess = openCodePermissionRules(runtimePolicy("full-access"));
+    assert.deepEqual(childStartRules(fullAccess), []);
     assert.equal(permissionAction(fullAccess, "external_directory"), "allow");
-    assert.notExists(fullAccess.find((rule) => rule.action === "deny"));
 
     // Supervised modes keep asking before a child leaves the workspace.
     const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));

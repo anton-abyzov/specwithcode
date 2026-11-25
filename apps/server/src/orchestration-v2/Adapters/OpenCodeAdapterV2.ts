@@ -668,12 +668,11 @@ export function openCodePermissionRules(
     sandboxType === undefined && runtimePolicy.runtimeMode === "full-access";
 
   if (!requiresApproval && (externallySandboxed || dangerFullAccess || implicitFullAccess)) {
-    // A Task child starts from only the parent's external_directory and deny
-    // rules, so name external_directory too or the child asks anyway.
-    return [
-      { permission: "*", pattern: "*", action: "allow" },
-      { permission: "external_directory", pattern: "*", action: "allow" },
-    ];
+    // No external_directory allow by name: a Task child copies the parent's
+    // external_directory rules, which would beat its own agent's deny. A Full
+    // access child's prompts are answered by its parent's mode instead
+    // (FullAccessApprovals).
+    return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
   // Task sessions initially inherit only parent deny rules. Seed explicit
@@ -774,6 +773,25 @@ function isAppDenyRule(rule: PermissionRuleset[number]): boolean {
  * sends and applies the last matching rule, so a deny the session was given by
  * someone else stays in force after a wider mode is installed.
  */
+/**
+ * Whether a session already runs under a policy: its rules hold the policy's
+ * rules in one run, followed by nothing but denies. Then an update is skipped,
+ * so a deny the session holds after them stays in force.
+ */
+export function openCodeSessionHoldsPolicy(
+  policyRules: PermissionRuleset,
+  sessionRules: PermissionRuleset,
+): boolean {
+  for (let start = sessionRules.length - policyRules.length; start >= 0; start -= 1) {
+    const matches = policyRules.every((rule, index) =>
+      permissionRuleEquals(rule, sessionRules[start + index]!),
+    );
+    if (!matches) continue;
+    return sessionRules.slice(start + policyRules.length).every((rule) => rule.action === "deny");
+  }
+  return false;
+}
+
 export function openCodeSessionPermissionUpdate(
   policyRules: PermissionRuleset,
   sessionRules: PermissionRuleset,
@@ -805,12 +823,12 @@ export function openCodeChildPermissionRules(
   const inheritedRules = parentRules.filter(
     (rule) => rule.permission === "external_directory" || rule.action === "deny",
   );
-  // An external_directory allow or ask comes only from the current parent
-  // rules: a child session copies its parent's, which may be from an earlier,
-  // wider mode. A deny the child carries (an agent's own limit) is kept.
+  // An external_directory allow comes only from the current parent rules: a
+  // child session copies its parent's, which may be from an earlier, wider
+  // mode. The child's own asks and denies are kept.
   const childSpecificRules = nativeChildRules.filter(
     (childRule) =>
-      (childRule.permission !== "external_directory" || childRule.action === "deny") &&
+      (childRule.permission !== "external_directory" || childRule.action !== "allow") &&
       !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)),
   );
   return [...parentRules, ...childSpecificRules];
@@ -3249,13 +3267,15 @@ export function makeOpenCodeAdapterV2(
                     client.session.get({ sessionID: sessionId }),
                   ),
                 );
-                const update = openCodeSessionPermissionUpdate(
-                  permission,
-                  current.permission ?? [],
-                );
-                yield* sdkCall("session.update", { sessionID: sessionId, permission: update }, () =>
-                  client.session.update({ sessionID: sessionId, permission: update }),
-                );
+                const sessionRules = current.permission ?? [];
+                if (!openCodeSessionHoldsPolicy(permission, sessionRules)) {
+                  const update = openCodeSessionPermissionUpdate(permission, sessionRules);
+                  yield* sdkCall(
+                    "session.update",
+                    { sessionID: sessionId, permission: update },
+                    () => client.session.update({ sessionID: sessionId, permission: update }),
+                  );
+                }
                 installedPermissionRules.set(sessionId, permission);
               }
               const isCompaction =
