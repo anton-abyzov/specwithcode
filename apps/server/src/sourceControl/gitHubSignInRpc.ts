@@ -51,6 +51,7 @@ import {
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as PtyAdapter from "../terminal/PtyAdapter.ts";
 import { makeGitHubSignIn, type GitHubSignIn } from "./GitHubSignIn.ts";
+import { readGitHubStarred } from "./gitHubStarred.ts";
 
 function ghLoginHelp(env: NodeJS.ProcessEnv): Promise<string | null> {
   return new Promise((resolve) => {
@@ -191,6 +192,22 @@ const layerHandlers = WsGitHubSignInRpcGroup.middleware(RpcInstrumentation).toLa
             ),
           ),
           Effect.andThen(state),
+        ),
+      // Read-only; the repository is fixed in gitHubStarred.ts. Any failure reads as "unknown".
+      [GITHUB_CREDENTIAL_RPC_METHODS.gitHubCredentialStarred]: () =>
+        sourceDeps.pipe(
+          Effect.flatMap((deps) =>
+            Effect.promise(() =>
+              readGitHubStarred({
+                hostEnabled: deps.hostEnabled,
+                savedToken: deps.savedToken,
+                ghToken: deps.ghToken,
+                fetch: deps.fetch,
+              }),
+            ),
+          ),
+          Effect.orElseSucceed(() => null),
+          Effect.map((starred) => ({ starred })),
         ),
       [GITHUB_CREDENTIAL_RPC_METHODS.gitHubCredentialCopyPreview]: (
         input: GitHubCredentialCopyInput,

@@ -116,6 +116,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.gitHubCredentialRemoveCopied]: "source-control",
   [WS_METHODS.gitHubCredentialCopyPreview]: "source-control",
   [WS_METHODS.gitHubCredentialCopy]: "source-control",
+  [WS_METHODS.gitHubCredentialStarred]: "source-control",
   [WS_METHODS.projectLinkDigest]: "projects",
   [WS_METHODS.projectLinkSyncStatus]: "projects",
   [WS_METHODS.limitHandoffCandidates]: "provider",

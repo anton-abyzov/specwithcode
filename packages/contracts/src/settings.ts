@@ -523,6 +523,34 @@ export const DictationLanguage = Schema.String.check(
 export const DictationMode = Schema.Literals(["auto", "toggle", "hold"]);
 export type DictationMode = typeof DictationMode.Type;
 
+/**
+ * The in-app "Star on GitHub" card (1489). Shared across the person's machines so one answer
+ * holds everywhere. `starred` and `done` never ask again; `off` is the Settings switch.
+ */
+export const GitHubStarPromptStatus = Schema.Literals(["asking", "starred", "done", "off"]);
+export type GitHubStarPromptStatus = typeof GitHubStarPromptStatus.Type;
+export const GITHUB_STAR_PROMPT_MAX_ASKS = 3;
+export const GitHubStarPrompt = Schema.Struct({
+  status: GitHubStarPromptStatus,
+  asks: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: GITHUB_STAR_PROMPT_MAX_ASKS })),
+  nextAskAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(64))),
+});
+export type GitHubStarPrompt = typeof GitHubStarPrompt.Type;
+export const DEFAULT_GITHUB_STAR_PROMPT: GitHubStarPrompt = {
+  status: "asking",
+  asks: 0,
+  nextAskAt: null,
+};
+/** Device-local use counts that decide when the card may first show. */
+export const GitHubStarUsage = Schema.Struct({
+  firstUsedAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(64))),
+  threadKeys: Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(
+    Schema.isMaxLength(5),
+  ),
+});
+export type GitHubStarUsage = typeof GitHubStarUsage.Type;
+export const DEFAULT_GITHUB_STAR_USAGE: GitHubStarUsage = { firstUsedAt: null, threadKeys: [] };
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -576,6 +604,10 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   /** The first-run screen's "Star on GitHub" link was dismissed. Settings > About keeps its own. */
   starOnGitHubDismissed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** When this device first started a turn, and the first threads it did, for the star card. */
+  githubStarUsage: GitHubStarUsage.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GITHUB_STAR_USAGE)),
+  ),
   /**
    * Settings > Machines: machines whose "Add your phone" step was put off with
    * Not now, keyed by environment id.
@@ -2105,6 +2137,9 @@ export const ServerSettings = Schema.Struct({
    * from being created. Existing assistants and their threads are kept.
    */
   aideEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  githubStarPrompt: GitHubStarPrompt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GITHUB_STAR_PROMPT)),
+  ),
   /**
    * "Use my Percy on this machine" (1448 D-12). Off by default and never
    * turned on by an update. Deliberately absent from `ServerSettingsPatch`:
@@ -2672,6 +2707,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerSessionIdleMinutes: Schema.optionalKey(ProviderSessionIdleMinutes),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
+  githubStarPrompt: Schema.optionalKey(GitHubStarPrompt),
   promptSuggestions: Schema.optionalKey(PromptSuggestionsMode),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   maxBootedDevices: Schema.optionalKey(Schema.NullOr(MaxBootedDevices)),
@@ -2882,6 +2918,7 @@ export const ClientSettingsPatch = Schema.Struct({
   whatYouCanDoDismissed: Schema.optionalKey(Schema.Boolean),
   fullAccessRecommendation: Schema.optionalKey(Schema.NullOr(FullAccessRecommendationAnswer)),
   starOnGitHubDismissed: Schema.optionalKey(Schema.Boolean),
+  githubStarUsage: Schema.optionalKey(GitHubStarUsage),
   machinePhoneStepDismissed: Schema.optionalKey(MachinePhoneStepDismissed),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),

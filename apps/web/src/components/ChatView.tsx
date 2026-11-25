@@ -1,6 +1,7 @@
 import { renderRich } from "../i18n/rich";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { modelLabel as threadIdentityLabel } from "../studio/shellModel";
+import { noteStarPromptTurn } from "./github/GitHubStarPrompt";
 import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
 import { latestRunPromptSuggestion } from "./chat/composerGhostSuggestion";
 import { resolveLeadingSkillCommand } from "../providerSkillSearch";
@@ -14162,6 +14163,7 @@ export default function ChatView(props: ChatViewProps) {
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
         clearUsageLimitsFor(routeThreadKey);
+        noteStarPromptTurn(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }

@@ -1,0 +1,93 @@
+import { DEFAULT_GITHUB_STAR_PROMPT, type GitHubStarUsage } from "@specweave-studio/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  answerStarPrompt,
+  isStarPromptDue,
+  noteStartedTurn,
+  setStarPromptEnabled,
+} from "./githubStarPrompt.logic";
+
+const DAY = 24 * 60 * 60 * 1000;
+const START = Date.parse("2026-11-01T10:00:00.000Z");
+const usedEnough: GitHubStarUsage = {
+  firstUsedAt: new Date(START).toISOString(),
+  threadKeys: ["a", "b", "c", "d", "e"],
+};
+
+describe("noteStartedTurn", () => {
+  it("records the first use and each new thread, up to five", () => {
+    let usage: GitHubStarUsage = { firstUsedAt: null, threadKeys: [] };
+    for (const key of ["a", "a", "b", "c", "d", "e", "f"]) {
+      usage = noteStartedTurn(usage, key, START) ?? usage;
+    }
+    expect(usage).toEqual({
+      firstUsedAt: new Date(START).toISOString(),
+      threadKeys: usedEnough.threadKeys,
+    });
+  });
+
+  it("makes no write for a thread it already counted", () => {
+    expect(noteStartedTurn(usedEnough, "a", START + DAY)).toBeNull();
+  });
+});
+
+describe("isStarPromptDue", () => {
+  it("never asks on first run or before real use", () => {
+    expect(
+      isStarPromptDue(DEFAULT_GITHUB_STAR_PROMPT, { firstUsedAt: null, threadKeys: [] }, START),
+    ).toBe(false);
+    const fourThreads = { ...usedEnough, threadKeys: ["a", "b", "c", "d"] };
+    expect(isStarPromptDue(DEFAULT_GITHUB_STAR_PROMPT, fourThreads, START + 10 * DAY)).toBe(false);
+    expect(isStarPromptDue(DEFAULT_GITHUB_STAR_PROMPT, usedEnough, START + 2 * DAY)).toBe(false);
+  });
+
+  it("asks after five threads and three days", () => {
+    expect(isStarPromptDue(DEFAULT_GITHUB_STAR_PROMPT, usedEnough, START + 3 * DAY)).toBe(true);
+  });
+
+  it("never asks after a star, an exhausted budget or Off", () => {
+    const later = START + 400 * DAY;
+    for (const status of ["starred", "done", "off"] as const) {
+      expect(isStarPromptDue({ status, asks: 0, nextAskAt: null }, usedEnough, later)).toBe(false);
+    }
+    expect(isStarPromptDue({ status: "asking", asks: 3, nextAskAt: null }, usedEnough, later)).toBe(
+      false,
+    );
+  });
+});
+
+describe("answerStarPrompt", () => {
+  it("never asks again after Star on GitHub, Already starred or a detected star", () => {
+    for (const answer of ["starred-now", "already-starred", "detected"] as const) {
+      expect(answerStarPrompt(DEFAULT_GITHUB_STAR_PROMPT, answer, START).status).toBe("starred");
+    }
+  });
+
+  it("backs off 14 then 30 days, and the third showing is the last", () => {
+    const now = START + 3 * DAY;
+    const first = answerStarPrompt(DEFAULT_GITHUB_STAR_PROMPT, "shown", now);
+    expect(first).toEqual({
+      status: "asking",
+      asks: 1,
+      nextAskAt: new Date(now + 14 * DAY).toISOString(),
+    });
+    expect(isStarPromptDue(first, usedEnough, now + 13 * DAY)).toBe(false);
+    expect(isStarPromptDue(first, usedEnough, now + 14 * DAY)).toBe(true);
+
+    const second = answerStarPrompt(first, "shown", now + 14 * DAY);
+    expect(second.asks).toBe(2);
+    expect(second.nextAskAt).toBe(new Date(now + 44 * DAY).toISOString());
+
+    const third = answerStarPrompt(second, "shown", now + 44 * DAY);
+    expect(third).toEqual({ status: "done", asks: 3, nextAskAt: null });
+    expect(isStarPromptDue(third, usedEnough, now + 1000 * DAY)).toBe(false);
+  });
+});
+
+describe("setStarPromptEnabled", () => {
+  it("Off ends asking; On starts a fresh three-ask budget", () => {
+    expect(setStarPromptEnabled(false).status).toBe("off");
+    expect(setStarPromptEnabled(true)).toEqual(DEFAULT_GITHUB_STAR_PROMPT);
+  });
+});

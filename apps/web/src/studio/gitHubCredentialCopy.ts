@@ -24,4 +24,9 @@ export const gitHubCredential = {
     label: "github-credential:copy",
     tag: GITHUB_CREDENTIAL_RPC_METHODS.gitHubCredentialCopy,
   }),
+  // Read-only: has this machine's GitHub sign-in starred SpecWithCode? (1489)
+  starred: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "github-credential:starred",
+    tag: GITHUB_CREDENTIAL_RPC_METHODS.gitHubCredentialStarred,
+  }),
 };

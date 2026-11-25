@@ -87,6 +87,16 @@ export const GitHubCredentialCopyPreview = Schema.Struct({
 export type GitHubCredentialCopyPreview = typeof GitHubCredentialCopyPreview.Type;
 
 export const GitHubCredentialStateInput = Schema.Struct({});
+/** No payload: the repository is fixed on the server, so no client can aim the check elsewhere. */
+export const GitHubCredentialStarredInput = Schema.Struct({});
+/**
+ * Whether this machine's GitHub sign-in has starred the SpecWithCode repository. Null when it
+ * cannot tell: no sign-in, github.com turned off, or GitHub did not answer. No login is returned.
+ */
+export const GitHubCredentialStarredResult = Schema.Struct({
+  starred: Schema.NullOr(Schema.Boolean),
+});
+export type GitHubCredentialStarredResult = typeof GitHubCredentialStarredResult.Type;
 export const GitHubCredentialRemoveCopiedInput = Schema.Struct({});
 export const GitHubCredentialCopyInput = Schema.Struct({
   targetEnvironmentId: EnvironmentId,
@@ -115,6 +125,7 @@ export const GITHUB_CREDENTIAL_RPC_METHODS = {
   gitHubCredentialRemoveCopied: "gitHubCredential.removeCopied",
   gitHubCredentialCopyPreview: "gitHubCredential.copyPreview",
   gitHubCredentialCopy: "gitHubCredential.copy",
+  gitHubCredentialStarred: "gitHubCredential.starred",
 } as const;
 
 const error = Schema.Union([GitHubCredentialError, EnvironmentAuthorizationError]);
@@ -137,6 +148,11 @@ export const gitHubCredentialRpcs = [
   Rpc.make(GITHUB_CREDENTIAL_RPC_METHODS.gitHubCredentialCopy, {
     payload: GitHubCredentialCopyInput,
     success: GitHubCredentialCopyResult,
+    error,
+  }),
+  Rpc.make(GITHUB_CREDENTIAL_RPC_METHODS.gitHubCredentialStarred, {
+    payload: GitHubCredentialStarredInput,
+    success: GitHubCredentialStarredResult,
     error,
   }),
 ] as const;
