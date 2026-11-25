@@ -329,6 +329,22 @@ export function untickedSecrets(
 }
 
 /**
+ * The saved choice with this window's own exclusions put back, or null when none was dropped.
+ * Two windows' saves can cross (each reads the shared copy a moment before the other writes),
+ * so the window whose exclusion was lost writes it again when it hears of the other's save.
+ */
+export function healedSecrets(
+  stored: SecretsChoice,
+  own: ReadonlySet<string>,
+  ownOff: boolean,
+): SecretsChoice | null {
+  const dropped = [...own].filter((path) => !stored.out.includes(path));
+  const off = ownOff && stored.included;
+  if (dropped.length === 0 && !off) return null;
+  return { included: stored.included && !ownOff, out: [...stored.out, ...dropped] };
+}
+
+/**
  * True when approving this copy without secrets would be unseen: its choice includes them
  * and the form never said this window cannot send them.
  */

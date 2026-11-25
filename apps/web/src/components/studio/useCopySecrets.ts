@@ -1,4 +1,4 @@
-import { useRef, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type {
   EnvironmentId,
   FolderCopySourceSummary,
@@ -16,7 +16,9 @@ import {
 } from "./handoffCopySecrets";
 import {
   ALL_SECRETS,
+  healedSecrets,
   pendingSecrets,
+  readPendingCopy,
   untickedSecrets,
   type PendingCopy,
   type SecretsChoice,
@@ -54,7 +56,7 @@ export function useCopySecrets({
   done,
   keep,
   readSummary,
-  savedNow,
+  storageKey,
 }: {
   readonly source: EnvironmentId;
   readonly sourceLabel: string;
@@ -74,8 +76,8 @@ export function useCopySecrets({
   readonly keep: (choice: SecretsChoice) => void;
   /** Reads the source's summary again; null when it cannot be read. */
   readonly readSummary: (saved: PendingCopy) => Promise<FolderCopySourceSummary | null | undefined>;
-  /** The copy's pointer as saved now, which another window may have changed. */
-  readonly savedNow: () => PendingCopy | null;
+  /** Where the copy's pointer is saved, shared with the other windows on this machine. */
+  readonly storageKey: string;
 }) {
   const sendSecrets = useAtomCommand(machineHandoff.copySecrets, { reportFailure: false });
   const sendSealed = useAtomCommand(machineHandoff.copySealedSecrets, { reportFailure: false });
@@ -94,16 +96,49 @@ export function useCopySecrets({
   /** The list last sent for a copy, which its approval then names to the destination. */
   const sent = useRef<{ operationId: string; paths: ReadonlyArray<string> } | null>(null);
 
+  /** Exclusions this window made for the running copy; another window's save never drops them. */
+  const own = useRef<{ operationId: string | null; out: Set<string>; off: boolean }>({
+    operationId: null,
+    out: new Set(),
+    off: false,
+  });
+  const ownFor = () => {
+    const operationId = latestPending.current?.operationId ?? null;
+    if (own.current.operationId !== operationId)
+      own.current = { operationId, out: new Set(), off: false };
+    return own.current;
+  };
   const choose = (next: SecretsChoice) => {
+    const mine = ownFor();
+    const before = chosenNow.current;
+    for (const path of next.out) if (!before.out.includes(path)) mine.out.add(path);
+    for (const path of before.out) if (!next.out.includes(path)) mine.out.delete(path);
+    mine.off = !next.included;
     setChosen(next);
     keep(next);
   };
+  // Another window saved this copy: put back any exclusion of this window its save dropped.
+  useEffect(() => {
+    const heard = (event: StorageEvent) => {
+      if (event.key !== storageKey) return;
+      const mine = latestPending.current;
+      const stored = readPendingCopy(storageKey);
+      if (!mine || !stored || stored.operationId !== mine.operationId) return;
+      const { out, off } = ownFor();
+      const healed = healedSecrets(pendingSecrets(stored), out, off);
+      if (!healed) return;
+      setChosen(healed);
+      keep(healed);
+    };
+    window.addEventListener("storage", heard);
+    return () => window.removeEventListener("storage", heard);
+  });
   /** Leaves out secret files a refresh found that the person never reviewed. */
   const untick = (paths: ReadonlyArray<string>) => {
     const mine = latestPending.current;
     const current = mine ? pendingSecrets(mine) : chosenNow.current;
     // Merged onto the saved copy: another window's exclusions stay out.
-    const stored = mine ? savedNow() : null;
+    const stored = mine ? readPendingCopy(storageKey) : null;
     const saved = stored && stored.operationId === mine?.operationId ? pendingSecrets(stored) : null;
     const next = untickedSecrets(saved, current, paths);
     if (JSON.stringify(next) !== JSON.stringify(current)) choose(next);

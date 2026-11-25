@@ -275,7 +275,7 @@ export function HandoffFolderCopy({
       else draft.keepDraft({ secrets: choice });
     },
     readSummary: (saved) => readSummary(saved),
-    savedNow: () => readPendingCopy(storageKey),
+    storageKey,
   });
   const { busy, closeLocked } = useCopyReporting({
     environmentId: project.environmentId,

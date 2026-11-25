@@ -109,6 +109,53 @@ export async function caseInsensitiveAt(directory: string): Promise<boolean> {
 }
 
 /**
+ * One digest of every destination folder at a path where the source sends something other
+ * than a folder: what replacing it would move to the backup. Every such folder counts,
+ * whatever the decision on it, so the digest moves only when the destination does. Null when
+ * there is none.
+ */
+async function replaceableTrees(
+  root: string,
+  files: ReadonlyArray<DestinationFile>,
+  sourceEntries: ReadonlyArray<ManifestEntry>,
+  key: (path: string) => string,
+): Promise<string | null> {
+  const replaced = new Set(
+    sourceEntries.filter((entry) => entry.type !== "directory").map((entry) => key(entry.path)),
+  );
+  const folders = files
+    .filter((file) => file.type === "directory" && replaced.has(key(file.path)))
+    .map((file) => file.path)
+    .sort();
+  if (folders.length === 0) return null;
+  const hash = NodeCrypto.createHash("sha256");
+  const walk = async (absolute: string, relative: string): Promise<void> => {
+    const names = await NodeFSP.readdir(absolute).catch(() => null);
+    if (!names) {
+      hash.update(`\0unreadable\0${relative}`);
+      return;
+    }
+    for (const name of names.sort()) {
+      const location = NodePath.join(absolute, name);
+      const path = `${relative}/${name}`;
+      const stat = await NodeFSP.lstat(location, { bigint: true }).catch(() => null);
+      if (!stat) {
+        hash.update(`\0gone\0${path}`);
+        continue;
+      }
+      const kind = stat.isDirectory() ? "d" : stat.isSymbolicLink() ? "l" : "f";
+      hash.update(
+        `\0${path}\0${kind}\0${stat.size}\0${stat.mtimeNs}\0${stat.ctimeNs}\0${stat.ino}`,
+      );
+      if (kind === "l") hash.update(await NodeFSP.readlink(location).catch(() => "?"));
+      if (kind === "d") await walk(location, path);
+    }
+  };
+  for (const folder of folders) await walk(NodePath.join(root, folder), folder);
+  return hash.digest("hex");
+}
+
+/**
  * Lists the target folder and hashes only what the plan can use: files at a path
  * the source also sends with the same size, and files whose size matches a file
  * the source sends (so its bytes can be reused instead of moved).
@@ -159,9 +206,13 @@ export async function scanDestination(
       // Unreadable here: compared as different, never reused.
     }
   });
+  // Folders a source entry of another kind would replace, walked whole below, so a change in
+  // a part the scan does not open (dependencies, build output) still names them anew.
+  const replaceable = await replaceableTrees(scan.root, files, sourceEntries, key);
   const fingerprint = NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify({
+        ...(replaceable !== null ? { replaceable } : {}),
         entries: scan.entries
           .filter((entry) => entry.class !== "repository")
           .map(({ path, type, mode, size, mtimeMs, target }) => ({
