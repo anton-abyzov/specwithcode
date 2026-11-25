@@ -62,12 +62,13 @@ const planExitOptions: ReadonlyArray<PermissionOption> = [
  * and returns the option ID sent to the agent.
  */
 const answerPlanExit = (
-  agentId: string,
+  agent: string | { readonly source: "local"; readonly commandPath: string },
   runtimeMode: RuntimeMode,
   decision: ProviderApprovalDecision,
   offered: ReadonlyArray<PermissionOption> = planExitOptions,
 ) =>
   Effect.gen(function* () {
+    const agentId = typeof agent === "string" ? agent : "local";
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
     const mockAgentPath = yield* path.fromFileUrl(
@@ -80,7 +81,9 @@ const answerPlanExit = (
       crypto: yield* Crypto.Crypto,
       selfInvocation: yield* resolveSelfInvocation(),
       instanceId,
-      settings: yield* decodeSettings({ agentId, authMethodId: "test" }),
+      settings: yield* decodeSettings(
+        typeof agent === "string" ? { agentId: agent, authMethodId: "test" } : agent,
+      ),
       environment: {},
       childProcessSpawner,
       fileSystem: yield* FileSystem.FileSystem,
@@ -226,6 +229,21 @@ describe("ACP registry permission answers", () => {
       Effect.provide(layerTest),
       Effect.scoped,
     ),
+  );
+
+  it.live.each(["/usr/local/bin/devin", "C:\\tools\\devin.exe"])(
+    "a locally installed Devin (%s) never answers with the bypass option",
+    (commandPath) =>
+      Effect.gen(function* () {
+        assert.equal(
+          yield* answerPlanExit({ source: "local", commandPath }, "approval-required", "accept"),
+          "plan_approve",
+        );
+        assert.equal(
+          yield* answerPlanExit({ source: "local", commandPath }, "full-access", "accept"),
+          "plan_approve",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("Devin's reject still answers with its reject option", () =>
