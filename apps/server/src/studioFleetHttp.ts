@@ -682,6 +682,8 @@ export const layer = HttpApiBuilder.group(
                 ttl: Duration.days(redeemed.days),
                 proofKeyThumbprint: thumbprint,
                 ...(redeemedFrom === undefined ? {} : { ipAddress: redeemedFrom }),
+                // A revoke-all since the line was spent refuses the session.
+                revocationEpoch: redeemed.revocationEpoch,
               })
               .pipe(Effect.mapError(internal));
             // A leaked line can be redeemed by someone else's key: leave a
