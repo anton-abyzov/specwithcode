@@ -204,7 +204,10 @@ describe("validateMcpElicitationContent", () => {
   });
 
   it("knows leap days", () => {
-    const [day] = fieldsOf({ type: "object", properties: { day: { type: "string", format: "date" } } });
+    const [day] = fieldsOf({
+      type: "object",
+      properties: { day: { type: "string", format: "date" } },
+    });
     expect(validateMcpElicitationContent([day!], { day: "2028-02-29" }).ok).toBe(true);
     expect(validateMcpElicitationContent([day!], { day: "2026-02-29" }).ok).toBe(false);
     expect(validateMcpElicitationContent([day!], { day: "2026-13-01" }).ok).toBe(false);
