@@ -5787,9 +5787,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 action: "cancel",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
+            // Access prompts can arrive without a turn id; the thread's
+            // active turn owns them then.
             const context =
               payload.turnId === undefined || payload.turnId === null
-                ? undefined
+                ? yield* findActiveTurnByNativeThreadId(payload.threadId)
                 : yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               yield* Effect.logWarning(

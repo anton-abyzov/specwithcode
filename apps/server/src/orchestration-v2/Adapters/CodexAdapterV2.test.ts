@@ -2470,62 +2470,65 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("shows a Full access browser access prompt to the app instead of losing it", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "mcp-browser-thread";
-      const nativeTurnId = "mcp-browser-turn";
-      const prompt = "Read the dashboard in the browser.";
-      const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
-      const harness = yield* makeCodexReplayHarness(
-        mcpAccessTranscript({
-          scenario: "mcp-browser-full-access",
-          nativeThreadId,
-          nativeTurnId,
-          prompt,
-          request: {
-            threadId: nativeThreadId,
-            turnId: nativeTurnId,
-            serverName: "browser",
-            mode: "form",
-            message: "Allow access to example.com?",
-            requestedSchema: {
-              type: "object",
-              properties: { approval: { type: "string", enum: ["once", "always"] } },
-              required: ["approval"],
+  it.effect.each(["present", "null"] as const)(
+    "shows a Full access browser access prompt with a %s turn id to the app instead of losing it",
+    (turnIdKind) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `mcp-browser-thread-${turnIdKind}`;
+        const nativeTurnId = `mcp-browser-turn-${turnIdKind}`;
+        const prompt = "Read the dashboard in the browser.";
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          mcpAccessTranscript({
+            scenario: `mcp-browser-full-access-${turnIdKind}`,
+            nativeThreadId,
+            nativeTurnId,
+            prompt,
+            request: {
+              threadId: nativeThreadId,
+              // Some access prompts arrive with no turn id; the thread's active turn owns them.
+              turnId: turnIdKind === "null" ? null : nativeTurnId,
+              serverName: "browser",
+              mode: "form",
+              message: "Allow access to example.com?",
+              requestedSchema: {
+                type: "object",
+                properties: { approval: { type: "string", enum: ["once", "always"] } },
+                required: ["approval"],
+              },
             },
-          },
-          answer: { action: "accept", content: { approval: "once" } },
-        }),
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
-            ? Queue.offer(pending, event.runtimeRequest)
-            : Effect.void,
-      );
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("mcp-browser-full-access-attempt"),
-          text: prompt,
-        }),
-      );
-      const request = yield* Queue.take(pending);
-      assert.equal(request.kind, "mcp-elicitation");
-      yield* harness.runtime.respondToRuntimeRequest({
-        requestId: request.id,
-        decision: "accept",
-      });
-      yield* harness.firstTerminal;
-      assert.deepEqual(
-        harness.terminalEvents().map((event) => event.status),
-        ["completed"],
-      );
-    }).pipe(
-      Effect.timeout("10 seconds"),
-      Effect.scoped,
-      Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
-    ),
+            answer: { action: "accept", content: { approval: "once" } },
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`mcp-browser-full-access-${turnIdKind}-attempt`),
+            text: prompt,
+          }),
+        );
+        const request = yield* Queue.take(pending);
+        assert.equal(request.kind, "mcp-elicitation");
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "accept",
+        });
+        yield* harness.firstTerminal;
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.timeout("10 seconds"),
+        Effect.scoped,
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+      ),
   );
 
   it.effect.each(["supported", "unsupported", "unsaved", "invalid"] as const)(
