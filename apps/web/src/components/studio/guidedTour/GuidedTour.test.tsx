@@ -4,20 +4,21 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const router = vi.hoisted(() => ({
-  navigate: vi.fn(async ({ to }: { to: string }) => {
-    window.history.pushState(null, "", to);
+  navigate: vi.fn(async ({ to }: { to: string; replace?: boolean }) => {
+    window.history.replaceState(null, "", to);
   }),
-  push: vi.fn((to: string) => window.history.pushState(null, "", to)),
+  replace: vi.fn((to: string) => window.history.replaceState(null, "", to)),
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => router.navigate,
-  useRouter: () => ({ history: { push: router.push } }),
+  useRouter: () => ({ history: { replace: router.replace } }),
 }));
 
 import { QuickGuides } from "../QuickGuides";
 import { GuidedTourHost, TARGET_WAIT_MS } from "./GuidedTour";
 import { GUIDED_TOUR_STEPS } from "./guidedTour.logic";
 import { endGuidedTour, getGuidedTourState, startGuidedTour } from "./guidedTourStore";
+import { getMainAppHref, setMainAppHref } from "../../sidebar/mainAppLocation";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -64,7 +65,7 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   router.navigate.mockClear();
-  router.push.mockClear();
+  router.replace.mockClear();
 });
 
 afterEach(async () => {
@@ -133,7 +134,7 @@ describe("guided tour host (1486)", () => {
     await settle();
     await act(async () => button("Skip tour").click());
     expect(overlay()).toBeNull();
-    expect(router.push).toHaveBeenLastCalledWith("/somewhere?tab=1");
+    expect(router.replace).toHaveBeenLastCalledWith("/somewhere?tab=1");
 
     await act(async () => startGuidedTour());
     await settle();
@@ -145,7 +146,7 @@ describe("guided tour host (1486)", () => {
     expect(getGuidedTourState().open).toBe(false);
   });
 
-  it("blocks clicks on the page under it (AC-04)", async () => {
+  it("covers the page with a hidden layer above it (AC-04; real hit tests are in the headless walk)", async () => {
     const page = drawTargets();
     const clicked = vi.fn();
     page.querySelector("[data-guided-tour='new-chat']")!.addEventListener("click", clicked);
@@ -180,6 +181,82 @@ describe("guided tour host (1486)", () => {
     expect(document.querySelector("[data-guided-tour-decor]")?.getAttribute("aria-hidden")).toBe(
       "true",
     );
+  });
+
+  it("lets no key reach the app under it, and still takes its own (AC-04)", async () => {
+    drawTargets();
+    const pageKeys = vi.fn();
+    window.addEventListener("keydown", pageKeys);
+    document.addEventListener("keydown", pageKeys, true);
+    await act(async () => root.render(<GuidedTourHost />));
+    await act(async () => startGuidedTour());
+    await settle();
+    for (const init of [
+      { key: "k", metaKey: true },
+      { key: "A", metaKey: true, altKey: true, shiftKey: true },
+      { key: "[", metaKey: true },
+      { key: "a" },
+      { key: "Enter" },
+    ]) {
+      const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+      await act(async () => {
+        document.body.dispatchEvent(event);
+      });
+      // Typing outside the card does nothing at all.
+      expect(event.defaultPrevented, init.key).toBe(true);
+    }
+    expect(pageKeys).not.toHaveBeenCalled();
+    // Enter on a focused tour button keeps its default, so the button is pressed.
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => {
+      button("Next").dispatchEvent(enter);
+    });
+    expect(enter.defaultPrevented).toBe(false);
+    await key("ArrowRight");
+    await settle();
+    expect(overlay()?.dataset.tourStep).toBe("projects");
+    expect(pageKeys).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", pageKeys);
+    document.removeEventListener("keydown", pageKeys, true);
+  });
+
+  it("puts back where closing Settings goes and replaces history (AC-04)", async () => {
+    drawTargets();
+    window.history.replaceState(null, "", "/settings/skills");
+    setMainAppHref("/projects/sample");
+    await act(async () => root.render(<GuidedTourHost />));
+    await act(async () => startGuidedTour());
+    await settle();
+    // Overview is a main app page, so the app's tracker would remember it.
+    setMainAppHref("/");
+    await act(async () => button("Skip tour").click());
+    expect(getMainAppHref()).toBe("/projects/sample");
+    expect(router.replace).toHaveBeenLastCalledWith("/settings/skills");
+    expect(router.navigate.mock.calls.every(([options]) => options.replace === true)).toBe(true);
+  });
+
+  it("moves to the real target when it draws after a stand-in (AC-03)", async () => {
+    const page = drawTargets();
+    const center = page.querySelector('[data-testid="skill-update-center"]')!;
+    center.remove();
+    const nav = document.createElement("a");
+    nav.dataset.settingsNavItem = "/settings/skills";
+    page.append(nav);
+    await act(async () => root.render(<GuidedTourHost />));
+    await act(async () => startGuidedTour());
+    const search = GUIDED_TOUR_STEPS.findIndex((step) => step.id === "skill-search");
+    for (let at = 0; at < search; at++) {
+      await settle(TARGET_WAIT_MS + 200);
+      await act(async () => button("Next").click());
+    }
+    await settle();
+    expect(overlay()?.dataset.tourStep).toBe("skill-search");
+    expect(overlay()?.dataset.tourMatch).toBe("1");
+    await act(async () => {
+      page.append(center);
+    });
+    await settle(300);
+    expect(overlay()?.dataset.tourMatch).toBe("0");
   });
 
   it("centres the card and marks a required target missing after the wait (AC-03)", async () => {

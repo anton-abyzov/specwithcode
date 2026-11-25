@@ -34,12 +34,12 @@ export const guidedTourKo: PhraseCatalog = {
   "{track} has a different model family check finished work before it ships.":
     "{track}에서는 다른 모델 계열이 완료된 작업을 내보내기 전에 확인합니다.",
   "One chat's model": "채팅 하나의 모델",
-  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu moves one that is running.":
-    "채팅에서 입력란 아래 모델 칩은 그 채팅만 바꾸고, 메뉴의 Switch model and continue…는 실행 중인 채팅을 바꿉니다.",
+  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu changes the model of a chat that is already working.":
+    "채팅에서 입력란 아래 모델 칩은 그 채팅만 바꾸고, 메뉴의 Switch model and continue…는 이미 작업 중인 채팅의 모델을 바꿉니다.",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "{machines}에는 이 컴퓨터와 연결한 컴퓨터가 표시되며, 컴퓨터가 한 대라면 다른 컴퓨터를 연결할 때까지 여기서 설정할 것이 없습니다.",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off everything unfinished.":
-    "채팅 메뉴의 Move thread…는 다른 컴퓨터에서 실행하고, 실행 중인 스레드 이동…은 끝나지 않은 작업을 모두 넘깁니다.",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
+    "채팅 메뉴의 Move thread…는 다른 컴퓨터에서 실행하고, 실행 중인 스레드 이동…은 이 컴퓨터에서 실행 중인 채팅을 넘깁니다.",
   "Take it again": "다시 보기",
   "Start this tour again here or from Quick guides on Overview.":
     "이 투어는 여기나 개요의 빠른 가이드에서 다시 시작할 수 있습니다.",

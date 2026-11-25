@@ -309,6 +309,60 @@ try {
         `${name}: Esc ends the tour and stays in Settings`,
         new URL(page.url()).pathname === "/settings/general",
       );
+      if (withProject) {
+        // Start inside Settings opened from another page, pass through Overview, then Skip:
+        // closing Settings must still return to that page, and shortcuts must do nothing.
+        await page.goto(`${origin}/`);
+        // Design is a main app page like a project's, and needs nothing set up.
+        const designLink = page.getByRole("link", { name: "Design", exact: true }).first();
+        await designLink.waitFor({ timeout: 15000 });
+        await designLink.click();
+        await page.waitForFunction(() => location.pathname.startsWith("/design"));
+        const projectPath = new URL(page.url()).pathname;
+        await page.evaluate(() => {
+          history.pushState(null, "", "/settings/general");
+          dispatchEvent(new PopStateEvent("popstate"));
+        });
+        await again.waitFor({ timeout: 15000 });
+        await again.click();
+        await overlay.waitFor({ timeout: 5000 });
+        await page.getByRole("button", { name: "Next", exact: true }).click();
+        await page.waitForFunction(
+          () =>
+            document.querySelector("[data-guided-tour-overlay]")?.getAttribute("data-tour-step") ===
+              "projects" && location.pathname === "/",
+        );
+        const before = await page.evaluate(() => ({
+          theme: document.documentElement.className,
+          stored: JSON.stringify({ ...localStorage }),
+          dialogs: document.querySelectorAll('[role="dialog"]').length,
+        }));
+        for (const shortcut of ["Meta+K", "Control+K", "Meta+Alt+Shift+A", "Meta+[", "n"])
+          await page.keyboard.press(shortcut);
+        await page.waitForTimeout(300);
+        const after = await page.evaluate(() => ({
+          theme: document.documentElement.className,
+          stored: JSON.stringify({ ...localStorage }),
+          dialogs: document.querySelectorAll('[role="dialog"]').length,
+        }));
+        check(
+          `${name}: shortcuts do nothing under the tour`,
+          JSON.stringify(before) === JSON.stringify(after),
+          { before, after },
+        );
+        check(`${name}: shortcuts left the tour on its step`, new URL(page.url()).pathname === "/");
+        await page.getByRole("button", { name: "Skip tour", exact: true }).click();
+        await overlay.waitFor({ state: "detached", timeout: 5000 });
+        await page.waitForURL((url) => url.pathname === "/settings/general", { timeout: 5000 });
+        await page.getByRole("button", { name: "Close settings", exact: true }).first().click();
+        await page.waitForFunction((path) => location.pathname === path, projectPath, {
+          timeout: 5000,
+        });
+        check(
+          `${name}: closing Settings after the tour returns to where it opened from`,
+          new URL(page.url()).pathname === projectPath,
+        );
+      }
       check(`${name}: no page errors`, errors.length === 0, errors);
       authenticated ??= await context.storageState();
     } catch (error) {

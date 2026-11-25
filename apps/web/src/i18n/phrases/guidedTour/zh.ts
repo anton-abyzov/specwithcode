@@ -34,12 +34,12 @@ export const guidedTourZh: PhraseCatalog = {
   "{track} has a different model family check finished work before it ships.":
     "{track} 让另一个模型家族在发布前检查已完成的工作。",
   "One chat's model": "单个聊天的模型",
-  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu moves one that is running.":
-    "在聊天中，消息框下方的模型标签只更改该聊天，菜单中的 Switch model and continue… 可切换正在运行的聊天。",
+  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu changes the model of a chat that is already working.":
+    "在聊天中，消息框下方的模型标签只更改该聊天，菜单中的 Switch model and continue… 可更改正在工作的聊天的模型。",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "{machines} 列出这台电脑和你加入的电脑；只有一台电脑时，在加入另一台之前这里无需设置。",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off everything unfinished.":
-    "聊天菜单中的 Move thread… 会在另一台电脑上运行它，转移正在运行的会话… 会移交所有未完成的工作。",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
+    "聊天菜单中的 Move thread… 会在另一台电脑上运行它，转移正在运行的会话… 会移交这台电脑上正在运行的聊天。",
   "Take it again": "再看一次",
   "Start this tour again here or from Quick guides on Overview.":
     "可以在这里或 概览 的 快速指南 中重新开始此导览。",

@@ -34,12 +34,12 @@ export const guidedTourRu: PhraseCatalog = {
   "{track} has a different model family check finished work before it ships.":
     "В треке {track} готовую работу перед выпуском проверяет модель другого семейства.",
   "One chat's model": "Модель одного чата",
-  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu moves one that is running.":
-    "В чате значок модели под полем ввода меняет модель только этого чата, а Switch model and continue… в его меню переключает уже идущий чат.",
+  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu changes the model of a chat that is already working.":
+    "В чате значок модели под полем ввода меняет модель только этого чата, а Switch model and continue… в его меню меняет модель чата, который уже работает.",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "В разделе {machines} эта машина и те, что вы подключите; с одной машиной здесь нечего настраивать, пока не подключите другую.",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off everything unfinished.":
-    "Move thread… в меню чата запускает его на другой машине, а Перенести запущенные треды… передаёт всю незаконченную работу.",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
+    "Move thread… в меню чата запускает его на другой машине, а Перенести запущенные треды… передаёт чаты, которые работают на этой машине.",
   "Take it again": "Пройти снова",
   "Start this tour again here or from Quick guides on Overview.":
     "Запустите эту экскурсию снова здесь или из Краткие руководства в Обзоре.",

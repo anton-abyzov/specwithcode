@@ -107,7 +107,11 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
   {
     id: "skill-switches",
     route: "/settings/skills",
-    targets: ['[data-testid="skills-table"]', '[data-testid="skill-update-center"]'],
+    targets: [
+      '[data-testid="skills-table"]',
+      '[data-testid="skills-empty"]',
+      '[data-testid="skill-update-center"]',
+    ],
     required: false,
     title: "Turn skills on and share them",
     body: "Each skill turns on or off per agent, and after an install Also add on puts the same copy on your other machines.",
@@ -145,7 +149,7 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
     targets: ['[data-guided-tour="new-chat"]'],
     required: true,
     title: "One chat's model",
-    body: "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu moves one that is running.",
+    body: "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu changes the model of a chat that is already working.",
   },
   {
     id: "machines",
@@ -162,7 +166,7 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
     targets: [sectionHeader("handoff-mode")],
     required: true,
     title: "Moving work between machines",
-    body: "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off everything unfinished.",
+    body: "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.",
   },
   {
     id: "again",

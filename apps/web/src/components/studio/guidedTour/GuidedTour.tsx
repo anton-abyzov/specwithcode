@@ -66,11 +66,24 @@ const sameRect = (a: TourRect | null, b: TourRect | null) =>
     a.width === b.width &&
     a.height === b.height);
 
-const offScreen = (rect: TourRect) =>
-  rect.top < 0 ||
-  rect.left < 0 ||
-  rect.top + rect.height > window.innerHeight ||
-  rect.left + rect.width > window.innerWidth;
+/**
+ * Whether the target needs scrolling back: none of it shows, or it fits the window and is
+ * cut off. A target taller than the window stays as it is once part of it shows.
+ */
+const needsScroll = (rect: TourRect) => {
+  const hidden =
+    rect.top + rect.height <= 0 ||
+    rect.top >= window.innerHeight ||
+    rect.left + rect.width <= 0 ||
+    rect.left >= window.innerWidth;
+  const fits = rect.height <= window.innerHeight && rect.width <= window.innerWidth;
+  const cut =
+    rect.top < 0 ||
+    rect.left < 0 ||
+    rect.top + rect.height > window.innerHeight ||
+    rect.left + rect.width > window.innerWidth;
+  return hidden || (fits && cut);
+};
 
 export function GuidedTourHost() {
   const tour = useGuidedTour();
@@ -138,9 +151,10 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
     };
   }, [container]);
 
+  // The tour replaces history entries as it goes, so Back afterwards skips its pages.
   const finish = useCallback(() => {
     const returnTo = endGuidedTour();
-    router.history.push(returnTo);
+    router.history.replace(returnTo);
   }, [router]);
   const goNext = useCallback(() => {
     const next = nextStepIndex(index, total);
@@ -149,33 +163,50 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
   }, [finish, index, total]);
   const goBack = useCallback(() => showGuidedTourStep(backStepIndex(index)), [index]);
 
-  // Open the step's page, then wait for its target.
+  // Open the step's page, then wait for its target. `attempt` restarts this when something
+  // other than the tour moves the page away from the step's route.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     setResolution({ kind: "waiting" });
     setRect(null);
-    if (window.location.pathname !== step.route) void navigate({ to: step.route });
+    if (window.location.pathname !== step.route) void navigate({ to: step.route, replace: true });
     if (step.targets.length === 0) {
       setResolution({ kind: "none" });
       return;
     }
-    const started = Date.now();
+    // The wait starts once the page is the step's own, not while it is still loading.
+    let started: number | null = null;
+    let best: number | null = null;
     let timer: number | undefined;
     const poll = () => {
-      const found = window.location.pathname === step.route ? findTarget(step) : null;
-      if (found) {
+      const onRoute = window.location.pathname === step.route;
+      if (onRoute && started === null) started = Date.now();
+      const found = onRoute ? findTarget(step) : null;
+      // A stand-in (a later selector) can draw first; keep looking for the first one.
+      if (found && (best === null || found.match < best)) {
+        best = found.match;
         found.element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
         setResolution({ kind: "found", ...found });
-        return;
+        if (found.match === 0) return;
       }
-      if (Date.now() - started >= TARGET_WAIT_MS) {
-        setResolution({ kind: step.required ? "missing" : "none" });
+      if (started !== null && Date.now() - started >= TARGET_WAIT_MS) {
+        if (best === null) setResolution({ kind: step.required ? "missing" : "none" });
         return;
       }
       timer = window.setTimeout(poll, POLL_MS);
     };
     poll();
     return () => window.clearTimeout(timer);
-  }, [navigate, step]);
+  }, [navigate, step, attempt]);
+
+  // Bring the step's page back if browser Back or a link outside the tour moved away.
+  useEffect(() => {
+    if (resolution.kind === "waiting") return;
+    const check = window.setInterval(() => {
+      if (window.location.pathname !== step.route) setAttempt((value) => value + 1);
+    }, 250);
+    return () => window.clearInterval(check);
+  }, [resolution.kind, step.route]);
 
   // Follow the target while the page scrolls, resizes or redraws.
   useEffect(() => {
@@ -189,7 +220,7 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
       const next = element ? rectOf(element) : null;
       // A page that grows after the target drew can push it off screen; bring it back.
       // The dim layer takes the wheel, so this never fights the person's own scrolling.
-      if (element && next && offScreen(next) && performance.now() - lastScroll > 300) {
+      if (element && next && needsScroll(next) && performance.now() - lastScroll > 300) {
         lastScroll = performance.now();
         element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
       }
@@ -219,21 +250,23 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
     if (resolution.kind !== "waiting") nextRef.current?.focus({ preventScroll: true });
   }, [resolution.kind]);
 
-  // Keys go to the tour first, so a page's own Esc or arrows never run under it.
+  // While the tour is open every key belongs to it: app shortcuts, the command palette and
+  // dialogs under it never see one, so looking around changes nothing (AC-04). Enter and
+  // Space still press the focused tour button, because only propagation is stopped.
   useEffect(() => {
+    const swallow = (event: KeyboardEvent) => {
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
     const onKey = (event: KeyboardEvent) => {
-      const handled =
-        event.key === "Escape"
-          ? finish
-          : event.key === "ArrowRight"
-            ? goNext
-            : event.key === "ArrowLeft"
-              ? goBack
-              : null;
+      swallow(event);
+      const card = cardRef.current;
+      const inCard = card !== null && event.target instanceof Node && card.contains(event.target);
+      const buttons = [
+        ...(card?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []),
+      ];
       if (event.key === "Tab") {
-        const buttons = [
-          ...(cardRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []),
-        ];
+        event.preventDefault();
         if (buttons.length === 0) return;
         const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
         const to = event.shiftKey
@@ -241,18 +274,33 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
             ? buttons.length - 1
             : at - 1
           : (at + 1) % buttons.length;
-        event.preventDefault();
-        event.stopPropagation();
         buttons[to]!.focus();
         return;
       }
-      if (!handled) return;
-      event.preventDefault();
-      event.stopPropagation();
-      handled();
+      const action =
+        event.key === "Escape"
+          ? finish
+          : event.key === "ArrowRight"
+            ? goNext
+            : event.key === "ArrowLeft"
+              ? goBack
+              : null;
+      if (action) {
+        event.preventDefault();
+        if (!event.repeat || event.key !== "Escape") action();
+        return;
+      }
+      // Typing reaches nothing under the tour; Enter and Space only press a tour button.
+      if (!inCard || (event.key !== "Enter" && event.key !== " ")) event.preventDefault();
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", swallow, true);
+    window.addEventListener("keypress", swallow, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", swallow, true);
+      window.removeEventListener("keypress", swallow, true);
+    };
   }, [finish, goBack, goNext]);
 
   const spotlit = resolution.kind === "found" ? rect : null;

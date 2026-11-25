@@ -17,6 +17,15 @@ export function isSidebarUtilityPage(pathname: string) {
 
 let mainAppHref: string | null = null;
 
+/** Where Back from a utility page goes; the guided tour saves and restores it (1486). */
+export function getMainAppHref(): string | null {
+  return mainAppHref;
+}
+
+export function setMainAppHref(href: string | null): void {
+  mainAppHref = href;
+}
+
 // Mount once in the app shell. Records the latest main app URL so Back can
 // return there no matter how many utility pages were visited since.
 export function MainAppLocationTracker() {

@@ -34,12 +34,12 @@ export const guidedTourDe: PhraseCatalog = {
   "{track} has a different model family check finished work before it ships.":
     "{track} lässt eine andere Modellfamilie fertige Arbeit prüfen, bevor sie ausgeliefert wird.",
   "One chat's model": "Das Modell eines Chats",
-  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu moves one that is running.":
-    "In einem Chat ändert der Modell-Chip unter dem Eingabefeld nur diesen Chat, und Switch model and continue… in seinem Menü wechselt bei einem laufenden Chat.",
+  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu changes the model of a chat that is already working.":
+    "In einem Chat ändert der Modell-Chip unter dem Eingabefeld nur diesen Chat, und Switch model and continue… in seinem Menü wechselt das Modell eines Chats, der schon arbeitet.",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "{machines} zeigt diesen Rechner und alle, die du verbindest; mit einem Rechner musst du hier nichts einstellen, bis du einen weiteren verbindest.",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off everything unfinished.":
-    "Move thread… im Menü eines Chats führt ihn auf einem anderen Rechner aus, und Laufende Threads verschieben… übergibt alles Unfertige.",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
+    "Move thread… im Menü eines Chats führt ihn auf einem anderen Rechner aus, und Laufende Threads verschieben… übergibt die Chats, die auf diesem Rechner laufen.",
   "Take it again": "Noch einmal ansehen",
   "Start this tour again here or from Quick guides on Overview.":
     "Starte diese Tour hier erneut oder über Kurzanleitungen in der Übersicht.",

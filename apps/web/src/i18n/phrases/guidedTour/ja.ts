@@ -34,12 +34,12 @@ export const guidedTourJa: PhraseCatalog = {
   "{track} has a different model family check finished work before it ships.":
     "{track} では、完成した作業を出す前に別のモデルファミリーが確認します。",
   "One chat's model": "1 つのチャットのモデル",
-  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu moves one that is running.":
-    "チャットでは、入力欄の下のモデルチップでそのチャットだけを変更でき、メニューの Switch model and continue… で実行中のチャットも切り替えられます。",
+  "In a chat, the model chip under the message box changes that chat only, and Switch model and continue… in its menu changes the model of a chat that is already working.":
+    "チャットでは、入力欄の下のモデルチップでそのチャットだけを変更でき、メニューの Switch model and continue… ですでに作業中のチャットのモデルを変更できます。",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "{machines} にはこのマシンと参加したマシンが表示されます。マシンが 1 台なら、別のマシンを追加するまでここで設定することはありません。",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off everything unfinished.":
-    "チャットのメニューの Move thread… で別のマシンで実行でき、実行中のスレッドを移動… で未完了の作業をすべて引き継げます。",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
+    "チャットのメニューの Move thread… で別のマシンで実行でき、実行中のスレッドを移動… でこのマシンで実行中のチャットを引き継げます。",
   "Take it again": "もう一度見る",
   "Start this tour again here or from Quick guides on Overview.":
     "このツアーはここ、または 概要 の クイックガイド からもう一度始められます。",

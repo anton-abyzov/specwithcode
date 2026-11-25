@@ -5,14 +5,18 @@
  */
 import { useSyncExternalStore } from "react";
 
+import { getMainAppHref, setMainAppHref } from "../../sidebar/mainAppLocation";
+
 export interface GuidedTourState {
   readonly open: boolean;
   readonly index: number;
   /** Path, search and hash the tour returns to on Skip or Done. */
   readonly returnTo: string;
+  /** Where closing Settings went before the tour visited Overview. */
+  readonly mainAppHref: string | null;
 }
 
-const CLOSED: GuidedTourState = { open: false, index: 0, returnTo: "/" };
+const CLOSED: GuidedTourState = { open: false, index: 0, returnTo: "/", mainAppHref: null };
 let state: GuidedTourState = CLOSED;
 const listeners = new Set<() => void>();
 
@@ -28,16 +32,20 @@ function currentLocation(): string {
 }
 
 export function startGuidedTour(): void {
-  set({ open: true, index: 0, returnTo: currentLocation() });
+  set({ open: true, index: 0, returnTo: currentLocation(), mainAppHref: getMainAppHref() });
 }
 
 export function showGuidedTourStep(index: number): void {
   if (state.open) set({ ...state, index });
 }
 
-/** Closes the tour and hands back where it started, for the host to navigate to. */
+/**
+ * Closes the tour and hands back where it started, for the host to navigate to. Visiting
+ * Overview on the way made it the place Settings closes to, so that is put back too.
+ */
 export function endGuidedTour(): string {
-  const { returnTo } = state;
+  const { returnTo, mainAppHref, open } = state;
+  if (open) setMainAppHref(mainAppHref);
   set(CLOSED);
   return returnTo;
 }
