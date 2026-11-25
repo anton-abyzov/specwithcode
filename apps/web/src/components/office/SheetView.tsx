@@ -703,12 +703,19 @@ export function SheetView(props: {
             size="sm"
             variant="outline"
             data-testid="sheet-draft-download"
-            onClick={() => {
-              downloadSheetDraft(live.draft!);
-              live.dropDraft?.();
-            }}
+            onClick={() => downloadSheetDraft(live.draft!)}
           >
             {tx("Download your version")}
+          </Button>
+          {/* Kept until dismissed: a download that was cancelled can be tried again. */}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            data-testid="sheet-draft-dismiss"
+            onClick={() => live.dropDraft?.()}
+          >
+            {tx("Dismiss")}
           </Button>
         </p>
       ) : null}

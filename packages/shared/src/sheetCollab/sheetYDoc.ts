@@ -426,6 +426,30 @@ export function sheetSnapshotByName(doc: SheetYDoc, document: SheetDocument): Sh
   };
 }
 
+/**
+ * A sheet that `before` was changed to (the file, read again) as a snapshot of
+ * this document: each of its tabs keeps the id of the tab of `before` it
+ * continues, as `writeSheetChange` pairs them, so a tab renamed in the
+ * document meanwhile is still the file's tab. A tab `before` did not have is
+ * paired by name.
+ */
+export function sheetSnapshotAfter(
+  doc: SheetYDoc,
+  before: SheetSnapshot,
+  after: SheetDocument,
+): SheetSnapshot {
+  const byName = sheetSnapshotByName(doc, after).tabIds;
+  const matches = matchTabs(before, after);
+  return {
+    document: after,
+    tabIds: after.tabs.map((_, index) => {
+      const match = matches[index] ?? null;
+      const id = match === null ? undefined : before.tabIds[match];
+      return id === undefined || id.startsWith("gone-") ? byName[index]! : id;
+    }),
+  };
+}
+
 // ------------------------------------------------------------------ transport
 
 export function createSheetYDoc(): SheetYDoc {

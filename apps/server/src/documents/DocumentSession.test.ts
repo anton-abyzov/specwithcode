@@ -640,15 +640,79 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         expect((yield* window.nextOf("closed")).reason).toContain(
           "before the last changes were saved",
         );
-        expect(logOf(file).updates).toBe(2);
-        // Another sheet in the folder opens for editing: the log is all there is of those
-        // changes, so it is not cleared away with the logs of sheets that are simply gone.
-        NodeFS.writeFileSync(NodePath.join(NodePath.dirname(file), "other.sheet.json"), TEXT);
-        yield* openWindow(
-          { cwd: target.cwd, relativePath: ".specweave/artifacts/other.sheet.json" },
-          "window-bbbb",
+        // The log is put aside whole: it is all there is of those changes.
+        const folder = NodePath.dirname(sheetSidecarPath(file));
+        const aside = () =>
+          NodeFS.readdirSync(folder).filter((name) => name.includes(".unmerged-"));
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(false);
+        expect(aside()).toHaveLength(1);
+        const kept = parseSheetSidecar(
+          NodeFS.readFileSync(NodePath.join(folder, aside()[0]!), "utf8"),
+        )!;
+        expect(kept.entries.filter((entry) => "update" in entry)).toHaveLength(2);
+        // A different sheet put under the old name, from the same template, gets none of it,
+        // and opening it clears nothing away.
+        NodeFS.writeFileSync(file, TEXT);
+        const other = yield* openWindow(target, "window-bbbb");
+        expect(other.cells().A4).toBeUndefined();
+        expect(aside()).toHaveLength(1);
+      }),
+    );
+
+    it.effect("does not put kept edits into another file that reads the same", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "For the first sheet"));
+        const log = logOf(file).text;
+        // Opened as the file it was made in, the log's edit is kept to be saved.
+        const stat = NodeFS.statSync(file);
+        const revision = sheetContentRevision(TEXT);
+        const same = loadSheet(BUDGET, log, "new-epoch", revision, String(stat.ino));
+        expect(same.unsaved).toBe(true);
+        // The same bytes in another file: the edit is not its own.
+        const another = loadSheet(BUDGET, log, "new-epoch", revision, `${stat.ino}0`);
+        expect(another.restored).toBe(false);
+        expect(readSheetYDoc(another.doc).document.tabs[0]!.cells.A4).toBeUndefined();
+      }),
+    );
+
+    it.effect("takes a later file change into a tab renamed here and not saved yet", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send((document) => ({
+          ...document,
+          tabs: [{ ...document.tabs[0]!, name: "Forecast" }],
+        }));
+        // Two saves from outside, both still under the tab's old name.
+        NodeFS.writeFileSync(file, serializeSheetDocument(put("A5", "First")(BUDGET)));
+        yield* sessions.reconcile(target);
+        NodeFS.writeFileSync(
+          file,
+          serializeSheetDocument(put("A6", "Second")(put("A5", "First")(BUDGET))),
         );
-        expect(logOf(file).updates).toBe(2);
+        yield* sessions.settleAll;
+        // Neither outside save is lost to the rename, in the window or in the file.
+        const saved = sheet(JSON.parse(NodeFS.readFileSync(file, "utf8"))).tabs;
+        expect(saved).toHaveLength(1);
+        expect(saved[0]!.cells).toMatchObject({ A5: "First", A6: "Second" });
+      }),
+    );
+
+    it.effect("puts a log it cannot read aside before writing a new one", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const folder = NodePath.dirname(sheetSidecarPath(file));
+        NodeFS.mkdirSync(folder);
+        NodeFS.writeFileSync(sheetSidecarPath(file), "not a log\n");
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "New"));
+        const aside = NodeFS.readdirSync(folder).filter((name) => name.includes(".unmerged-"));
+        expect(aside).toHaveLength(1);
+        expect(NodeFS.readFileSync(NodePath.join(folder, aside[0]!), "utf8")).toBe("not a log\n");
+        expect(logOf(file).updates).toBeGreaterThan(0);
       }),
     );
 

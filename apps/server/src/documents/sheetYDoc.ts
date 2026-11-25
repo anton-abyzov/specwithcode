@@ -40,6 +40,7 @@ import {
   onSheetUpdate,
   readSheetYDoc,
   sheetHasUnappliedUpdate,
+  sheetSnapshotAfter,
   sheetSnapshotByName,
   sheetStateVectorOf,
   sheetUpdateFromBase64,
@@ -119,8 +120,8 @@ export function sheetFileText(snapshot: SheetSnapshot): SheetFileText {
 
 export type SheetSidecarEntry =
   | { readonly update: Uint8Array }
-  /** The file was saved, at this revision, holding every update above. */
-  | { readonly saved: string };
+  /** The file was saved, at this revision, holding every update above; `file` is which file it was. */
+  | { readonly saved: string; readonly file?: string };
 
 export interface SheetSidecar {
   readonly epoch: string;
@@ -150,9 +151,9 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
       epoch = header.epoch;
       continue;
     }
-    const { u: update, s: saved } = entry as { u?: unknown; s?: unknown };
+    const { u: update, s: saved, i: file } = entry as { u?: unknown; s?: unknown; i?: unknown };
     if (typeof saved === "string") {
-      entries.push({ saved });
+      entries.push(typeof file === "string" ? { saved, file } : { saved });
       continue;
     }
     const bytes = typeof update === "string" ? sheetUpdateFromBase64(update) : null;
@@ -165,9 +166,13 @@ export function parseSheetSidecar(text: string): SheetSidecar | null {
 export const sheetSidecarHeader = (epoch: string): string =>
   `${JSON.stringify({ v: SIDECAR_VERSION, epoch })}\n`;
 
-/** The line that says the file, at `revision`, holds every update above it. */
-export const sheetSidecarMark = (revision: string): string =>
-  `${JSON.stringify({ s: revision })}\n`;
+/**
+ * The line that says the file, at `revision`, holds every update above it.
+ * `file` is the file's own identity on disk then: edits kept below the mark
+ * belong to that file, not to another one put under its name later.
+ */
+export const sheetSidecarMark = (revision: string, file?: string): string =>
+  `${JSON.stringify(file === undefined ? { s: revision } : { s: revision, i: file })}\n`;
 
 export const sheetSidecarLine = (update: Uint8Array): string =>
   `${JSON.stringify({ u: sheetUpdateToBase64(update) })}\n`;
@@ -180,9 +185,10 @@ export const compactSheetSidecar = (
   epoch: string,
   doc: SheetYDoc,
   savedRevision?: string,
+  file?: string,
 ): string =>
   `${sheetSidecarHeader(epoch)}${sheetSidecarLine(encodeSheetState(doc))}${
-    savedRevision === undefined ? "" : sheetSidecarMark(savedRevision)
+    savedRevision === undefined ? "" : sheetSidecarMark(savedRevision, file)
   }`;
 
 // ------------------------------------------------------------------ loading
@@ -191,6 +197,8 @@ export const compactSheetSidecar = (
 export interface SheetSidecarBase {
   readonly revision: string;
   readonly state: Uint8Array;
+  /** Which file on disk held that state, where the system tells files apart. */
+  readonly file?: string | undefined;
 }
 
 /**
@@ -205,7 +213,7 @@ export const unsavedSheetSidecar = (
   doc: SheetYDoc,
 ): string => {
   const since = encodeSheetMissing(doc, sheetStateVectorOf(base.state));
-  return `${sheetSidecarHeader(epoch)}${sheetSidecarLine(base.state)}${sheetSidecarMark(base.revision)}${
+  return `${sheetSidecarHeader(epoch)}${sheetSidecarLine(base.state)}${sheetSidecarMark(base.revision, base.file)}${
     since === null ? "" : sheetSidecarLine(since)
   }`;
 };
@@ -244,9 +252,12 @@ export function loadSheet(
   sidecarText: string | null,
   newEpoch: string,
   fileRevision?: string,
+  /** The identity on disk of the file being opened, where the system tells files apart. */
+  fileIdentity?: string,
 ): LoadedSheet {
   const sidecar = sidecarText === null ? null : parseSheetSidecar(sidecarText);
-  const restored = sidecar === null ? null : restoreSheet(file, sidecar, fileRevision);
+  const restored =
+    sidecar === null ? null : restoreSheet(file, sidecar, fileRevision, fileIdentity);
   if (restored !== null) return restored;
   const doc = sheetYDocFrom(file, FILE_ORIGIN);
   return {
@@ -266,6 +277,7 @@ function restoreSheet(
   file: SheetDocument,
   sidecar: SheetSidecar,
   fileRevision: string | undefined,
+  fileIdentity: string | undefined,
 ): LoadedSheet | null {
   const doc = createSheetYDoc();
   /** The document as the file last held it, and how many updates came after. */
@@ -273,6 +285,7 @@ function restoreSheet(
     readonly revision: string;
     readonly snapshot: SheetSnapshot;
     readonly state: Uint8Array;
+    readonly file: string | undefined;
   } | null = null;
   let after = 0;
   const lastMark = sidecar.entries.findLastIndex((entry) => "saved" in entry);
@@ -284,6 +297,7 @@ function restoreSheet(
           revision: entry.saved,
           snapshot: readSheetYDoc(doc),
           state: encodeSheetState(doc),
+          file: entry.file,
         };
       }
       after = 0;
@@ -296,14 +310,19 @@ function restoreSheet(
   if (sheetHasUnappliedUpdate(doc) || !validateSheetDocument(held.document).ok) return null;
   const kept = marked !== null && after > 0 && validateSheetDocument(marked.snapshot.document).ok;
   if (kept && marked!.revision === fileRevision) {
+    // The same bytes under the same name, yet another file: the sheet these edits were made
+    // in went elsewhere, and what is here now is not it. They are not put into it.
+    if (marked!.file !== undefined && fileIdentity !== undefined && marked!.file !== fileIdentity) {
+      return null;
+    }
     return {
       doc,
       epoch: sidecar.epoch,
-      saved: fileSnapshot(doc, file),
+      saved: sheetSnapshotAfter(doc, marked!.snapshot, file),
       restored: true,
       sidecarLines: sidecar.lines,
       marked: null,
-      base: { revision: marked!.revision, state: marked!.state },
+      base: { revision: marked!.revision, state: marked!.state, file: marked!.file },
       pending: [],
       unsaved: true,
     };
@@ -311,7 +330,8 @@ function restoreSheet(
   // The file's side: against the marked state when edits were kept, else against all the log holds.
   const pending: Uint8Array[] = [];
   const stop = onSheetUpdate(doc, (update) => pending.push(update));
-  writeSheetChange(doc, kept ? marked!.snapshot : held, file, FILE_ORIGIN);
+  const from = kept ? marked!.snapshot : held;
+  writeSheetChange(doc, from, file, FILE_ORIGIN);
   stop();
   const merged = readSheetYDoc(doc);
   const checked = validateSheetDocument(merged.document);
@@ -320,7 +340,8 @@ function restoreSheet(
   return {
     doc,
     epoch: sidecar.epoch,
-    saved: fileSnapshot(doc, file),
+    // A tab renamed by kept edits is still the file's tab under its old name.
+    saved: sheetSnapshotAfter(doc, from, file),
     restored: true,
     sidecarLines: sidecar.lines,
     marked:
@@ -332,7 +353,7 @@ function restoreSheet(
     base:
       marked !== null &&
       (kept || (after === 0 && pending.length === 0 && marked.revision === fileRevision))
-        ? { revision: marked.revision, state: marked.state }
+        ? { revision: marked.revision, state: marked.state, file: marked.file }
         : null,
     pending,
     unsaved,
@@ -486,6 +507,26 @@ export async function writeSheetSidecar(
   }
 }
 
+/**
+ * What is under a sidecar's name: nothing, its text, or something that could
+ * not be read. The last may be a log all the same, so it is never written over.
+ */
+export async function inspectSheetSidecar(
+  sidecarPath: string,
+): Promise<
+  | { readonly kind: "none" }
+  | { readonly kind: "unreadable" }
+  | { readonly kind: "text"; readonly text: string }
+> {
+  const text = await readSheetSidecar(sidecarPath);
+  if (text !== null) return { kind: "text", text };
+  const there = await NodeFSP.lstat(sidecarPath).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => !(error.code === "ENOENT" || error.code === "ENOTDIR"),
+  );
+  return { kind: there ? "unreadable" : "none" };
+}
+
 /** Whether a sidecar's text ends in changes no file was saved with. */
 export function sheetSidecarHoldsUnsaved(text: string | null): boolean {
   const sidecar = text === null ? null : parseSheetSidecar(text);
@@ -500,7 +541,11 @@ export function sheetSidecarHoldsUnsaved(text: string | null): boolean {
  * changes no file has is all there is of them, and one that cannot be read
  * might be.
  */
-export async function sweepSheetSidecars(documentFolder: string): Promise<void> {
+export async function sweepSheetSidecars(
+  documentFolder: string,
+  /** A log an open session writes to is that session's to remove. */
+  inUse: (sidecarPath: string) => boolean = () => false,
+): Promise<void> {
   const folder = await sidecarFolder(NodePath.join(documentFolder, SHEET_SIDECAR_DIR, "x"), false);
   if (folder === null) return;
   const names = await NodeFSP.readdir(folder).catch(() => [] as string[]);
@@ -513,9 +558,13 @@ export async function sweepSheetSidecars(documentFolder: string): Promise<void> 
     );
     if (!gone) continue;
     const sidecarPath = NodePath.join(folder, name);
+    if (inUse(sidecarPath)) continue;
     const text = await readSheetSidecar(sidecarPath);
     if (text === null || parseSheetSidecar(text) === null) continue;
-    if (!sheetSidecarHoldsUnsaved(text)) await removeSheetSidecar(sidecarPath);
+    // No wait between the checks and the removal a session's write could fall into.
+    if (!sheetSidecarHoldsUnsaved(text) && !inUse(sidecarPath)) {
+      await removeSheetSidecar(sidecarPath);
+    }
   }
 }
 

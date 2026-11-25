@@ -49,6 +49,7 @@ import {
   readSheetYDoc,
   sheetHasUnappliedUpdate,
   sheetUpdateFromBase64,
+  sheetSnapshotAfter,
   sheetUpdateToBase64,
   summarizeSheetChange,
   writeSheetChange,
@@ -72,11 +73,11 @@ import {
   SHEET_SIDECAR_MAX_LINES,
   appendSheetSidecar,
   compactSheetSidecar,
-  fileSnapshot,
   loadSheet,
   moveSheetSidecar,
   readSheetFileText,
-  readSheetSidecar,
+  inspectSheetSidecar,
+  parseSheetSidecar,
   removeSheetSidecar,
   sheetSidecarHoldsUnsaved,
   sheetFileText,
@@ -201,6 +202,12 @@ const fileIdentity = (absolutePath: string): Promise<string | null> =>
 const UNREADABLE = "unreadable";
 
 /** What tells one state of the file from the next; null only when the file is not there. */
+/** Which file a stat signature describes, where the system tells files apart. */
+const fileOf = (signature: string): string | undefined => {
+  const inode = signature.split(":")[2];
+  return inode === undefined || inode === "" || inode === "0" ? undefined : inode;
+};
+
 const statSignature = (absolutePath: string): Promise<string | null> =>
   NodeFSP.stat(absolutePath).then(
     (stat) => `${stat.size}:${stat.mtimeMs}:${stat.ino}`,
@@ -422,10 +429,24 @@ const make = Effect.gen(function* () {
    * another folder, or a sidecar is already at the new name) nothing is
    * written or removed.
    */
+  /**
+   * The sheet left with edits no file has, and there is no following it. Its
+   * log is put aside under another name: a different sheet put under this name
+   * later is not the one these edits were made in, and never gets them.
+   */
+  const setAside = (session: Session) =>
+    Effect.promise(() => {
+      session.counter += 1;
+      return moveSheetSidecar(
+        session.sidecarPath,
+        `${session.sidecarPath}.unmerged-${session.epoch}-${session.counter}`,
+      );
+    }).pipe(Effect.as("kept" as const));
+
   const followRename = Effect.fn("DocumentSession.followRename")(function* (session: Session) {
     const inode = session.fileStat.split(":")[2];
     const next = sheetFileText(readSheetYDoc(session.doc, session.saved));
-    if (!next.ok || inode === undefined || inode === "0") return "kept" as const;
+    if (!next.ok || inode === undefined || inode === "0") return yield* setAside(session);
     const folder = NodePath.dirname(session.absolutePath);
     const name = yield* Effect.promise(async () => {
       const names = await NodeFSP.readdir(folder).catch(() => [] as string[]);
@@ -436,7 +457,7 @@ const make = Effect.gen(function* () {
       }
       return null;
     });
-    if (name === null) return "kept" as const;
+    if (name === null) return yield* setAside(session);
     const renamed = NodePath.join(NodePath.dirname(session.relativePath), name);
     if (!(yield* bound(session, renamed))) return "kept" as const;
     const written = yield* files
@@ -458,7 +479,7 @@ const make = Effect.gen(function* () {
     const moved = yield* Effect.promise(() =>
       moveSheetSidecar(session.sidecarPath, sheetSidecarPath(NodePath.join(folder, name))),
     );
-    return moved ? ("moved" as const) : ("kept" as const);
+    return moved ? ("moved" as const) : yield* setAside(session);
   });
 
   /**
@@ -495,13 +516,17 @@ const make = Effect.gen(function* () {
       // The whole state: with the file current, one update and its mark; with the file
       // behind, the state it has, its mark, and everything since as one update.
       const base: SheetSidecarBase | null = clean
-        ? { revision: session.fileRevision, state: encodeSheetState(session.doc) }
+        ? {
+            revision: session.fileRevision,
+            state: encodeSheetState(session.doc),
+            file: fileOf(session.fileStat),
+          }
         : session.base;
       const text =
         base === null
           ? compactSheetSidecar(session.epoch, session.doc)
           : clean
-            ? compactSheetSidecar(session.epoch, session.doc, base.revision)
+            ? compactSheetSidecar(session.epoch, session.doc, base.revision, base.file)
             : unsavedSheetSidecar(session.epoch, base, session.doc);
       session.counter += 1;
       const written = yield* Effect.promise(() =>
@@ -519,7 +544,7 @@ const make = Effect.gen(function* () {
     const mark = clean && (session.marked !== session.fileRevision || session.pending.length > 0);
     if (session.pending.length === 0 && !mark) return true;
     const text = `${session.pending.map(sheetSidecarLine).join("")}${
-      mark ? sheetSidecarMark(session.fileRevision) : ""
+      mark ? sheetSidecarMark(session.fileRevision, fileOf(session.fileStat)) : ""
     }`;
     const written = yield* Effect.promise(() => appendSheetSidecar(session.sidecarPath, text));
     if (written) {
@@ -528,7 +553,11 @@ const make = Effect.gen(function* () {
       session.pending = [];
       session.marked = mark ? session.fileRevision : null;
       if (mark) {
-        session.base = { revision: session.fileRevision, state: encodeSheetState(session.doc) };
+        session.base = {
+          revision: session.fileRevision,
+          state: encodeSheetState(session.doc),
+          file: fileOf(session.fileStat),
+        };
       }
     }
     return written;
@@ -541,7 +570,11 @@ const make = Effect.gen(function* () {
    */
   const rememberSaved = (session: Session): void => {
     if (!session.dirty && session.base?.revision !== session.fileRevision) {
-      session.base = { revision: session.fileRevision, state: encodeSheetState(session.doc) };
+      session.base = {
+        revision: session.fileRevision,
+        state: encodeSheetState(session.doc),
+        file: fileOf(session.fileStat),
+      };
     }
   };
 
@@ -594,7 +627,8 @@ const make = Effect.gen(function* () {
       writeSheetChange(session.doc, session.saved, read.file.document, FILE_ORIGIN);
       stop();
       session.fileRevision = read.file.revision;
-      session.saved = fileSnapshot(session.doc, read.file.document);
+      // Paired as the change was: a tab renamed here and not saved yet is still the file's tab.
+      session.saved = sheetSnapshotAfter(session.doc, session.saved, read.file.document);
       session.current = readCurrent(session);
       const mine = sheetFileText(session.current);
       // Dirty only when the sheets differ: a file laid out another way is left as it was written.
@@ -692,6 +726,8 @@ const make = Effect.gen(function* () {
     held: ReturnType<typeof hold>,
   ) {
     if ((yield* writeLog(session)) || (yield* flush(session))) return true;
+    // The save met a change to the file and took it in, and the log was written then after all.
+    if (session.pending.length === 0 && session.sidecarLines > 0 && !session.closed) return true;
     if (session.closed) return false;
     if (session.fileRevision === held.revision) {
       session.doc = held.doc;
@@ -813,10 +849,14 @@ const make = Effect.gen(function* () {
     // A window that may only view removes nothing.
     if (mayWrite) {
       yield* Effect.promise(() =>
-        sweepSheetSidecars(NodePath.dirname(absolutePath)).catch(() => undefined),
+        sweepSheetSidecars(NodePath.dirname(absolutePath), (path) =>
+          [...sessions.values()].some((open) => !open.closed && open.sidecarPath === path),
+        ).catch(() => undefined),
       );
     }
-    const sidecarText = yield* Effect.promise(() => readSheetSidecar(sidecarPath));
+    const found = yield* Effect.promise(() => inspectSheetSidecar(sidecarPath));
+    const sidecarText = found.kind === "text" ? found.text : null;
+    const fileStat = (yield* Effect.promise(() => statSignature(absolutePath))) ?? "";
     epochs += 1;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const loaded = loadSheet(
@@ -824,6 +864,7 @@ const make = Effect.gen(function* () {
       sidecarText,
       `e${now.toString(36)}-${epochs}`,
       read.file.revision,
+      fileOf(fileStat),
     );
     const session: Session = {
       key,
@@ -839,7 +880,7 @@ const make = Effect.gen(function* () {
       saved: loaded.saved,
       current: loaded.saved,
       fileRevision: read.file.revision,
-      fileStat: (yield* Effect.promise(() => statSignature(absolutePath))) ?? "",
+      fileStat,
       // Changes kept from a save that did not happen are saved once an editor is here.
       dirty: loaded.unsaved,
       pending: [...loaded.pending],
@@ -852,7 +893,13 @@ const make = Effect.gen(function* () {
       marked: loaded.marked,
       base: loaded.base,
       edited: false,
-      unmerged: !loaded.restored && sheetSidecarHoldsUnsaved(sidecarText),
+      // A log that was not taken in and may hold changes no file has: one that could not be
+      // read, or not be made sense of, or whose changes do not go with this file.
+      unmerged:
+        !loaded.restored &&
+        (found.kind === "unreadable" ||
+          (found.kind === "text" &&
+            (parseSheetSidecar(found.text) === null || sheetSidecarHoldsUnsaved(found.text)))),
       authorized: false,
       agentWrites: new Map(),
       watcher: null,
