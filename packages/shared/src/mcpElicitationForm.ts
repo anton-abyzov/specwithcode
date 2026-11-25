@@ -283,10 +283,10 @@ function formatError(format: McpElicitationStringFormat, value: string): string 
     case "date": {
       const match = DATE.exec(value);
       if (match === null) return "Enter a date as YYYY-MM-DD.";
-      const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-      return date.getUTCDate() === Number(match[3]) && date.getUTCMonth() === Number(match[2]) - 1
-        ? undefined
-        : "Enter a real date.";
+      const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+      const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+      const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+      return days !== undefined && day >= 1 && day <= days ? undefined : "Enter a real date.";
     }
     case "date-time":
       return DATE_TIME.test(value) && !Number.isNaN(Date.parse(value))

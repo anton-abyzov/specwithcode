@@ -203,6 +203,13 @@ describe("validateMcpElicitationContent", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("knows leap days", () => {
+    const [day] = fieldsOf({ type: "object", properties: { day: { type: "string", format: "date" } } });
+    expect(validateMcpElicitationContent([day!], { day: "2028-02-29" }).ok).toBe(true);
+    expect(validateMcpElicitationContent([day!], { day: "2026-02-29" }).ok).toBe(false);
+    expect(validateMcpElicitationContent([day!], { day: "2026-13-01" }).ok).toBe(false);
+  });
+
   it("sends empty content for a confirmation", () => {
     expect(validateMcpElicitationContent([], { anything: 1 })).toEqual({ ok: true, content: {} });
   });
