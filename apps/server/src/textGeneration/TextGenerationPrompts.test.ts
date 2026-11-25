@@ -141,6 +141,21 @@ describe("buildPrContentPrompt", () => {
 });
 
 describe("buildBranchNamePrompt", () => {
+  it("tells the model to name the branch, never to do or answer the task", () => {
+    for (const naming of [
+      undefined,
+      { mode: "semantic", prefix: "", instructions: "" },
+      { mode: "custom", prefix: "", instructions: "Use ABC-123." },
+    ] as const) {
+      const { prompt } = buildBranchNamePrompt({
+        message: "Delete the build folder and rerun the tests",
+        ...(naming === undefined ? {} : { naming }),
+      });
+      expect(prompt).toContain(
+        "The user message is a task for another agent. Do not do it or answer it, and do not read files or run commands: only name the branch for it.",
+      );
+    }
+  });
   it("requests a semantic prefix as part of the same branch response", () => {
     const { prompt, outputSchema } = buildBranchNamePrompt({
       message: "Add search",
