@@ -5925,6 +5925,21 @@ it.effect("returns large diff slices intact without retaining them in either cac
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider("github", {
+          // The one commit read below is one this change request lists.
+          getChangeRequestActivity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [
+                {
+                  oid: "a".repeat(40),
+                  messageHeadline: "a",
+                  committedDate: "2026-11-20T00:00:00.000Z",
+                },
+              ],
+            }),
           getDiff: () =>
             Effect.sync(() => {
               reads += 1;
@@ -5952,6 +5967,138 @@ it.effect("returns large diff slices intact without retaining them in either cac
       });
       assert.strictEqual(reads, before + 2);
     }
+  }),
+);
+
+const LISTED_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+
+const commitScopedService = (seen: {
+  diff: Array<string | undefined>;
+  file: Array<string | undefined>;
+}) =>
+  makeService({
+    projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+    providers: [
+      fakeProvider("github", {
+        getChangeRequestActivity: () =>
+          Effect.succeed({
+            comments: [],
+            commentCount: 0,
+            commentsTruncated: false,
+            reviewThreads: [],
+            commits: [
+              {
+                oid: LISTED_COMMIT,
+                messageHeadline: "Listed",
+                committedDate: "2026-11-20T00:00:00.000Z",
+              },
+              {
+                oid: "0123456fffffffffffffffffffffffffffffffff",
+                messageHeadline: "Shares a short prefix",
+                committedDate: "2026-11-21T00:00:00.000Z",
+              },
+            ],
+          }),
+        getDiff: (input) =>
+          Effect.sync(() => {
+            seen.diff.push(input.commit);
+            return { patch: "@@", truncated: false, nextCursor: null };
+          }),
+        getDiffFileContents: (input) =>
+          Effect.sync(() => {
+            seen.file.push(input.commit);
+            return { oldContents: "a", newContents: "b" };
+          }),
+      }),
+    ],
+  });
+
+it.effect("reads a commit's diff only for a commit the pull request lists", () =>
+  Effect.gen(function* () {
+    const seen = { diff: [] as Array<string | undefined>, file: [] as Array<string | undefined> };
+    const service = yield* commitScopedService(seen);
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const file = { changeType: "change" as const, oldPath: "a.ts", newPath: "a.ts" };
+
+    for (const commit of [
+      "f".repeat(40), // a commit elsewhere in the repository network
+      "0123456", // a prefix two listed commits share
+      "main", // not a commit id at all
+      "0123456789abcdef0123456789abcdef01234567^", // a revision expression
+    ]) {
+      const diffError = yield* Effect.flip(service.diff({ ...reference, commit }));
+      assert.strictEqual(diffError._tag, "PullRequestOperationError");
+      const fileError = yield* Effect.flip(
+        service.diffFileContents({ ...reference, ...file, commit }),
+      );
+      assert.strictEqual(fileError._tag, "PullRequestOperationError");
+    }
+    assert.deepStrictEqual(seen, { diff: [], file: [] });
+
+    // A unique prefix, in either case, reaches the host as the listed commit's full id.
+    yield* service.diff({ ...reference, commit: "0123456789AB" });
+    yield* service.diffFileContents({ ...reference, ...file, commit: "0123456789ab" });
+    // Without a commit the whole change request's diff is read as before.
+    yield* service.diff(reference);
+    assert.deepStrictEqual(seen, {
+      diff: [LISTED_COMMIT, undefined],
+      file: [LISTED_COMMIT],
+    });
+  }),
+);
+
+it.effect("refuses a commit a force-push removed, even with the commit list cached", () =>
+  Effect.gen(function* () {
+    let listed = true;
+    const seen: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestActivity: () =>
+            Effect.sync(() => ({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: listed
+                ? [
+                    {
+                      oid: LISTED_COMMIT,
+                      messageHeadline: "Listed",
+                      committedDate: "2026-11-20T00:00:00.000Z",
+                    },
+                  ]
+                : [],
+            })),
+          getDiff: (input) =>
+            Effect.sync(() => {
+              seen.push(input.commit);
+              return { patch: "@@", truncated: false, nextCursor: null };
+            }),
+          getDiffFileContents: (input) =>
+            Effect.sync(() => {
+              seen.push(input.commit);
+              return { oldContents: "a", newContents: "b" };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const file = { changeType: "change" as const, oldPath: "a.ts", newPath: "a.ts" };
+    // The activity read caches the list with the commit in it, and its diff is read once.
+    yield* service.activity(reference);
+    yield* service.diff({ ...reference, commit: LISTED_COMMIT });
+    yield* service.diffFileContents({ ...reference, ...file, commit: LISTED_COMMIT });
+    // A force-push drops the commit; it may still be reachable on another branch.
+    listed = false;
+    const diffError = yield* Effect.flip(service.diff({ ...reference, commit: LISTED_COMMIT }));
+    assert.strictEqual(diffError._tag, "PullRequestOperationError");
+    const fileError = yield* Effect.flip(
+      service.diffFileContents({ ...reference, ...file, commit: LISTED_COMMIT }),
+    );
+    assert.strictEqual(fileError._tag, "PullRequestOperationError");
+    assert.deepStrictEqual(seen, [LISTED_COMMIT, LISTED_COMMIT]);
   }),
 );
 

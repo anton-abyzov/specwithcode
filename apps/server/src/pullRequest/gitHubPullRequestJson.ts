@@ -1148,8 +1148,8 @@ export function decodePullRequestNodeIdJson(raw: string): Result.Result<string, 
 }
 
 /**
- * Where a client-given reaction subject actually hangs: the pull request itself, or the pull
- * request an issue comment, a review comment, or a review belongs to. Read before a mutation
+ * Where a client-given subject actually hangs: the pull request itself, or the pull request an
+ * issue comment, a review comment, a review or a review thread belongs to. Read before a mutation
  * reaches it, so a subject named for one pull request cannot react on another's behalf.
  */
 export const REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $subjectId: ID!) {
@@ -1159,6 +1159,7 @@ export const REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY = `query($owner: String
     ... on IssueComment { pullRequest { id } }
     ... on PullRequestReviewComment { pullRequest { id } }
     ... on PullRequestReview { pullRequest { id } }
+    ... on PullRequestReviewThread { reviewThreadPullRequest: pullRequest { id } }
   }
 }`;
 
@@ -1171,6 +1172,7 @@ const RawReactionSubjectScopeSchema = Schema.Struct({
       Schema.Struct({
         id: Schema.String,
         pullRequest: Schema.optional(Schema.Struct({ id: Schema.String })),
+        reviewThreadPullRequest: Schema.optional(Schema.Struct({ id: Schema.String })),
       }),
     ),
   }),
@@ -1187,7 +1189,8 @@ export function decodeReactionSubjectScopeJson(raw: string): Result.Result<boole
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const expected = decoded.success.data.repository?.pullRequest?.id ?? null;
   const node = decoded.success.data.node;
-  const actual = node === null ? null : (node.pullRequest?.id ?? node.id);
+  const actual =
+    node === null ? null : (node.pullRequest?.id ?? node.reviewThreadPullRequest?.id ?? node.id);
   return Result.succeed(expected !== null && actual !== null && expected === actual);
 }
 
