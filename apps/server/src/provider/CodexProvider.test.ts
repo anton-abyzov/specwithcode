@@ -854,13 +854,11 @@ describe("Codex app-server probe environment", () => {
           spawned.push({ env: command.options.env, extendEnv: command.options.extendEnv });
         }
         return Effect.fail(
-          new PlatformError.PlatformError(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-            }),
-          ),
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+          }),
         );
       });
       yield* Effect.scoped(
