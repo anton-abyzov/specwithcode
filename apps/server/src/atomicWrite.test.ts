@@ -427,61 +427,82 @@ it.layer(NodeServices.layer)("writeFileStringAtomically file modes", (it) => {
   );
 });
 
-it.effect("syncs the data before the rename and the folder after, ignoring a refused folder", () =>
-  Effect.gen(function* () {
-    const events: Array<string> = [];
-    const file = (name: string) =>
-      ({
-        writeAll: () => Effect.sync(() => void events.push(`write ${name}`)),
-        sync: Effect.sync(() => void events.push(`sync ${name}`)),
-      }) as unknown as FileSystem.File;
-    const fileSystem = (folderOpen: "ok" | "refused") =>
-      FileSystem.layerNoop({
-        readLink: (path) =>
-          Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "FileSystem",
-              method: "readLink",
-              pathOrDescriptor: path,
-            }),
-          ),
-        makeDirectory: () => Effect.void,
-        makeTempDirectory: () => Effect.succeed("/home/settings.json.abc123"),
-        stat: () => Effect.succeed({ mode: 0o100600 } as unknown as FileSystem.File.Info),
-        chmod: (_path, mode) => Effect.sync(() => void events.push(`chmod ${mode.toString(8)}`)),
-        open: (path) =>
-          path === "/home" && folderOpen === "refused"
-            ? Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "open",
-                  pathOrDescriptor: path,
-                }),
-              )
-            : Effect.succeed(file(path === "/home" ? "folder" : "temp")),
-        rename: () => Effect.sync(() => void events.push("rename")),
-        remove: () => Effect.void,
-      });
-    const save = (folderOpen: "ok" | "refused") =>
-      Effect.exit(
-        writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }).pipe(
-          Effect.provide(Layer.mergeAll(Path.layer, fileSystem(folderOpen))),
-          Effect.provideService(HostProcessPlatform, "linux"),
+it.effect(
+  "syncs the data before the rename and the folder after, ignoring a folder sync that fails",
+  () =>
+    Effect.gen(function* () {
+      const events: Array<string> = [];
+      // A folder that opens but cannot be synced, as on Windows.
+      const unsyncable = {
+        writeAll: () => Effect.void,
+        sync: Effect.fail(
+          PlatformError.systemError({
+            _tag: "BadResource",
+            module: "FileSystem",
+            method: "sync",
+            pathOrDescriptor: "/home",
+            cause: Object.assign(new Error("EBADF"), { code: "EBADF" }),
+          }),
         ),
-      );
+      } as unknown as FileSystem.File;
+      const file = (name: string) =>
+        ({
+          writeAll: () => Effect.sync(() => void events.push(`write ${name}`)),
+          sync: Effect.sync(() => void events.push(`sync ${name}`)),
+        }) as unknown as FileSystem.File;
+      const fileSystem = (folderOpen: "ok" | "refused" | "unsyncable") =>
+        FileSystem.layerNoop({
+          readLink: (path) =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "readLink",
+                pathOrDescriptor: path,
+              }),
+            ),
+          makeDirectory: () => Effect.void,
+          makeTempDirectory: () => Effect.succeed("/home/settings.json.abc123"),
+          stat: () => Effect.succeed({ mode: 0o100600 } as unknown as FileSystem.File.Info),
+          chmod: (_path, mode) => Effect.sync(() => void events.push(`chmod ${mode.toString(8)}`)),
+          open: (path) =>
+            path === "/home" && folderOpen === "refused"
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "open",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : path === "/home" && folderOpen === "unsyncable"
+                ? Effect.succeed(unsyncable)
+                : Effect.succeed(file(path === "/home" ? "folder" : "temp")),
+          rename: () => Effect.sync(() => void events.push("rename")),
+          remove: () => Effect.void,
+        });
+      const save = (folderOpen: "ok" | "refused" | "unsyncable") =>
+        Effect.exit(
+          writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }).pipe(
+            Effect.provide(Layer.mergeAll(Path.layer, fileSystem(folderOpen))),
+            Effect.provideService(HostProcessPlatform, "linux"),
+          ),
+        );
 
-    assert.deepStrictEqual(yield* save("ok"), Exit.void);
-    assert.deepStrictEqual(events, [
-      "write temp",
-      "chmod 600",
-      "sync temp",
-      "rename",
-      "sync folder",
-    ]);
-    events.length = 0;
-    assert.deepStrictEqual(yield* save("refused"), Exit.void);
-    assert.deepStrictEqual(events, ["write temp", "chmod 600", "sync temp", "rename"]);
-  }),
+      assert.deepStrictEqual(yield* save("ok"), Exit.void);
+      assert.deepStrictEqual(events, [
+        "write temp",
+        "chmod 600",
+        "sync temp",
+        "rename",
+        "sync folder",
+      ]);
+      events.length = 0;
+      assert.deepStrictEqual(yield* save("refused"), Exit.void);
+      assert.deepStrictEqual(events, ["write temp", "chmod 600", "sync temp", "rename"]);
+      // The rename has landed by then, so the save stands.
+      events.length = 0;
+      assert.deepStrictEqual(yield* save("unsyncable"), Exit.void);
+      assert.deepStrictEqual(events, ["write temp", "chmod 600", "sync temp", "rename"]);
+    }),
 );

@@ -32,18 +32,6 @@ const modeAfterSave = (fs: FileSystem.FileSystem, targetPath: string) =>
     ),
   );
 
-/** A folder that cannot be opened or synced here (no read access, a filesystem without it). */
-const isFolderSyncRefused = (error: PlatformError.PlatformError) => {
-  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
-  return (
-    error.reason._tag === "PermissionDenied" ||
-    code === "EINVAL" ||
-    code === "ENOTSUP" ||
-    code === "ENOSYS" ||
-    code === "EISDIR"
-  );
-};
-
 /**
  * Writes a save's temp file. Synced before the rename, since otherwise a crash
  * soon after it can leave the target empty; closed before it too, which
@@ -69,15 +57,18 @@ export const writeSyncedTemp = (input: {
   );
 
 /**
- * Makes a rename into `directory` durable. Replacing a file needs only write
- * and search access to its folder, so a folder this process cannot open
+ * Makes a rename into `directory` durable. Best effort: the rename has landed
+ * by then, so a folder this process cannot open (replacing a file needs only
+ * write and search access to it) or cannot sync (Windows, some filesystems)
  * leaves the save standing.
  */
 export const syncFolder = (fs: FileSystem.FileSystem, directory: string) =>
   fs.open(directory, { flag: "r" }).pipe(
     Effect.flatMap((folder) => folder.sync),
     Effect.scoped,
-    Effect.catchIf(isFolderSyncRefused, () => Effect.void),
+    Effect.catch((error) =>
+      Effect.logDebug("A saved file's folder could not be synced", { directory, error }),
+    ),
   );
 
 // About 2 seconds. Settings and keybinding saves hold their write lock while
