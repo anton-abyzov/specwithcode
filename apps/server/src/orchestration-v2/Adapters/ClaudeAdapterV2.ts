@@ -27,6 +27,7 @@ import {
 } from "../../provider/subscriptionIdentity.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { withMainThreadPromptCache } from "../../provider/ClaudePromptCache.ts";
+import { makeClaudeMcpElicitations } from "../../provider/ClaudeMcpElicitation.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -1131,6 +1132,7 @@ export function makeClaudeQueryOptions(input: {
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
+  readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   /**
@@ -1264,6 +1266,7 @@ export function makeClaudeQueryOptions(input: {
         }
       : { settings: workflowSettings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
+    ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
       ? {}
       : { supportedDialogKinds: input.supportedDialogKinds }),
@@ -8206,6 +8209,15 @@ export function makeClaudeAdapterV2(
             }),
           );
 
+        const mcpElicitations = makeClaudeMcpElicitations({
+          activeTurn: Ref.get(activeTurn),
+          buildApprovalRequestArtifacts,
+          emitProviderEvent,
+          releaseHeldRootFrames,
+          resolveItemOrdinal,
+          idAllocator,
+          runPromise,
+        });
         // Work the live process still runs. A subagent whose completion is
         // already buffered is done: the buffer outlives the process.
         const liveProcessRunsBackgroundWork = Effect.fnUntraced(function* (
@@ -8747,6 +8759,7 @@ export function makeClaudeAdapterV2(
                 }),
             canUseTool,
             onUserDialog,
+            onElicitation: mcpElicitations.onElicitation,
             supportedDialogKinds: ["resume_return"],
             claudeAdvisor: sessionAdvisor.outcome,
             advisorGuidance: turnInput.runtimePolicy.advisorGuidance,
@@ -9661,6 +9674,7 @@ export function makeClaudeAdapterV2(
           interruptTurn,
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {
+              if (yield* mcpElicitations.respond(requestInput)) return;
               const pending = (yield* Ref.get(pendingRuntimeRequests)).get(
                 String(requestInput.requestId),
               );
