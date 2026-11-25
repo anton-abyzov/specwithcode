@@ -20,7 +20,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { isProjectWindow } from "./projectWindow";
+import { isArtifactAppWindow, isProjectWindow } from "./projectWindow";
 import { randomUUID } from "./utils";
 
 const CLIENT_ID_STORAGE_KEY = "specweave-studio.backgroundActivity.clientId";
@@ -96,13 +96,13 @@ function getWindowId(): string {
 
 /**
  * Desktop windows share local storage, so they share the stored client id. A
- * project window adds its own suffix so its background report can never stand
+ * project window or installed-page window adds its own suffix so its background report can never stand
  * in for the focused main window's. The main window and the browser keep the
  * stored id unchanged.
  */
 export function backgroundActivityClientId(): string {
   const storedClientId = getStoredClientId();
-  if (!isProjectWindow()) return storedClientId;
+  if (!isProjectWindow() && !isArtifactAppWindow()) return storedClientId;
   const suffix = `:${getWindowId()}`.slice(0, CLIENT_ID_MAX_LENGTH - 1);
   return `${storedClientId.slice(0, CLIENT_ID_MAX_LENGTH - suffix.length)}${suffix}`;
 }

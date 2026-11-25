@@ -161,8 +161,9 @@ export function KeepAwakeWhileWorking() {
 
   const memory = useRef(makeBatteryNoticeMemory());
   const shownToast = useRef<ReturnType<typeof toastManager.add> | null>(null);
-  // One window speaks for the app: project windows stay quiet.
-  const speaks = window.desktopBridge?.getWindowRole?.() !== "project";
+  // One window speaks for the app: project and installed-page windows stay quiet.
+  const role = window.desktopBridge?.getWindowRole?.();
+  const speaks = role !== "project" && role !== "artifact-app";
   useEffect(() => {
     const closeShown = () => {
       if (shownToast.current !== null) toastManager.close(shownToast.current);

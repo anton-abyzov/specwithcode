@@ -13,6 +13,7 @@ export * from "./desktopBrowser.ts";
 export * from "./desktopAppActivation.ts";
 export * from "./remoteAccess.ts";
 export * from "./ipc.ts";
+export * from "./artifactApps.ts";
 export * from "./keepAwake.ts";
 export * from "./serviceUpdatePreparation.ts";
 export * from "./terminal.ts";

@@ -6,6 +6,7 @@ vi.mock("../components/ui/toast", () => ({ toastManager: { add: toast.add } }));
 import {
   canOpenProjectWindow,
   canOpenProjectWindowFor,
+  isArtifactAppWindow,
   isProjectWindow,
   openProjectWindow,
   ownProjectWindowKey,
@@ -161,5 +162,28 @@ describe("canOpenProjectWindowFor", () => {
     });
     expect(ownProjectWindowKey()).toBeNull();
     expect(canOpenProjectWindowFor("atlas")).toBe(true);
+  });
+});
+
+describe("isArtifactAppWindow", () => {
+  it("is true only for a desktop window showing an installed page", () => {
+    stubWindow({ bridge: { getWindowRole: () => "artifact-app" } });
+    expect(isArtifactAppWindow()).toBe(true);
+    expect(isProjectWindow()).toBe(false);
+    stubWindow({ bridge: { getWindowRole: () => "project" } });
+    expect(isArtifactAppWindow()).toBe(false);
+    stubWindow({});
+    expect(isArtifactAppWindow()).toBe(false);
+  });
+
+  it("is false when the shell cannot be asked", () => {
+    stubWindow({
+      bridge: {
+        getWindowRole: () => {
+          throw new Error("bridge gone");
+        },
+      },
+    });
+    expect(isArtifactAppWindow()).toBe(false);
   });
 });

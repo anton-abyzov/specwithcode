@@ -60,7 +60,11 @@ try {
 // oxlint-disable-next-line studio/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
 // Set by the shell when it creates the window (DESKTOP_WINDOW_ROLE_ARGUMENT).
-const windowRole = process.argv.includes("--studio-window-role=project") ? "project" : "main";
+const windowRole = process.argv.includes("--studio-window-role=artifact-app")
+  ? "artifact-app"
+  : process.argv.includes("--studio-window-role=project")
+    ? "project"
+    : "main";
 // The project a project window was opened for (DESKTOP_WINDOW_PROJECT_ARGUMENT).
 const WINDOW_PROJECT_ARGUMENT = "--studio-window-project=";
 const windowProjectKey = (() => {
@@ -258,6 +262,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   openProjectWindow: (input) => ipcRenderer.invoke(IpcChannels.OPEN_PROJECT_WINDOW_CHANNEL, input),
+  installArtifactApp: (input) =>
+    ipcRenderer.invoke(IpcChannels.INSTALL_ARTIFACT_APP_CHANNEL, input),
+  uninstallArtifactApp: (input) =>
+    ipcRenderer.invoke(IpcChannels.UNINSTALL_ARTIFACT_APP_CHANNEL, input),
+  listArtifactApps: () => ipcRenderer.invoke(IpcChannels.LIST_ARTIFACT_APPS_CHANNEL),
+  getArtifactApp: () => ipcRenderer.invoke(IpcChannels.GET_ARTIFACT_APP_CHANNEL),
+  revealArtifactApp: (input) => ipcRenderer.invoke(IpcChannels.REVEAL_ARTIFACT_APP_CHANNEL, input),
   startFileDrag: (path) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, { path }),
   printDocumentPdf: (input) => ipcRenderer.invoke(IpcChannels.PRINT_DOCUMENT_PDF_CHANNEL, input),
   onNotificationBadgeClear: (listener) => {
