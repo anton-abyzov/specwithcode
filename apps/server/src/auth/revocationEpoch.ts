@@ -22,17 +22,25 @@ export interface RevocationEpoch {
 export const makeRevocationEpoch: Effect.Effect<RevocationEpoch> = Effect.gen(function* () {
   const lock = yield* Semaphore.make(1);
   let epoch = 0;
+  const issueIfUnrevoked = <A, E, R, E2>(
+    startedAt: number,
+    issue: Effect.Effect<A, E, R>,
+    refused: () => E2,
+  ): Effect.Effect<A, E | E2, R> =>
+    lock.withPermits(1)(
+      Effect.suspend((): Effect.Effect<A, E | E2, R> =>
+        epoch === startedAt ? issue : Effect.fail(refused()),
+      ),
+    );
+  const revokeAll = <A, E, R>(revoke: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    lock.withPermits(1)(
+      Effect.sync(() => {
+        epoch += 1;
+      }).pipe(Effect.andThen(revoke)),
+    );
   return {
     current: Effect.sync(() => epoch),
-    issueIfUnrevoked: (startedAt, issue, refused) =>
-      lock.withPermits(1)(
-        Effect.suspend(() => (epoch === startedAt ? issue : Effect.fail(refused()))),
-      ),
-    revokeAll: (revoke) =>
-      lock.withPermits(1)(
-        Effect.sync(() => {
-          epoch += 1;
-        }).pipe(Effect.andThen(revoke)),
-      ),
+    issueIfUnrevoked,
+    revokeAll,
   } satisfies RevocationEpoch;
 });

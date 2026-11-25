@@ -214,10 +214,6 @@ export const make = Effect.gen(function* () {
     if (!isValidSecretName(name)) throw new SecretStoreNameError({ resource: "secret name" });
     return path.join(serverConfig.secretsDir, `${name}.bin`);
   };
-  const secretPath = (name: string) =>
-    isValidSecretName(name)
-      ? Effect.succeed(path.join(serverConfig.secretsDir, `${name}.bin`))
-      : Effect.fail(new SecretStoreNameError({ resource: "secret name" }));
 
   // Random secrets (signing keys, salts) are generated once and only replaced
   // through this store, so their bytes are kept after the first read. Asset URLs
@@ -237,28 +233,28 @@ export const make = Effect.gen(function* () {
       storeGeneration += 1;
     });
 
+  const refuseName = () => Effect.fail(new SecretStoreNameError({ resource: "secret name" }));
+
   const get: ServerSecretStore["Service"]["get"] = (name) =>
-    secretPath(name).pipe(
-      Effect.flatMap((file) => fileSystem.readFile(file)),
-      Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
-      Effect.catch((cause) =>
-        cause._tag === "SecretStoreNameError"
-          ? Effect.fail(cause)
-          : cause.reason._tag === "NotFound"
-            ? Effect.succeedNone
-            : Effect.fail(
-                new SecretStoreReadError({
-                  resource: `secret ${name}`,
-                  cause,
-                }),
-              ),
-      ),
-      Effect.withSpan("ServerSecretStore.get"),
-    );
+    !isValidSecretName(name)
+      ? refuseName()
+      : fileSystem.readFile(resolveSecretPath(name)).pipe(
+          Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeedNone
+              : Effect.fail(
+                  new SecretStoreReadError({
+                    resource: `secret ${name}`,
+                    cause,
+                  }),
+                ),
+          ),
+          Effect.withSpan("ServerSecretStore.get"),
+        );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
-    if (!isValidSecretName(name))
-      return Effect.fail(new SecretStoreNameError({ resource: "secret name" }));
+    if (!isValidSecretName(name)) return refuseName();
     const secretPath = resolveSecretPath(name);
     return crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -303,9 +299,11 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const createUncached = (name: string, value: Uint8Array) => {
-    if (!isValidSecretName(name))
-      return Effect.fail(new SecretStoreNameError({ resource: "secret name" }));
+  const createUncached = (
+    name: string,
+    value: Uint8Array,
+  ): Effect.Effect<void, SecretStorePersistError | SecretStoreNameError> => {
+    if (!isValidSecretName(name)) return refuseName();
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
@@ -415,23 +413,22 @@ export const make = Effect.gen(function* () {
     });
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    secretPath(name).pipe(
-      Effect.flatMap((file) => fileSystem.remove(file)),
-      Effect.catch((cause) =>
-        cause._tag === "SecretStoreNameError"
-          ? Effect.fail(cause)
-          : cause.reason._tag === "NotFound"
-            ? Effect.void
-            : Effect.fail(
-                new SecretStoreRemoveError({
-                  resource: `secret ${name}`,
-                  cause,
-                }),
-              ),
-      ),
-      Effect.ensuring(forget(name)),
-      Effect.withSpan("ServerSecretStore.remove"),
-    );
+    !isValidSecretName(name)
+      ? refuseName()
+      : fileSystem.remove(resolveSecretPath(name)).pipe(
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.void
+              : Effect.fail(
+                  new SecretStoreRemoveError({
+                    resource: `secret ${name}`,
+                    cause,
+                  }),
+                ),
+          ),
+          Effect.ensuring(forget(name)),
+          Effect.withSpan("ServerSecretStore.remove"),
+        );
 
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,
