@@ -122,7 +122,7 @@ describe("Codex context usage compatibility", () => {
 });
 
 describe("CodexAdapterV2 file change approvals", () => {
-  it("uses nonblank reasons before sorted file operations and renamed paths", () => {
+  it("lists sorted file operations and renamed paths before the agent's reason", () => {
     const fileChanges = {
       "/tmp/removed.md": { type: "delete" as const, content: "gone" },
       "/tmp/added.ts": { type: "add" as const, content: "export {};" },
@@ -137,7 +137,7 @@ describe("CodexAdapterV2 file change approvals", () => {
         reason: "  Update configuration. ",
         fileChanges,
       }),
-      "Update configuration.",
+      "add /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md\nReason: Update configuration.",
     );
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
@@ -145,14 +145,14 @@ describe("CodexAdapterV2 file change approvals", () => {
     );
   });
 
-  it("falls back to a nonblank grant root and omits empty details", () => {
+  it("names a nonblank write grant root and omits empty details", () => {
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
-      "/workspace",
+      "write /workspace",
     );
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
-      "/workspace",
+      "write /workspace",
     );
     assert.isUndefined(
       CodexAdapterV2.codexFileChangeApprovalPrompt({
@@ -163,7 +163,7 @@ describe("CodexAdapterV2 file change approvals", () => {
     );
   });
 
-  it("bounds large patch descriptions without losing the remaining count", () => {
+  it("lists every path of a large patch, so none is approved unseen", () => {
     const fileChanges = Object.fromEntries(
       Array.from({ length: 25 }, (_, index) => [
         `/tmp/file-${String(index).padStart(2, "0")}.ts`,
@@ -171,10 +171,10 @@ describe("CodexAdapterV2 file change approvals", () => {
       ]),
     );
     const detail = CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges });
-    assert.equal(detail?.split("\n").length, 21);
+    assert.equal(detail?.split("\n").length, 25);
     assert.isTrue(detail?.startsWith("add /tmp/file-00.ts") ?? false);
-    assert.isTrue(detail?.endsWith("+5 more") ?? false);
-    assert.notInclude(detail, "file-20.ts");
+    assert.isTrue(detail?.endsWith("add /tmp/file-24.ts") ?? false);
+    assert.notInclude(detail, "more");
   });
 });
 

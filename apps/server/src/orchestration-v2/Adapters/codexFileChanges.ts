@@ -71,24 +71,100 @@ export function legacyCodexFileChanges(
   });
 }
 
-/** Describe approval scope even when Codex omits or blanks the optional reason. */
+/**
+ * The agent's own explanation, kept to one labelled line after the scope so
+ * it can add context but never stand in for what is being approved.
+ */
+function approvalReasonLine(reason: string | null | undefined): string[] {
+  const text = reason?.replace(/\s+/g, " ").trim();
+  return text ? [`Reason: ${text}`] : [];
+}
+
+/**
+ * What a file-change approval allows: every path (the card scrolls, so none
+ * is hidden), then the write grant, then the agent's reason.
+ */
 export function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
   readonly fileChanges?: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"];
 }): string | undefined {
-  const reason = input.reason?.trim();
-  if (reason) return reason;
   const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
     left.localeCompare(right),
   );
-  if (entries.length > 0) {
-    const described = entries.slice(0, 20).map(([path, change]) => {
-      const movePath = change.type === "update" ? change.move_path : undefined;
-      return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
-    });
-    const remaining = entries.length - described.length;
-    return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
+  const paths = entries.map(([path, change]) => {
+    const movePath = change.type === "update" ? change.move_path : undefined;
+    return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
+  });
+  const grantRoot = input.grantRoot?.trim();
+  const lines = [
+    ...paths,
+    ...(grantRoot ? [`write ${grantRoot}`] : []),
+    ...approvalReasonLine(input.reason),
+  ];
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+/** What a command approval runs: the command first, then where and what it reaches. */
+export function codexCommandApprovalPrompt(input: {
+  readonly command?: string | null;
+  readonly cwd?: string | null;
+  readonly networkApprovalContext?: { readonly host: string; readonly protocol: string } | null;
+  readonly reason?: string | null;
+}): string | undefined {
+  const command = input.command?.trim();
+  const cwd = input.cwd?.trim();
+  const network = input.networkApprovalContext;
+  const lines = [
+    ...(command ? [command] : []),
+    ...(cwd ? [`cwd ${cwd}`] : []),
+    ...(network ? [`network ${network.protocol} ${network.host}`] : []),
+    ...approvalReasonLine(input.reason),
+  ];
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+type PermissionPath = CodexSchema.PermissionsRequestApprovalParams__FileSystemPath;
+
+function permissionPathLabel(path: PermissionPath): string {
+  switch (path.type) {
+    case "path":
+      return path.path;
+    case "glob_pattern":
+      return path.pattern;
+    case "special": {
+      const special = path.value;
+      switch (special.kind) {
+        case "root":
+          return "/ (the whole file system)";
+        case "minimal":
+          return "minimal system paths";
+        case "project_roots":
+          return special.subpath ? `project roots/${special.subpath}` : "project roots";
+        case "tmpdir":
+          return "the temporary folder";
+        case "slash_tmp":
+          return "/tmp";
+        case "unknown":
+          return [special.path, special.subpath].filter(Boolean).join("/") || "an unnamed path";
+      }
+    }
   }
-  return input.grantRoot?.trim() || undefined;
+}
+
+/** What a permissions approval grants: each path with its access, and network. */
+export function codexPermissionsApprovalPrompt(input: {
+  readonly permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"];
+  readonly reason?: string | null;
+}): string | undefined {
+  const fileSystem = input.permissions.fileSystem;
+  // A path can arrive in both the older read/write lists and the entries list.
+  const scope = new Set<string>();
+  for (const path of fileSystem?.read ?? []) scope.add(`read ${path}`);
+  for (const path of fileSystem?.write ?? []) scope.add(`write ${path}`);
+  for (const entry of fileSystem?.entries ?? [])
+    scope.add(`${entry.access} ${permissionPathLabel(entry.path)}`);
+  if (input.permissions.network?.enabled) scope.add("network");
+  const lines = [...scope, ...approvalReasonLine(input.reason)];
+  return lines.length > 0 ? lines.join("\n") : undefined;
 }
