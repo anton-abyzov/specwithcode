@@ -52,7 +52,7 @@ const target: LiveActivities.TargetRow = {
   bundle_id: null,
   aps_environment: null,
   push_token: "apns-device-token",
-  push_to_start_token: null,
+  push_to_start_token: "start-token",
   preferences_json: JSON.stringify({
     liveActivitiesEnabled: true,
     notificationsEnabled: true,
@@ -196,6 +196,36 @@ describe("ApnsDeliveries when the delivery-time recheck fails", () => {
         }),
       );
       expect(result).toMatchObject({ apnsReason: "Stale APNs delivery job skipped." });
+      expect(calls.apns).toBe(0);
+    }).pipe(Effect.provide(layerFor(calls)));
+  });
+
+  it.effect("skips a queued Live Activity start instead of delivering it", () => {
+    const calls = { apns: 0 };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(
+        sign({
+          kind: "live_activity_start",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: "start-token",
+          aggregate: {
+            ...completed,
+            activeCount: 1,
+            activities: completed.activities.map((activity) => ({
+              ...activity,
+              phase: "running",
+              status: "Working",
+            })),
+          },
+          createdAt: completedAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-start-recheck-failed",
+        }),
+      );
+      // A start the relay cannot confirm could birth an activity nothing ends.
+      expect(result).toMatchObject({ kind: "live_activity_start", apnsStatus: null });
       expect(calls.apns).toBe(0);
     }).pipe(Effect.provide(layerFor(calls)));
   });

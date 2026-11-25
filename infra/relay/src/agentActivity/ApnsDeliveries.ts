@@ -557,8 +557,10 @@ export const make = Effect.gen(function* () {
   // delivered moments after a newer terminal publish already ended the user's
   // work, birthing an orphan activity that shows stale content forever (no
   // token is ever registered for it, so nothing can update or end it).
-  // Re-validate at delivery time that the user still has live work; fail open
-  // on persistence errors so a database hiccup never drops a legitimate start.
+  // Re-validate at delivery time that the user still has live work. A failed
+  // read skips the start, as the other rechecks do: a start the relay cannot
+  // confirm could birth an activity nothing ends, and the next publish while
+  // work is live queues a new one.
   const userStillHasLiveWork = Effect.fnUntraced(function* (userId: string) {
     const now = yield* DateTime.now;
     return yield* activityRows.listForUser({ userId }).pipe(
@@ -569,8 +571,8 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.catchCause((cause) =>
-        Effect.logWarning("live-work recheck failed; allowing queued start", { cause }).pipe(
-          Effect.as(true),
+        Effect.logWarning("live-work recheck failed; skipping queued start", { cause }).pipe(
+          Effect.as(false),
         ),
       ),
     );
