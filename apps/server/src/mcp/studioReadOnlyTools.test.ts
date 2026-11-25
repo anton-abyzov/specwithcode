@@ -17,6 +17,7 @@ import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import { ProjectKnowledgeToolkit } from "./toolkits/projectKnowledge/tools.ts";
 import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import { ProjectPlanToolkit } from "./toolkits/projectPlan/tools.ts";
+import { SpecweaveToolkit } from "./toolkits/specweave/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import {
@@ -44,6 +45,7 @@ const TOOLS = [
   DesignToolkit,
   DesignScreenshotToolkit,
   GoogleToolkit,
+  SpecweaveToolkit,
 ].flatMap((toolkit) => Object.values(toolkit.tools));
 
 // Annotated as a write only because reading a finished result acknowledges its delivery.
@@ -68,6 +70,13 @@ describe("STUDIO_READ_ONLY_TOOLS", () => {
       google.filter((name) => STUDIO_READ_ONLY_TOOLS.has(name)),
       ["studio_google_status"],
     );
+  });
+
+  it("takes SpecWeave's reads, never task done or verify", () => {
+    assert.isTrue(STUDIO_READ_ONLY_TOOLS.has("specweave_pickup"));
+    assert.isTrue(STUDIO_READ_ONLY_TOOLS.has("specweave_task_status"));
+    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("specweave_task_done"));
+    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("specweave_verify"));
   });
 
   it("keeps other threads' transcripts behind approval", () => {

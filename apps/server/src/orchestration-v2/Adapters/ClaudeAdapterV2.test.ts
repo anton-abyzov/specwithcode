@@ -73,6 +73,7 @@ import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
+import { SpecweaveToolkit } from "../../mcp/toolkits/specweave/tools.ts";
 import { CLAUDE_PROVIDER_HOSTED_DOCUMENT_TOOLS } from "../../provider/ClaudeWorkflowPolicy.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
@@ -1175,6 +1176,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(DecisionToolkit.tools),
       ...Object.values(DesignToolkit.tools),
       ...Object.values(DesignScreenshotToolkit.tools),
+      ...Object.values(SpecweaveToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__studio-code__${tool.name}`)

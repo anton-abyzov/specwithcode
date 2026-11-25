@@ -50,6 +50,11 @@ import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpProgress from "./McpProgress.ts";
+import { toolMeta } from "./McpToolMeta.ts";
+import * as McpToolVisibility from "./McpToolVisibility.ts";
+import { SpecweaveToolkit } from "./toolkits/specweave/tools.ts";
+import * as SpecweaveHandlers from "./toolkits/specweave/handlers.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -350,6 +355,7 @@ const looksLikeProviderToken = (token: string) => token.length > 0 && !token.inc
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const filterToolList = yield* McpToolVisibility.makeToolListFilter;
   const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
     request: HttpServerRequest.HttpServerRequest,
   ) {
@@ -432,6 +438,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       // The device a client acts for; tools also read it off the invocation (1327).
       Effect.provideService(ConnectDeviceTrust.RequestDevice, admitted.client?.deviceKey ?? null),
       Effect.map(normalizeMcpHttpResponse),
+      // Per-caller tool lists (1483): the SpecWeave tools only where `.specweave/` is.
+      Effect.flatMap((response) => filterToolList(bounded, admitted, response)),
     );
   }) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
@@ -1190,6 +1198,47 @@ const withToolSpans = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
   });
 
 /**
+ * Every tool's `_meta` search hints (`McpToolMeta`), and a progress reporter
+ * for its calls that sends `notifications/progress` when the client asked (1483).
+ */
+const withToolMetaAndProgress = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const hintingServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) =>
+        server.addTool({
+          ...options,
+          tool: new McpSchema.Tool({
+            ...options.tool,
+            _meta: { ...options.tool._meta, ...toolMeta(options.tool.name) },
+          }),
+          handle: (payload) =>
+            Effect.serviceOption(McpSchema.McpRequestContext).pipe(
+              Effect.flatMap((request) => {
+                const token = Option.getOrUndefined(request)?.requestMetadata?.progressToken;
+                const progressToken =
+                  typeof token === "string" || typeof token === "number" ? token : undefined;
+                const reporter = McpProgress.McpProgress.of({
+                  report: (update) =>
+                    progressToken === undefined
+                      ? Effect.void
+                      : server.notifications["notifications/progress"]({
+                          progressToken,
+                          ...update,
+                        }).pipe(Effect.ignore),
+                });
+                return options
+                  .handle(payload)
+                  .pipe(Effect.provideService(McpProgress.McpProgress, reporter));
+              }),
+            ),
+        }),
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, hintingServer));
+  });
+
+/**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
  */
@@ -1200,8 +1249,12 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 ) =>
   Layer.effectDiscard(
     withToolSpans(
-      withAdvertisedSchemas(
-        McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+      withToolMetaAndProgress(
+        withAdvertisedSchemas(
+          McpServer.registerToolkit(
+            inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit,
+          ),
+        ),
       ),
     ),
   ).pipe(
@@ -1214,7 +1267,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolSpans(register)).pipe(
+  Layer.effectDiscard(withToolSpans(withToolMetaAndProgress(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
@@ -1341,6 +1394,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),
+  toolkitRegistration(SpecweaveToolkit, SpecweaveHandlers.layer),
   layerEnvironmentRegistration,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
