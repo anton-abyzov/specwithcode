@@ -213,9 +213,9 @@ export const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
  * link timeout, so the client still reads the relay's answer.
  */
 export const RELAY_LINK_REQUEST_DEADLINE_MS = 25_000;
-
-// The routes that provision a tunnel: linking a machine and recovering its tunnel.
-const RELAY_PROVISIONING_PATH = /\/v1\/(client\/environment-links|environments\/[^/]+\/tunnel)$/u;
+// Linking a machine and recovering its tunnel provision one; Clerk's account deletion removes them.
+const RELAY_PROVISIONING_PATH =
+  /\/v1\/(client\/environment-links|environments\/[^/]+\/tunnel|webhooks\/clerk)$/u;
 
 const relayRequestDeadlineMs = (request: HttpServerRequest.HttpServerRequest) =>
   request.method === "POST" && RELAY_PROVISIONING_PATH.test(request.url.split("?")[0] ?? "")
