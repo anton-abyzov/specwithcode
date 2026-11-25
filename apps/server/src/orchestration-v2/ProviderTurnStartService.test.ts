@@ -13,6 +13,7 @@ import {
   ProviderSetupError,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
@@ -1594,6 +1595,7 @@ effectIt.effect(
         instanceId: harness.oldInstanceId,
         text: "/logout",
         hasAttachments: false,
+        sentByPerson: true,
       });
       expect(harness.open).not.toHaveBeenCalled();
       expect(harness.startRootRun).not.toHaveBeenCalled();
@@ -1612,6 +1614,101 @@ effectIt.effect(
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
     }),
+);
+
+const AGENT_SENDER = ThreadId.make("thread-sending-agent");
+const ROUTINE = ScheduledTaskId.make("routine-nightly");
+effectIt.effect.each([
+  {
+    sender: "a person in the web app",
+    fields: { createdBy: "user", creationSource: "web" },
+    person: true,
+  },
+  {
+    sender: "a person on the phone",
+    fields: { createdBy: "user", creationSource: "mobile" },
+    person: true,
+  },
+  {
+    sender: "another thread's agent",
+    fields: { createdBy: "agent", creationSource: "mcp", senderThreadId: AGENT_SENDER },
+    person: false,
+  },
+  {
+    sender: "a forwarded message an agent routed",
+    fields: { createdBy: "user", creationSource: "mcp", senderThreadId: AGENT_SENDER },
+    person: false,
+  },
+  {
+    sender: "a routine",
+    fields: { createdBy: "user", creationSource: "server", scheduledTaskId: ROUTINE },
+    person: false,
+  },
+  {
+    sender: "the server",
+    fields: { createdBy: "system", creationSource: "server" },
+    person: false,
+  },
+] as const)("tells the sign-out whether $sender sent the /logout", ({ fields, person }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+    harness.editProjection((value) => ({
+      ...value,
+      messages: value.messages.map((message) => ({ ...message, ...fields })),
+    }));
+
+    yield* harness.start;
+
+    expect(harness.tryHandlePromptCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ text: "/logout", sentByPerson: person }),
+    );
+  }),
+);
+
+effectIt.effect.each([
+  {
+    sender: "another thread's agent",
+    fields: { createdBy: "agent", creationSource: "mcp", senderThreadId: AGENT_SENDER },
+    note: `the agent in thread "${AGENT_SENDER}"`,
+  },
+  {
+    sender: "a routine",
+    fields: { createdBy: "user", creationSource: "server", scheduledTaskId: ROUTINE },
+    note: `routine "${ROUTINE}"`,
+  },
+  {
+    sender: "a tool caller",
+    fields: { createdBy: "agent", creationSource: "mcp" },
+    note: "SpecWithCode's tools",
+  },
+] as const)("names $sender to the agent before its message", ({ fields, note }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Run the tests", startsRootRun: true });
+    harness.editProjection((value) => ({
+      ...value,
+      messages: value.messages.map((message) => ({ ...message, ...fields })),
+    }));
+
+    yield* harness.start;
+
+    const sent = harness.startRootRun.mock.calls[0]?.[0].message.text ?? "";
+    const [firstLine, ...rest] = sent.split("\n\n");
+    expect(firstLine).toContain(note);
+    expect(firstLine).toContain("not the person");
+    expect(rest.join("\n\n")).toBe("Run the tests");
+    // The stored message keeps the sender's own words.
+    expect(harness.projection().messages[0]?.text).toBe("Run the tests");
+  }),
+);
+
+effectIt.effect("sends a person's message to the agent as typed", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Run the tests", startsRootRun: true });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe("Run the tests");
+  }),
 );
 
 effectIt.effect("persists a failed sign-out without starting a provider turn", () =>

@@ -704,13 +704,52 @@ describe("ProviderAuthService", () => {
   ])("handles only a standalone logout command %#", ({ text, hasAttachments, handled }) =>
     Effect.gen(function* () {
       const { service, actions } = yield* makeHarness();
-      const result = yield* service.tryHandlePromptCommand({ instanceId, text, hasAttachments });
+      const result = yield* service.tryHandlePromptCommand({
+        instanceId,
+        text,
+        hasAttachments,
+        sentByPerson: true,
+      });
 
       assert.strictEqual(result, handled);
       assert.deepStrictEqual(
         actions,
         handled ? ["close-gate", "list-threads", "native-logout"] : [],
       );
+    }),
+  );
+
+  it.effect("refuses a chat sign-out no person sent and keeps the sign-in", () =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness();
+      const error = yield* Effect.flip(
+        service.tryHandlePromptCommand({
+          instanceId,
+          text: "/logout",
+          hasAttachments: false,
+          sentByPerson: false,
+        }),
+      );
+
+      assert.instanceOf(error, ProviderSetupError);
+      assert.strictEqual(error.operation, "logout");
+      assert.include(error.detail, "Settings");
+      assert.deepStrictEqual(actions, []);
+    }),
+  );
+
+  it.effect("leaves ordinary text from any sender to the provider", () =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness();
+      assert.isFalse(
+        yield* service.tryHandlePromptCommand({
+          instanceId,
+          text: "Explain /logout",
+          hasAttachments: false,
+          sentByPerson: false,
+        }),
+      );
+      assert.deepStrictEqual(actions, []);
     }),
   );
 
@@ -723,6 +762,7 @@ describe("ProviderAuthService", () => {
             instanceId: id,
             text: "/logout",
             hasAttachments: false,
+            sentByPerson: true,
           }),
         );
       }
@@ -751,7 +791,12 @@ describe("ProviderAuthService", () => {
         stopError: true,
       });
       const error = yield* Effect.flip(
-        service.tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false }),
+        service.tryHandlePromptCommand({
+          instanceId,
+          text: "/logout",
+          hasAttachments: false,
+          sentByPerson: true,
+        }),
       );
 
       assert.instanceOf(error, ProviderSetupError);
@@ -776,7 +821,12 @@ describe("ProviderAuthService", () => {
       });
       const { service } = yield* makeHarness({ logoutError });
       const error = yield* Effect.flip(
-        service.tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false }),
+        service.tryHandlePromptCommand({
+          instanceId,
+          text: "/logout",
+          hasAttachments: false,
+          sentByPerson: true,
+        }),
       );
 
       assert.strictEqual(error, logoutError);
@@ -802,7 +852,12 @@ it.effect("queued logout prompts resolve the current controller after provider r
     yield* Deferred.await(entered);
     observeLookup = true;
     const queued = yield* harness.service
-      .tryHandlePromptCommand({ instanceId, text: "/logout", hasAttachments: false })
+      .tryHandlePromptCommand({
+        instanceId,
+        text: "/logout",
+        hasAttachments: false,
+        sentByPerson: true,
+      })
       .pipe(Effect.forkChild);
     yield* Deferred.await(lookup);
     let replacementLoggedOut = false;
@@ -867,6 +922,7 @@ it.effect.each(["start", "logout", "prompt"] as const)(
                 instanceId,
                 text: "/logout",
                 hasAttachments: false,
+                sentByPerson: true,
               });
       const running = yield* operation.pipe(Effect.forkChild);
       yield* Deferred.await(checked);

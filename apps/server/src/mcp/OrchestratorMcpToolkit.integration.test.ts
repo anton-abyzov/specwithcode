@@ -108,6 +108,8 @@ const claudeModel = "claude-sonnet-4-6";
 const parentPrompt = "Keep this parent turn active while orchestration tools are tested.";
 const delegatedPrompt = "Inspect the delegated API boundary and return the result.";
 const delegatedResult = "Delegated API boundary inspected.";
+// A delegated child's provider text opens with a line naming the parent agent.
+const providerTaskText = (text: string) => text.replace(/^\[SpecWithCode: [^\]]*\]\n\n/u, "");
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
@@ -593,7 +595,7 @@ describe("orchestrator MCP toolkit", () => {
           const deliveryMessageGates = new Map<MessageId, Deferred.Deferred<void>>();
           const terminalGate = (turn: ProviderAdapterV2TurnInput) =>
             deliveryMessageGates.get(turn.message.messageId) ??
-            (turn.message.text.startsWith("Delegated task")
+            (providerTaskText(turn.message.text).startsWith("Delegated task")
               ? deliveryTerminalGates.get(turn.threadId)
               : parentTerminalGates.get(turn.threadId));
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
@@ -608,21 +610,22 @@ describe("orchestrator MCP toolkit", () => {
               },
               capturedTurns,
               shouldComplete: (turn) =>
-                turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
+                turn.threadId !== parentThreadId &&
+                providerTaskText(turn.message.text) !== cancellationPrompt,
               terminalGate,
-              response: (turn) => `Codex completed: ${turn.message.text}`,
+              response: (turn) => `Codex completed: ${providerTaskText(turn.message.text)}`,
             }),
             makeDeterministicAdapter({
               instanceId: claudeInstanceId,
               driver: ProviderDriverKind.make("claudeAgent"),
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
-              shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
+              shouldComplete: (turn) => providerTaskText(turn.message.text) !== cancellationPrompt,
               terminalGate,
               response: (turn) =>
-                turn.message.text === delegatedPrompt
+                providerTaskText(turn.message.text) === delegatedPrompt
                   ? delegatedResult
-                  : `Claude completed: ${turn.message.text}`,
+                  : `Claude completed: ${providerTaskText(turn.message.text)}`,
             }),
           ]);
           // Captures parent-wake offers made when a delegated child
@@ -2031,7 +2034,8 @@ describe("orchestrator MCP toolkit", () => {
               {
                 instanceId: claudeInstanceId,
                 threadId: delegated.childThreadId,
-                text: delegatedPrompt,
+                // The child reads that its task came from the parent's agent.
+                text: `[SpecWithCode: the agent in thread "${parentThreadId}" sent this message, not the person using this chat.]\n\n${delegatedPrompt}`,
               },
             ]);
             expect(

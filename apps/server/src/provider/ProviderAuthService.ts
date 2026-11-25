@@ -109,7 +109,16 @@ export class ProviderAuthService extends Context.Service<
       ownerSessionId: string,
     ) => Stream.Stream<ProviderAuthState, ProviderSetupError>;
     readonly tryHandlePromptCommand: (
-      input: ProviderAuthTarget & { readonly text: string; readonly hasAttachments: boolean },
+      input: ProviderAuthTarget & {
+        readonly text: string;
+        readonly hasAttachments: boolean;
+        /**
+         * True only for a message a person typed (on any of their devices).
+         * An agent's, a routine's or a tool caller's `/logout` never signs
+         * the provider out: Settings holds that action behind its own scope.
+         */
+        readonly sentByPerson: boolean;
+      },
     ) => Effect.Effect<boolean, ProviderSetupError>;
   }
 >()("specweave-studio/provider/ProviderAuthService") {}
@@ -349,6 +358,14 @@ export const makeProviderAuthService = Effect.gen(function* () {
         const instance = yield* registry.getInstance(input.instanceId);
         if (!instance?.auth?.isLogoutPrompt?.(input.text, input.hasAttachments)) {
           return false;
+        }
+        if (input.sentByPerson !== true) {
+          return yield* new ProviderSetupError({
+            instanceId: input.instanceId,
+            operation: "logout",
+            detail:
+              "Only you can sign this provider out from a chat. An agent, a routine or a tool sent this /logout, so the sign-in was kept. Sign out in Settings > Providers.",
+          });
         }
         return yield* credentialChanges.withPermit(
           Effect.gen(function* () {
