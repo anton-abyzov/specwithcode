@@ -377,11 +377,20 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         cwd,
         args: ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
         allowNonZeroExit: true,
+        // Only the folder decides which repository it belongs to, never a
+        // repository named by this server's own environment.
+        env: SAME_FOLDER_GIT_ENV,
       })
       .pipe(
         Effect.flatMap((result) => {
-          const [toplevel = "", commonDir = ""] = result.stdout.trim().split("\n");
-          return result.exitCode === 0 && toplevel.length > 0 && commonDir.length > 0
+          // Exactly two lines, read as written: a path with a newline or
+          // trailing space in it is never cut down to another one.
+          const lines = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1).split("\n") : [];
+          const [toplevel = "", commonDir = ""] = lines;
+          return result.exitCode === 0 &&
+            lines.length === 2 &&
+            toplevel.length > 0 &&
+            commonDir.length > 0
             ? Effect.all([real(toplevel), real(commonDir)])
             : Effect.succeed(undefined);
         }),
@@ -430,7 +439,22 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       if (Option.isNone(record)) return false;
       const named = encoder.encode(gitSpelling(entry));
       const withNewline = encoder.encode(`${gitSpelling(entry)}\n`);
-      return sameBytes(record.value, named) || sameBytes(record.value, withNewline);
+      const namesThisFolder = (bytes: Uint8Array) =>
+        sameBytes(bytes, named) || sameBytes(bytes, withNewline);
+      if (!namesThisFolder(record.value)) return false;
+      // Git looks a path up in the first slot that names it, so a path two
+      // slots name is not one registration.
+      const ids = yield* fileSystem
+        .readDirectory(slots.slice(0, -1))
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      let naming = 0;
+      for (const other of ids) {
+        const otherRecord = yield* fileSystem
+          .readFile(`${slots}${other}/gitdir`)
+          .pipe(Effect.option);
+        if (Option.isSome(otherRecord) && namesThisFolder(otherRecord.value)) naming += 1;
+      }
+      return naming === 1;
     });
   const project = yield* checkoutOf(workspaceRoot);
   for (const path of registered) {
@@ -452,6 +476,18 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     message: `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
   });
 });
+
+/** Git variables that would make a probe read some other repository than the folder's own. */
+const SAME_FOLDER_GIT_ENV: NodeJS.ProcessEnv = {
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_COMMON_DIR: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_CEILING_DIRECTORIES: undefined,
+  GIT_DISCOVERY_ACROSS_FILESYSTEM: undefined,
+};
 
 /**
  * Apply the effort the caller named to a launch's model selection, matched to
