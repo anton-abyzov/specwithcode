@@ -36,6 +36,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
 import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
+import { mergeHeadPin } from "./pullRequestHeadPin";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
 /** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
@@ -134,10 +135,13 @@ export function usePullRequestActionRunner({
   reference,
   onSuccess,
   resolveMergeMethod,
+  headSha,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef | null;
   onSuccess?: (action: PullRequestAction) => void;
+  /** The head on screen, which a merge is pinned to. */
+  headSha?: string | undefined;
   /** Small surfaces resolve repository settings on the click, not for every visible row. */
   resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
 }) {
@@ -158,6 +162,7 @@ export function usePullRequestActionRunner({
           ...reference,
           action,
           ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
+          ...mergeHeadPin(action, headSha),
         },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);

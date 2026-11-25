@@ -1105,6 +1105,11 @@ export const PullRequestActionInput = Schema.Struct({
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   /** Only read for `update-branch`, where absent means the host's own default. */
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /**
+   * The head commit the person was looking at. A merge sent with it is refused once the branch
+   * has moved on. Older clients send none, and the server then pins to the head it reads itself.
+   */
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 
@@ -1195,6 +1200,8 @@ export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft
  */
 export const PullRequestSubmitReviewInput = Schema.Struct({
   ...PullRequestRef.fields,
+  /** The head commit the review was written against; refused once the branch has moved on. */
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   verdict: PullRequestReviewVerdict,
   /** The review's own words. May be empty, which is how an approval with no remarks is sent. */
   body: Schema.String.check(Schema.isMaxLength(65_536)),

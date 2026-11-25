@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The review half of the floating composer: the summary and the verdict that sends it, together
@@ -19,6 +20,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { readableFailure } from "./pullRequestDetail.logic";
 import {
   pullRequestReviewKey,
   usePendingReviewComments,
@@ -60,6 +62,8 @@ export function PullRequestReviewForm({
   pending,
   onPendingChange,
   onSubmitted,
+  headSha,
+  onRefused,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -69,6 +73,10 @@ export function PullRequestReviewForm({
   pending: boolean;
   onPendingChange: (pending: boolean) => void;
   onSubmitted: () => void;
+  /** The head on screen, which the review is pinned to. */
+  headSha?: string | undefined;
+  /** Called when the host refused the review, so the panel can show what it has now. */
+  onRefused?: () => void;
 }) {
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const comments = usePendingReviewComments(reference);
@@ -100,12 +108,21 @@ export function PullRequestReviewForm({
         verdict: verdict.value,
         body: submittedBody,
         comments: submittedComments,
+        ...(headSha === undefined ? {} : { expectedHeadSha: headSha }),
       },
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
       // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      toastManager.add({
+        type: "error",
+        title: "The review could not be submitted",
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          "The host refused the review.",
+        ),
+      });
+      onRefused?.();
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,

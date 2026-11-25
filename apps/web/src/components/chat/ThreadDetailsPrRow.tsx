@@ -171,6 +171,7 @@ export function ThreadDetailsPrRow({
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId,
     reference,
+    headSha: detail?.headSha ?? undefined,
     onSuccess: () => {
       detailQuery.refresh();
       checksQuery.refresh();

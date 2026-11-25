@@ -93,6 +93,7 @@ import {
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
 import { withListedCommit } from "./listedCommit.ts";
+import { pinnedHead } from "./pinnedHead.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
@@ -1965,6 +1966,24 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // Read fresh: a pinned write compares against the head as it stands, not a cached one.
+  const currentHeadOf = (
+    project: SupportedProject,
+    number: number,
+    operation: string,
+  ): Effect.Effect<string | undefined, PullRequestError> =>
+    project.api
+      .getChangeRequest({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number,
+      })
+      .pipe(
+        Effect.map((current) => current.headSha ?? undefined),
+        Effect.mapError(toPullRequestError(operation)),
+      );
+
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
@@ -2071,8 +2090,22 @@ export const make = Effect.gen(function* () {
                     ),
                   )
                 : Effect.succeed(false);
-            return mergeSettings.pipe(
-              Effect.flatMap((removeAgentCreditsOnMerge) =>
+            // Only a merge is pinned to a head; a stack carries its own expected heads.
+            const pinsHead =
+              input.stackNumber === undefined &&
+              (input.action === "merge" || input.action === "enable-auto-merge");
+            return pinnedHead(
+              pinsHead ? input.expectedHeadSha : undefined,
+              "runAction",
+              currentHeadOf(project, input.number, "runAction"),
+            ).pipe(
+              Effect.flatMap((expectedHeadSha) =>
+                Effect.map(mergeSettings, (removeAgentCreditsOnMerge) => ({
+                  expectedHeadSha,
+                  removeAgentCreditsOnMerge,
+                })),
+              ),
+              Effect.flatMap(({ expectedHeadSha, removeAgentCreditsOnMerge }) =>
                 project.api
                   .runAction({
                     cwd: project.project.workspaceRoot,
@@ -2089,6 +2122,7 @@ export const make = Effect.gen(function* () {
                     ...(input.updateMethod === undefined
                       ? {}
                       : { updateMethod: input.updateMethod }),
+                    ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
                   })
                   .pipe(
                     // Once the authorized provider action starts, a failure may leave partial
@@ -2265,17 +2299,26 @@ export const make = Effect.gen(function* () {
                 "You need write access on this repository to comment on a line of a change request.",
               );
             }
-            return project.api
-              .submitReview({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
-                number: input.number,
-                verdict: input.verdict,
-                body: input.body,
-                comments: input.comments,
-              })
-              .pipe(Effect.mapError(toPullRequestError("submitReview")));
+            return pinnedHead(
+              input.expectedHeadSha,
+              "submitReview",
+              currentHeadOf(project, input.number, "submitReview"),
+            ).pipe(
+              Effect.flatMap((expectedHeadSha) =>
+                project.api
+                  .submitReview({
+                    cwd: project.project.workspaceRoot,
+                    repository: project.repository,
+                    host: project.host,
+                    number: input.number,
+                    verdict: input.verdict,
+                    body: input.body,
+                    comments: input.comments,
+                    ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
+                  })
+                  .pipe(Effect.mapError(toPullRequestError("submitReview"))),
+              ),
+            );
           }),
         );
       }),
