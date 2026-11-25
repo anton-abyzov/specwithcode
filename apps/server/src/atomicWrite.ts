@@ -44,6 +44,42 @@ const isFolderSyncRefused = (error: PlatformError.PlatformError) => {
   );
 };
 
+/**
+ * Writes a save's temp file. Synced before the rename, since otherwise a crash
+ * soon after it can leave the target empty; closed before it too, which
+ * Windows needs. Off Windows it takes the mode the save leaves.
+ */
+export const writeSyncedTemp = (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly platform: NodeJS.Platform;
+  readonly tempPath: string;
+  readonly targetPath: string;
+  readonly contents: Uint8Array;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { fs, tempPath } = input;
+      const file = yield* fs.open(tempPath, { flag: "w" });
+      yield* file.writeAll(input.contents);
+      if (input.platform !== "win32") {
+        yield* fs.chmod(tempPath, yield* modeAfterSave(fs, input.targetPath));
+      }
+      yield* file.sync;
+    }),
+  );
+
+/**
+ * Makes a rename into `directory` durable. Replacing a file needs only write
+ * and search access to its folder, so a folder this process cannot open
+ * leaves the save standing.
+ */
+export const syncFolder = (fs: FileSystem.FileSystem, directory: string) =>
+  fs.open(directory, { flag: "r" }).pipe(
+    Effect.flatMap((folder) => folder.sync),
+    Effect.scoped,
+    Effect.catchIf(isFolderSyncRefused, () => Effect.void),
+  );
+
 // About 2 seconds. Settings and keybinding saves hold their write lock while
 // they wait, so a denial that is not a brief scan has to surface quickly.
 const LOCKED_RENAME_RETRIES = 20;
@@ -82,26 +118,16 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      // Synced before the rename: otherwise a crash soon after it can leave the
-      // target empty. Closed before the rename too, which Windows needs.
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const file = yield* fs.open(tempPath, { flag: "w" });
-          yield* file.writeAll(new TextEncoder().encode(input.contents));
-          if (platform !== "win32") yield* fs.chmod(tempPath, yield* modeAfterSave(fs, targetPath));
-          yield* file.sync;
-        }),
-      );
+      yield* writeSyncedTemp({
+        fs,
+        platform,
+        tempPath,
+        targetPath,
+        contents: new TextEncoder().encode(input.contents),
+      });
       if (platform !== "win32") {
         yield* fs.rename(tempPath, targetPath);
-        // Makes the rename itself durable. Replacing a file needs only write and
-        // search access to its folder, so a folder this process cannot open
-        // leaves the save standing.
-        return yield* fs.open(targetDirectory, { flag: "r" }).pipe(
-          Effect.flatMap((directory) => directory.sync),
-          Effect.scoped,
-          Effect.catchIf(isFolderSyncRefused, () => Effect.void),
-        );
+        return yield* syncFolder(fs, targetDirectory);
       }
 
       // A retry must not replace a save another process landed meanwhile, so it
