@@ -69,7 +69,7 @@ import {
 } from "./ScheduledTaskRunnerWire.ts";
 import { nextRunAt } from "./ScheduledTaskStorage.ts";
 import { makeTransferIn } from "./ScheduledTaskTransferIn.ts";
-import { makeLinkMove } from "./ScheduledTaskLinkMove.ts";
+import { linkPausedNote, makeLinkMove } from "./ScheduledTaskLinkMove.ts";
 
 export { RoutineTransferRefusal, TransferRunState };
 export { ROUTINE_TRANSFER_PROTOCOL_VERSION, RoutineTransferRequest, RoutineTransferResponse };
@@ -126,6 +126,8 @@ export interface TransferOutDeps {
   readonly setEnabled: (taskId: ScheduledTask["id"], enabled: boolean) => Effect.Effect<boolean>;
   /** Writes the note the routine shows while Away keeps it off; null clears it. */
   readonly note: (taskId: ScheduledTask["id"], note: string | null) => Effect.Effect<void>;
+  /** Marks a routine off here as paused by a project link for `target` (1472). */
+  readonly markLinkPaused?: (taskId: ScheduledTask["id"], target: string) => Effect.Effect<boolean>;
   /** Writes run state onto this machine's copy (Bring back, and a move the target refused). */
   readonly writeState: (
     task: Pick<ScheduledTask, "id" | "projectId">,
@@ -300,8 +302,13 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
     turnOn: boolean,
   ) =>
     Effect.gen(function* () {
-      // One a project link paused stays off: the link names why and offers Try again.
-      if (turnOn && operation.pausedHere !== true) {
+      // One a project link paused stays off, paused for the link again, whoever
+      // called the move off: the link names why and offers Try again.
+      if (turnOn && operation.pausedHere === true) {
+        yield* deps.note(task.id, linkPausedNote(operation.targetLabel));
+        if (deps.markLinkPaused !== undefined)
+          yield* deps.markLinkPaused(task.id, operation.target);
+      } else if (turnOn) {
         yield* deps.setEnabled(task.id, true);
         // Turning on computes its own next run; the carried state keeps the due slot.
         if (operation.runState !== null) yield* deps.writeState(task, operation.runState);
@@ -843,6 +850,7 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
             yield* db`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${id}`;
           }),
         ).pipe(logged("write a routine's note")(undefined)),
+      markLinkPaused: (id, target) => makeLinkPauseMarker(sql).mark(id, target),
       writeState: (task, state) =>
         withSql(writeStateRow(task.projectId, task.id, state)).pipe(
           logged("write run state")(undefined),

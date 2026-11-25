@@ -160,12 +160,18 @@ export function setupNotes(
  * The kept machine's refusals that it has no grant for this machine, or one with
  * Routines off. Its other refusals (a project or sign-in left out) are shown as said.
  */
-const GRANT_REFUSAL = /does not let that machine (run work here|'s coordinator manage routines)/;
+const GRANT_REFUSAL = /does not let that machine(?: run work here|'s coordinator manage routines)/;
 const grantDetail = (targetLabel: string) =>
   `${targetLabel} does not let this machine move routines there. On ${targetLabel}: turn on Routines for this machine in Settings > Machines > Who can run work here, then choose Try again.`;
 /** Every machine of the project must confirm it rests its copy before one moves. */
 const unconfirmedDetail = (targetLabel: string) =>
   `${targetLabel} did not confirm it rests its copy of this routine, so it cannot move yet. Check that ${targetLabel} is online and lets this machine run routines there (on ${targetLabel}: Settings > Machines > Who can run work here > Routines), then choose Try again.`;
+
+/** The kept machine's own refusal says "This machine" of itself: named here as that machine. */
+const refusedThere = (targetLabel: string, detail: string) =>
+  /^This machine/.test(detail)
+    ? `${targetLabel}: ${detail.replace(/^This machine/, "That machine")}`
+    : detail;
 
 const refuse = (code: ProjectLinkError["code"], detail: string) =>
   Effect.fail(new ProjectLinkError({ code, detail }));
@@ -314,7 +320,7 @@ export const makeLinkMove = (deps: LinkMoveDeps) => {
       return yield* paused(
         GRANT_REFUSAL.test(moved.detail)
           ? grantDetail(targetLabel)
-          : moved.detail.replace(/^Stays here:\s*/, ""),
+          : refusedThere(targetLabel, moved.detail.replace(/^Stays here:\s*/, "")),
       );
     });
   return once;

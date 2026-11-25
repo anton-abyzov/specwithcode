@@ -513,6 +513,26 @@ describe("a kept machine whose work grant leaves routines out", () => {
     }),
   );
 
+  it.effect(
+    "Routines turned off there after the runner settled: the stage refusal names the setting",
+    () =>
+      Effect.gen(function* () {
+        const { kept, joining, network } = yield* linked;
+        yield* seedOnJoining(joining);
+        yield* joining.runner.reconcile({ force: true });
+        assert.equal((yield* joining.record)?.state, "settled");
+        network.grant = () => noRoutines(joining) as never;
+        const refused = yield* moverOn(joining, kept)(move(joining, kept));
+        assert.equal(refused.outcome, "failed");
+        assert.match(
+          refused.detail,
+          /On kept: turn on Routines for this machine in Settings > Machines > Who can run work here/,
+        );
+        assert.isFalse(yield* enabledOn(joining));
+        assert.isUndefined(yield* listed(kept));
+      }),
+  );
+
   it.effect("Leave off works while the runner is still being settled", () =>
     Effect.gen(function* () {
       const { kept, joining, network } = yield* linked;
