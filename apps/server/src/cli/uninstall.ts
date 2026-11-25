@@ -116,9 +116,9 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
 export function spawnWindowsRuntimeRemoval(
   environment: NodeJS.ProcessEnv,
   runtimeDir: string,
-  spawn: typeof NodeChildProcess.spawn = NodeChildProcess.spawn,
+  processes: Pick<typeof NodeChildProcess, "spawn"> = NodeChildProcess,
 ) {
-  return spawn(
+  return processes.spawn(
     windowsSystem32Path("cmd.exe", environment),
     [
       "/d",

@@ -91,7 +91,7 @@ it("removes the Windows runtime from a System32 shell, the folder passed as data
   spawnWindowsRuntimeRemoval(
     { SystemRoot: "D:\\Windows", ComSpec: "C:\\work\\evil\\cmd.exe", PATH: "C:\\work" },
     runtimeDir,
-    spawn,
+    { spawn },
   );
   const [call] = calls;
   assert.equal(call!.command, "D:\\Windows\\System32\\cmd.exe");
