@@ -114,8 +114,7 @@ it.live("the local hub refuses callers without its token, and our calls carry it
       expect(log).not.toContain(token);
     }).pipe(
       Effect.ensuring(host.stop),
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provide(capture),
+      Effect.provide(Layer.merge(FetchHttpClient.layer, capture)),
       Effect.provideService(References.MinimumLogLevel, "Debug"),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -128,7 +127,7 @@ it.live("hub sockets carry the token on the upgrade", () =>
         () =>
           new NodeWS.WebSocketServer({
             port: 0,
-            verifyClient: ({ req }: { req: { headers: { authorization?: string } } }) =>
+            verifyClient: ({ req }: { req: { headers: { authorization?: string | undefined } } }) =>
               req.headers.authorization === `Bearer ${TOKEN}`,
           }),
       ),
