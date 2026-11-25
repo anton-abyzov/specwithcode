@@ -419,3 +419,35 @@ describe("findSharedSettingsMismatches", () => {
     expect(mismatches).toEqual([]);
   });
 });
+
+describe("githubStarPrompt (1489)", () => {
+  const answered = { status: "starred", asks: 1, nextAskAt: null } as const;
+
+  it("is written to every machine with the shared patch", () => {
+    const { sharedPatch, localPatch } = splitSharedServerPatch({ githubStarPrompt: answered });
+    expect(sharedPatch).toEqual({ githubStarPrompt: answered });
+    expect(localPatch).toEqual({});
+  });
+
+  it("never raises a settings-differ warning when one machine missed a write", () => {
+    expect(
+      findSharedSettingsMismatches({
+        primaryEnvironmentId: primaryId,
+        primarySettings: { ...DEFAULT_SERVER_SETTINGS, githubStarPrompt: answered },
+        environments: [
+          {
+            environmentId: laptopId,
+            label: "Laptop",
+            syncEligible: true,
+            settings: DEFAULT_SERVER_SETTINGS,
+            capabilities: restartCapabilities,
+          },
+        ],
+        primaryCapabilities: restartCapabilities,
+      }),
+    ).toEqual([]);
+    expect(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS)).not.toHaveProperty(
+      "githubStarPrompt",
+    );
+  });
+});

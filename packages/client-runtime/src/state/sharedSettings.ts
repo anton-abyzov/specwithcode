@@ -33,11 +33,25 @@ const SHARED_SERVER_SETTING_KEYS = [
   // Each machine refuses a new personal assistant while its own copy is off,
   // so the Settings switch has to reach every machine, not only the primary.
   "aideEnabled",
+  // One star answer for every machine (1489), so the card never repeats per machine.
+  "githubStarPrompt",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;
 
 export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
 
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
+
+/**
+ * Shared keys written everywhere but never compared: a machine that missed a write is not worth
+ * a "settings differ" warning, and the next write brings it level.
+ */
+const QUIET_SHARED_SERVER_SETTING_KEYS = ["githubStarPrompt"] as const satisfies ReadonlyArray<
+  (typeof SHARED_SERVER_SETTING_KEYS)[number]
+>;
+const COMPARED_SHARED_SERVER_SETTING_KEYS = SHARED_SERVER_SETTING_KEYS.filter(
+  (key): key is Exclude<(typeof SHARED_SERVER_SETTING_KEYS)[number], "githubStarPrompt"> =>
+    !(QUIET_SHARED_SERVER_SETTING_KEYS as ReadonlyArray<string>).includes(key),
+);
 
 /** Split a server patch into the keys every environment should receive and the primary-only rest. */
 export function splitSharedServerPatch(patch: ServerSettingsPatch): {
@@ -95,7 +109,7 @@ export function pickSharedServerSettings(
   capabilities?: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation">,
 ): ServerSettingsPatch {
   return filterSharedServerPatch(
-    Struct.pick(settings, SHARED_SERVER_SETTING_KEYS),
+    Struct.pick(settings, COMPARED_SHARED_SERVER_SETTING_KEYS),
     capabilities,
     settings,
   );

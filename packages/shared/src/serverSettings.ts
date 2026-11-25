@@ -1,5 +1,6 @@
 import {
   isProviderDriverKind,
+  mergeGitHubStarPrompt,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
@@ -412,8 +413,17 @@ export function applyServerSettingsPatch(
     projectScriptOverrides: _legacyScripts,
     // Newest stamp wins per machine; a stale peer must not undo a rename.
     machineNicknames: machineNicknamesPatch,
-    ...patchForMerge
+    // Folded so a stale machine's write never undoes a star or adds asks (1489).
+    githubStarPrompt: githubStarPromptPatch,
+    ...patchWithoutStarPrompt
   } = patch;
+  const patchForMerge =
+    githubStarPromptPatch === undefined
+      ? patchWithoutStarPrompt
+      : {
+          ...patchWithoutStarPrompt,
+          githubStarPrompt: mergeGitHubStarPrompt(current.githubStarPrompt, githubStarPromptPatch),
+        };
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
   const backgroundActivityPatch =
     backgroundActivityProfile !== undefined

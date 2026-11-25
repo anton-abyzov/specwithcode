@@ -925,3 +925,16 @@ it("retains explicitly used project custom roots when overrides are cleared", ()
   expect(next.previousWorktreesDirectories).toContain("/old-project-worktrees");
   expect(next.projectSettingsOverrides[project]).toBeUndefined();
 });
+
+describe("applyServerSettingsPatch githubStarPrompt (1489)", () => {
+  it("keeps a star when a stale machine writes a showing", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      githubStarPrompt: { status: "starred" as const, asks: 1, nextAskAt: null },
+    };
+    const next = applyServerSettingsPatch(current, {
+      githubStarPrompt: { status: "asking", asks: 1, nextAskAt: "2026-12-09T00:00:00.000Z" },
+    });
+    expect(next.githubStarPrompt).toEqual(current.githubStarPrompt);
+  });
+});

@@ -799,6 +799,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["github star repository source code open source mit license contribute"],
   },
   {
+    id: "github-star-prompt",
+    title: "Ask for a GitHub star",
+    to: "/settings/general",
+    searchTerms: ["github star prompt ask reminder card nag turn off stop asking"],
+  },
+  {
     id: "send-feedback",
     title: "Send feedback",
     to: "/settings/general",

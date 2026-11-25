@@ -254,6 +254,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitHubSignInCancel]: AuthSettingsWriteScope,
   // Copying a sign-in reads this machine's token and stores it on another; both ends need it.
   [WS_METHODS.gitHubCredentialState]: AuthSettingsWriteScope,
+  // Uses this machine's GitHub sign-in, so only the owner's own devices may ask.
+  [WS_METHODS.gitHubCredentialStarred]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialRemoveCopied]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopyPreview]: AuthSettingsWriteScope,
   [WS_METHODS.gitHubCredentialCopy]: AuthSettingsWriteScope,

@@ -6,7 +6,7 @@ import { Button } from "../ui/button";
 
 export const SPECWITHCODE_REPO_URL = "https://github.com/anton-abyzov/specwithcode";
 
-function openRepository() {
+export function openRepository() {
   void ensureLocalApi().shell.openExternal(SPECWITHCODE_REPO_URL);
 }
 
