@@ -478,11 +478,9 @@ export default function StudioSidebar() {
         project: (t) => projectByMember.get(`${t.environmentId}:${t.projectId}`),
         words: {
           projectOnMachine: (project, machine) =>
-            tx("From {project} on {machine}")
-              .replace("{project}", project)
-              .replace("{machine}", machine),
-          project: (project) => tx("From {project}").replace("{project}", project),
-          machine: (machine) => tx("From {machine}").replace("{machine}", machine),
+            tx("From {project} on {machine}", { project, machine }),
+          project: (project) => tx("From {project}", { project }),
+          machine: (machine) => tx("From {machine}", { machine }),
         },
       }),
     [isStandaloneChat, projectByMember, threadByKey, tx],

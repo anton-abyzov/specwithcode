@@ -97,6 +97,8 @@ const setup = (
     readonly staleM1Member?: boolean;
     /** What M1 reports about this project when probed. */
     readonly m1ProjectMatch?: "none" | "identity";
+    /** Which projects M1's grant lets this machine see. */
+    readonly m1ProjectScope?: "all" | "linked";
     /** M1 holds a linked copy of this project. */
     readonly m1Member?: boolean;
     /** What each machine reports about itself; a machine left out has not said. */
@@ -122,6 +124,7 @@ const setup = (
     deletedAt: null,
   } as OrchestrationV2ThreadShell;
   const remoteLaunches: RemoteWorkers.RemoteLaunchInput[] = [];
+  const machineListings: Array<{ readonly only?: string; readonly fresh?: boolean }> = [];
   const providerReads = { count: 0 };
   const proxied: string[] = [];
   const linkSteps: string[] = [];
@@ -187,8 +190,12 @@ const setup = (
   const remote: RemoteWorkers.RemoteWorkersShape = {
     ...RemoteWorkers.RemoteWorkers.defaultValue(),
     enabled: true,
-    listMachines: () =>
-      Effect.succeed({
+    listMachines: (input) => {
+      machineListings.push({
+        ...(input.only === undefined ? {} : { only: input.only }),
+        ...(input.fresh === undefined ? {} : { fresh: input.fresh }),
+      });
+      return Effect.succeed({
         local: { id: "local", label: "M4", environmentId: EnvironmentId.make("env-m4") },
         machines: [M1, M3].map((machine) => {
           const platform = options.platforms?.[machine.id as "m1" | "m3"];
@@ -202,10 +209,14 @@ const setup = (
             ...(options.m1ProjectMatch !== undefined && machine === M1
               ? { project: { match: options.m1ProjectMatch } }
               : {}),
+            ...(options.m1ProjectScope !== undefined && machine === M1
+              ? { projectScope: options.m1ProjectScope }
+              : {}),
           };
         }),
         projectWorkerMachine: null,
-      }),
+      });
+    },
     resolveMachine: (target) =>
       target === undefined || target === "local"
         ? Effect.succeed({ kind: "local" })
@@ -479,6 +490,7 @@ const setup = (
     launch,
     launchEncoded,
     remoteLaunches,
+    machineListings,
     localLaunches,
     proxied,
     linkSteps,
@@ -961,13 +973,15 @@ it.effect(
     const legacy = setup({ m1ProjectMatch: "identity" });
     // M1 said nothing about the project: the old rule stands.
     const unknown = setup();
+    // M1 shows this machine only its linked projects, so "none" there proves nothing.
+    const scoped = setup({ m1ProjectMatch: "none", m1ProjectScope: "linked" });
     return Effect.gen(function* () {
       // Without a named machine, a saved worker machine is no reason to leave the project.
       expect(
         yield* unnamed.launch({ title: "Git push check", message: "go", scratch: true }),
       ).toMatchObject({ code: "invalid_request" });
       expect(unnamed.remoteLaunches).toEqual([]);
-      for (const world of [legacy, unknown]) {
+      for (const world of [legacy, unknown, scoped]) {
         expect(
           yield* world.launch({
             title: "Git push check",
@@ -986,6 +1000,8 @@ it.effect(
         scratch: true,
       });
       expect(helper.remoteLaunches).toHaveLength(1);
+      // Only M1 was asked, and not from the cache.
+      expect(helper.machineListings).toContainEqual({ only: "m1", fresh: true });
       expect(helper.remoteLaunches[0]).toMatchObject({
         callerThreadId: callerId,
         localProject: undefined,

@@ -251,11 +251,15 @@ export interface RemoteWorkersShape {
    * The configured machines and this server's grant on each. Only `probe`
    * asks each machine for its providers and matching project and says
    * whether it answered (`reachable`); without it a row has the grant
-   * status alone.
+   * status alone. `only` keeps one machine (the others are not asked), and
+   * `fresh` skips the minute-long cache and leaves out a "none" match taken
+   * from a project list that was cut short.
    */
   readonly listMachines: (input: {
     readonly projectId: ProjectId | undefined;
     readonly probe: boolean;
+    readonly only?: string | undefined;
+    readonly fresh?: boolean | undefined;
   }) => Effect.Effect<OrchestratorMcpMachineListResult, OrchestratorMcpFailure>;
   readonly launch: (
     input: RemoteLaunchInput,
@@ -401,6 +405,8 @@ interface Probe extends MachineProbeFacts {
   readonly at: number;
   readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
   readonly projects: ReadonlyArray<Project>;
+  /** Whether the project list ended within the page cap. */
+  readonly complete: boolean;
 }
 
 const make = Effect.gen(function* () {
@@ -601,6 +607,7 @@ const make = Effect.gen(function* () {
         at: now,
         providers: readProviders(capabilities),
         projects: listed,
+        complete: cursor === null,
         ...readMachineProbeFacts(capabilities),
       };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
@@ -633,13 +640,18 @@ const make = Effect.gen(function* () {
       : matchRemoteProject({ local: project, remote: remoteProjects, projectId });
   };
 
-  const listMachines: RemoteWorkersShape["listMachines"] = ({ projectId, probe: probing }) =>
+  const listMachines: RemoteWorkersShape["listMachines"] = ({
+    projectId,
+    probe: probing,
+    only,
+    fresh = false,
+  }) =>
     Effect.gen(function* () {
       const descriptor = yield* environment.getDescriptor;
       const project = projectId === undefined ? undefined : yield* localProject(projectId);
       const configured = yield* machines;
       const rows = yield* Effect.forEach(
-        configured,
+        only === undefined ? configured : configured.filter((target) => target.id === only),
         (target) =>
           Effect.gen(function* () {
             const machine = refOf(target);
@@ -654,7 +666,7 @@ const make = Effect.gen(function* () {
               grantExpiresAt: workers.expiresAt,
             };
             if (!probing || (status !== "ready" && status !== "grant_expiring")) return row;
-            const probed = yield* probe(machine).pipe(Effect.result);
+            const probed = yield* probe(machine, fresh).pipe(Effect.result);
             if (probed._tag === "Failure") {
               const error = probed.failure;
               if (error.remoteCode === RemoteStudioMcpClient.TEAM_RULES_REMOTE_CODE) {
@@ -691,7 +703,9 @@ const make = Effect.gen(function* () {
               const match = machineRowProjectMatch(
                 matchFor(machine, project, probed.success.projects, undefined),
               );
-              row.project = match;
+              // A list cut short cannot show that no checkout matches.
+              if (!(fresh && match.match === "none" && !probed.success.complete))
+                row.project = match;
               // That machine lists only projects its grant covers, so no match there means
               // the grant leaves this one out: work for it cannot start there yet.
               if (scope !== undefined && scope !== "all" && match.match === "none")

@@ -14,33 +14,17 @@ import { renderRich } from "../../i18n/rich";
 import { useOpenThread } from "../../hooks/useOpenThread";
 import { useThreadShells } from "../../state/entities";
 import { threadBlocker } from "../../studio/projectWorkspaceModel";
-import { blockedHelpersOf } from "../../studio/standaloneChats";
+import { blockedHelpersAmong } from "../../studio/standaloneChats";
 import { InlineButton } from "../ui/button";
 
 export function HelperChatBlockers({ thread }: { thread: EnvironmentThreadShell | null }) {
   const { openThread } = useOpenThread();
   // Only a thread's own page reads every shell; nothing renders while none is blocked.
   const shells = useThreadShells(thread !== null);
-  const blocked = useMemo(() => {
-    if (thread === null) return [];
-    // One pass picks the helpers this machine's threads started elsewhere; usually none.
-    const helpers = shells.filter(
-      (shell) =>
-        shell.archivedAt === null &&
-        shell.environmentId !== thread.environmentId &&
-        shell.origin?.parentThreadRef?.environmentId === thread.environmentId,
-    );
-    if (helpers.length === 0) return [];
-    const parents = new Map(
-      shells
-        .filter((shell) => shell.environmentId === thread.environmentId)
-        .map((shell) => [shell.id as string, shell]),
-    );
-    return blockedHelpersOf(thread, helpers, {
-      thread: (_environmentId, threadId) => parents.get(threadId),
-      blockerOf: threadBlocker,
-    });
-  }, [shells, thread]);
+  const blocked = useMemo(
+    () => (thread === null ? [] : blockedHelpersAmong(thread, shells, threadBlocker)),
+    [shells, thread],
+  );
   return (
     <HelperChatBlockersView
       blocked={blocked}

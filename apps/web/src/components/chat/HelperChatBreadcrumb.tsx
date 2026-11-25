@@ -86,14 +86,16 @@ export function HelperChatBreadcrumbView({
 }) {
   const tx = useTx();
   const { projectName, fromMachine } = helper;
-  const label = projectName ?? tx("From {machine}").replace("{machine}", fromMachine ?? "");
+  const machine = fromMachine ?? "";
+  const label = projectName ?? tx("From {machine}", { machine });
   const ariaLabel = projectName
     ? fromMachine
-      ? tx("{project} on {machine}: open the thread that asked for this")
-          .replace("{project}", projectName)
-          .replace("{machine}", fromMachine)
-      : tx("{project}: open the thread that asked for this").replace("{project}", projectName)
-    : tx("{machine}: open the thread that asked for this").replace("{machine}", fromMachine ?? "");
+      ? tx("{project} on {machine}: open the thread that asked for this", {
+          project: projectName,
+          machine,
+        })
+      : tx("{project}: open the thread that asked for this", { project: projectName })
+    : tx("{machine}: open the thread that asked for this", { machine });
   const tooltip = projectName
     ? fromMachine
       ? renderRich(tx("A thread in {project} on {machine} asked for this. Open that thread."), {

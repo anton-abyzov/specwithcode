@@ -407,6 +407,45 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("asks one machine afresh and drops a no-match read from a list cut short", () => {
+    let asked = 0;
+    let ends = true;
+    const { layer } = setup({
+      studio_project_list: () => {
+        asked++;
+        return { result: { projects: [], nextCursor: ends ? null : 1 } };
+      },
+    });
+    const list = (input: { readonly only?: string; readonly fresh?: boolean }) =>
+      RemoteWorkers.RemoteWorkers.pipe(
+        Effect.flatMap((workers) =>
+          workers.listMachines({
+            projectId: ProjectId.make("local-project"),
+            probe: true,
+            ...input,
+          }),
+        ),
+      );
+    return Effect.gen(function* () {
+      yield* allow();
+      expect((yield* list({})).machines[0]?.project).toMatchObject({ match: "none" });
+      expect(asked).toBe(1);
+      // The cached answer serves a plain listing; a fresh one asks again.
+      yield* list({});
+      expect(asked).toBe(1);
+      expect((yield* list({ only: "m1", fresh: true })).machines).toHaveLength(1);
+      expect(asked).toBe(2);
+      // Another machine named: this one is not asked at all.
+      expect((yield* list({ only: "elsewhere", fresh: true })).machines).toEqual([]);
+      expect(asked).toBe(2);
+      // More pages than the cap: "none" there proves nothing.
+      ends = false;
+      const partial = (yield* list({ only: "m1", fresh: true })).machines[0];
+      expect(partial).toMatchObject({ reachable: true });
+      expect(partial).not.toHaveProperty("project");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("lists the operating system and simulator support each machine reports", () => {
     const list = Effect.gen(function* () {
       yield* allow();

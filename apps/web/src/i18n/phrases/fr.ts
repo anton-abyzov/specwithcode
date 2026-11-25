@@ -7,6 +7,7 @@ import { actionMachineFr } from "./actionMachine/fr";
 import { coordinatorMessagesFr } from "./coordinatorMessages/fr";
 import { providerSignInFr } from "./providerSignIn/fr";
 import { limitHopsFr } from "./limitHops/fr";
+import { helperChatsFr } from "./helperChats/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
@@ -18,6 +19,7 @@ export const fr: PhraseCatalog = {
   ...coordinatorMessagesFr,
   ...providerSignInFr,
   ...limitHopsFr,
+  ...helperChatsFr,
   About: "À propos",
   "Accent color": "Couleur d’accent",
   Account: "Compte",

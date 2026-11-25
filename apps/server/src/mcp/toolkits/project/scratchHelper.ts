@@ -37,7 +37,8 @@ export function mayStartScratchHelper(
  * The same check against what that machine reports now: a project with no
  * link or saved binding can still match a checkout there by repository, and
  * then the work belongs in that checkout. Only a confirmed "none" allows the
- * helper; an unreachable machine or an unreadable answer keeps the old rule.
+ * helper; an unreachable machine, a partial list or an unreadable answer
+ * keeps the old rule.
  */
 export const confirmScratchHelper = (
   project: Project | undefined,
@@ -46,10 +47,18 @@ export const confirmScratchHelper = (
   Effect.gen(function* () {
     if (!mayStartScratchHelper(project, machine) || project === undefined) return false;
     const remote = yield* RemoteWorkers.RemoteWorkers;
-    const listed = yield* remote.listMachines({ projectId: project.id, probe: true });
+    // Asks that machine alone, now, for its whole project list.
+    const listed = yield* remote.listMachines({
+      projectId: project.id,
+      probe: true,
+      only: machine.id,
+      fresh: true,
+    });
     const row = listed.machines.find(
       (candidate) =>
         candidate.id === machine.id && candidate.environmentId === machine.environmentId,
     );
-    return row?.reachable === true && row.project?.match === "none";
+    // A grant that shows only some projects there cannot show that none matches.
+    const seesAll = row?.projectScope === undefined || row.projectScope === "all";
+    return row?.reachable === true && seesAll && row.project?.match === "none";
   }).pipe(Effect.orElseSucceed(() => false));

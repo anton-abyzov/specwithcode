@@ -184,6 +184,39 @@ export function blockedHelpersOf<T extends HelperCandidate>(
 }
 
 /**
+ * The blocked helpers among every loaded thread: one pass keeps the unarchived
+ * threads on other machines whose requester is on this thread's machine
+ * (usually none), then reads the starting threads from this machine's own.
+ */
+export function blockedHelpersAmong<
+  T extends HelperCandidate & {
+    readonly archivedAt: string | null;
+    readonly lineage?: { readonly rootThreadId?: string | null };
+  },
+>(
+  thread: { readonly environmentId: string; readonly id: string },
+  shells: ReadonlyArray<T>,
+  blockerOf: (helper: T) => string | null,
+): Array<{ readonly helper: T; readonly blocker: string }> {
+  const helpers = shells.filter(
+    (shell) =>
+      shell.archivedAt === null &&
+      shell.environmentId !== thread.environmentId &&
+      helperParentRef(shell)?.environmentId === thread.environmentId,
+  );
+  if (helpers.length === 0) return [];
+  const parents = new Map(
+    shells
+      .filter((shell) => shell.environmentId === thread.environmentId)
+      .map((shell) => [shell.id, shell]),
+  );
+  return blockedHelpersOf(thread, helpers, {
+    thread: (_environmentId, threadId) => parents.get(threadId),
+    blockerOf,
+  });
+}
+
+/**
  * Where the chats list puts a chat a thread on another machine started: with
  * that thread's project (`group`, opened from its project row), or, while that
  * thread is not loaded here, under the helper's "From <project> on <machine>".

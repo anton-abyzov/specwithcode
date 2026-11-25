@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  blockedHelpersAmong,
   blockedHelpersOf,
   chatRequester,
   helperChatGroupLabel,
@@ -134,6 +135,28 @@ describe("helper chats another machine's thread started", () => {
       blockedHelpersOf({ environmentId: "m4", id: "project-coordinator:p" }, [helper], input),
     ).toEqual([]);
     expect(blockedHelpersOf(worker, [helper], { ...input, blockerOf: () => null })).toEqual([]);
+  });
+});
+
+describe("blockedHelpersAmong", () => {
+  const worker = { environmentId: "m5", id: "worker", archivedAt: null };
+  const blocker = () => "On win: run gh auth login";
+  it("finds a helper whose origin names the machine beside the ref", () => {
+    const older = {
+      environmentId: "win",
+      id: "helper",
+      archivedAt: null,
+      origin: { environmentId: "m5", parentThreadRef: { threadId: "worker" } },
+    };
+    expect(blockedHelpersAmong(worker, [worker, older], blocker)).toEqual([
+      { helper: older, blocker: "On win: run gh auth login" },
+    ]);
+  });
+  it("skips archived helpers and threads this machine started itself", () => {
+    const origin = { parentThreadRef: { environmentId: "m5", threadId: "worker" } };
+    const archived = { environmentId: "win", id: "a", archivedAt: "2026-11-25", origin };
+    const local = { environmentId: "m5", id: "b", archivedAt: null, origin };
+    expect(blockedHelpersAmong(worker, [worker, archived, local], blocker)).toEqual([]);
   });
 });
 
