@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({
   reads: [] as Array<{ path: string; enabled: boolean }>,
   assets: [] as Array<{ _tag: string; cwd: string; path: string }>,
   readError: null as null | { message: string; reason?: string; failure?: string },
+  /** Bumped to stand for a re-minted signed URL. */
+  mint: 1,
 }));
 
 vi.mock("~/viewerOverlayStore", async (importOriginal) => ({
@@ -41,7 +43,11 @@ vi.mock("~/assets/assetUrls", () => ({
     resource: { _tag: string; cwd: string; path: string },
   ) => {
     state.assets.push(resource);
-    return { _tag: "Success", url: `https://asset.test/${resource.path.split("/").at(-1)}` };
+    const name = resource.path.split("/").at(-1);
+    return {
+      _tag: "Success",
+      url: `https://asset.test/${name}${state.mint > 1 ? `?mint=${state.mint}` : ""}`,
+    };
   },
 }));
 vi.mock("../../chat/ViewerImageStage", () => ({
@@ -80,6 +86,7 @@ beforeEach(() => {
   state.reads = [];
   state.assets = [];
   state.readError = null;
+  state.mint = 1;
 });
 afterEach(async () => {
   await act(async () => renderer?.unmount());
@@ -178,6 +185,77 @@ it("renders an HTML report in the locked frame, and its source on request", asyn
 it("shows a PDF report in the PDF frame", async () => {
   await open(`${COPY}/plan.pdf`);
   expect(find("data-document-frame")[0]!.props["data-pdf"]).toBe("true");
+});
+
+it("keeps an open PDF on its first URL when the signed URL is re-minted", async () => {
+  const viewer = () => (
+    <LibraryFileViewer
+      environmentId={EnvironmentId.make("library-host")}
+      workspaceRoot={ROOT}
+      files={[{ path: `${COPY}/plan.pdf`, name: "plan.pdf" }]}
+      path={`${COPY}/plan.pdf`}
+      onPath={() => {}}
+      onClose={() => {}}
+    />
+  );
+  await act(async () => {
+    renderer = create(viewer());
+  });
+  state.mint = 2;
+  await act(async () => renderer!.update(viewer()));
+  // The re-render saw the new URL; the frame kept the first.
+  expect(state.assets.length).toBeGreaterThan(1);
+  expect(find("data-document-frame")[0]!.props["data-document-frame"]).toBe(
+    "https://asset.test/plan.pdf",
+  );
+});
+
+it("plays a browser video, shows any other as a preview card, and says when one will not load", async () => {
+  await open(`${COPY}/demo.mp4`);
+  const video = find("data-library-video")[0]!;
+  expect(video.props.src).toBe("https://asset.test/demo.mp4");
+  await act(async () => video.props.onError());
+  expect(alertText()).toEqual(["demo.mp4 could not be opened on this machine."]);
+  await open(`${COPY}/capture.avi`);
+  expect(find("data-library-video")).toHaveLength(0);
+  expect(find("data-file-card")).toHaveLength(1);
+});
+
+it("leaves the arrow keys to a video's controls instead of changing files", async () => {
+  class FakeElement {
+    isContentEditable = false;
+    closest() {
+      return null;
+    }
+  }
+  class FakeMedia extends FakeElement {}
+  class FakeOther {}
+  vi.stubGlobal("HTMLElement", FakeElement);
+  vi.stubGlobal("HTMLMediaElement", FakeMedia);
+  vi.stubGlobal("HTMLInputElement", FakeOther);
+  vi.stubGlobal("HTMLTextAreaElement", FakeOther);
+  vi.stubGlobal("HTMLSelectElement", FakeOther);
+  const paths: string[] = [];
+  await act(async () => {
+    renderer = create(
+      <LibraryFileViewer
+        environmentId={EnvironmentId.make("library-host")}
+        workspaceRoot={ROOT}
+        files={[
+          { path: `${COPY}/demo.mp4`, name: "demo.mp4" },
+          { path: `${COPY}/plan.pdf`, name: "plan.pdf" },
+        ]}
+        path={`${COPY}/demo.mp4`}
+        onPath={(path) => paths.push(path)}
+        onClose={() => {}}
+      />,
+    );
+  });
+  const frame = renderer!.root.find((node) => node.props["data-library-viewer"] === "true");
+  await act(async () => frame.props.onKeyDown({ key: "ArrowRight", target: new FakeMedia() }));
+  expect(paths).toEqual([]);
+  await act(async () => frame.props.onKeyDown({ key: "ArrowRight", target: new FakeElement() }));
+  expect(paths).toEqual([`${COPY}/plan.pdf`]);
 });
 
 it("says a missing spec is no longer there and where the Board found it", async () => {
