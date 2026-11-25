@@ -56,7 +56,14 @@ describe("OpenCode after a thread is lowered from Full access", () => {
       const calls: Array<{ readonly method: string; readonly permission?: Rules }> = [];
       const session = { id: "root", time: { created: 1, updated: 1 } };
       const client = {
-        event: { subscribe: async () => ({ stream: (async function* () {})() }) },
+        // The event stream stays open: an ended stream fails the turn first.
+        event: {
+          subscribe: async () => ({
+            stream: (async function* () {
+              await new Promise<never>(() => {});
+            })(),
+          }),
+        },
         session: {
           create: async (input: { permission: Rules }) => {
             calls.push({ method: "create", permission: input.permission });

@@ -290,6 +290,13 @@ describe("ACP registry permission answers", () => {
       assert.isNull(yield* answerPlanExit("gemini", "approval-required", "decline", offered));
       assert.isNull(yield* answerPlanExit("gemini", "approval-required", "accept", offered));
       assert.isNull(yield* answerPlanExit("gemini", "full-access", "accept", offered));
+      // Full access approves once or not at all, never for good instead.
+      assert.isNull(
+        yield* answerPlanExit("gemini", "full-access", "accept", [
+          ...offered,
+          { optionId: "always", name: "Always allow", kind: "allow_always" },
+        ]),
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

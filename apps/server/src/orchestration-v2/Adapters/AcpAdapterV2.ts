@@ -1424,9 +1424,14 @@ function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
   offered: ReadonlyArray<EffectAcpSchema.PermissionOption> = request.options,
 ): string | undefined {
+  // An allow-once the agent offered but that cannot be sent safely never
+  // turns into an approval that lasts: the request is cancelled instead.
+  const offersAllowOnce = request.options.some(
+    (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
+  );
   return (
     selectPermissionOption(request, "accept", offered) ??
-    selectPermissionOption(request, "acceptForSession", offered)
+    (offersAllowOnce ? undefined : selectPermissionOption(request, "acceptForSession", offered))
   )?.optionId;
 }
 
