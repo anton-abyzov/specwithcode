@@ -23,6 +23,7 @@ export * from "./providerRuntime.ts";
 export * from "./providerUsageLimits.ts";
 export * from "./usageLimitSourceId.ts";
 export * from "./providerPolicy.ts";
+export * from "./mcpElicitation.ts";
 export * from "./modelSelection.ts";
 export * from "./taskRouting.ts";
 export * from "./adversarialReview.ts";

@@ -300,6 +300,10 @@
       "types": "./src/decisionModel.ts",
       "import": "./src/decisionModel.ts"
     },
+    "./mcpElicitationForm": {
+      "types": "./src/mcpElicitationForm.ts",
+      "import": "./src/mcpElicitationForm.ts"
+    },
     "./teamRules": {
       "types": "./src/teamRules.ts",
       "import": "./src/teamRules.ts"
