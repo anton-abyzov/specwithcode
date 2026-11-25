@@ -11,8 +11,6 @@ import {
   projectThreads,
   threadAttentionNote,
   threadHeldQueue,
-  threadBlocker,
-  threadOwnBlocker,
 } from "./projectWorkspaceModel";
 import { linkedThreadIds } from "./projectThreadMentions";
 import { formatStudioThreadHref, formatStudioThreadLink } from "./studioThreadLinks";
@@ -43,36 +41,6 @@ function thread(overrides: Partial<EnvironmentThreadShell> = {}): EnvironmentThr
 }
 const projectId = ProjectId.make("project-1");
 const coordinator = ThreadId.make("coordinator");
-describe("a helper another machine's worker started", () => {
-  const origin = {
-    kind: "fleet_machine",
-    label: "SpecWithCode",
-    machineLabel: "M5",
-    environmentId: "m5",
-    parentThreadRef: { environmentId: "m5", threadId: "thread:delegated-task:worker" },
-  } as const;
-  const helper = (overrides: Partial<EnvironmentThreadShell> = {}) =>
-    thread({
-      reportedBlocker: "On win: run gh auth login.",
-      source: { creationSource: "mcp", origin } as never,
-      ...overrides,
-    });
-
-  it("leaves lists to its worker but still says on its own page what it waits on", () => {
-    expect(threadBlocker(helper())).toBeNull();
-    expect(threadAttentionNote(helper())).toBeNull();
-    expect(threadOwnBlocker(helper())).toBe("On win: run gh auth login.");
-    expect(threadOwnBlocker(helper({ settledOverride: "settled" }))).toBeNull();
-    expect(threadOwnBlocker(helper({ archivedAt: "2026-11-25T00:00:00Z" }))).toBeNull();
-    // Any other thread reads the same as in lists.
-    const plain = thread({
-      reportedBlocker: "Ship it?",
-      source: { creationSource: "mcp" } as never,
-    });
-    expect(threadOwnBlocker(plain)).toBe(threadBlocker(plain));
-  });
-});
-
 describe("Project thread lifecycle", () => {
   it("retains idle and resolved workers for later routing", () => {
     expect(projectThreadGroup(thread())).toBe("Idle");

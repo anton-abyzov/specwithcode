@@ -407,6 +407,48 @@ if (params.get("scenario") === "reviewers") {
           parentThreadRef: { environmentId: "host", threadId: "worker" },
         },
       } as EnvironmentThreadShell,
+      // November 25, 2026: a coordinator's delegate_task worker asked m5 for a check; the
+      // requester is a subagent shell and the helper's origin names no project.
+      shell("thread:delegated-task:push", "Fix push failures", {
+        environmentId: "host",
+        projectId: "p-specweave",
+        createdAt: minutesAgo(80),
+        lineage: {
+          parentThreadId: "project-coordinator:p-specweave",
+          relationshipToParent: "subagent",
+          rootThreadId: "project-coordinator:p-specweave",
+        },
+      } as Partial<EnvironmentThreadShell>),
+      {
+        ...shell(
+          "push-check",
+          "Git push credentials check on m5",
+          on("m5", { createdAt: minutesAgo(21) }),
+        ),
+        origin: {
+          kind: "fleet_machine",
+          label: "SpecWithCode",
+          machineLabel: "m4",
+          environmentId: "host",
+          parentThreadRef: { environmentId: "host", threadId: "thread:delegated-task:push" },
+        },
+      } as EnvironmentThreadShell,
+      // Its requester is not loaded here, so it stays in Chats, under the project it names.
+      {
+        ...shell(
+          "orphan-check",
+          "Disk check for specweave",
+          on("m5", { createdAt: minutesAgo(23) }),
+        ),
+        origin: {
+          kind: "fleet_machine",
+          label: "SpecWithCode",
+          machineLabel: "m4",
+          environmentId: "host",
+          parentProjectLabel: "specweave",
+          parentThreadRef: { environmentId: "host", threadId: "gone" },
+        },
+      } as EnvironmentThreadShell,
       shell("verify", "Verify M4 to M5 specweave handoff", on("m5", { createdAt: minutesAgo(50) })),
       shell(
         "appstore",

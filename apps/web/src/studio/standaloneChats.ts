@@ -109,7 +109,11 @@ export function helperChatGroupLabel(chat: {
   readonly origin?: HelperOrigin | undefined;
 }): string | undefined {
   const helper = helperChatOrigin(chat, undefined);
-  if (helper === undefined) return undefined;
+  // A machine before the project name travelled still says where the request came from.
+  if (helper === undefined) {
+    const machine = chat.origin?.machineLabel?.trim();
+    return helperParentKey(chat) !== undefined && machine ? `From ${machine}` : undefined;
+  }
   return helper.fromMachine
     ? `From ${helper.projectName} on ${helper.fromMachine}`
     : `From ${helper.projectName}`;

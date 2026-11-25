@@ -510,7 +510,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             input.scratch === true &&
             caller !== undefined &&
             input.projectless !== true &&
-            !mayStartScratchHelper(callerProject, machine.machine) &&
+            !(
+              input.machine !== undefined && mayStartScratchHelper(callerProject, machine.machine)
+            ) &&
             !(yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
               Effect.flatMap((folders) => folders.isScratch(caller.projectId)),
             ))

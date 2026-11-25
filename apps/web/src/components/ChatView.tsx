@@ -36,7 +36,7 @@ import {
   useHostReach,
   useUnreachableHosts,
 } from "../studio/unreachableHosts";
-import { threadOwnBlocker } from "../studio/projectWorkspaceModel";
+import { threadBlocker } from "../studio/projectWorkspaceModel";
 import {
   machineNickname as machineNicknameNow,
   useMachineNicknames,
@@ -10328,9 +10328,8 @@ export default function ChatView(props: ChatViewProps) {
     isThisMachineCatchingUp:
       activeEnvironmentIsThisMachine && isThisMachineCatchingUp(activeEnvironmentConnectionPhase),
   });
-  // The same rule that files the thread under Blocked, so the two never disagree; a
-  // helper another machine's worker started still shows what it waits on here.
-  const activeThreadBlocker = activeThreadShell ? threadOwnBlocker(activeThreadShell) : null;
+  // The same rule that files the thread under Blocked, so the two never disagree.
+  const activeThreadBlocker = activeThreadShell ? threadBlocker(activeThreadShell) : null;
   const {
     claudeShip,
     acknowledgeActiveThreadWoke,

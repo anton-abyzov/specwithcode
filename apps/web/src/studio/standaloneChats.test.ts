@@ -80,6 +80,9 @@ describe("helper chats another machine's thread started", () => {
     expect(helperChatGroupLabel({ origin: { ...origin, machineLabel: undefined } })).toBe(
       "From specweave",
     );
+    expect(helperChatGroupLabel({ origin: { ...origin, parentProjectLabel: undefined } })).toBe(
+      "From M5",
+    );
     expect(helperChatGroupLabel({})).toBeUndefined();
   });
 

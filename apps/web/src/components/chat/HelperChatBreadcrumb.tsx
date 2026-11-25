@@ -52,8 +52,20 @@ export function useHelperChatOrigin(
 }
 
 export function HelperChatBreadcrumb({ helper }: { helper: HelperChatHeaderOrigin }) {
-  const tx = useTx();
   const { openThread } = useOpenThread();
+  return (
+    <HelperChatBreadcrumbView helper={helper} onOpen={() => void openThread(helper.parentRef)} />
+  );
+}
+
+export function HelperChatBreadcrumbView({
+  helper,
+  onOpen,
+}: {
+  helper: Pick<HelperChatHeaderOrigin, "projectName" | "fromMachine">;
+  onOpen: () => void;
+}) {
+  const tx = useTx();
   const tooltip = helper.fromMachine
     ? renderRich(tx("A thread in {project} on {machine} asked for this. Open that thread."), {
         project: helper.projectName,
@@ -72,7 +84,7 @@ export function HelperChatBreadcrumb({ helper }: { helper: HelperChatHeaderOrigi
                 type="button"
                 data-helper-chat-origin
                 aria-label={`${helper.projectName}${helper.fromMachine ? ` on ${helper.fromMachine}` : ""}: open the thread that asked for this`}
-                onClick={() => void openThread(helper.parentRef)}
+                onClick={onOpen}
                 className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             }

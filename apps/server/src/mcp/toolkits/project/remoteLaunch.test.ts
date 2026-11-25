@@ -702,6 +702,21 @@ it.effect("lets an outside client start work on another machine, without reporti
   });
 });
 
+it.effect("accepts an origin hint carrying a key this build does not know", () => {
+  // What an older machine receives from a newer one: the unknown key is dropped.
+  const outside = setup({ outsideClient: true, clientAccess: "auto" });
+  return Effect.gen(function* () {
+    const result = yield* outside.launch({
+      title: "Fix CI",
+      message: "Fix it",
+      projectId: "project",
+      machine: "m1",
+      originHint: { parentThreadId: "m5-worker", someFutureKey: "x" },
+    });
+    expect(result).toMatchObject({ threadId: "b-thread" });
+  });
+});
+
 it.effect("refuses an outside client work above its access or any as read-only", () => {
   const capped = setup({ outsideClient: true, clientAccess: "approval-required" });
   const readOnly = setup({ outsideClient: true, clientAccess: "read-only" });
@@ -936,7 +951,13 @@ it.effect(
   "starts a project's scratch helper on a machine without the project, named for it",
   () => {
     const helper = setup();
+    const unnamed = setup({ workerMachines: ["m1"] });
     return Effect.gen(function* () {
+      // Without a named machine, a saved worker machine is no reason to leave the project.
+      expect(
+        yield* unnamed.launch({ title: "Git push check", message: "go", scratch: true }),
+      ).toMatchObject({ code: "invalid_request" });
+      expect(unnamed.remoteLaunches).toEqual([]);
       // M1 has no copy of this project: a check there needs no projectless.
       yield* helper.launch({
         title: "Git push check",

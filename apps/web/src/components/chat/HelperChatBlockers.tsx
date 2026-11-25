@@ -1,8 +1,8 @@
 /**
  * Helpers this thread started on other machines that are blocked. Such a
- * helper reports back here, and lists do not count it on its own, so this
- * thread shows what it waits on, with a way to open it. A subagent's helpers
- * also show in its root thread.
+ * helper lives in that machine's "No project" folder and reports back here, so
+ * this thread shows what it waits on, with a way to open it. A subagent's
+ * helpers also show in its root thread.
  */
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
@@ -13,23 +13,45 @@ import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import { useOpenThread } from "../../hooks/useOpenThread";
 import { useThreadShells } from "../../state/entities";
-import { threadOwnBlocker } from "../../studio/projectWorkspaceModel";
+import { threadBlocker } from "../../studio/projectWorkspaceModel";
 import { blockedHelpersOf } from "../../studio/standaloneChats";
 import { InlineButton } from "../ui/button";
 
 export function HelperChatBlockers({ thread }: { thread: EnvironmentThreadShell | null }) {
-  const tx = useTx();
   const { openThread } = useOpenThread();
   // Only a thread's own page reads every shell; nothing renders while none is blocked.
   const shells = useThreadShells(thread !== null);
   const blocked = useMemo(() => {
     if (thread === null) return [];
-    const byKey = new Map(shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]));
-    return blockedHelpersOf(thread, shells, {
-      thread: (key) => byKey.get(key),
-      blockerOf: threadOwnBlocker,
+    // Only helpers another machine's thread started can be this thread's; most shells are not.
+    const helpers = shells.filter(
+      (shell) => shell.origin?.parentThreadRef !== undefined && shell.archivedAt === null,
+    );
+    if (helpers.length === 0) return [];
+    return blockedHelpersOf(thread, helpers, {
+      thread: (key) => shells.find((shell) => `${shell.environmentId}:${shell.id}` === key),
+      blockerOf: threadBlocker,
     });
   }, [shells, thread]);
+  return (
+    <HelperChatBlockersView
+      blocked={blocked}
+      onOpen={(helper) => void openThread(scopeThreadRef(helper.environmentId, helper.id))}
+    />
+  );
+}
+
+export function HelperChatBlockersView({
+  blocked,
+  onOpen,
+}: {
+  blocked: ReadonlyArray<{
+    readonly helper: Pick<EnvironmentThreadShell, "environmentId" | "id" | "title">;
+    readonly blocker: string;
+  }>;
+  onOpen: (helper: Pick<EnvironmentThreadShell, "environmentId" | "id">) => void;
+}) {
+  const tx = useTx();
   if (blocked.length === 0) return null;
   return (
     <section
@@ -47,10 +69,7 @@ export function HelperChatBlockers({ thread }: { thread: EnvironmentThreadShell 
             {blocker}
           </p>
           <span className="mt-0.5 shrink-0 text-xs">
-            <InlineButton
-              tone="muted"
-              onClick={() => void openThread(scopeThreadRef(helper.environmentId, helper.id))}
-            >
+            <InlineButton tone="muted" onClick={() => onOpen(helper)}>
               {tx("Open")}
             </InlineButton>
           </span>
