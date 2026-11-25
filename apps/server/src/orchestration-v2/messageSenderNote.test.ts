@@ -23,6 +23,20 @@ describe("withMessageSenderNote", () => {
     expect(withMessageSenderNote(agent, "$deploy staging", known)).toBe("$deploy staging");
   });
 
+  it("leaves the app's own /compact as sent, in any case, even when the provider does not list it", () => {
+    for (const text of ["/compact", "/Compact", " /COMPACT "]) {
+      expect(withMessageSenderNote(agent, text, { slash: new Set(), skills: new Set() })).toBe(
+        text,
+      );
+      expect(withMessageSenderNote(agent, text, undefined)).toBe(text);
+    }
+    // With an attachment the app sends it as a prompt; unlisted, it is noted.
+    expect(withMessageSenderNote({ ...agent, attachments: [{}] }, "/compact", undefined)).not.toBe(
+      "/compact",
+    );
+    expect(withMessageSenderNote(agent, "/compact now", undefined)).not.toBe("/compact now");
+  });
+
   it("notes a leading word the provider does not list as a command", () => {
     for (const text of [
       "/tmp contains the results.",
@@ -39,7 +53,7 @@ describe("withMessageSenderNote", () => {
   });
 
   it("notes even a known command when the provider's commands cannot be read", () => {
-    expect(withMessageSenderNote(agent, "/compact")).toContain("[SpecWithCode:");
+    expect(withMessageSenderNote(agent, "/review")).toContain("[SpecWithCode:");
   });
 
   it("notes an agent's text that only mentions a command later", () => {

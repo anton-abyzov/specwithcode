@@ -7,7 +7,16 @@ import { questionAnswerRequestId } from "./questionAnswerText.ts";
 type SenderFields = Pick<
   OrchestrationV2ConversationMessage,
   "createdBy" | "creationSource" | "scheduledTaskId" | "senderThreadId" | "peerMessage"
->;
+> & { readonly attachments?: ReadonlyArray<unknown> };
+
+/**
+ * A bare `/compact` without attachments, in any case: the app compacts the
+ * conversation itself (RunExecutionService) instead of sending a turn, so a
+ * note would turn it into an ordinary prompt.
+ */
+function isAppCompaction(message: SenderFields, text: string): boolean {
+  return (message.attachments?.length ?? 0) === 0 && text.trim().toLowerCase() === "/compact";
+}
 
 /**
  * Whether a person typed this message, on any of their devices (web, desktop,
@@ -69,8 +78,9 @@ function senderNote(message: SenderFields): string | undefined {
 /**
  * The provider text with one leading line naming who sent it, when an agent,
  * a routine or a tool caller did, so the model never takes it for the
- * person's own instruction. A person's message, and text that starts with a
- * slash command or `$skill` the provider lists, is returned unchanged; when the
+ * person's own instruction. A person's message, the app's own `/compact`, and
+ * text that starts with a slash command or `$skill` the provider lists, is
+ * returned unchanged; when the
  * provider's list cannot be read, every such message is noted. Only the text
  * sent to the provider carries the note; the stored message keeps its words.
  */
@@ -80,7 +90,9 @@ export function withMessageSenderNote(
   known?: KnownProviderCommands,
 ): string {
   const note = senderNote(message);
-  if (note === undefined || startsWithKnownCommand(text, known)) return text;
+  if (note === undefined || isAppCompaction(message, text) || startsWithKnownCommand(text, known)) {
+    return text;
+  }
   return text.length === 0 ? note : `${note}\n\n${text}`;
 }
 
