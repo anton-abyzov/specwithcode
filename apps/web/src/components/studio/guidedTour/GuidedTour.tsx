@@ -29,17 +29,20 @@ import { endGuidedTour, showGuidedTourStep, useGuidedTour } from "./guidedTourSt
 export const TARGET_WAIT_MS = 3000;
 const POLL_MS = 100;
 const RING_PAD = 6;
+const HIDING_ATTRIBUTES = ["aria-hidden", "inert", "data-base-ui-inert"] as const;
 
 type Resolution =
   | { readonly kind: "waiting" }
-  | { readonly kind: "found"; readonly element: Element }
+  | { readonly kind: "found"; readonly element: Element; readonly match: number }
   | { readonly kind: "none" }
   | { readonly kind: "missing" };
 
-function findTarget(step: GuidedTourStep): Element | null {
-  for (const selector of step.targets) {
+function findTarget(step: GuidedTourStep): { element: Element; match: number } | null {
+  for (const [match, selector] of step.targets.entries()) {
     const element = document.querySelector(selector);
-    if (element && element.getClientRects().length > 0) return element;
+    // Inside a collapsed section an element still has a box but is not drawn.
+    const collapsed = element?.parentElement?.closest("details:not([open])");
+    if (element && !collapsed && element.getClientRects().length > 0) return { element, match };
   }
   return null;
 }
@@ -62,6 +65,12 @@ const sameRect = (a: TourRect | null, b: TourRect | null) =>
     a.left === b.left &&
     a.width === b.width &&
     a.height === b.height);
+
+const offScreen = (rect: TourRect) =>
+  rect.top < 0 ||
+  rect.left < 0 ||
+  rect.top + rect.height > window.innerHeight ||
+  rect.left + rect.width > window.innerWidth;
 
 export function GuidedTourHost() {
   const tour = useGuidedTour();
@@ -88,6 +97,47 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
 
+  // Settings is a modal dialog that opens after the tour does. The last modal in the page is
+  // the one assistive tech and focus treat as active, and it marks the rest hidden, so the
+  // tour keeps its container last in the page and takes those marks straight back off.
+  const [container] = useState(() => {
+    const node = document.createElement("div");
+    node.dataset.guidedTourRoot = "";
+    return node;
+  });
+  useEffect(() => {
+    const keepLast = () => {
+      if (document.body.lastElementChild !== container) {
+        const focused = container.contains(document.activeElement) ? document.activeElement : null;
+        document.body.append(container);
+        if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+      }
+    };
+    // A modal that opens while Next has focus takes the card for its trigger and hides the
+    // card's other parts too; only the dim layer and the ring are meant to be hidden.
+    const unhide = () => {
+      for (const node of [container, ...container.querySelectorAll("*")])
+        if (!(node instanceof HTMLElement && "guidedTourDecor" in node.dataset))
+          for (const name of HIDING_ATTRIBUTES)
+            if (node.hasAttribute(name)) node.removeAttribute(name);
+    };
+    keepLast();
+    unhide();
+    const bodyObserver = new MutationObserver(keepLast);
+    bodyObserver.observe(document.body, { childList: true });
+    const markObserver = new MutationObserver(unhide);
+    markObserver.observe(container, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: [...HIDING_ATTRIBUTES],
+    });
+    return () => {
+      bodyObserver.disconnect();
+      markObserver.disconnect();
+      container.remove();
+    };
+  }, [container]);
+
   const finish = useCallback(() => {
     const returnTo = endGuidedTour();
     router.history.push(returnTo);
@@ -111,10 +161,10 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
     const started = Date.now();
     let timer: number | undefined;
     const poll = () => {
-      const element = window.location.pathname === step.route ? findTarget(step) : null;
-      if (element) {
-        element.scrollIntoView({ block: "nearest", inline: "nearest" });
-        setResolution({ kind: "found", element });
+      const found = window.location.pathname === step.route ? findTarget(step) : null;
+      if (found) {
+        found.element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+        setResolution({ kind: "found", ...found });
         return;
       }
       if (Date.now() - started >= TARGET_WAIT_MS) {
@@ -131,9 +181,18 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
   useEffect(() => {
     if (resolution.kind !== "found") return;
     let frame = 0;
+    let lastScroll = -Infinity;
     const tick = () => {
-      const element = resolution.element.isConnected ? resolution.element : findTarget(step);
+      const element = resolution.element.isConnected
+        ? resolution.element
+        : (findTarget(step)?.element ?? null);
       const next = element ? rectOf(element) : null;
+      // A page that grows after the target drew can push it off screen; bring it back.
+      // The dim layer takes the wheel, so this never fights the person's own scrolling.
+      if (element && next && offScreen(next) && performance.now() - lastScroll > 300) {
+        lastScroll = performance.now();
+        element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+      }
       setRect((current) => (sameRect(current, next) ? current : next));
       setViewport((current) =>
         current.width === window.innerWidth && current.height === window.innerHeight
@@ -208,16 +267,19 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
       data-guided-tour-overlay=""
       data-tour-step={step.id}
       data-tour-target={resolution.kind}
+      data-tour-match={resolution.kind === "found" ? resolution.match : undefined}
     >
       {/* Swallows clicks so the tour changes nothing on the page under it. */}
       <div
         className={spotlit ? "absolute inset-0" : "absolute inset-0 bg-black/55"}
         aria-hidden="true"
+        data-guided-tour-decor=""
         onPointerDown={(event) => event.preventDefault()}
       />
       {spotlit ? (
         <div
           aria-hidden="true"
+          data-guided-tour-decor=""
           data-guided-tour-spotlight=""
           className="pointer-events-none absolute rounded-xl ring-2 ring-primary motion-safe:transition-[top,left,width,height] motion-safe:duration-200"
           style={{
@@ -265,6 +327,6 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
         </div>
       </div>
     </div>,
-    document.body,
+    container,
   );
 }

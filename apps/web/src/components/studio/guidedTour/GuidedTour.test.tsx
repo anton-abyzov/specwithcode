@@ -160,6 +160,28 @@ describe("guided tour host (1486)", () => {
     expect(clicked).not.toHaveBeenCalled();
   });
 
+  it("stays usable when a modal such as Settings opens over the page (AC-02)", async () => {
+    drawTargets();
+    await act(async () => root.render(<GuidedTourHost />));
+    await act(async () => startGuidedTour());
+    await settle();
+    const tourRoot = document.querySelector<HTMLElement>("[data-guided-tour-root]")!;
+    // What a Base UI modal does on open: adds its portal last and hides the rest.
+    const modal = document.createElement("div");
+    await act(async () => {
+      document.body.append(modal);
+      tourRoot.setAttribute("aria-hidden", "true");
+      card()!.lastElementChild!.setAttribute("aria-hidden", "true");
+      await Promise.resolve();
+    });
+    expect(document.body.lastElementChild).toBe(tourRoot);
+    expect(tourRoot.hasAttribute("aria-hidden")).toBe(false);
+    expect(card()!.lastElementChild!.hasAttribute("aria-hidden")).toBe(false);
+    expect(document.querySelector("[data-guided-tour-decor]")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
+  });
+
   it("centres the card and marks a required target missing after the wait (AC-03)", async () => {
     await act(async () => root.render(<GuidedTourHost />));
     await act(async () => startGuidedTour());

@@ -413,6 +413,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           <SidebarMenuItem key={item.to}>
                             <SidebarMenuButton
                               isActive={isActive}
+                              data-settings-nav-item={item.to}
                               aria-current={isActive ? "page" : undefined}
                               onClick={() => handleSectionClick(item.to)}
                             >

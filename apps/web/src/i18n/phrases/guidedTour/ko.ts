@@ -14,8 +14,8 @@ export const guidedTourKo: PhraseCatalog = {
   "Each project keeps its chats here, and a chat's menu holds Project settings for it.":
     "각 프로젝트의 채팅은 여기 모이고, 채팅 메뉴에 Project settings가 있습니다.",
   "Settings for one project": "프로젝트별 설정",
-  "Pages under {project} change only the project you pick at the top of Settings.":
-    "{project} 아래 페이지는 설정 상단에서 고른 프로젝트만 바꿉니다.",
+  "Pages under {project} change one project at a time, never all of them.":
+    "{project} 아래 페이지는 한 번에 프로젝트 하나만 바꾸며, 모두를 바꾸지는 않습니다.",
   "Global settings": "전체 설정",
   "{app} and the groups below it apply to the whole app or one machine, and each section says This project, This machine or This device.":
     "{app}과 그 아래 그룹은 앱 전체나 컴퓨터 한 대에 적용되며, 각 섹션에 이 프로젝트, 이 컴퓨터, 이 기기 중 하나가 표시됩니다.",

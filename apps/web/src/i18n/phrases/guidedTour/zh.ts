@@ -14,8 +14,8 @@ export const guidedTourZh: PhraseCatalog = {
   "Each project keeps its chats here, and a chat's menu holds Project settings for it.":
     "每个项目的聊天都在这里，聊天菜单中有它的 Project settings。",
   "Settings for one project": "单个项目的设置",
-  "Pages under {project} change only the project you pick at the top of Settings.":
-    "{project} 下的页面只更改你在设置顶部选中的项目。",
+  "Pages under {project} change one project at a time, never all of them.":
+    "{project} 下的页面一次只更改一个项目，不会同时更改所有项目。",
   "Global settings": "全局设置",
   "{app} and the groups below it apply to the whole app or one machine, and each section says This project, This machine or This device.":
     "{app} 及其下方的分组适用于整个应用或一台电脑，每个部分都会注明 此项目、这台电脑 或 此设备。",

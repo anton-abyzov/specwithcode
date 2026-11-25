@@ -10,6 +10,7 @@
 // Optional: STUDIO_PLAYWRIGHT_MODULE (a playwright or playwright-core entry), STUDIO_TEST_CHROMIUM.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
@@ -117,9 +118,11 @@ try {
       : {}),
   });
   let authenticated;
-  for (const [name, width, height, theme, desktop] of [
-    ["desktop-dark", 1440, 900, "dark", true],
-    ["phone-light", 390, 844, "light", false],
+  // Fresh install first (no project), then the same machine after one project is added.
+  for (const [name, width, height, theme, desktop, withProject] of [
+    ["desktop-dark", 1440, 900, "dark", true, false],
+    ["phone-light", 390, 844, "light", false, false],
+    ["project-desktop-light", 1440, 900, "light", true, true],
   ]) {
     const context = await browser.newContext({
       viewport: { width, height },
@@ -141,6 +144,22 @@ try {
       });
       NodeAssert.equal(auth.status(), 200);
     }
+    if (withProject) {
+      const workspaceRoot = NodePath.join(state, "tour-sample");
+      NodeFS.mkdirSync(workspaceRoot, { recursive: true });
+      const created = await context.request.post(`${origin}/api/projects/mutate`, {
+        data: {
+          type: "project.create",
+          commandId: NodeCrypto.randomUUID(),
+          projectId: NodeCrypto.randomUUID(),
+          title: "Tour sample",
+          workspaceRoot,
+        },
+        headers: { Origin: origin },
+      });
+      check("seed one project", created.status() === 200, await created.text());
+      receipt.projects = 1;
+    }
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -154,10 +173,12 @@ try {
       await page.getByRole("button", { name: "Take the tour", exact: true }).click();
       const overlay = page.locator("[data-guided-tour-overlay]");
       await overlay.waitFor({ timeout: 5000 });
-      check(
-        `${name}: Quick guides closes before the tour`,
-        (await page.getByText("Plan an increment").count()) === 0,
-      );
+      const closed = await page
+        .getByText("Plan an increment")
+        .waitFor({ state: "detached", timeout: 3000 })
+        .then(() => true)
+        .catch(() => false);
+      check(`${name}: Quick guides closes before the tour`, closed);
 
       const total = 14;
       for (let at = 0; at < total; at++) {
@@ -186,6 +207,7 @@ try {
           return {
             step: node?.getAttribute("data-tour-step"),
             target: node?.getAttribute("data-tour-target"),
+            match: node?.getAttribute("data-tour-match"),
             path: location.pathname,
             counter: card?.querySelector("p")?.textContent,
             title: card?.querySelector("h2")?.textContent,
@@ -218,6 +240,13 @@ try {
         check(`${name} step ${at + 1}: card on screen`, info.cardInside);
         check(`${name} step ${at + 1}: no sideways scroll`, !info.sideways);
         check(`${name} step ${at + 1}: page clicks blocked`, !info.clickReachesPage);
+        // With a project, the skills stops point at the skills page itself, not the stand-in.
+        if (withProject && ["skills", "skill-search"].includes(info.step))
+          check(
+            `${name} step ${at + 1} (${info.step}): skills page target`,
+            info.match === "0",
+            info,
+          );
         if (desktop)
           check(
             `${name} step ${at + 1} (${info.step}): required target found`,

@@ -14,8 +14,8 @@ export const guidedTourEs: PhraseCatalog = {
   "Each project keeps its chats here, and a chat's menu holds Project settings for it.":
     "Cada proyecto guarda aquí sus chats, y el menú de un chat incluye Project settings para él.",
   "Settings for one project": "Ajustes de un proyecto",
-  "Pages under {project} change only the project you pick at the top of Settings.":
-    "Las páginas bajo {project} cambian solo el proyecto que eliges arriba en Ajustes.",
+  "Pages under {project} change one project at a time, never all of them.":
+    "Las páginas bajo {project} cambian un proyecto cada vez, nunca todos.",
   "Global settings": "Ajustes globales",
   "{app} and the groups below it apply to the whole app or one machine, and each section says This project, This machine or This device.":
     "{app} y los grupos de debajo se aplican a toda la app o a un equipo, y cada sección indica Este proyecto, Este equipo o Este dispositivo.",

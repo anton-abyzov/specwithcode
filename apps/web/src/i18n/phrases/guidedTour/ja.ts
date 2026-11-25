@@ -14,8 +14,8 @@ export const guidedTourJa: PhraseCatalog = {
   "Each project keeps its chats here, and a chat's menu holds Project settings for it.":
     "各プロジェクトのチャットはここにまとまり、チャットのメニューに Project settings があります。",
   "Settings for one project": "プロジェクトごとの設定",
-  "Pages under {project} change only the project you pick at the top of Settings.":
-    "{project} の下のページは、設定の上部で選んだプロジェクトだけを変更します。",
+  "Pages under {project} change one project at a time, never all of them.":
+    "{project} の下のページは一度に 1 つのプロジェクトだけを変更し、すべてを変えることはありません。",
   "Global settings": "全体の設定",
   "{app} and the groups below it apply to the whole app or one machine, and each section says This project, This machine or This device.":
     "{app} とその下のグループはアプリ全体または 1 台のマシンに適用され、各セクションに このプロジェクト、このマシン、このデバイス のどれかが表示されます。",

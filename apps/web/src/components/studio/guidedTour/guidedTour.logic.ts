@@ -39,6 +39,8 @@ const group = (label: string) => {
 /** Header row of a settings section found by its search anchor id. */
 const sectionHeader = (id: string) => `#${id} > [data-settings-scroll-target]`;
 
+const SKILLS_NAV_ITEM = '[data-settings-nav-item="/settings/skills"]';
+
 export const GUIDED_TOUR_TITLE = "Guided tour";
 export const GUIDED_TOUR_START = "Take the tour";
 export const GUIDED_TOUR_SETTING_DESCRIPTION =
@@ -72,7 +74,7 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
     targets: [`[data-settings-nav-group="${group("Project")}"]`],
     required: true,
     title: "Settings for one project",
-    body: "Pages under {project} change only the project you pick at the top of Settings.",
+    body: "Pages under {project} change one project at a time, never all of them.",
     labels: { project: group("Project") },
   },
   {
@@ -87,7 +89,8 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
   {
     id: "skills",
     route: "/settings/skills",
-    targets: [sectionHeader("project-skills")],
+    // With no project yet the page only asks for one, so the Skills entry stands in.
+    targets: [sectionHeader("project-skills"), SKILLS_NAV_ITEM],
     required: true,
     title: SETTINGS_SECTION_LABELS["/settings/skills"],
     body: "{skills} lists what each agent loads on one machine, and Across machines compares them.",
@@ -96,7 +99,7 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
   {
     id: "skill-search",
     route: "/settings/skills",
-    targets: ['[data-testid="skill-update-center"] > :first-child'],
+    targets: ['[data-testid="skill-update-center"] > :first-child', SKILLS_NAV_ITEM],
     required: true,
     title: "Find and install a skill",
     body: "Search installed skills and connected repos, then press Install to add one on this machine.",

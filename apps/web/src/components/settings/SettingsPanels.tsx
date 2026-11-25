@@ -2808,6 +2808,11 @@ export function GeneralSettingsPanel() {
               </Select>
             }
           />
+          <SettingsRow
+            {...searchableSetting("guided-tour")}
+            description={GUIDED_TOUR_SETTING_DESCRIPTION}
+            control={<GuidedTourButton />}
+          />
         </SettingsSection>
 
         <SettingsSection id="projects-and-threads" title="Projects & threads">
@@ -3508,11 +3513,6 @@ export function GeneralSettingsPanel() {
             />
           ) : null}
           {canHostVoiceCall() ? <DictationSettings /> : null}
-          <SettingsRow
-            {...searchableSetting("guided-tour")}
-            description={GUIDED_TOUR_SETTING_DESCRIPTION}
-            control={<GuidedTourButton />}
-          />
           <SettingsRow
             {...searchableSetting("what-you-can-do")}
             description="A short checklist on Overview, ticked from what you have set up. It goes away once everything is done."
