@@ -8,6 +8,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServer } from "effect/http";
@@ -96,7 +97,10 @@ const makeFixture = Effect.acquireRelease(
 
 const serve = (
   fixture: Fixture,
-  shell: { readonly worktreePath?: string | null; readonly deletedAt?: string | null } = {},
+  shell: {
+    readonly worktreePath?: string | null;
+    readonly deletedAt?: ReturnType<typeof liveThreadShell>["deletedAt"];
+  } = {},
 ) =>
   Effect.gen(function* () {
     const serverLayer = McpHttpServer.toolkitRegistration(
@@ -352,7 +356,9 @@ it.live("a deleted thread is refused even while its worktree is still on disk", 
   withServer(
     Effect.gen(function* () {
       const fixture = yield* makeFixture;
-      const port = yield* serve(fixture, { deletedAt: "2026-11-25T00:00:00.000Z" });
+      const port = yield* serve(fixture, {
+        deletedAt: DateTime.makeUnsafe("2026-11-25T00:00:00.000Z"),
+      });
       const headers = yield* session(port, THREAD_TOKEN);
       for (const name of ["specweave_task_status", "specweave_next_task"]) {
         const { result } = yield* call(port, headers, name, { increment: "1483" });
