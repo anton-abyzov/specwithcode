@@ -60,7 +60,7 @@ import {
   type PrincipalApproval,
 } from "./principalApproval.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
-import { makeRevocationEpoch } from "./revocationEpoch.ts";
+import { makeRevocationEpoch, RequestRevocationEpoch } from "./revocationEpoch.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
@@ -279,6 +279,12 @@ export class EnvironmentAuth extends Context.Service<
        * stops working when that device is removed.
        */
       readonly creatorDeviceKey?: string | undefined;
+      /**
+       * A revoke-all since this counter reading refuses the code. Defaults to the
+       * asking request's `RequestRevocationEpoch`, so every code an
+       * authenticated request mints is ordered against revoke-all.
+       */
+      readonly revocationEpoch?: number | undefined;
     }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput & {
@@ -316,6 +322,7 @@ export class EnvironmentAuth extends Context.Service<
       /**
        * For a session that a spent credential pays for: `revocationEpoch` from
        * before it was spent. A revoke-all since then refuses the session.
+       * Defaults to the asking request's `RequestRevocationEpoch`.
        */
       readonly revocationEpoch?: number | undefined;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
@@ -1309,6 +1316,24 @@ export const make = Effect.gen(function* () {
       );
     };
 
+  /**
+   * Issues against `explicit`, else against the counter the asking request
+   * read before its credential was checked; outside a request it just issues.
+   */
+  const issueOrderedAgainstRevoke = <A, E, R, E2>(
+    explicit: number | undefined,
+    issue: Effect.Effect<A, E, R>,
+    refused: () => E2,
+  ): Effect.Effect<A, E | E2, R> =>
+    Effect.gen(function* () {
+      const startedAt = explicit ?? (yield* RequestRevocationEpoch);
+      return yield* startedAt === undefined
+        ? issue
+        : revocation.issueIfUnrevoked(startedAt, issue, refused);
+    });
+  const signedOutMidRequest = (what: string) =>
+    new Error(`Every other client was signed out while this ${what} was under way.`);
+
   const issuePairingCredentialForSubject = (input: {
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
     readonly subject: string;
@@ -1318,8 +1343,10 @@ export const make = Effect.gen(function* () {
     readonly ttl?: Duration.Duration;
     readonly purpose?: "startup";
     readonly creatorDeviceKey?: string | undefined;
+    readonly revocationEpoch?: number | undefined;
   }) =>
     createPairingLink({
+      ...(input.revocationEpoch === undefined ? {} : { revocationEpoch: input.revocationEpoch }),
       scopes: input.scopes,
       subject: input.subject,
       ...principalApproval(input),
@@ -1353,16 +1380,20 @@ export const make = Effect.gen(function* () {
         return yield* new ServerAuthPairingLinkCreationError({
           cause: "The device asking is not approved here.",
         });
-      const issued = yield* bootstrapCredentials.issueOneTimeToken({
-        ...(creatorDevice === undefined ? {} : { creatorDevice }),
-        scopes: input?.scopes ?? AuthStandardClientScopes,
-        subject: input?.subject ?? "one-time-token",
-        ...principalApproval(input ?? {}),
-        ...(input?.ttl ? { ttl: input.ttl } : {}),
-        ...(input?.label ? { label: input.label } : {}),
-        ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
-        ...(input?.purpose ? { purpose: input.purpose } : {}),
-      });
+      const issued = yield* issueOrderedAgainstRevoke(
+        input?.revocationEpoch,
+        bootstrapCredentials.issueOneTimeToken({
+          ...(creatorDevice === undefined ? {} : { creatorDevice }),
+          scopes: input?.scopes ?? AuthStandardClientScopes,
+          subject: input?.subject ?? "one-time-token",
+          ...principalApproval(input ?? {}),
+          ...(input?.ttl ? { ttl: input.ttl } : {}),
+          ...(input?.label ? { label: input.label } : {}),
+          ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
+          ...(input?.purpose ? { purpose: input.purpose } : {}),
+        }),
+        () => signedOutMidRequest("request"),
+      );
       return {
         id: issued.id,
         credential: issued.credential,
@@ -1432,19 +1463,10 @@ export const make = Effect.gen(function* () {
         ),
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
       );
-    return (
-      input?.revocationEpoch === undefined
-        ? issue
-        : revocation.issueIfUnrevoked(
-            input.revocationEpoch,
-            issue,
-            () =>
-              new ServerAuthSessionTokenIssueError({
-                cause: new Error(
-                  "Every other client was signed out while this sign-in was pending.",
-                ),
-              }),
-          )
+    return issueOrderedAgainstRevoke(
+      input?.revocationEpoch,
+      issue,
+      () => new ServerAuthSessionTokenIssueError({ cause: signedOutMidRequest("sign-in") }),
     ).pipe(Effect.withSpan("EnvironmentAuth.issueSession"));
   };
 
@@ -1529,21 +1551,10 @@ export const make = Effect.gen(function* () {
       ...(input?.creatorDeviceKey === undefined
         ? {}
         : { creatorDeviceKey: input.creatorDeviceKey }),
+      // createPairingLink orders the code against revoke-all.
+      ...(input?.revocationEpoch === undefined ? {} : { revocationEpoch: input.revocationEpoch }),
     });
-    return (
-      input?.revocationEpoch === undefined
-        ? issue
-        : revocation.issueIfUnrevoked(
-            input.revocationEpoch,
-            issue,
-            () =>
-              new ServerAuthPairingLinkCreationError({
-                cause: new Error(
-                  "Every other client was signed out while this request was under way.",
-                ),
-              }),
-          )
-    ).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
+    return issue.pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
   };
 
   const revokeDeviceCredentials: EnvironmentAuth["Service"]["revokeDeviceCredentials"] = (key) =>
@@ -1851,18 +1862,11 @@ export const make = Effect.gen(function* () {
           ...(binding === undefined ? {} : { boundDevice: binding }),
         })
         .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
-      const issued = yield* input.revocationEpoch === undefined
-        ? issue
-        : revocation.issueIfUnrevoked(
-            input.revocationEpoch,
-            issue,
-            () =>
-              new ServerAuthSessionTokenIssueError({
-                cause: new Error(
-                  "Every other client was signed out while this sign-in was pending.",
-                ),
-              }),
-          );
+      const issued = yield* issueOrderedAgainstRevoke(
+        input.revocationEpoch,
+        issue,
+        () => new ServerAuthSessionTokenIssueError({ cause: signedOutMidRequest("sign-in") }),
+      );
       // Noted so Remove ends it at once; its claims refuse it either way.
       if (binding !== undefined)
         yield* deviceTrust.trackCredential({
