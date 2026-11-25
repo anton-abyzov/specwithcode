@@ -7,6 +7,7 @@ import { actionMachineKo } from "./actionMachine/ko";
 import { coordinatorMessagesKo } from "./coordinatorMessages/ko";
 import { providerSignInKo } from "./providerSignIn/ko";
 import { limitHopsKo } from "./limitHops/ko";
+import { helperChatsKo } from "./helperChats/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
@@ -18,6 +19,7 @@ export const ko: PhraseCatalog = {
   ...coordinatorMessagesKo,
   ...providerSignInKo,
   ...limitHopsKo,
+  ...helperChatsKo,
   About: "정보",
   "Accent color": "강조 색상",
   Account: "계정",

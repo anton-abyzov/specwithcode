@@ -440,6 +440,11 @@ export const OrchestrationV2ThreadOrigin = Schema.Struct({
       threadId: ThreadId,
     }),
   ),
+  /**
+   * The project of the thread that started it, as that machine names it: a
+   * helper on a machine without that project still reads as its work.
+   */
+  parentProjectLabel: Schema.optional(TrimmedNonEmptyString),
   /** The ceiling the work brought from the machine it came from. */
   carried: Schema.optional(TeamRulesCarried),
 });

@@ -73,6 +73,39 @@ describe("launchOriginOf", () => {
     ).toBe("SpecWithCode");
   });
 
+  it("keeps the starting thread's project name for a helper on a machine without it", () => {
+    const here = { scope: scope(claude), caller: undefined };
+    expect(
+      launchOriginOf(here, fleetWork, {
+        parentThreadId: ThreadId.make("worker-1"),
+        projectLabel: "  spec\n weave ",
+      }),
+    ).toEqual({
+      kind: "fleet_machine",
+      label: "SpecWithCode",
+      machineLabel: "m4-studio",
+      environmentId: "env-coordinator",
+      parentThreadRef: { environmentId: "env-coordinator", threadId: "worker-1" },
+      parentProjectLabel: "spec weave",
+    });
+    // A project name only means something next to the thread that asked.
+    expect(
+      launchOriginOf(here, fleetWork, { projectLabel: "specweave" })?.parentProjectLabel,
+    ).toBeUndefined();
+    expect(
+      launchOriginOf(here, fleetWork, {
+        parentThreadId: ThreadId.make("worker-1"),
+        projectLabel: "   ",
+      })?.parentProjectLabel,
+    ).toBeUndefined();
+    expect(
+      launchOriginOf(here, fleetWork, {
+        parentThreadId: ThreadId.make("worker-1"),
+        projectLabel: "p".repeat(200),
+      })?.parentProjectLabel?.length,
+    ).toBe(80);
+  });
+
   it("records nothing for this machine's own threads and users", () => {
     const caller = { id: "thread-1" } as never;
     expect(launchOriginOf({ scope: scope(claude), caller }, undefined)).toBeUndefined();

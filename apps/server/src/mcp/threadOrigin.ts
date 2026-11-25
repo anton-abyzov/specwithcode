@@ -59,6 +59,8 @@ export const launchOriginOf = (
     const machineLabel = cleanLabel(work.coordinatorLabel);
     const hint = context.caller === undefined ? originHint : undefined;
     const environmentId = work.origin.coordinatorEnvironmentId;
+    const parentProjectLabel =
+      hint?.parentThreadId === undefined ? undefined : cleanLabel(hint.projectLabel);
     return {
       kind: "fleet_machine",
       label: cleanLabel(hint?.clientLabel) ?? FLEET_ORIGIN_APP_LABEL,
@@ -67,6 +69,7 @@ export const launchOriginOf = (
       ...(hint?.parentThreadId === undefined
         ? {}
         : { parentThreadRef: { environmentId, threadId: hint.parentThreadId } }),
+      ...(parentProjectLabel === undefined ? {} : { parentProjectLabel }),
       ...(carried === undefined ? {} : { carried }),
     };
   }
