@@ -88,7 +88,7 @@ const withInstanceIdentity =
 /**
  * Whether no other user can rename, replace, fill or write beside `folder`:
  * it and every folder above it are owned by this user or the system and closed
- * to others. A sticky folder such as /tmp does not count, because Pi also reads
+ * to others (this user's own primary group aside). A sticky folder such as /tmp does not count, because Pi also reads
  * context files from every folder above the one it runs in. Windows guards
  * folders with ACLs, not these modes.
  */
@@ -96,11 +96,18 @@ const isPrivateFolderPath = (fileSystem: FileSystem.FileSystem, path: Path.Path,
   Effect.gen(function* () {
     if (process.platform === "win32") return true;
     const uid = process.getuid?.();
+    const gid = process.getgid?.();
     let current = folder;
     for (let depth = 0; ; depth++) {
       const info = yield* fileSystem.stat(current);
       const owner = Option.getOrUndefined(info.uid);
-      const closed = (info.mode & 0o022) === 0;
+      // A folder of this user's that only its own primary group may also
+      // write (Ubuntu's default umask 0002, one group per user) counts as
+      // closed: whoever is in that group could change all of the app's data
+      // there anyway, the probe included.
+      const ownGroupOnly =
+        owner === uid && Option.getOrUndefined(info.gid) === gid && (info.mode & 0o002) === 0;
+      const closed = (info.mode & 0o022) === 0 || ownGroupOnly;
       const ok =
         depth === 0
           ? info.type === "Directory" && owner === uid && closed

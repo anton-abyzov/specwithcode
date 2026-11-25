@@ -215,4 +215,25 @@ describe("Pi status probe folder", () => {
           assert.equal(command, path.resolve("/srv/studio", "bin/pi"));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "accepts a folder only this user and its own primary group may write, as Ubuntu makes them",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const ownGroup = path.join(yield* privateFolder, "data");
+        yield* fileSystem.makeDirectory(ownGroup);
+        yield* fileSystem.chmod(ownGroup, 0o775);
+        const cwds: Array<string | undefined> = [];
+        yield* checkPiProviderStatusInProbeFolder(
+          piSettings,
+          {},
+          probeFolders(path.join(ownGroup, "cache")),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(cwds)),
+        );
+        assert.isAbove(cwds.length, 0);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
