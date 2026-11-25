@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - sends an absolute-form request target, which HttpClient cannot.
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -149,7 +150,7 @@ it.effect("gives an absolute-form /mcp preflight no CORS answer either", () =>
     Effect.gen(function* () {
       yield* serve;
       const server = yield* HttpServer.HttpServer;
-      const address = server.address as HttpServer.TcpAddress;
+      const address = { port: Number(new URL(HttpServer.formatAddress(server.address)).port) };
       for (const target of [
         `http://127.0.0.1:${address.port}/mcp`,
         `http://127.0.0.1:${address.port}/mcp/`,
