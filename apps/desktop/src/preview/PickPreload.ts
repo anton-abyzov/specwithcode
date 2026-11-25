@@ -1340,6 +1340,8 @@ function startAnnotation(sendEnabled: boolean): void {
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
   const onKeyDown = (event: KeyboardEvent): void => {
+    // Escape and the tool keys are the person's; a page script's synthetic key changes nothing.
+    if (!event.isTrusted) return;
     if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
     if (event.key === "Escape") {
       event.preventDefault();
