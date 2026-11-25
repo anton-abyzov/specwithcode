@@ -2,7 +2,7 @@ import type { FolderCopySourceStatus } from "@specweave-studio/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { copyNoticeWarnings } from "./handoffCopyNotices";
 import { refreshCopyScan } from "./handoffCopyScanRecovery";
-import { untickedSecrets } from "./handoffFolderCopyPending";
+import { healedSecrets, untickedSecrets } from "./handoffFolderCopyPending";
 
 const summary = (secrets: ReadonlyArray<string>, warnings: ReadonlyArray<string> = []) =>
   ({
@@ -70,4 +70,17 @@ it("leaves Refresh's new secret out without ticking again one another window lef
     included: true,
     out: ["a", "b"],
   });
+});
+
+it("puts back an exclusion this window made that another window's save dropped", () => {
+  // B left .env out; A's save, from a read made just before, replaced it without .env.
+  const stored = { included: true, out: [".env.local"] };
+  expect(healedSecrets(stored, new Set([".env"]), false)).toEqual({
+    included: true,
+    out: [".env.local", ".env"],
+  });
+  // Secrets this window turned off stay off.
+  expect(healedSecrets(stored, new Set(), true)).toEqual({ included: false, out: [".env.local"] });
+  // Nothing of this window's was dropped: nothing to write.
+  expect(healedSecrets({ included: true, out: [".env"] }, new Set([".env"]), false)).toBeNull();
 });

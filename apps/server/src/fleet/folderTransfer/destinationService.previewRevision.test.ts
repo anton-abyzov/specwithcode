@@ -167,3 +167,19 @@ it("names the destination contents a preview saw, and a new name once they chang
   expect(now).toMatch(/^[a-f0-9]{64}$/);
   expect(now).not.toBe(seen);
 }, 120_000);
+
+it("names again a folder a source file would replace when a hidden part of it changes", async () => {
+  // Here README.md is a folder holding dependencies, which the comparison does not open.
+  const target = NodePath.join(base, "targets", "replaced-tree");
+  const hidden = NodePath.join(target, "README.md", "node_modules", "pkg");
+  NodeFS.mkdirSync(hidden, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 1;\n");
+  const { copies, operationId, status } = await previewed("replaced-tree");
+  const seen = status.destinationRevision;
+  expect(seen).toBeTruthy();
+  // Its contents change before the next comparison; replacing the folder would move them.
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 'edited here';\n");
+  await copies.decide(operationId, {});
+  const after = await settle(copies, operationId, "previewed");
+  expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(seen);
+}, 120_000);
