@@ -1020,7 +1020,10 @@ describe("AssetAccess", () => {
         // A page name would earn a token for the whole folder; a picture behind it must not.
         yield* fs.symlink(path.join(root, "real.png"), path.join(root, "page.html"));
         yield* fs.symlink(path.join(root, "real.html"), path.join(root, "pic.png"));
-        for (const linked of ["page.html", "pic.png"]) {
+        // Two kinds outside pictures, a page and a document, must not swap either.
+        yield* fs.writeFileString(path.join(root, "real.pdf"), "%PDF-1.4");
+        yield* fs.symlink(path.join(root, "real.pdf"), path.join(root, "doc.html"));
+        for (const linked of ["page.html", "pic.png", "doc.html"]) {
           const refused = yield* issueAssetUrl({
             resource: { _tag: "workspace-file", threadId, path: linked },
             workspaceRoot: root,
