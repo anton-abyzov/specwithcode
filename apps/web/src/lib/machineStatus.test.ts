@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
+import {
+  machineReach,
+  type EnvironmentConnectionPresentation,
+} from "@specweave-studio/client-runtime/connection";
 
 import { THIS_MACHINE_BUSY_DESCRIPTION } from "../components/ChatView.logic";
 import {
@@ -8,6 +11,7 @@ import {
   environmentConnectionStatusTitle,
   environmentUnavailableSendToast,
   isUnansweredEnvironmentRequest,
+  lastSeenClockRuns,
   lastSeenLabel,
   machineDetail,
   machineStatus,
@@ -353,5 +357,37 @@ describe("readableConnectionReason", () => {
     expect(readableConnectionReason("Failed to fetch environment endpoint")).toBe(
       "Failed to fetch environment endpoint",
     );
+  });
+});
+
+describe("lastSeenClockRuns", () => {
+  const now = 1_800_000_000_000;
+  const lostLongAgo = (cause: "not-answering" | "awaiting-approval") =>
+    ({
+      phase: "reconnecting",
+      cause,
+      lostAt: now - 10 * 60_000,
+      lastConnectedAt: now - 10 * 60_000,
+    }) as const;
+
+  it("runs while the machine is out of reach", () => {
+    const connection = lostLongAgo("not-answering");
+    expect(lastSeenClockRuns(connection, machineReach(connection, now).state)).toBe(true);
+  });
+
+  it("stays off while a reachable machine waits to approve this device", () => {
+    const connection = lostLongAgo("awaiting-approval");
+    expect(lastSeenClockRuns(connection, machineReach(connection, now).state)).toBe(false);
+    expect(lastSeenClockRuns(connection, undefined)).toBe(false);
+  });
+
+  it("stays off inside the reconnect grace and while connected", () => {
+    const inGrace = { ...lostLongAgo("not-answering"), lostAt: now - 1_000 };
+    expect(lastSeenClockRuns(inGrace, machineReach(inGrace, now).state)).toBe(false);
+    expect(lastSeenClockRuns(null, "connected")).toBe(false);
+  });
+
+  it("runs for an unreachable machine the app has not judged yet", () => {
+    expect(lastSeenClockRuns(lostLongAgo("not-answering"), undefined)).toBe(true);
   });
 });

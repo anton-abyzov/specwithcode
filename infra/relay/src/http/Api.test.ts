@@ -14,6 +14,8 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
@@ -21,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,6 +32,7 @@ import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Etag from "effect/http/Etag";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpMiddleware from "effect/http/HttpMiddleware";
@@ -60,7 +64,8 @@ import {
   withoutCapturedParentSpan,
 } from "./Api.ts";
 import * as RelayHttpApi from "./Api.ts";
-import { ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS } from "../environments/EnvironmentConnector.ts";
+import * as EnvironmentConnector from "../environments/EnvironmentConnector.ts";
+import { RELAY_RESPONSE_MARGIN_MS } from "../requestDeadline.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
@@ -1477,13 +1482,140 @@ describe("relay request tracing", () => {
     }),
   );
 
-  // The probe of a machine's endpoint starts after the link lookup and proof
-  // checks. If it may run as long as the request deadline, the deadline fires
-  // first and a slow machine comes back as a bare 504 that clients read as the
-  // relay being down, instead of a timed-out connect or an offline status.
-  it("leaves the endpoint probe room to answer inside the request deadline", () => {
-    expect(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS).toBeLessThanOrEqual(
-      RELAY_REQUEST_DEADLINE_MS - 2_000,
+  // The probe of a machine's endpoint starts after auth, the link lookup and
+  // proof signing. With a fixed probe, slow setup let the request deadline fire
+  // first: a bare 504 that clients read as the relay being down. Here setup
+  // takes 3 s and the machine accepts the probe but never answers.
+  describe("a slow machine's answer inside the request deadline", () => {
+    const SLOW_SETUP_MS = 3_000;
+    const mintKeys = NodeCrypto.generateKeyPairSync("ed25519", {
+      privateKeyEncoding: { format: "pem", type: "pkcs8" },
+      publicKeyEncoding: { format: "pem", type: "spki" },
+    });
+    const layerHungEndpoint = (probeStarted: Deferred.Deferred<number>) =>
+      EnvironmentConnector.layer.pipe(
+        Layer.provide(NodeCryptoLayer.layer),
+        Layer.provide(
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {
+            getForUser: () =>
+              Effect.succeed({
+                environmentId: "env-slow" as never,
+                label: "Slow machine",
+                endpoint: {
+                  httpBaseUrl: "https://env.example.test/",
+                  wsBaseUrl: "wss://env.example.test/ws",
+                  providerKind: "cloudflare_tunnel",
+                },
+                linkedAt: "2026-05-25T00:00:00.000Z",
+                environmentPublicKey: mintKeys.publicKey,
+              }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {
+            get: () =>
+              Effect.succeed({
+                userId: "user_123",
+                environmentId: "env-slow",
+                hostname: "env.example.test",
+                tunnelId: "tunnel-id",
+                tunnelName: "tunnel-name",
+                dnsRecordId: "dns-record-id",
+                readyAt: "2026-05-25T00:00:00.000Z",
+                origin: { localHttpHost: "127.0.0.1", localHttpPort: 8319 },
+                updatedAt: "2026-05-25T00:00:00.000Z",
+                generation: 1,
+                tunnelReleasedAt: null,
+              }),
+          }),
+        ),
+        Layer.provide(
+          RelayConfiguration.layer({
+            ...relaySettings,
+            cloudMintPrivateKey: Redacted.make(mintKeys.privateKey),
+            cloudMintPublicKey: mintKeys.publicKey,
+            managedEndpointBaseDomain: "example.test",
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) => Deferred.succeed(probeStarted, now)),
+                Effect.andThen(Effect.never),
+              ),
+            ),
+          ),
+        ),
+      );
+
+    const runRequest = <A>(
+      call: (
+        connector: EnvironmentConnector.EnvironmentConnector["Service"],
+      ) => Effect.Effect<A, EnvironmentConnector.EnvironmentConnectorError>,
+    ) =>
+      Effect.gen(function* () {
+        const probeStarted = yield* Deferred.make<number>();
+        const handlerEntered = yield* Deferred.make<void>();
+        const outcome = yield* Deferred.make<
+          Exit.Exit<A, EnvironmentConnector.EnvironmentConnectorError>
+        >();
+        const handler = Effect.gen(function* () {
+          yield* Deferred.succeed(handlerEntered, undefined);
+          // Auth, the link lookup and proof signing, slowed down.
+          yield* Effect.sleep(Duration.millis(SLOW_SETUP_MS));
+          const connector = yield* EnvironmentConnector.EnvironmentConnector;
+          yield* Deferred.succeed(outcome, yield* Effect.exit(call(connector)));
+          return HttpServerResponse.empty({ status: 200 });
+        }).pipe(Effect.provide(layerHungEndpoint(probeStarted)));
+        const request = HttpServerRequest.fromWeb(
+          new Request("https://relay.test/v1/client/environments/env-slow/status"),
+        );
+        const startedAt = yield* Clock.currentTimeMillis;
+        const fiber = yield* traceRelayHttpRequestWith(handler, Layer.empty).pipe(
+          Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(handlerEntered);
+        yield* TestClock.adjust(Duration.millis(SLOW_SETUP_MS));
+        const probeStartedAt = yield* Deferred.await(probeStarted);
+        yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS - SLOW_SETUP_MS));
+        const response = yield* Fiber.join(fiber);
+        expect(probeStartedAt - startedAt).toBe(SLOW_SETUP_MS);
+        expect(response.status).toBe(200);
+        return yield* Deferred.await(outcome);
+      });
+
+    it.effect("reports a status probe that hangs as offline, not as a 504", () =>
+      Effect.gen(function* () {
+        const exit = yield* runRequest((connector) =>
+          connector.status({ userId: "user_123", environmentId: "env-slow" }),
+        );
+        expect(Exit.isSuccess(exit) && exit.value).toMatchObject({
+          status: "offline",
+          error: "Managed endpoint health request timed out.",
+        });
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("times out a hung connect with the time left, not as a 504", () =>
+      Effect.gen(function* () {
+        const exit = yield* runRequest((connector) =>
+          connector.connect({
+            userId: "user_123",
+            environmentId: "env-slow",
+            clientProofKeyThumbprint: "client-thumbprint",
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+        expect(error).toBeInstanceOf(EnvironmentConnector.EnvironmentMintRequestTimedOut);
+        // 9 s deadline, less 3 s of setup and the response margin.
+        expect((error as EnvironmentConnector.EnvironmentMintRequestTimedOut).timeoutMs).toBe(
+          RELAY_REQUEST_DEADLINE_MS - SLOW_SETUP_MS - RELAY_RESPONSE_MARGIN_MS,
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
     );
   });
 

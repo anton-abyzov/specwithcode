@@ -13,6 +13,7 @@ import {
   RelayEnvironmentMintResponseProofPayload,
 } from "@specweave-studio/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import {
   RELAY_HEALTH_RESPONSE_TYP,
@@ -35,6 +36,7 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentConnector from "./EnvironmentConnector.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import { RELAY_RESPONSE_MARGIN_MS, RelayRequestDeadlineAt } from "../requestDeadline.ts";
 
 const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   privateKeyEncoding: { format: "pem", type: "pkcs8" },
@@ -593,6 +595,24 @@ describe("EnvironmentConnector", () => {
         status: "offline",
         error: "Managed endpoint health request timed out.",
         traceId: expect.any(String),
+      });
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerConnectorTest(execute))));
+  });
+
+  // Setup used up the request: the probe gets no time and the relay still
+  // answers with an offline status before its own deadline.
+  it.effect("gives the health probe only the time left in the request", () => {
+    const execute = () => Effect.never as Effect.Effect<HttpClientResponse.HttpClientResponse>;
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const deadlineAt = (yield* Clock.currentTimeMillis) + RELAY_RESPONSE_MARGIN_MS;
+      const result = yield* connector
+        .status({ userId: "user_123", environmentId: "env-connector-test" })
+        .pipe(Effect.provideService(RelayRequestDeadlineAt, deadlineAt));
+
+      expect(result).toMatchObject({
+        status: "offline",
+        error: "Managed endpoint health request timed out.",
       });
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerConnectorTest(execute))));
   });
