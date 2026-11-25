@@ -317,9 +317,10 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
 });
 
 /**
- * The path the router matches: without the query, the scheme and host of an
- * absolute-form target (`GET http://host/mcp`), or trailing slashes, which the
- * router ignores too.
+ * The path the router matches, in the form these checks compare: lower case,
+ * since the router ignores case, and without the query, the scheme and host
+ * of an absolute-form target (`GET http://host/mcp`), or trailing slashes,
+ * which the router ignores too.
  */
 const pathOf = (request: HttpServerRequest.HttpServerRequest) => {
   const queryIndex = request.url.indexOf("?");
@@ -331,6 +332,7 @@ const pathOf = (request: HttpServerRequest.HttpServerRequest) => {
       return path;
     }
   }
+  path = path.toLowerCase();
   return path.length > 1 ? path.replace(/\/+$/u, "") || "/" : path;
 };
 

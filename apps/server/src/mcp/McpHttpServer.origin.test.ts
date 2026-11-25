@@ -120,8 +120,8 @@ it.effect("refuses /mcp from any browser origin before credentials, with no CORS
           ["POST", undefined],
           ["OPTIONS", undefined],
         ] as const) {
-          // The router ignores a trailing slash and the query, so the check does too.
-          for (const path of ["/mcp", "/mcp/", "/mcp?x=1", "/mcp//"]) {
+          // The router ignores case, a trailing slash and the query, so the check does too.
+          for (const path of ["/mcp", "/mcp/", "/mcp?x=1", "/mcp//", "/MCP", "/Mcp/"]) {
             const response = yield* call(method, path, { origin, token });
             expect(response.status, `${method} ${path} ${origin} ${token ?? "no token"}`).toBe(403);
             expect(response.headers["access-control-allow-origin"]).toBeUndefined();
