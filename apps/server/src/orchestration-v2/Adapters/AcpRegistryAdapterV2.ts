@@ -2,6 +2,7 @@ import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
+  devinAnswerablePermissionOptions,
 } from "./DevinAcp.ts";
 import {
   AcpRegistrySettings,
@@ -349,6 +350,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          answerablePermissionOptions: devinAnswerablePermissionOptions,
         }
       : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
