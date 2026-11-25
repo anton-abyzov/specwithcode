@@ -291,6 +291,37 @@ describe("project link routine moves", () => {
     }),
   );
 
+  it.effect(
+    "the owner turning an on routine off during a refused move is not marked for the link",
+    () =>
+      Effect.gen(function* () {
+        const { kept, joining, network } = yield* linked;
+        const task = yield* seedOnJoining(joining);
+        kept.state.unlinked.add(joining.environmentId);
+        let toggled = false;
+        network.before = (_from, _to, op) =>
+          op !== "status" || toggled
+            ? Effect.void
+            : Effect.gen(function* () {
+                toggled = true;
+                yield* joining.service
+                  .setEnabled({ id: task.id, enabled: false })
+                  .pipe(Effect.orDie);
+              });
+        const refused = yield* moverOn(joining, kept)(move(joining, kept));
+        network.before = undefined;
+        kept.state.unlinked.clear();
+        assert.isTrue(toggled);
+        assert.equal(refused.outcome, "failed");
+        assert.isNull(yield* makeLinkPauseMarker(joining.sql).read(task.id));
+        const later = yield* moverOn(joining, kept)(move(joining, kept));
+        assert.equal(later.outcome, "failed");
+        assert.match(later.detail, /off on this machine/);
+        assert.isFalse(yield* enabledOn(kept));
+        assert.isFalse(yield* enabledOn(joining));
+      }),
+  );
+
   it.effect("two moves of one routine at once: one moves it, the other waits its turn", () =>
     Effect.gen(function* () {
       const { kept, joining, network } = yield* linked;
