@@ -10,7 +10,7 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Socket from "effect/socket/Socket";
-import { FetchHttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -104,7 +104,7 @@ it.live("the local hub refuses callers without its token, and our calls carry it
       const token = ready.hub.token ?? "";
       expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
       // Any other local process, or a web page, is refused.
-      const direct = yield* Effect.promise(() => fetch(`${ready.hub.origin}/api/devices`));
+      const direct = yield* HttpClient.get(`${ready.hub.origin}/api/devices`);
       expect(direct.status).toBe(401);
       // The server's own hub calls are let through.
       expect((yield* ready.devices.list).devices).toEqual([]);
@@ -114,6 +114,7 @@ it.live("the local hub refuses callers without its token, and our calls carry it
       expect(log).not.toContain(token);
     }).pipe(
       Effect.ensuring(host.stop),
+      Effect.provide(FetchHttpClient.layer),
       Effect.provide(capture),
       Effect.provideService(References.MinimumLogLevel, "Debug"),
     );
@@ -127,7 +128,8 @@ it.live("hub sockets carry the token on the upgrade", () =>
         () =>
           new NodeWS.WebSocketServer({
             port: 0,
-            verifyClient: ({ req }) => req.headers.authorization === `Bearer ${TOKEN}`,
+            verifyClient: ({ req }: { req: { headers: { authorization?: string } } }) =>
+              req.headers.authorization === `Bearer ${TOKEN}`,
           }),
       ),
       (server) =>

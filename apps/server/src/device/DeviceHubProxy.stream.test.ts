@@ -22,7 +22,8 @@ it.effect("preserves binary input and admission frames through the real socket p
         () =>
           new NodeWS.WebSocketServer({
             port: 0,
-            verifyClient: ({ req }) => req.headers.authorization === "Bearer hub-token",
+            verifyClient: ({ req }: { req: { headers: { authorization?: string } } }) =>
+              req.headers.authorization === "Bearer hub-token",
           }),
       ),
       (server) =>
