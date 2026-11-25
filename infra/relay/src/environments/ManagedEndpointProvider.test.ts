@@ -15,6 +15,7 @@ import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointCloudflareBindings from "./ManagedEndpointCloudflareBindings.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
+import type { ManagedTunnelClient } from "./ManagedTunnelBinding.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
@@ -420,7 +421,8 @@ describe("ManagedEndpointProvider", () => {
       putConfiguration: () => Effect.void,
       getToken: () => Effect.succeed("connector-token"),
       delete: () => Effect.void,
-    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+      disconnect: () => Effect.void,
+    } as unknown as ManagedTunnelClient;
     const dnsClient = {
       listDnsRecords: () => Effect.succeed({ result: [] }),
       createDnsRecord: () => Effect.succeed({ id: "dns-record-id" }),

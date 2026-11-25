@@ -13,6 +13,7 @@ import {
   ManagedEndpointTunnelClientError,
   normalizeHostname,
 } from "./ManagedEndpointProvider.ts";
+import type { ManagedTunnelClient } from "./ManagedTunnelBinding.ts";
 
 // The Worker's Cloudflare clients for the managed endpoint provider, each call
 // bounded and retried the same way.
@@ -32,7 +33,7 @@ export const limitCloudflareCall = <A, E, R>(call: Effect.Effect<A, E, R>) =>
   call.pipe(CloudflareRetry.policy(CLOUDFLARE_CALL_RETRY), Effect.timeout("8 seconds"));
 
 export const layerCloudflareBindings = (
-  tunnelClient: Cloudflare.Tunnel.ReadWriteTunnelClient,
+  tunnelClient: ManagedTunnelClient,
   dnsClient: Cloudflare.DNS.ReadWriteDnsClient,
   alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
 ) =>
@@ -106,6 +107,18 @@ export const layerCloudflareBindings = (
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
                     operation: "delete",
+                    tunnelId,
+                    cause,
+                  }),
+              ),
+              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+            ),
+          disconnect: (tunnelId) =>
+            limitCloudflareCall(tunnelClient.disconnect(tunnelId)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ManagedEndpointTunnelClientError({
+                    operation: "disconnect",
                     tunnelId,
                     cause,
                   }),

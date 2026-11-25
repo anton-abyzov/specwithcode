@@ -1,4 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type * as Alchemy from "alchemy";
+import type * as Cloudflare from "alchemy/Cloudflare";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,7 +12,9 @@ import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
 import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
 import * as ConnectAccounts from "./ConnectAccounts.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import * as ManagedEndpointCloudflareBindings from "./ManagedEndpointCloudflareBindings.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
+import type { ManagedTunnelClient } from "./ManagedTunnelBinding.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
 // The real provider and allocations on SQLite D1, with a Cloudflare stub whose
@@ -115,5 +119,38 @@ describe("removing a tunnel whose host is still connected", () => {
       expect(state).toMatchObject({ disconnects: 1, deleted: true });
       expect(yield* allocationCount).toBe(0);
     }).pipe(Effect.provide(layerFor(client)));
+  });
+
+  it.effect("the Worker's Cloudflare bindings carry the disconnect through", () => {
+    const { state, client } = liveTunnel();
+    // The Worker's tunnel binding, as the Cloudflare SDK shape, over the stub.
+    const binding = { ...client } as unknown as ManagedTunnelClient;
+    const dns = {
+      listDnsRecords: () => Effect.succeed({ result: [] }),
+      createDnsRecord: () => Effect.succeed({ id: "dns-1" }),
+      updateDnsRecord: () => Effect.void,
+      deleteDnsRecord: () => Effect.void,
+    } as unknown as Cloudflare.DNS.ReadWriteDnsClient;
+    const workerLayer = ManagedEndpointCloudflareBindings.layerCloudflareBindings(
+      binding,
+      dns,
+      {} as Alchemy.BaseRuntimeContext,
+    ).pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ManagedEndpointAllocations.layer,
+          ManagedTunnelLimits.layer,
+          ConnectAccounts.layer,
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.mergeAll(layerSqliteRelayDb(), RelayConfiguration.layer(config), NodeServices.layer),
+      ),
+    );
+    return Effect.gen(function* () {
+      const provider = yield* provisionLiveHost;
+      expect(yield* provider.deprovision({ ...key, forceDisconnect: true })).toBe(true);
+      expect(state).toMatchObject({ disconnects: 1, deleted: true });
+    }).pipe(Effect.provide(workerLayer));
   });
 });

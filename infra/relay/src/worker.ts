@@ -70,6 +70,7 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedEndpointCloudflareBindings from "./environments/ManagedEndpointCloudflareBindings.ts";
+import * as ManagedTunnelBinding from "./environments/ManagedTunnelBinding.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as ConnectAccounts from "./environments/ConnectAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
@@ -190,7 +191,7 @@ export const layer = Api.make(
       yield* Cloudflare.D1.QueryDatabase(yield* RelayDb.RelayD1Database),
     );
 
-    const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
+    const managedEndpointTunnelBinding = yield* ManagedTunnelBinding.ManagedTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
@@ -545,7 +546,7 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
         Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
         Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
-        Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
+        Layer.provideMerge(ManagedTunnelBinding.ManagedTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
         Layer.provideMerge(HookInboxObject.layer),
