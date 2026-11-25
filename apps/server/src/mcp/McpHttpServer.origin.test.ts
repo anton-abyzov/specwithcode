@@ -90,7 +90,7 @@ const initialize = HttpBody.text(
 const call = (
   method: "POST" | "OPTIONS",
   path: string,
-  options: { origin?: string; token?: string },
+  options: { origin?: string | undefined; token?: string | undefined },
 ) =>
   Effect.flatMap(HttpClient.HttpClient, (client) =>
     client.execute(
