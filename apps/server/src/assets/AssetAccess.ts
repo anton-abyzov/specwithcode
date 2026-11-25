@@ -117,8 +117,15 @@ const isPreviewDependencyPath = (filePath: string, path: Path.Path) =>
   !filePath.split(/[\\/]/).some((segment) => segment.startsWith(".")) &&
   PREVIEW_ASSET_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 
-/** A file's extension, lower-cased; empty when it has none. */
-const fileExtension = (filePath: string) => /\.[^./\\]*$/.exec(filePath)?.[0].toLowerCase() ?? "";
+/**
+ * A file's extension, lower-cased, read the way `path.extname` reads it: a name that only starts
+ * with a dot (".png") has none.
+ */
+const fileExtension = (filePath: string) => {
+  const name = filePath.slice(Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1);
+  const dot = name.lastIndexOf(".");
+  return dot <= 0 ? "" : name.slice(dot).toLowerCase();
+};
 /**
  * Whether a link leads to a file of the type its name says. The response's type follows the
  * target, so a picture name over a page, or a page name over a document, would change what runs.
