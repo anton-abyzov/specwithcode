@@ -106,6 +106,35 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff",
   ".woff2",
 ]);
+/**
+ * A path an HTML preview may load as a dependency: no dot segment anywhere (hidden files and
+ * folders, `.` and `..`) and an asset extension. Applied to the name a page asks for and again
+ * to where that name really leads, so a link cannot dress another file up as an asset.
+ */
+const isPreviewDependencyPath = (filePath: string, path: Path.Path) =>
+  filePath.length > 0 &&
+  !filePath.includes("\0") &&
+  !filePath.split(/[\\/]/).some((segment) => segment.startsWith(".")) &&
+  PREVIEW_ASSET_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+
+/**
+ * A file's extension, lower-cased, read the way `path.extname` reads it: a name that only starts
+ * with a dot (".png") has none.
+ */
+const fileExtension = (filePath: string) => {
+  const name = filePath.slice(Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1);
+  const dot = name.lastIndexOf(".");
+  return dot <= 0 ? "" : name.slice(dot).toLowerCase();
+};
+/**
+ * Whether a link leads to a file of the type its name says. The response's type follows the
+ * target, so a picture name over a page, or a page name over a document, would change what runs.
+ * Two names with no extension are not the same type: ".png" over ".html" would serve the page.
+ */
+const sameFileType = (target: string, requested: string) => {
+  const extension = fileExtension(target);
+  return extension !== "" && extension === fileExtension(requested);
+};
 const htmlFilePreview = (filePath: string) =>
   /\.html?$/i.test(filePath) ? ({ htmlPreview: "file" as const }) : {};
 
@@ -347,7 +376,17 @@ export const readableHostFile = Effect.fn("AssetAccess.readableHostFile")(functi
 });
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
-  function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
+  function* (input: {
+    readonly workspaceRoot: string;
+    readonly relativePath: string;
+    /**
+     * Set for an HTML preview's dependency: the folder of the page, relative to the root. The
+     * resolved file, below that folder (or from the root when a link leads elsewhere), must
+     * pass the dependency rule itself. The page's own folder may be a dot folder, as reports
+     * under `.specweave/` are.
+     */
+    readonly previewDependencyBase?: string;
+  }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const resolved = yield* workspacePaths.resolveRelativePathWithinRoot(input).pipe(
@@ -367,6 +406,14 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const path = yield* Path.Path;
     const relative = path.relative(canonicalRoot.value, canonicalFile.value);
     if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    if (input.previewDependencyBase !== undefined) {
+      const base = path.normalize(input.previewDependencyBase);
+      const belowBase =
+        base === "." || !relative.startsWith(`${base}${path.sep}`)
+          ? relative
+          : relative.slice(base.length + 1);
+      if (!isPreviewDependencyPath(belowBase, path)) return null;
+    }
 
     const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
     return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
@@ -376,6 +423,7 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
 const resolveCanonicalWorkspaceFileForRequest = (input: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
+  readonly previewDependencyBase?: string;
 }) =>
   resolveCanonicalWorkspaceFile(input).pipe(
     Effect.tapError((cause) =>
@@ -518,6 +566,17 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     );
     if (!canonicalFile || (yield* isProtectedAssetFile(resolved.absolutePath, canonicalFile))) {
       return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+      });
+    }
+    // The file is served by the type of what a link leads to, so that must be previewable too,
+    // and the same type as its name: a page name earns a token for its whole folder, a picture
+    // or a document does not.
+    if (
+      !isWorkspacePreviewEntryPath(canonicalFile) ||
+      !sameFileType(canonicalFile, resolved.relativePath)
+    ) {
+      return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
       });
     }
@@ -1158,7 +1217,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         unlessProtected(path.resolve(claims.workspaceRoot, claims.relativePath), file),
       ),
     );
-    return exactWorkspaceFile
+    // Checked again: a link can be repointed after its URL was issued, to a file that is not a
+    // preview or to another type of file (a picture's URL must never serve a page).
+    return exactWorkspaceFile &&
+      isWorkspacePreviewEntryPath(exactWorkspaceFile) &&
+      sameFileType(exactWorkspaceFile, claims.relativePath)
       ? ({
           kind: "file",
           path: exactWorkspaceFile,
@@ -1166,26 +1229,25 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         } satisfies ResolvedAsset)
       : null;
   }
-  const segments = decodedPath.split(/[\\/]/);
-  if (
-    decodedPath.length === 0 ||
-    decodedPath.includes("\0") ||
-    segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".")) ||
-    !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase())
-  ) {
-    return null;
-  }
+  if (!isPreviewDependencyPath(decodedPath, path)) return null;
   const joinedRelativePath =
     claims.baseRelativePath === "." ? decodedPath : path.join(claims.baseRelativePath, decodedPath);
   const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
+    previewDependencyBase: claims.baseRelativePath,
   }).pipe(
     Effect.flatMap((file) =>
       unlessProtected(path.resolve(claims.workspaceRoot, joinedRelativePath), file),
     ),
   );
-  return workspaceFile
-    ? ({ kind: "file", path: workspaceFile, ...htmlFilePreview(workspaceFile) } satisfies ResolvedAsset)
+  // The response's type follows the target, so a link must not change the file's kind: a
+  // picture name over a page would render that page, and a page name over a picture likewise.
+  return workspaceFile && sameFileType(workspaceFile, joinedRelativePath)
+    ? ({
+        kind: "file",
+        path: workspaceFile,
+        ...htmlFilePreview(workspaceFile),
+      } satisfies ResolvedAsset)
     : null;
 });

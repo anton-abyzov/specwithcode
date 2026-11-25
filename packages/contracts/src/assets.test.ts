@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { assetResourceReadsHostFiles, AttachmentCreateUploadUrlInput } from "./assets.ts";
+import {
+  AssetCreateUrlResult,
+  assetResourceReadsHostFiles,
+  AttachmentCreateUploadUrlInput,
+  AttachmentCreateUploadUrlResult,
+} from "./assets.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -82,5 +87,49 @@ describe("assetResourceReadsHostFiles", () => {
         { _tag: "github-media", cwd: "/repo", url: "https://github.com/x.png" },
       ].map((resource) => assetResourceReadsHostFiles(resource as never)),
     ).toEqual([false, false, false]);
+  });
+});
+
+describe("signed asset and upload URLs from a host", () => {
+  // A remote host answers these, and the client resolves them against that host's origin, so
+  // only a path on the host's own asset and upload routes is accepted.
+  const isAssetUrl = (relativeUrl: string) =>
+    Schema.is(AssetCreateUrlResult)({ relativeUrl, expiresAt: 1 });
+  const isUploadUrl = (relativeUrl: string) =>
+    Schema.is(AttachmentCreateUploadUrlResult)({ relativeUrl, expiresAt: 1, attachmentId: "a1" });
+
+  it("accepts the shapes the server issues", () => {
+    expect(isAssetUrl("/api/assets/eyJ2IjoxfQ.c2ln-_x/report%20(final).html")).toBe(true);
+    expect(isAssetUrl("/api/assets/eyJ2IjoxfQ.c2ln/%E2%9C%93.png")).toBe(true);
+    expect(isUploadUrl("/api/attachments/upload/eyJ2IjoxfQ.c2ln-_x")).toBe(true);
+  });
+
+  it("refuses anything that leaves the host's own routes", () => {
+    for (const relativeUrl of [
+      "https://other.example/api/assets/t/a.png",
+      "//other.example/api/assets/t/a.png",
+      "data:text/html,hi",
+      "file:///etc/hosts",
+      "/api/assets/t/../../other",
+      "/api/assets/../a.png",
+      "/api/assets/t/..",
+      "/api/assets/t/%2e%2e",
+      "/api/assets/t/a.png?x=1",
+      "/api/assets/t/sub/a.png",
+      "/api/assets/t\\a.png",
+      "/api/other/t/a.png",
+    ]) {
+      expect(isAssetUrl(relativeUrl), relativeUrl).toBe(false);
+    }
+    for (const relativeUrl of [
+      "https://other.example/api/attachments/upload/t",
+      "//other.example/api/attachments/upload/t",
+      "/api/attachments/upload/..",
+      "/api/attachments/upload/t/extra",
+      "/api/attachments/upload/t?x=1",
+      "/api/assets/t/a.png",
+    ]) {
+      expect(isUploadUrl(relativeUrl), relativeUrl).toBe(false);
+    }
   });
 });

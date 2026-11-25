@@ -285,14 +285,14 @@ it("pins one Chrome for Testing build per host", () => {
     undefined,
   ]);
   expect(PreviewBrowser.previewBrowserRelease("linux", "x64")).toMatchObject({
-    url: "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.78/linux64/chrome-headless-shell-linux64.zip",
-    bytes: 127_965_683,
+    url: "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.88/linux64/chrome-headless-shell-linux64.zip",
+    bytes: 132_091_593,
   });
 });
 
-// Chrome 157.0.8103.78 carries security fixes the 156 builds lack. Each archive's
+// Chrome 158.0.8127.88 carries Chromium security fixes the 157 builds lack. Each archive's
 // size and SHA-256 come from the file the official endpoint serves.
-it("pins Chrome for Testing 157.0.8103.78 for every platform", () => {
+it("pins Chrome for Testing 158.0.8127.88 for every platform", () => {
   const hosts = [
     ["linux", "x64"],
     ["linux", "arm64"],
@@ -308,40 +308,40 @@ it("pins Chrome for Testing 157.0.8103.78 for every platform", () => {
     }),
   ).toEqual([
     [
-      "157.0.8103.78",
+      "158.0.8127.88",
       "linux64",
-      127_965_683,
-      "f90329720fb61e5a76da9b6b509b6ad12a484c9c5df0359403e935177c6d153a",
+      132_091_593,
+      "63401333cc587645bfaeea7f0c90958b327d249251e23954a47f30112ca23d5b",
     ],
     [
-      "157.0.8103.78",
+      "158.0.8127.88",
       "linux-arm64",
-      128_047_138,
-      "912fbf877e53de34d7b3cca5104f3b95607d41bd35412ccc6cd2a599ff0c0dbf",
+      129_942_265,
+      "9f89b7ef6574e4bbf6ddda9f17f1fab5626e93d6f7d852653232d0d3554df975",
     ],
     [
-      "157.0.8103.78",
+      "158.0.8127.88",
       "mac-arm64",
-      104_822_985,
-      "17bf66d53c1b1104dcb641c5b331cd4ac5d200c778f5feed0934a0b92deaf8d6",
+      105_060_087,
+      "69320f6869c4defbbdac8b8fa83aef65dc63975e83bbd06899b75dbea5c464b3",
     ],
     [
-      "157.0.8103.78",
+      "158.0.8127.88",
       "mac-x64",
-      110_132_547,
-      "f1a6a9561eaf1f409849538de663695d36d72fbf1ebca4d42e47c7b5f2a157f3",
+      112_314_759,
+      "dc1ac31965cb2ec7794aed8c66127aceea304ae15353cd56fc4b8bde44091548",
     ],
     [
-      "157.0.8103.78",
+      "158.0.8127.88",
       "win32",
-      120_403_126,
-      "d9829c59dcc79d9e6e920f8ab841f2a9a055dcf54229d756ac0b42dfec303910",
+      122_509_314,
+      "936ad5e7f530bdd66b7261d0a2ceed76b057d429cf31b770a95fd903a7969856",
     ],
     [
-      "157.0.8103.78",
+      "158.0.8127.88",
       "win64",
-      126_047_001,
-      "2138c1583d25d6f3abec5269943b2f430207d87a539895aa9e90cc4697ec0e1f",
+      127_879_225,
+      "e935ea2d4633495b5e9ab7bc66bcd982806329c0ee9ecbafc1ac9596a3b34cdb",
     ],
   ]);
 });
