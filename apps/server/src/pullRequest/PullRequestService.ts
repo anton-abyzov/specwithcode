@@ -3193,12 +3193,31 @@ export const make = Effect.gen(function* () {
 
   const diffCache = yield* Cache.makeWith(
     (key: string) => {
-      const [reference, cursor, commit] = JSON.parse(key) as [string, string | null, string | null];
-      return diffUncached({
-        ...refOfCacheKey(reference),
+      const [reference, cursor, commit, , head] = JSON.parse(key) as [
+        string,
+        string | null,
+        string | null,
+        string | null,
+        string | null,
+      ];
+      const ref = refOfCacheKey(reference);
+      const read = diffUncached({
+        ...ref,
         ...(cursor === null ? {} : { cursor }),
         ...(commit === null ? {} : { commit }),
       } as PullRequestDiffInput);
+      if (head === null) return read;
+      // The host's head is checked before and after the read, so what is kept under this pin
+      // was read while the change request stood at that commit. A failed check is not cached.
+      const checkHead = requireProject(ref).pipe(
+        Effect.flatMap((project) =>
+          pinnedHead(head, "diff", currentHeadOf(project, ref.number, "diff")),
+        ),
+      );
+      return checkHead.pipe(
+        Effect.andThen(read),
+        Effect.tap(() => checkHead),
+      );
     },
     {
       capacity: DIFF_CACHE_CAPACITY,
@@ -3217,6 +3236,8 @@ export const make = Effect.gen(function* () {
       input.commit === undefined
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
+      // A commit's own diff never changes; the whole change's diff is kept per pinned head.
+      input.commit === undefined ? (input.headSha ?? null) : null,
     ]);
     const read = Cache.get(diffCache, key).pipe(
       Effect.tap((value) =>

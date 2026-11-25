@@ -269,8 +269,9 @@ function PullRequestCodeTab({
   // The slices also belong to the head a review is pinned to: the render that moves the pin
   // already shows none of the old diff, so no line of it can be commented on against the new head.
   const sliceKey = `${scopeKey}#${headSha ?? ""}`;
-  /** When the pin last moved; diff answers older than this were read for the previous head. */
-  const headMovedAt = useRef(0);
+  // The whole change's diff is asked for at the pinned head, so the server never answers with
+  // one read for another head; a commit's own diff does not depend on the head.
+  const pinnedDiffHead = commit === null && headSha !== undefined ? { headSha } : {};
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -294,6 +295,7 @@ function PullRequestCodeTab({
         ...reference,
         ...(cursor === null ? {} : { cursor }),
         ...(commit === null ? {} : { commit }),
+        ...pinnedDiffHead,
       },
     }),
   );
@@ -301,7 +303,7 @@ function PullRequestCodeTab({
   // text would cost more with every slice, which is the wall the slicing exists to remove.
   useEffect(() => {
     const data = diffQuery.data;
-    if (data === null || diffQuery.dataUpdatedAt <= headMovedAt.current) return;
+    if (data === null) return;
     setSliceState((previous) => {
       const slices = previous.key === sliceKey ? previous.slices : NO_SLICES;
       const next = {
@@ -338,31 +340,25 @@ function PullRequestCodeTab({
       // after it go with the replacement: their cursors were positions in the old diff.
       return { key: sliceKey, cursor, slices: [...slices.slice(0, index), next] };
     });
-  }, [cursor, diffQuery.data, diffQuery.dataUpdatedAt, sliceKey]);
+  }, [cursor, diffQuery.data, sliceKey]);
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
   const refreshFirstDiffPage = useAtomRefresh(
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(commit === null ? {} : { commit }) },
+      input: { ...reference, ...(commit === null ? {} : { commit }), ...pinnedDiffHead },
     }),
   );
-  // A new pin drops the open composer and rereads the diff; the answer already on hand was read
-  // for the previous head and is ignored above. Mounting counts as a new pin: the panel can close
-  // and reopen on another head while the last diff read stays cached for this pull request.
-  const appliedHead = useRef<string | undefined | null>(null);
+  // A new pin drops the open composer and the selection; the diff query is keyed by the pin, so
+  // the new head's diff is read on its own.
+  const appliedHead = useRef(headSha);
   useEffect(() => {
     if (appliedHead.current === headSha) return;
-    const mounting = appliedHead.current === null;
     appliedHead.current = headSha;
-    // Without a pin nothing is stamped, so a cached diff is as good as before.
-    if (mounting && headSha === undefined) return;
-    headMovedAt.current = Date.now();
     setDraft(null);
     setSelectedLines(null);
     setSliceState({ key: sliceKey, cursor: null, slices: NO_SLICES });
-    refreshFirstDiffPage();
-  }, [headSha, sliceKey, refreshFirstDiffPage]);
+  }, [headSha, sliceKey]);
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);

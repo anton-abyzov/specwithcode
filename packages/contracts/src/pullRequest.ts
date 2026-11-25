@@ -959,6 +959,12 @@ export const PullRequestDiffInput = Schema.Struct({
    * read a commit at a time, and the author's own commits are the boundaries they chose.
    */
   commit: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The head the reader is pinned to, for the whole change's diff (servers that advertise
+   * `pullRequestHeadPin`). A diff read for one head is never served for another, and a read
+   * whose host head is not this commit fails, so line comments drawn on it belong to this head.
+   */
+  headSha: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestDiffInput = typeof PullRequestDiffInput.Type;
 
