@@ -316,6 +316,14 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   return yield* HttpServerResponse.file(asset.path, { status, offset, bytesToRead, headers });
 });
 
+const pathOf = (request: HttpServerRequest.HttpServerRequest) => {
+  const queryIndex = request.url.indexOf("?");
+  return queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
+};
+
+/** The MCP transport's path; McpHttpServer serves it. */
+const MCP_HTTP_PATH = "/mcp";
+
 export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
 });
@@ -331,7 +339,7 @@ export const layerBrowserApiCors = Layer.unwrap(
     // origin — a tailnet name, a LAN IP, a phone. Browser dev normally proxies
     // through Vite and is same-origin (no preflight at all), so this is a
     // safety net for the desktop renderer and any direct-to-backend caller.
-    return HttpRouter.cors({
+    const cors = HttpMiddleware.cors({
       ...(devOrigin
         ? {
             allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
@@ -342,6 +350,17 @@ export const layerBrowserApiCors = Layer.unwrap(
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
+    // `/mcp` refuses every browser origin (McpHttpServer), so no CORS answer or
+    // preflight may invite a page to call it.
+    return HttpRouter.middleware(
+      (httpEffect) => {
+        const withCors = cors(httpEffect);
+        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+          pathOf(request) === MCP_HTTP_PATH ? httpEffect : withCors,
+        );
+      },
+      { global: true },
+    );
   }),
 );
 
@@ -477,11 +496,6 @@ const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((
 });
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
-
-const pathOf = (request: HttpServerRequest.HttpServerRequest) => {
-  const queryIndex = request.url.indexOf("?");
-  return queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-};
 
 // Signed URLs (webhooks, assets, attachment uploads) carry bearer tokens in
 // the path itself, where query redaction cannot reach them.
