@@ -711,6 +711,13 @@ describe("linkAgreement", () => {
       side: "both",
     });
   });
+  it("treats a list without its own copy as not this link", () => {
+    const withoutJoining = [{ ...kept, linkId: "k1" }];
+    expect(linkAgreement(side(kept, "p", both), side(joining, "p", withoutJoining))).toEqual({
+      status: "missing",
+      side: "joining",
+    });
+  });
   it("says the copies name different shared projects", () => {
     expect(linkAgreement(side(kept, "old", both), side(joining, "new", both))).toEqual({
       status: "different-projects",

@@ -14,9 +14,13 @@ const state = vi.hoisted(() => ({
   },
   hydration: "ready",
   updateClient: vi.fn(),
+  allListed: true,
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.config }));
 vi.mock("../state/server", () => ({ primaryServerConfigAtom: {} }));
+vi.mock("../state/entities", () => ({
+  useAllEnvironmentProjectSnapshotsReady: () => state.allListed,
+}));
 vi.mock("../hooks/useSettings", () => ({
   useUpdatePrimarySettings: () => state.update,
   useClientSettings: (select: (settings: typeof state.client) => unknown) => select(state.client),
@@ -49,6 +53,7 @@ beforeEach(() => {
   state.updateClient.mockClear();
   state.client.projectCoordinatorMachines = {};
   state.hydration = "ready";
+  state.allListed = true;
   groups = undefined;
   root = createRoot(document.createElement("div"));
 });
@@ -295,6 +300,12 @@ describe("a link moves the project's key", () => {
       { projectKey: linkedKey, memberProjects: [copy("B", "b1", true), copy("C", "c1", true)] },
       { projectKey: "other", memberProjects: [copy("A", "o1")] },
     ] as never;
+    // A machine that has not sent its projects may still hold the old group.
+    state.allListed = false;
+    await render();
+    expect(current[0].pinned).toEqual([repositoryKey]);
+    expect(state.update).not.toHaveBeenCalled();
+    state.allListed = true;
     await render();
     expect(current[0].pinned).toEqual([linkedKey]);
   });

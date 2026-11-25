@@ -681,8 +681,11 @@ export function linkAgreement(
 ): LinkAgreement {
   const entry = (side: typeof kept, of: LogicalProjectMember) =>
     side.logicalProject?.members.find((candidate) => sameMember(candidate, of));
-  const keptLists = entry(kept, joining.member) !== undefined;
-  const joiningLists = entry(joining, kept.member) !== undefined;
+  // Each side lists the other copy, and itself: a list without its own copy is not this link.
+  const keptLists =
+    entry(kept, joining.member) !== undefined && entry(kept, kept.member) !== undefined;
+  const joiningLists =
+    entry(joining, kept.member) !== undefined && entry(joining, joining.member) !== undefined;
   if (!keptLists || !joiningLists)
     return {
       status: "missing",
