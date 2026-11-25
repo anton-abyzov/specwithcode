@@ -2,6 +2,7 @@ package com.specwithcode.android.app
 
 import com.specwithcode.transport.PairingLink
 import com.specwithcode.transport.RouteKind
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URI
 import java.net.URLDecoder
 
@@ -91,20 +92,22 @@ object PairingInput {
     fun isCleartext(link: String): Boolean =
         (target(link) ?: unwrap(link)).lowercase().startsWith("http://")
 
-    /** The host the link pairs with, or null when it has none. */
-    fun host(link: String): String? = try {
-        URI(target(link) ?: unwrap(link)).host?.takeIf { it.isNotEmpty() }
-    } catch (_: Exception) {
-        null
-    }
+    /**
+     * The host the link pairs with, read by the same URL parser pairing uses (OkHttp), or
+     * null when it has none. `java.net.URI` reads no host for some names OkHttp accepts,
+     * such as a label with a leading underscore.
+     */
+    fun host(link: String): String? =
+        (target(link) ?: unwrap(link)).toHttpUrlOrNull()?.host?.takeIf { it.isNotEmpty() }
 
     /**
-     * True when the link would send the sign-in over plain http to a host outside this
-     * device, the local network and the tailnet. Links opened from other apps must not do that.
+     * True when a link from another app must not be used: it would send the sign-in over
+     * plain http to a host outside this device, the local network and the tailnet, or no
+     * machine address can be read from it at all.
      */
     fun isPublicCleartext(link: String): Boolean {
-        if (!isCleartext(link)) return false
         val host = host(link) ?: return true
+        if (!isCleartext(link)) return false
         return RouteKind.classify(host) == RouteKind.PUBLIC
     }
 }
