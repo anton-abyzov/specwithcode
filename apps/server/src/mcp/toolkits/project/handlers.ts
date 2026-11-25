@@ -364,15 +364,19 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const real = (path: string) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
-  const worktrees = yield* git.listWorktreePaths(workspaceRoot).pipe(
-    Effect.flatMap((paths) => Effect.forEach(paths, real)),
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
-  );
-  if (!worktrees.includes(yield* real(worktreePath)))
-    return yield* new OrchestratorMcpFailure({
-      code: "invalid_request",
-      message: `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
-    });
+  const registered = yield* git
+    .listWorktreePaths(workspaceRoot)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const asked = yield* real(worktreePath);
+  for (const path of registered) {
+    // The registered path, not the caller's spelling: a symlink that resolves
+    // here now could point somewhere else by the time the thread starts.
+    if ((yield* real(path)) === asked) return path;
+  }
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
+  });
 });
 
 /**
@@ -603,6 +607,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Effect.mapError(unavailable),
           Effect.map(Option.getOrUndefined),
         );
+        // An existing worktree launches in the path the check matched.
+        let launchStrategy = input.workspaceStrategy;
         if (input.workspaceStrategy?.type === "existing_worktree") {
           const project = yield* readProject;
           if (project === undefined)
@@ -624,11 +630,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               label: `repository "${resolved.checkout.id}"'s`,
             };
           }
-          yield* assertProjectWorktree(
+          const worktreePath = yield* assertProjectWorktree(
             worktreeOwner.cwd,
             input.workspaceStrategy.worktreePath,
             worktreeOwner.label,
           );
+          launchStrategy = { ...input.workspaceStrategy, worktreePath };
         }
         const project = yield* readProject;
         if (work !== undefined) {
@@ -645,7 +652,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // worktree, else the project. A new worktree is not made yet, so a ref
         // the project lacks is looked up in the caller's own worktree, as
         // delegate_task and create_threads do. A bad ref launches nothing.
-        const strategy = input.workspaceStrategy;
+        const strategy = launchStrategy;
         const { stateDir } = yield* ServerConfig.ServerConfig;
         const incrementResolution =
           project === undefined
@@ -864,8 +871,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // checkout that never happens; the agent switches branches itself.
         const workspace = declinedWorktree
           ? { strategy: { type: "root" as const }, notice: WORKTREE_OFF_NOTICE }
-          : input.workspaceStrategy !== undefined
-            ? { strategy: input.workspaceStrategy }
+          : launchStrategy !== undefined
+            ? { strategy: launchStrategy }
             : project === undefined || scratchProjectId !== undefined
               ? { strategy: { type: "root" as const } }
               : yield* projectLaunchWorkspace(project, increment.increment);
