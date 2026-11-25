@@ -1,0 +1,218 @@
+import {
+  encodeScreenShareHostFrame,
+  SCREEN_SHARE_CLOSE_ENDED,
+  SCREEN_SHARE_CLOSE_REFUSED,
+  SCREEN_SHARE_WIRE,
+  type ScreenShareViewerDevice,
+} from "@specweave-studio/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import { ScreenShareRelay, type ScreenSharePeer } from "./ScreenShareRelay.ts";
+
+const SID = "0f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9";
+const SID2 = "1f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9";
+const DEVICE: ScreenShareViewerDevice = {
+  thumbprint: "thumb",
+  label: "Work laptop",
+  shortId: "7F3A",
+  kind: "connect",
+};
+
+function peer() {
+  const texts: Array<string> = [];
+  const binaries: Array<Uint8Array> = [];
+  const closes: Array<{ code: number; reason: string }> = [];
+  let buffered = 0;
+  const end: ScreenSharePeer = {
+    sendText: (text) => void texts.push(text),
+    sendBinary: (bytes) => void binaries.push(bytes),
+    close: (code, reason) => void closes.push({ code, reason }),
+    bufferedBytes: () => buffered,
+  };
+  return {
+    end,
+    texts,
+    binaries,
+    closes,
+    json: () => texts.map((text) => JSON.parse(text) as Record<string, unknown>),
+    setBuffered: (bytes: number) => {
+      buffered = bytes;
+    },
+  };
+}
+
+const on = { enabled: true, supported: true, busy: false };
+const status = (value: object) => JSON.stringify({ t: "status", status: value });
+const bytes = (type: number, ...rest: ReadonlyArray<number>) => new Uint8Array([type, ...rest]);
+
+function ready(options?: ConstructorParameters<typeof ScreenShareRelay>[0]) {
+  const ids = [SID, SID2];
+  const relay = new ScreenShareRelay({ newSessionId: () => ids.shift()!, ...options });
+  const host = peer();
+  const hostIn = relay.attachHost(host.end);
+  hostIn.text(status(on));
+  return { relay, host, hostIn };
+}
+
+describe("ScreenShareRelay", () => {
+  it("refuses a viewer while no app is attached", () => {
+    const relay = new ScreenShareRelay();
+    expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "no_host" });
+    expect(relay.status()).toEqual({ host: false, enabled: false, supported: false, busy: false });
+  });
+
+  it("refuses a viewer until the app says sharing is on", () => {
+    const relay = new ScreenShareRelay();
+    const host = peer();
+    const hostIn = relay.attachHost(host.end);
+    // An app that has said nothing counts as unsupported and off.
+    expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "unsupported" });
+    hostIn.text(status({ enabled: false, supported: true, busy: false }));
+    expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "off" });
+    expect(host.texts).toEqual([]);
+  });
+
+  it("opens a session, names the device to the app and passes bytes both ways", () => {
+    const { relay, host, hostIn } = ready();
+    const viewer = peer();
+    const opened = relay.openViewer(viewer.end, DEVICE, "env");
+    if ("refused" in opened) throw new Error("refused");
+    expect(viewer.json()).toEqual([{ t: "open", sid: SID, environmentId: "env" }]);
+    expect(host.json()).toEqual([{ t: "open", sid: SID, environmentId: "env", device: DEVICE }]);
+
+    opened.binary(bytes(SCREEN_SHARE_WIRE.hello, 7));
+    expect(host.binaries).toEqual([
+      encodeScreenShareHostFrame(SID, bytes(SCREEN_SHARE_WIRE.hello, 7)),
+    ]);
+    hostIn.binary(encodeScreenShareHostFrame(SID, bytes(SCREEN_SHARE_WIRE.challenge, 8)));
+    expect(viewer.binaries).toEqual([bytes(SCREEN_SHARE_WIRE.challenge, 8)]);
+    expect(relay.status().busy).toBe(true);
+  });
+
+  it("allows one session at a time", () => {
+    const { relay } = ready();
+    expect("sid" in relay.openViewer(peer().end, DEVICE, "env")).toBe(true);
+    expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "busy" });
+  });
+
+  it("ends the session when a viewer sends what only the machine may send", () => {
+    const { relay, host } = ready();
+    const viewer = peer();
+    const opened = relay.openViewer(viewer.end, DEVICE, "env");
+    if ("refused" in opened) throw new Error("refused");
+    opened.binary(bytes(SCREEN_SHARE_WIRE.challenge, 1));
+    expect(host.binaries).toEqual([]);
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_ENDED, reason: "protocol_error" }]);
+    expect(host.json().at(-1)).toEqual({ t: "closed", sid: SID });
+  });
+
+  it("ends the session on an empty or unknown message from either end", () => {
+    for (const bad of [new Uint8Array(0), bytes(99)]) {
+      const { relay } = ready();
+      const viewer = peer();
+      const opened = relay.openViewer(viewer.end, DEVICE, "env");
+      if ("refused" in opened) throw new Error("refused");
+      opened.binary(bad);
+      expect(viewer.closes[0]?.reason).toBe("protocol_error");
+    }
+    const { relay, hostIn } = ready();
+    const viewer = peer();
+    relay.openViewer(viewer.end, DEVICE, "env");
+    hostIn.binary(encodeScreenShareHostFrame(SID, bytes(SCREEN_SHARE_WIRE.hello)));
+    expect(viewer.closes[0]?.reason).toBe("protocol_error");
+  });
+
+  it("drops what the app sends for a session that does not exist", () => {
+    const { relay, hostIn } = ready();
+    const viewer = peer();
+    relay.openViewer(viewer.end, DEVICE, "env");
+    hostIn.binary(encodeScreenShareHostFrame(SID2, bytes(SCREEN_SHARE_WIRE.sealed, 1)));
+    hostIn.binary(new Uint8Array([1, 2, 3]));
+    expect(viewer.binaries).toEqual([]);
+    expect(viewer.closes).toEqual([]);
+  });
+
+  it("drops a viewer that does not read, instead of holding its frames", () => {
+    const { relay, host, hostIn } = ready({ maxBufferBytes: 100 });
+    const viewer = peer();
+    relay.openViewer(viewer.end, DEVICE, "env");
+    viewer.setBuffered(90);
+    hostIn.binary(
+      encodeScreenShareHostFrame(SID, new Uint8Array(20).fill(SCREEN_SHARE_WIRE.sealed)),
+    );
+    expect(viewer.binaries).toEqual([]);
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_ENDED, reason: "viewer_silent" }]);
+    expect(host.json().at(-1)).toEqual({ t: "closed", sid: SID });
+  });
+
+  it("closes the viewer with the app's reason: refused before a session, ended after", () => {
+    for (const [reason, code] of [
+      ["denied", SCREEN_SHARE_CLOSE_REFUSED],
+      ["cooldown", SCREEN_SHARE_CLOSE_REFUSED],
+      ["stopped_at_machine", SCREEN_SHARE_CLOSE_ENDED],
+      ["time_limit", SCREEN_SHARE_CLOSE_ENDED],
+    ] as const) {
+      const { relay, host, hostIn } = ready();
+      const viewer = peer();
+      relay.openViewer(viewer.end, DEVICE, "env");
+      hostIn.text(JSON.stringify({ t: "close", sid: SID, reason }));
+      expect(viewer.closes).toEqual([{ code, reason }]);
+      // The app asked, so it is not told again.
+      expect(host.json().filter((message) => message.t === "closed")).toEqual([]);
+      expect(relay.status().busy).toBe(false);
+    }
+  });
+
+  it("ignores a close whose reason is not plain words", () => {
+    const { relay, hostIn } = ready();
+    const viewer = peer();
+    relay.openViewer(viewer.end, DEVICE, "env");
+    hostIn.text(JSON.stringify({ t: "close", sid: SID, reason: "<b>look here</b>" }));
+    hostIn.text("not json");
+    hostIn.text(JSON.stringify({ t: "status", status: { enabled: "yes" } }));
+    expect(viewer.closes).toEqual([]);
+  });
+
+  it("tells the app when the viewer leaves, once", () => {
+    const { relay, host } = ready();
+    const opened = relay.openViewer(peer().end, DEVICE, "env");
+    if ("refused" in opened) throw new Error("refused");
+    opened.closed();
+    opened.closed();
+    expect(host.json().filter((message) => message.t === "closed")).toEqual([
+      { t: "closed", sid: SID },
+    ]);
+    expect(relay.status().busy).toBe(false);
+  });
+
+  it("ends every session when the app goes away or sharing is turned off", () => {
+    const first = ready();
+    const viewer = peer();
+    first.relay.openViewer(viewer.end, DEVICE, "env");
+    first.hostIn.closed();
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_REFUSED, reason: "no_host" }]);
+    expect(first.relay.status().host).toBe(false);
+
+    const second = ready();
+    const other = peer();
+    second.relay.openViewer(other.end, DEVICE, "env");
+    second.hostIn.text(status({ enabled: false, supported: true, busy: false }));
+    expect(other.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_ENDED, reason: "turned_off" }]);
+  });
+
+  it("a new app socket replaces the old one, whose messages then do nothing", () => {
+    const { relay, host, hostIn } = ready();
+    const viewer = peer();
+    relay.openViewer(viewer.end, DEVICE, "env");
+    const next = peer();
+    const nextIn = relay.attachHost(next.end);
+    expect(host.closes).toEqual([{ code: 1012, reason: "replaced" }]);
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_REFUSED, reason: "no_host" }]);
+    hostIn.text(status(on));
+    expect(relay.status().enabled).toBe(false);
+    hostIn.closed();
+    expect(relay.status().host).toBe(true);
+    nextIn.text(status(on));
+    expect(relay.status().enabled).toBe(true);
+  });
+});

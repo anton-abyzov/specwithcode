@@ -97,11 +97,22 @@ const ownAddresses = (): ReadonlyArray<string> =>
   );
 
 /**
- * The proof the app sent, when the request came straight from this machine: over
- * loopback, or from its own address for a service bound to that address.
- * Tailscale Serve and the Connect tunnel also arrive from loopback, so any
- * header a proxy adds disqualifies it.
+ * Whether the request came straight from this machine: over loopback, or from
+ * its own address for a service bound to that address. Tailscale Serve and the
+ * Connect tunnel also arrive from loopback, so any header a proxy adds
+ * disqualifies it.
  */
+export const arrivedFromThisMachine = (
+  request: HttpServerRequest.HttpServerRequest,
+  addresses?: ReadonlyArray<string>,
+): boolean => {
+  const peer = requestRemoteAddress(request);
+  if (peer === undefined || arrivedOverConnect(request)) return false;
+  if (!LOOPBACK_PEER.test(peer) && !(addresses ?? ownAddresses()).includes(peer)) return false;
+  return !Object.keys(request.headers).some((name) => PROXY_HEADER.test(name));
+};
+
+/** The proof the app sent, when the request came straight from this machine. */
 export const desktopOwnerProofOf = (
   request: HttpServerRequest.HttpServerRequest,
   addresses?: ReadonlyArray<string>,
@@ -109,10 +120,7 @@ export const desktopOwnerProofOf = (
   const proof = request.headers[DESKTOP_OWNER_PROOF_HEADER];
   if (proof === undefined || proof.length === 0 || proof.length > MAX_PROOF_LENGTH)
     return undefined;
-  const peer = requestRemoteAddress(request);
-  if (peer === undefined || arrivedOverConnect(request)) return undefined;
-  if (!LOOPBACK_PEER.test(peer) && !(addresses ?? ownAddresses()).includes(peer)) return undefined;
-  return Object.keys(request.headers).some((name) => PROXY_HEADER.test(name)) ? undefined : proof;
+  return arrivedFromThisMachine(request, addresses) ? proof : undefined;
 };
 
 export const desktopOwnerProofMatches = (proof: string, verifier: Uint8Array): boolean => {

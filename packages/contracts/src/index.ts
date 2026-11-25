@@ -89,6 +89,7 @@ export * from "./browserProfile.ts";
 export * from "./externalBrowser.ts";
 export * from "./device.ts";
 export * from "./computerUse.ts";
+export * from "./screenShare.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";

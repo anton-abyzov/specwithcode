@@ -328,6 +328,7 @@ export const make = Effect.gen(function* () {
       usageMachineReport: true,
       usageDeliveredReport: true,
       deviceApproval: true,
+      screenShare: true,
       pullRequestChecks: true,
       inlineMessageContext: true,
       requiredWorktreeBootstrap: true,

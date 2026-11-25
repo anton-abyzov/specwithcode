@@ -98,6 +98,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
+import * as ScreenShareHttp from "./screenShare/ScreenShareHttp.ts";
 import * as ComputerUseBroker from "./computerUse/ComputerUseBroker.ts";
 import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
@@ -1193,6 +1194,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GoogleOAuthRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
+    ScreenShareHttp.routeLayer,
     BrowserExtension.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
