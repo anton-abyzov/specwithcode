@@ -196,6 +196,10 @@ export function createCdpRelayConnection(
       throw new Error("Only this preview tab's page and its frames can be reached.");
     if (command.method.startsWith("Target.") && !(await ownTargetCommand(command)))
       throw new Error(`Not supported for a desktop preview tab: ${command.method}`);
+    // Browser commands belong to the browser session, which answers them here. On the
+    // tab's debugger a permission override would skip the person's Allow prompt.
+    if (command.method.startsWith("Browser."))
+      throw new Error(`Not supported on a desktop preview page: ${command.method}`);
     return target.send(
       command.method,
       command.params ?? {},
