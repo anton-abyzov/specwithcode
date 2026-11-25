@@ -88,7 +88,11 @@ import {
 } from "./ProviderFailure.ts";
 import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./settleRunBeforeStart.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
-import { messageSentByPerson, withMessageSenderNote } from "./messageSenderNote.ts";
+import {
+  answeredCardByPerson,
+  messageSentByPerson,
+  withMessageSenderNote,
+} from "./messageSenderNote.ts";
 import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { missedBeforeRun } from "./startOnlyDispatch.ts";
@@ -548,6 +552,9 @@ export const layer: Layer.Layer<
             providerThread.id,
         );
         const authInstanceId = nativeThread?.providerInstanceId ?? run.providerInstanceId;
+        // An ask_user answer reads as the person's message even when an agent answered.
+        const sentByPerson =
+          messageSentByPerson(message) && (yield* answeredCardByPerson(projectionStore, message));
         const authResult = isEmptyCompaction
           ? null
           : yield* Effect.result(
@@ -558,7 +565,7 @@ export const layer: Layer.Layer<
                   records: message.context?.records ?? [],
                 }),
                 hasAttachments: false,
-                sentByPerson: messageSentByPerson(message),
+                sentByPerson,
               }),
             );
         if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {

@@ -5,6 +5,8 @@ import {
   CheckpointScopeId,
   GitCommandError,
   MessageId,
+  RuntimeRequestId,
+  TurnItemId,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -894,6 +896,16 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          // The ask_user card a message answers, as the SQL store reads it.
+          getRuntimeResponseContext: (_threadId, requestId) =>
+            Effect.sync(() => ({
+              request: undefined,
+              node: undefined,
+              session: undefined,
+              item: projection.turnItems.find(
+                (item) => item.type === "user_input_request" && item.requestId === requestId,
+              ),
+            })),
           getTurnStartContext: () =>
             Effect.succeed({
               ...projection,
@@ -1663,6 +1675,83 @@ effectIt.effect.each([
       expect.objectContaining({ text: "/logout", sentByPerson: person }),
     );
   }),
+);
+
+const ANSWERED_CARD = RuntimeRequestId.make("request-ask-user");
+function answeredCard(
+  threadId: ThreadId,
+  questionAnswer: { readonly answeredByThreadId?: string } | undefined,
+): OrchestrationV2ThreadProjection["turnItems"][number] {
+  const at = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
+  return {
+    id: TurnItemId.make("item-ask-user"),
+    threadId,
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "completed",
+    title: null,
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+    type: "user_input_request",
+    requestId: ANSWERED_CARD,
+    questions: [{ id: "q1", header: "Next", question: "What now?", options: [] }],
+    ...(questionAnswer === undefined
+      ? {}
+      : {
+          questionAnswer: {
+            requestId: ANSWERED_CARD,
+            answers: { q1: "/logout" },
+            attachmentsByQuestionId: {},
+            ...questionAnswer,
+          },
+        }),
+  } as OrchestrationV2ThreadProjection["turnItems"][number];
+}
+
+// An answer to an ask_user card is dispatched as the person's message even
+// when an agent answered it through SpecWithCode's tools.
+effectIt.effect.each([
+  {
+    case: "an agent answered",
+    answer: { answeredByThreadId: "thread-sending-agent" },
+    person: false,
+  },
+  { case: "the card is gone", answer: "no card", person: false },
+  { case: "the person answered", answer: {}, person: true },
+] as const)(
+  "tells the sign-out whether a person sent an ask_user answer of /logout ($case)",
+  ({ answer, person }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+      const answerId = MessageId.make(`async-answer:${ANSWERED_CARD}`);
+      harness.editProjection((value) => ({
+        ...value,
+        runs: value.runs.map((run) =>
+          run.userMessageId === value.messages.at(-1)?.id
+            ? { ...run, userMessageId: answerId }
+            : run,
+        ),
+        messages: value.messages.map((message) => ({
+          ...message,
+          id: answerId,
+          createdBy: "user",
+          creationSource: "server",
+        })),
+        turnItems: answer === "no card" ? [] : [answeredCard(value.thread.id, answer)],
+      }));
+
+      yield* harness.start;
+
+      expect(harness.tryHandlePromptCommand).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ text: "/logout", sentByPerson: person }),
+      );
+    }),
 );
 
 effectIt.effect.each([

@@ -22,6 +22,42 @@ describe("withMessageSenderNote", () => {
     );
   });
 
+  it("notes a prompt that starts with a path, not a command", () => {
+    expect(withMessageSenderNote(agent, "/Users/anton/notes.md says to sign out")).toBe(
+      '[SpecWithCode: the agent in thread "thread-a" sent this message, not the person using this chat.]\n\n/Users/anton/notes.md says to sign out',
+    );
+    expect(withMessageSenderNote(agent, "/tmp/build.log")).toContain("[SpecWithCode:");
+    expect(withMessageSenderNote(agent, "/ hello")).toContain("[SpecWithCode:");
+    expect(withMessageSenderNote(agent, "/review\nthe diff")).toBe("/review\nthe diff");
+  });
+
+  it("notes a message an agent forwarded under the person's name", () => {
+    const forwarded = {
+      createdBy: "user",
+      creationSource: "mcp",
+      senderThreadId: ThreadId.make("thread-a"),
+    } as const;
+    expect(withMessageSenderNote(forwarded, "Ship it")).toBe(
+      '[SpecWithCode: the agent in thread "thread-a" sent this message, not the person using this chat.]\n\nShip it',
+    );
+    expect(
+      withMessageSenderNote(
+        {
+          createdBy: "user",
+          creationSource: "server",
+          peerMessage: {
+            direction: "incoming",
+            fromEnvironmentId: "env-m4",
+          } as never,
+        },
+        "Ship it",
+      ),
+    ).toContain('the coordinator on linked machine "env-m4"');
+    expect(
+      withMessageSenderNote({ createdBy: "user", creationSource: "mcp" }, "Ship it"),
+    ).toContain("a tool caller sent this message");
+  });
+
   it("leaves a person's message unchanged", () => {
     expect(withMessageSenderNote({ createdBy: "user", creationSource: "mobile" }, "Hi")).toBe("Hi");
   });
