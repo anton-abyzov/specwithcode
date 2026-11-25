@@ -290,6 +290,14 @@ describe("ACP registry permission answers", () => {
       assert.isNull(yield* answerPlanExit("gemini", "approval-required", "decline", offered));
       assert.isNull(yield* answerPlanExit("gemini", "approval-required", "accept", offered));
       assert.isNull(yield* answerPlanExit("gemini", "full-access", "accept", offered));
+      // The only allow-once is the bypass, which is never sent: no lasting approval either.
+      assert.isNull(
+        yield* answerPlanExit("gemini", "full-access", "accept", [
+          { optionId: "plan_bypass", name: "Implement and bypass", kind: "allow_once" },
+          { optionId: "always", name: "Always allow", kind: "allow_always" },
+          { optionId: "reject", name: "Reject", kind: "reject_once" },
+        ]),
+      );
       // Full access approves once or not at all, never for good instead.
       assert.isNull(
         yield* answerPlanExit("gemini", "full-access", "accept", [

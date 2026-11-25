@@ -1426,7 +1426,8 @@ function selectAutoApprovedPermissionOption(
 ): string | undefined {
   // An allow-once the agent offered but that cannot be sent safely never
   // turns into an approval that lasts: the request is cancelled instead.
-  const offersAllowOnce = request.options.some(
+  // `offered` still holds options the adapter never sends, such as a bypass.
+  const offersAllowOnce = offered.some(
     (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
   );
   return (

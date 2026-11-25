@@ -50,6 +50,7 @@ type Scenario =
   | "commandUnknown"
   | "commandFromActions"
   | "commandWithActions"
+  | "networkOnly"
   | "execEmpty"
   | "permissions";
 const changes = [
@@ -293,7 +294,18 @@ const observeApproval = (
     const base = { threadId: "native-thread-files", turnId: "native-turn-files" };
     const item = { type: "fileChange", id: "native-files", status: "inProgress", changes };
     let approvalResult: Exit.Exit<unknown>;
-    if (scenario === "command") {
+    if (scenario === "networkOnly") {
+      // Codex asks for network access without a command; the host is the decision.
+      approvalResult = yield* peer
+        .request("item/commandExecution/requestApproval", {
+          ...base,
+          itemId: "native-command",
+          startedAtMs: 1782622440000,
+          networkApprovalContext: { host: "example.invalid", protocol: "https" },
+          reason: "Fetch the package index",
+        })
+        .pipe(Effect.exit);
+    } else if (scenario === "command") {
       approvalResult = yield* peer
         .request("item/commandExecution/requestApproval", {
           ...base,
@@ -658,6 +670,11 @@ describe("Codex adapter structured file approval evidence", () => {
       ],
     ],
     ["permissions", "file-change", ["write /etc/hosts", "network", "Reason: Run the unit tests"]],
+    [
+      "networkOnly",
+      "command",
+      ["network https example.invalid", "Reason: Fetch the package index"],
+    ],
   ] as const)("shows what a %s approval runs, not only the agent's reason", (input) =>
     Effect.gen(function* () {
       const [scenario, kind, lines] = input;

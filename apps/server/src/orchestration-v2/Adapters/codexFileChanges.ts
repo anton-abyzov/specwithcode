@@ -134,8 +134,9 @@ export function codexArgvCommandLine(argv: ReadonlyArray<string>): string {
 
 /**
  * What a command approval runs: the command first, then the agent's parse of
- * it (labelled, never in its place), then where and what it reaches. Without
- * command text there is nothing to judge: undefined, so the approval is
+ * it (labelled, never in its place), then where and what it reaches. A
+ * network approval names only the host it reaches. Without command text or a
+ * network target there is nothing to judge: undefined, so the approval is
  * declined instead of shown.
  */
 export function codexCommandApprovalPrompt(input: {
@@ -152,15 +153,16 @@ export function codexCommandApprovalPrompt(input: {
   const command =
     input.command?.trim() ||
     (input.argv && input.argv.length > 0 ? codexArgvCommandLine(input.argv) : "");
-  if (!command) return undefined;
+  const network = input.networkApprovalContext;
+  // A network approval names no command: what it reaches is the decision.
+  if (!command && !network) return undefined;
   const actions = (input.commandActions ?? [])
     .map((action) => action.command.trim())
     .filter((action) => action.length > 0 && action !== command)
     .map((action) => `Parsed action: ${action}`);
   const cwd = input.cwd?.trim();
-  const network = input.networkApprovalContext;
   return [
-    command,
+    ...(command ? [command] : []),
     ...actions,
     ...(cwd ? [`cwd ${cwd}`] : []),
     ...(network ? [`network ${network.protocol} ${network.host}`] : []),
