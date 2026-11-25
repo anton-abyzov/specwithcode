@@ -274,7 +274,10 @@ it.effect.each([
   {
     label: "a local file model on a driver that lists the user's own models",
     driver: "opencode",
-    selection: { instanceId: ProviderInstanceId.make("opencode"), model: "/Users/x/models/foo.gguf" },
+    selection: {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "/Users/x/models/foo.gguf",
+    },
     expected: "custom:opencode",
   },
   {

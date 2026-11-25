@@ -397,8 +397,9 @@ export const layer: Layer.Layer<
       Effect.gen(function* () {
         const modelSelection = input.analyticsContext?.modelSelection;
         if (modelSelection === undefined) return undefined;
-        const providers =
-          Option.isSome(providerRegistry) ? yield* providerRegistry.value.getProviders : [];
+        const providers = Option.isSome(providerRegistry)
+          ? yield* providerRegistry.value.getProviders
+          : [];
         return analyticsModelLabel(providers, {
           instanceId: modelSelection.instanceId,
           driver: input.event.driver,
