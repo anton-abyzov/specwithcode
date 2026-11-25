@@ -209,3 +209,18 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
   120_000,
 );
+
+it("names again a folder a source repository would replace when a hidden part of it changes", async () => {
+  // A plain folder sits where the source has the svc-a repository; replacing it moves it whole.
+  const target = NodePath.join(base, "targets", "replaced-repository");
+  const hidden = NodePath.join(target, "repositories", "svc-a", "node_modules", "pkg");
+  NodeFS.mkdirSync(hidden, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 1;\n");
+  const { copies, operationId, status } = await previewed("replaced-repository");
+  const seen = status.destinationRevision;
+  expect(seen).toBeTruthy();
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 'edited here';\n");
+  await copies.decide(operationId, {});
+  const after = await settle(copies, operationId, "previewed");
+  expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(seen);
+}, 120_000);
