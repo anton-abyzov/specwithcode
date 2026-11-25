@@ -596,15 +596,15 @@ export const make = Effect.gen(function* () {
             current.phase === input.phase &&
             current.updatedAt === input.updatedAt,
         ),
-        // A transient persistence failure must not permanently discard a
-        // legitimate alert. Fail open and let the signed job's retry/dedupe
-        // protections handle transport failures as usual.
+        // Fail closed: this recheck is what keeps an environment that moved to
+        // another account from alerting the previous owner's phones. A missed
+        // alert is cheaper than one delivered to the wrong person.
         Effect.catchCause((cause) =>
-          Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
+          Effect.logWarning("agent-activity state recheck failed; skipping queued delivery", {
             cause,
             environmentId: input.environmentId,
             threadId: input.threadId,
-          }).pipe(Effect.as(true)),
+          }).pipe(Effect.as(false)),
         ),
       );
   });
@@ -631,10 +631,11 @@ export const make = Effect.gen(function* () {
         });
       }),
       Effect.catchCause((cause) =>
-        Effect.logWarning("agent-activity aggregate recheck failed; allowing queued delivery", {
+        // Fail closed, as the per-thread recheck above.
+        Effect.logWarning("agent-activity aggregate recheck failed; skipping queued delivery", {
           cause,
           userId: input.userId,
-        }).pipe(Effect.as(true)),
+        }).pipe(Effect.as(false)),
       ),
     );
   });
