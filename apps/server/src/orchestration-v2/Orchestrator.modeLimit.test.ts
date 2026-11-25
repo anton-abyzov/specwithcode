@@ -123,13 +123,15 @@ const steeringAdapter = (
  * Starts a turn on a thread at `startedAt`, sets the thread to `loweredTo`
  * for the next turn, and steers the running turn from a sender limited to
  * Supervised. `forgetTurnModes` rewrites the attempt as one recorded before
- * attempts kept their modes.
+ * attempts kept their modes; `stillStarting` rewrites it as one whose turn has
+ * not started yet.
  */
 const steerFromLimitedSender = (input: {
   readonly name: string;
   readonly startedAt: RuntimeMode;
   readonly loweredTo?: RuntimeMode;
   readonly forgetTurnModes?: boolean;
+  readonly stillStarting?: boolean;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -178,7 +180,7 @@ const steerFromLimitedSender = (input: {
         yield* worker.drain();
         yield* Fiber.join(running);
         const runId = started[0]!.runId;
-        if (input.forgetTurnModes === true) {
+        if (input.forgetTurnModes === true || input.stillStarting === true) {
           const projection = yield* orchestrator.getThreadProjection(threadId);
           const { startedModes: _, ...attempt } = projection.attempts.find(
             (candidate) => candidate.runId === runId,
@@ -191,7 +193,10 @@ const steerFromLimitedSender = (input: {
                 threadId,
                 runId,
                 occurredAt: yield* DateTime.now,
-                payload: attempt,
+                payload:
+                  input.stillStarting === true
+                    ? { ...attempt, status: "pending", startedAt: null }
+                    : attempt,
               },
             ],
           });
@@ -289,5 +294,22 @@ it.effect("a turn recorded without its modes is checked against the thread's mod
       forgetTurnModes: true,
     });
     assert.equal(raised.steer._tag, "Failure");
+  }),
+);
+
+it.effect("a limited sender cannot steer a turn that has not recorded its modes yet", () =>
+  Effect.gen(function* () {
+    const result = yield* steerFromLimitedSender({
+      name: "still-starting",
+      startedAt: "full-access",
+      loweredTo: "approval-required",
+      stillStarting: true,
+    });
+    assert.equal(result.threadMode, "approval-required");
+    assert.equal(result.steer._tag, "Failure");
+    if (result.steer._tag === "Failure") {
+      assert.include(String(result.steer.cause), "OrchestratorThreadAboveModeLimitError");
+    }
+    assert.deepEqual(result.steered, []);
   }),
 );

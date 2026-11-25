@@ -1263,10 +1263,11 @@ export const layer: Layer.Layer<
           : { nativeThreadId: runningProviderThread.nativeThreadRef.nativeId }),
         status: "running",
         startedAt: now,
-        // A message that later joins this turn is checked against these modes.
+        // A message that later joins this turn is checked against the modes
+        // the provider was given.
         startedModes: {
-          runtimeMode: projection.thread.runtimeMode,
-          interactionMode: projection.thread.interactionMode,
+          runtimeMode: resolvedRuntimePolicy.runtimeMode,
+          interactionMode: resolvedRuntimePolicy.interactionMode,
         },
       };
       const runningRootNode: OrchestrationV2ExecutionNode = {
