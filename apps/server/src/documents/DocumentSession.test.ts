@@ -686,12 +686,17 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         const { target, file, read } = yield* project;
         const sessions = yield* DocumentSession.DocumentSession;
         const window = yield* openWindow(target, "window-aaaa");
+        // An edit that is saved: the log beside the sheet ends in a mark of the file.
+        yield* window.send(put("A3", "Saved"));
+        yield* sessions.settleAll;
+        expect(logOf(file).marked).toBe(sheetContentRevision(read()));
+        const saved = read();
         const typed = window.edit(put("A4", "Still being typed"));
         NodeFS.renameSync(
           file,
           NodePath.join(NodePath.dirname(NodePath.dirname(file)), "moved.json"),
         );
-        NodeFS.writeFileSync(file, TEXT);
+        NodeFS.writeFileSync(file, saved);
         yield* sessions.reconcile(target);
         expect((yield* window.nextOf("closed")).reason).toContain("replaced by another file");
         // The edit that was on its way has no session to merge into, and the new file is untouched.
@@ -699,7 +704,9 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           .update({ ...target, sessionKey: "window-aaaa", update: typed })
           .pipe(Effect.flip);
         expect(refused.code).toBe("not_open");
-        expect(read()).toBe(TEXT);
+        expect(read()).toBe(saved);
+        // The old sheet's log is gone with it.
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(false);
         // Opened again, the file that is here now is a sheet of its own: nothing of the old one's.
         const again = yield* openWindow(target, "window-bbbb");
         expect(again.first.epoch).not.toBe(window.first.epoch);

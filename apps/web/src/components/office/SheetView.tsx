@@ -711,7 +711,7 @@ export function SheetView(props: {
           <Button
             type="button"
             size="sm"
-            variant="ghost"
+            variant="outline"
             data-testid="sheet-draft-dismiss"
             onClick={() => live.dropDraft?.()}
           >
