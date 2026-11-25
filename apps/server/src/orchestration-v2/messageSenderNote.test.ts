@@ -28,6 +28,8 @@ describe("withMessageSenderNote", () => {
       "/tmp contains the results.",
       "/etc is fine",
       "/frobnicate",
+      "/Review status",
+      "$Deploy staging",
       "$unknown x",
     ]) {
       expect(withMessageSenderNote(agent, text, known)).toBe(

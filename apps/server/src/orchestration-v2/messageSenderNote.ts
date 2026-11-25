@@ -38,14 +38,15 @@ const LEADING_SKILL = /^\s*\$([A-Za-z0-9:_-]*[A-Za-z])(?:\s|$)/u;
 /**
  * Whether the text starts with a command or skill the provider lists, which a
  * leading note would stop it from reading. A path such as `/tmp` or any word
- * the provider does not list is ordinary text.
+ * the provider does not list is ordinary text. Names match exactly, as the
+ * providers resolve them: `/Review` is not `/review`.
  */
 function startsWithKnownCommand(text: string, known: KnownProviderCommands | undefined): boolean {
   if (known === undefined) return false;
   const slash = LEADING_SLASH_COMMAND.exec(text)?.[1];
-  if (slash !== undefined) return known.slash.has(slash.toLowerCase());
+  if (slash !== undefined) return known.slash.has(slash);
   const skill = LEADING_SKILL.exec(text)?.[1];
-  return skill !== undefined && known.skills.has(skill.toLowerCase());
+  return skill !== undefined && known.skills.has(skill);
 }
 
 function senderNote(message: SenderFields): string | undefined {

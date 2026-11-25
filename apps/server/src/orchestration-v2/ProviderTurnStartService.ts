@@ -300,13 +300,9 @@ export const layer: Layer.Layer<
               return provider === undefined
                 ? undefined
                 : {
-                    slash: new Set(
-                      provider.slashCommands.map((command) => command.name.toLowerCase()),
-                    ),
+                    slash: new Set(provider.slashCommands.map((command) => command.name)),
                     skills: new Set(
-                      provider.skills
-                        .filter((skill) => skill.enabled)
-                        .map((skill) => skill.name.toLowerCase()),
+                      provider.skills.filter((skill) => skill.enabled).map((skill) => skill.name),
                     ),
                   };
             }),
