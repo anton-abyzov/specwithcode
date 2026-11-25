@@ -70,7 +70,8 @@ describe("Pi status probe folder", () => {
         assert.isAbove(cwds.length, 0);
         const folders = [...new Set(cwds)];
         assert.equal(folders.length, 1);
-        assert.equal(path.dirname(folders[0]!), cacheDir);
+        // Under the cache folder's real path (a temp folder can sit behind a link).
+        assert.equal(path.dirname(folders[0]!), yield* fileSystem.realPath(cacheDir));
         assert.isTrue(path.basename(folders[0]!).startsWith("pi-status-probe-"));
         assert.equal(observed[0]?.entries, 0);
         // Windows has no POSIX mode bits to check.
@@ -114,5 +115,34 @@ describe("Pi status probe folder", () => {
       assert.deepEqual(cwds, []);
       assert.equal(snapshot.status, "error");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "fails the check, and runs nothing, when another user could write the cache folder",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "pi-probe-cache-" });
+        const cacheDir = path.join(parent, "shared");
+        yield* fileSystem.makeDirectory(cacheDir);
+        yield* fileSystem.chmod(cacheDir, 0o777);
+        // A link that leads into the shared folder counts as the shared folder.
+        const linked = path.join(parent, "linked");
+        yield* fileSystem.symlink(cacheDir, linked);
+        for (const candidate of [cacheDir, linked]) {
+          const cwds: Array<string | undefined> = [];
+          const snapshot = yield* checkPiProviderStatusInProbeFolder(
+            piSettings,
+            {},
+            candidate,
+          ).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(cwds)),
+          );
+          assert.deepEqual(cwds, []);
+          assert.equal(snapshot.status, "error");
+        }
+        assert.deepEqual(yield* fileSystem.readDirectory(cacheDir), []);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
