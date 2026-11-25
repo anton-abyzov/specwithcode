@@ -22,6 +22,7 @@ import {
   makeOpenCodeAdapterV2,
   openCodeChildPermissionRules,
   openCodePermissionRules,
+  openCodeSessionPermissionUpdate,
 } from "./OpenCodeAdapterV2.ts";
 
 type Rules = ReturnType<typeof openCodePermissionRules>;
@@ -57,10 +58,30 @@ describe("OpenCode after a thread is lowered from Full access", () => {
     assert.equal(action(child, "external_directory"), "deny");
   });
 
+  it("a session keeps a deny the app did not write when a wider mode is installed", () => {
+    const foreign = { permission: "bash", pattern: "rm *", action: "deny" } as const;
+    const session = [...openCodePermissionRules(policy("approval-required")), foreign];
+    const update = openCodeSessionPermissionUpdate(openCodePermissionRules(policy("full-access")), [
+      ...session,
+      foreign,
+    ]);
+    // OpenCode appends the update, so the app's old Supervised denies end up
+    // before the new allow and stop applying; the other deny stays last.
+    assert.deepEqual(update.at(-1), foreign);
+    assert.equal(update.filter((rule) => rule.action === "deny").length, 1);
+    assert.equal(action(update, "bash"), "deny");
+    assert.equal(action(update.slice(0, -1), "bash"), "allow");
+  });
+
   it.effect("a resumed session gets the current mode's rules before the next prompt", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly method: string; readonly permission?: Rules }> = [];
-      const session = { id: "root", time: { created: 1, updated: 1 } };
+      const foreign = { permission: "bash", pattern: "rm *", action: "deny" } as const;
+      const session = {
+        id: "root",
+        time: { created: 1, updated: 1 },
+        permission: [...openCodePermissionRules(policy("full-access")), foreign],
+      };
       const client = {
         // The event stream stays open: an ended stream fails the turn first.
         event: {
@@ -177,7 +198,8 @@ describe("OpenCode after a thread is lowered from Full access", () => {
       assert.isAtLeast(update, 0, "the resumed session's rules are replaced");
       assert.isBelow(update, prompt);
       const installed = calls[update]!.permission!;
-      assert.equal(action(installed, "bash"), "ask");
+      assert.deepEqual(installed.at(-1), foreign);
+      assert.equal(action(installed.slice(0, -1), "bash"), "ask");
       assert.equal(action(installed, "external_directory"), "ask");
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );

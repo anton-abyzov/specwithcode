@@ -758,6 +758,39 @@ function permissionRuleEquals(
   );
 }
 
+/** A deny the app's own rules can hold; any other deny came from someone else. */
+function isAppDenyRule(rule: PermissionRuleset[number]): boolean {
+  if (rule.permission === "read") return rule.pattern === "*.env" || rule.pattern === "*.env.*";
+  return (
+    rule.pattern === "*" &&
+    (rule.permission === "*" ||
+      (OPENCODE_RESTRICTED_PERMISSIONS as ReadonlyArray<string>).includes(rule.permission))
+  );
+}
+
+/**
+ * The rules a turn installs on a session: its policy's rules, then every deny
+ * the session holds that the app did not write. OpenCode appends what an update
+ * sends and applies the last matching rule, so a deny the session was given by
+ * someone else stays in force after a wider mode is installed.
+ */
+export function openCodeSessionPermissionUpdate(
+  policyRules: PermissionRuleset,
+  sessionRules: PermissionRuleset,
+): PermissionRuleset {
+  const keptDenies: Array<PermissionRuleset[number]> = [];
+  for (const rule of sessionRules) {
+    if (
+      rule.action === "deny" &&
+      !isAppDenyRule(rule) &&
+      !keptDenies.some((kept) => permissionRuleEquals(kept, rule))
+    ) {
+      keptDenies.push(rule);
+    }
+  }
+  return [...policyRules, ...keptDenies];
+}
+
 /**
  * OpenCode task sessions inherit only the parent's deny/external-directory
  * rules and then add agent-specific restrictions such as disabling nested
@@ -3210,8 +3243,18 @@ export function makeOpenCodeAdapterV2(
                 installed.length !== permission.length ||
                 !installed.every((rule, index) => permissionRuleEquals(rule, permission[index]!))
               ) {
-                yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
-                  client.session.update({ sessionID: sessionId, permission }),
+                const current = unwrapData(
+                  "session.get",
+                  yield* sdkCall("session.get", { sessionID: sessionId }, () =>
+                    client.session.get({ sessionID: sessionId }),
+                  ),
+                );
+                const update = openCodeSessionPermissionUpdate(
+                  permission,
+                  current.permission ?? [],
+                );
+                yield* sdkCall("session.update", { sessionID: sessionId, permission: update }, () =>
+                  client.session.update({ sessionID: sessionId, permission: update }),
                 );
                 installedPermissionRules.set(sessionId, permission);
               }
