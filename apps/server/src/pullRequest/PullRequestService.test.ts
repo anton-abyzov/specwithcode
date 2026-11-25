@@ -7666,3 +7666,47 @@ describe("a merge or review pinned to the head the person saw", () => {
     }),
   );
 });
+
+describe("a whole diff read for the head the reader is pinned to", () => {
+  const HEAD = "a".repeat(40);
+  const NEWER = "b".repeat(40);
+  const LATER = "c".repeat(40);
+  const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+  it.effect("never serves one head's cached diff to a reader pinned to another", () =>
+    Effect.gen(function* () {
+      let head = HEAD;
+      let reads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequest: () => Effect.sync(() => ({ headSha: head }) as never),
+            getDiff: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return { patch: `@@ ${head}`, truncated: false, nextCursor: null };
+              }),
+          }),
+        ],
+      });
+      assert.strictEqual(
+        (yield* service.diff({ ...reference, headSha: HEAD })).patch,
+        `@@ ${HEAD}`,
+      );
+      // A push with no newer summary read: the change request's revision time has not moved.
+      head = NEWER;
+      assert.strictEqual(
+        (yield* service.diff({ ...reference, headSha: NEWER })).patch,
+        `@@ ${NEWER}`,
+      );
+      assert.strictEqual(reads, 2);
+      // A read whose host head is not the pinned one is refused rather than kept under that pin.
+      head = LATER;
+      const moved = yield* Effect.flip(service.diff({ ...reference, headSha: "d".repeat(40) }));
+      assert.strictEqual(moved._tag, "PullRequestOperationError");
+    }),
+  );
+});
