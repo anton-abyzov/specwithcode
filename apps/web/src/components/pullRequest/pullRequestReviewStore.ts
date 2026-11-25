@@ -9,7 +9,11 @@
 import type { PullRequestRef, PullRequestReviewCommentDraft } from "@specweave-studio/contracts";
 import { create } from "zustand";
 
-export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
+/** `headSha` is the head on screen when the comment was drawn; it never reaches the host. */
+export type PendingReviewComment = PullRequestReviewCommentDraft & {
+  readonly id: string;
+  readonly headSha?: string;
+};
 
 /**
  * A counter rather than anything derived from the comment: two remarks on one line can be the

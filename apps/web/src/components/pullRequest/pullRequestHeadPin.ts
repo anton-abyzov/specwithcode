@@ -30,3 +30,16 @@ export function mergeHeadPin(
     ? { expectedHeadSha: headSha }
     : {};
 }
+
+/**
+ * The line comments written on another head than the one a review is pinned to. Their lines
+ * belong to the diff they were drawn on, so sending them with a newer head could attach them to
+ * different code; the review waits until they are removed. A comment with no head was drawn
+ * before one was known, and is held back the same way.
+ */
+export function commentsFromOtherHeads<C extends { readonly headSha?: string | undefined }>(
+  comments: ReadonlyArray<C>,
+  headSha: string | undefined,
+): ReadonlyArray<C> {
+  return headSha === undefined ? [] : comments.filter((comment) => comment.headSha !== headSha);
+}

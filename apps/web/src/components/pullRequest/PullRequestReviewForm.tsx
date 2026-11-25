@@ -21,6 +21,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
+import { commentsFromOtherHeads } from "./pullRequestHeadPin";
 import {
   pullRequestReviewKey,
   usePendingReviewComments,
@@ -92,13 +93,16 @@ export function PullRequestReviewForm({
     reportFailure: false,
   });
 
+  const staleComments = commentsFromOtherHeads(comments, headSha);
   const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
   const selectedVerdict =
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number]) => {
     if (pending) return;
+    if (staleComments.length > 0) return;
     const submittedBody = body;
+    // Only what the host takes: the local id and drawn-on head stay here.
     const submittedComments = comments;
     onPendingChange(true);
     const result = await submitReview({
@@ -107,7 +111,7 @@ export function PullRequestReviewForm({
         ...reference,
         verdict: verdict.value,
         body: submittedBody,
-        comments: submittedComments,
+        comments: submittedComments.map(({ id: _id, headSha: _head, ...comment }) => comment),
         ...(headSha === undefined ? {} : { expectedHeadSha: headSha }),
       },
     });
@@ -156,6 +160,29 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
+      {staleComments.length > 0 ? (
+        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {staleComments.length === 1
+              ? "1 line comment was written on older commits."
+              : `${staleComments.length} line comments were written on older commits.`}{" "}
+            Remove {staleComments.length === 1 ? "it" : "them"} to submit this review.
+          </span>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              removeComments(
+                reviewKey,
+                staleComments.map((comment) => comment.id),
+              )
+            }
+          >
+            Remove
+          </Button>
+        </div>
+      ) : null}
       <div className="mt-2 flex justify-between gap-2">
         <Select
           value={selectedVerdict?.value ?? null}
@@ -183,7 +210,12 @@ export function PullRequestReviewForm({
         </Select>
         <Button
           size="xs"
-          disabled={pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value)}
+          disabled={
+            pending ||
+            staleComments.length > 0 ||
+            selectedVerdict === undefined ||
+            !canSubmit(selectedVerdict.value)
+          }
           onClick={() => {
             if (selectedVerdict !== undefined) void submit(selectedVerdict);
           }}

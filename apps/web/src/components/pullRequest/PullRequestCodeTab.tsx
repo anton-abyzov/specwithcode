@@ -203,6 +203,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
+  headSha,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -219,6 +220,8 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  /** The head a review is pinned to; line comments carry it, and a new one rereads the diff. */
+  headSha?: string | undefined;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -263,6 +266,11 @@ function PullRequestCodeTab({
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
   const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
+  // The slices also belong to the head a review is pinned to: the render that moves the pin
+  // already shows none of the old diff, so no line of it can be commented on against the new head.
+  const sliceKey = `${scopeKey}#${headSha ?? ""}`;
+  /** When the pin last moved; diff answers older than this were read for the previous head. */
+  const headMovedAt = useRef(0);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -272,12 +280,13 @@ function PullRequestCodeTab({
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: sliceKey, cursor: null, slices: NO_SLICES });
     parseCache.current.clear();
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- a moved head has its own reset below
   }, [scopeKey]);
 
-  const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
-  const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
+  const loadedSlices = sliceState.key === sliceKey ? sliceState.slices : NO_SLICES;
+  const cursor = sliceState.key === sliceKey ? sliceState.cursor : null;
   const diffQuery = useEnvironmentQuery(
     pullRequestEnvironment.diff({
       environmentId,
@@ -292,9 +301,9 @@ function PullRequestCodeTab({
   // text would cost more with every slice, which is the wall the slicing exists to remove.
   useEffect(() => {
     const data = diffQuery.data;
-    if (data === null) return;
+    if (data === null || diffQuery.dataUpdatedAt <= headMovedAt.current) return;
     setSliceState((previous) => {
-      const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
+      const slices = previous.key === sliceKey ? previous.slices : NO_SLICES;
       const next = {
         cursor,
         patch: data.patch,
@@ -304,7 +313,7 @@ function PullRequestCodeTab({
       };
       const index = slices.findIndex((slice) => slice.cursor === cursor);
       if (index === -1) {
-        return { key: scopeKey, cursor, slices: [...slices, next] };
+        return { key: sliceKey, cursor, slices: [...slices, next] };
       }
       const existing = slices[index];
       if (
@@ -327,9 +336,9 @@ function PullRequestCodeTab({
       }
       // A page that came back different means the diff moved under the review. The slices
       // after it go with the replacement: their cursors were positions in the old diff.
-      return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
+      return { key: sliceKey, cursor, slices: [...slices.slice(0, index), next] };
     });
-  }, [cursor, diffQuery.data, scopeKey]);
+  }, [cursor, diffQuery.data, diffQuery.dataUpdatedAt, sliceKey]);
   // The refresh button rereads from the first page rather than the page the reader is on:
   // pages are positions in one snapshot of the diff, and a fresh snapshot starts over.
   const refreshFirstDiffPage = useAtomRefresh(
@@ -338,6 +347,18 @@ function PullRequestCodeTab({
       input: { ...reference, ...(commit === null ? {} : { commit }) },
     }),
   );
+  // A new pin drops the open composer and rereads the diff; the answer already on hand was read
+  // for the previous head and is ignored above.
+  const appliedHead = useRef(headSha);
+  useEffect(() => {
+    if (appliedHead.current === headSha) return;
+    appliedHead.current = headSha;
+    headMovedAt.current = Date.now();
+    setDraft(null);
+    setSelectedLines(null);
+    setSliceState({ key: sliceKey, cursor: null, slices: NO_SLICES });
+    refreshFirstDiffPage();
+  }, [headSha, sliceKey, refreshFirstDiffPage]);
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -435,10 +456,10 @@ function PullRequestCodeTab({
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: sliceKey, cursor: null, slices: NO_SLICES });
     refreshFirstDiffPage();
     refreshFilesViewed();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  }, [refreshToken, sliceKey, refreshFirstDiffPage, refreshFilesViewed]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
@@ -1024,6 +1045,7 @@ function PullRequestCodeTab({
                 ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
                 position: draft.position,
                 body,
+                ...(headSha === undefined ? {} : { headSha }),
               });
               setDraft(null);
               setSelectedLines(null);

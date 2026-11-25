@@ -2963,6 +2963,7 @@ export function PullRequestDetailPanel({
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
+                    headSha={shownHeadSha}
                   />
                 </Suspense>
               </div>
