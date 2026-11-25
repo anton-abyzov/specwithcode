@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/model";
+import { BUNDLED_MODEL_MANIFEST, type ModelManifestData } from "../provider/ModelManifest.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as CrashReporter from "../telemetry/CrashReporter.ts";
@@ -171,9 +172,30 @@ const VENDOR_MODEL_LIST_DRIVERS: ReadonlySet<string> = new Set([
   "muse",
 ]);
 
+// A context-window marker such as `[1m]` after a slug.
+const MODEL_SUFFIX = /\[[^\]]*\]$/u;
+
+/** The slug of a model the bundled model manifest lists for a driver, by slug or alias. */
+function manifestModelSlug(
+  manifest: ModelManifestData,
+  driver: string,
+  model: string,
+): string | undefined {
+  const name = model.replace(MODEL_SUFFIX, "");
+  const listed = manifest.providers?.[driver]?.models.find(
+    (entry) => entry.slug === name || entry.aliases?.includes(name) === true,
+  );
+  if (listed !== undefined) return listed.slug;
+  return manifest.currentModels[driver]?.includes(name) === true ? name : undefined;
+}
+
 /**
- * The model name analytics and error reports may carry. A model the vendor
- * itself lists for that instance (by slug or alias) reports its slug. Any
+ * The model name analytics and error reports may carry. A model the bundled
+ * model manifest lists for the driver reports its manifest slug. Where the
+ * manifest holds the driver's catalog (Claude, Antigravity), only that counts:
+ * Claude's own discovery lists a configured backend id, such as a Bedrock
+ * profile or a gateway deployment, as a vendor model. A driver without a
+ * catalog there also reports a model its vendor lists for that instance. Any
  * other name can identify a person, a deployment or a file on disk, so it
  * reports only the driver, as `custom:<driver>`.
  */
@@ -184,15 +206,25 @@ export function analyticsModelLabel(
     readonly driver: string;
     readonly model: string;
   },
+  manifest: ModelManifestData = BUNDLED_MODEL_MANIFEST,
 ): string {
   const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-  if (provider !== undefined && VENDOR_MODEL_LIST_DRIVERS.has(provider.driver)) {
-    const listed = provider.models.find(
-      (entry) =>
-        !entry.isCustom &&
-        (entry.slug === input.model || entry.aliases?.includes(input.model) === true),
-    );
-    if (listed !== undefined) return listed.slug;
+  const driver = provider?.driver ?? input.driver;
+  const listed = provider?.models.find(
+    (entry) =>
+      !entry.isCustom &&
+      (entry.slug === input.model || entry.aliases?.includes(input.model) === true),
+  );
+  const catalogSlug =
+    manifestModelSlug(manifest, driver, input.model) ??
+    (listed === undefined ? undefined : manifestModelSlug(manifest, driver, listed.slug));
+  if (catalogSlug !== undefined) return catalogSlug;
+  if (
+    listed !== undefined &&
+    VENDOR_MODEL_LIST_DRIVERS.has(driver) &&
+    manifest.providers?.[driver] === undefined
+  ) {
+    return listed.slug;
   }
   return `custom:${input.driver}`;
 }

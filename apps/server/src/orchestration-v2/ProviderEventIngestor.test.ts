@@ -346,6 +346,65 @@ it.effect.each([
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerAnalytics))));
 });
 
+// Claude's native discovery lists a configured backend id (a Bedrock profile,
+// a gateway deployment) as a vendor model, so a listed, non-custom row is not
+// proof the name is public.
+const claudeProvider: ServerProvider = {
+  ...codexProvider,
+  instanceId: ProviderInstanceId.make("claude-work"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  models: [
+    { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+    {
+      slug: "acme-bedrock-opus-prod",
+      name: "acme-bedrock-opus-prod",
+      aliases: ["acme-opus"],
+      isCustom: false,
+      capabilities: null,
+    },
+  ],
+};
+it.each([
+  {
+    label: "a configured backend id Claude discovery lists",
+    model: "acme-bedrock-opus-prod",
+    expected: "custom:claudeAgent",
+  },
+  { label: "an alias of that backend id", model: "acme-opus", expected: "custom:claudeAgent" },
+  { label: "a catalog model", model: "claude-opus-5-5", expected: "claude-opus-5-5" },
+  { label: "a catalog alias", model: "opus-5.5", expected: "claude-opus-5-5" },
+  {
+    label: "a catalog model with a context suffix",
+    model: "claude-opus-5-5[1m]",
+    expected: "claude-opus-5-5",
+  },
+  {
+    label: "a catalog model the instance does not list",
+    model: "claude-sonnet-5-5",
+    expected: "claude-sonnet-5-5",
+  },
+])("labels $label for analytics as $expected", ({ model, expected }) => {
+  assert.equal(
+    ProviderEventIngestor.analyticsModelLabel([claudeProvider], {
+      instanceId: claudeProvider.instanceId,
+      driver: "claudeAgent",
+      model,
+    }),
+    expected,
+  );
+});
+
+it("labels a model an unknown instance sends by the catalog only", () => {
+  assert.equal(
+    ProviderEventIngestor.analyticsModelLabel([], {
+      instanceId: ProviderInstanceId.make("gone"),
+      driver: "claudeAgent",
+      model: "acme-bedrock-opus-prod",
+    }),
+    "custom:claudeAgent",
+  );
+});
+
 layer("ProviderEventIngestorV2", (it) => {
   it.effect("normalizes provider events through the real event log and projection store", () =>
     Effect.gen(function* () {
