@@ -130,6 +130,7 @@ import {
   requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
+import { replayMarkerName } from "./cloudReplayMarkers.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -1697,8 +1698,8 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = `${CLOUD_HEALTH_JTI_PREFIX}${proof.jti}`;
-      const nonceSecretName = `${CLOUD_HEALTH_NONCE_PREFIX}${proof.nonce}`;
+      const jtiSecretName = replayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti);
+      const nonceSecretName = replayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
@@ -1803,8 +1804,8 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = `${CLOUD_MINT_JTI_PREFIX}${proof.jti}`;
-      const nonceSecretName = `${CLOUD_MINT_NONCE_PREFIX}${proof.nonce}`;
+      const jtiSecretName = replayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti);
+      const nonceSecretName = replayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
