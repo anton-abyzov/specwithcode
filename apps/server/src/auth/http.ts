@@ -46,6 +46,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { RequestRevocationEpoch } from "./revocationEpoch.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
@@ -463,6 +464,7 @@ export const layerAuthenticatedAuth = Layer.effect(
           }),
           // What this request mints (asset URLs, copies) is bound to its device (1327).
           Effect.provideService(ConnectDeviceTrust.RequestDevice, session.deviceKey ?? null),
+          Effect.provideService(RequestRevocationEpoch, session.revocationEpoch),
         );
         return yield* session.subject === "cloud-connect"
           ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
@@ -756,6 +758,7 @@ export const layer = HttpApiBuilder.group(
                 "auth.pairingCredential",
                 serverAuth.issuePairingCredential({
                   ...args.payload,
+                  revocationEpoch: yield* RequestRevocationEpoch,
                   // A device's code dies with its approval (1327).
                   ...(session.deviceKey === undefined
                     ? {}
@@ -802,6 +805,7 @@ export const layer = HttpApiBuilder.group(
               label: args.payload.label,
               access: args.payload.access,
               deviceKey: session.deviceKey,
+              revocationEpoch: yield* RequestRevocationEpoch,
               ...(args.payload.ttlSeconds
                 ? { ttl: Duration.seconds(args.payload.ttlSeconds) }
                 : {}),
