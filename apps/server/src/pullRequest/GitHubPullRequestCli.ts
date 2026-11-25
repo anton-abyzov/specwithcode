@@ -1,5 +1,6 @@
 import { removeAgentCredits } from "./mergeMessage.ts";
 import { ByteTail, parseGitHubActionsJobUrl, trimFailureLog } from "./gitHubCheckFailureLog.ts";
+import { checkLogEnvironment } from "./checkLogEnvironment.ts";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Cause from "effect/Cause";
@@ -1533,7 +1534,6 @@ export const make = Effect.gen(function* () {
       // gh login here too. Without one, gh falls back on its own.
       const credential = yield* api.credential(host).pipe(Effect.option);
       const token = Option.isSome(credential) ? Redacted.value(credential.value.token) : null;
-      const gitHubDotCom = host === "github.com" || host.endsWith(".ghe.com");
       const tail = new ByteTail(CHECK_FAILURE_LOG_TAIL_BYTES);
       const output = yield* vcsProcess
         .run({
@@ -1550,18 +1550,7 @@ export const make = Effect.gen(function* () {
             `${host}/${input.repository}`,
           ],
           cwd: input.cwd,
-          env: {
-            GH_DEBUG: "",
-            GH_PROMPT_DISABLED: "1",
-            GH_NO_UPDATE_NOTIFIER: "1",
-            NO_COLOR: "1",
-            GH_HOST: host,
-            ...(token === null
-              ? {}
-              : gitHubDotCom
-                ? { GH_TOKEN: token }
-                : { GH_ENTERPRISE_TOKEN: token }),
-          },
+          env: checkLogEnvironment(host, token),
           allowNonZeroExit: true,
           timeoutMs: CHECK_FAILURE_LOG_TIMEOUT_MS,
           maxOutputBytes: CHECK_FAILURE_LOG_TAIL_BYTES,

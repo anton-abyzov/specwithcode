@@ -168,16 +168,20 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
 /**
  * A `scheme://` remote without what it carries as a login: the password always, the user
  * unless the scheme is SSH (where it is the account name, part of the address), and any
- * query or fragment. Other spellings (scp-style, paths) are returned as they are.
+ * query or fragment. Git's `transport::address` form is cleaned the same way on its address.
+ * A `file://` path keeps every character, since `?` and `#` are part of a file name there.
+ * Other spellings (scp-style, paths) are returned as they are.
  */
 export function withoutRemoteUrlLogin(url: string): string {
+  const helper = /^([a-z][a-z0-9+.-]*)::/i.exec(url);
+  if (helper !== null) return `${helper[0]}${withoutRemoteUrlLogin(url.slice(helper[0].length))}`;
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(url);
   if (scheme === null) return url;
   const rest = url.slice(scheme[0].length);
   const authorityEnd = rest.search(/[/?#]/);
   const authority = authorityEnd === -1 ? rest : rest.slice(0, authorityEnd);
   const afterAuthority = authorityEnd === -1 ? "" : rest.slice(authorityEnd);
-  const queryStart = afterAuthority.search(/[?#]/);
+  const queryStart = /^file$/i.test(scheme[1] ?? "") ? -1 : afterAuthority.search(/[?#]/);
   const path = queryStart === -1 ? afterAuthority : afterAuthority.slice(0, queryStart);
   const at = authority.lastIndexOf("@");
   const host = authority.slice(at + 1);
