@@ -417,7 +417,9 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.equal(path.dirname(h.calls.trashed[0]!), path.dirname(bundle));
         assert.match(
           path.basename(h.calls.trashed[0]!),
-          /^\.Morning dashboard\.app\.removing-[0-9a-f]{32}$/,
+          new RegExp(
+            `^\\.Morning dashboard\\.app\\.removing-${result.app.installId}\\.[0-9a-f]{32}$`,
+          ),
         );
         assert.isFalse(yield* fileSystem.exists(bundle));
         assert.deepEqual(yield* h.records.list, []);
@@ -536,7 +538,12 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
 
         assert.isFalse(yield* h.installer.uninstall(result.app.installId));
         const [left] = yield* fileSystem.readDirectory(folder);
-        assert.match(left!, /^\.Morning dashboard\.app\.removing-[0-9a-f]{32}$/);
+        assert.match(
+          left!,
+          new RegExp(
+            `^\\.Morning dashboard\\.app\\.removing-${result.app.installId}\\.[0-9a-f]{32}$`,
+          ),
+        );
         assert.equal((yield* h.records.list).length, 1);
 
         // Something new at the old path is never touched.
@@ -630,6 +637,57 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
           assert.equal((yield* retry.records.list).length, 1);
         }),
       ),
+  );
+
+  // File modes do not stop Windows or root from reading.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "keeps the install while its own bundle cannot be read",
+    () =>
+      withHome(({ home, recordsPath, fileSystem, path }) =>
+        Effect.gen(function* () {
+          const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+          const result = yield* h.installer.install(input);
+          if (result.status !== "installed") return assert.fail("not installed");
+          const bundle = path.join(
+            home,
+            "Applications",
+            "SpecWithCode Apps",
+            "Morning dashboard.app",
+          );
+          const plist = path.join(bundle, "Contents", "Info.plist");
+          yield* fileSystem.chmod(plist, 0o000);
+          const uninstalled = yield* h.installer
+            .uninstall(result.app.installId)
+            .pipe(Effect.ensuring(fileSystem.chmod(plist, 0o644).pipe(Effect.orDie)));
+          assert.isFalse(uninstalled);
+          assert.deepEqual(h.calls.trashed, []);
+          assert.isTrue(yield* fileSystem.exists(bundle));
+          assert.equal((yield* h.records.list).length, 1);
+        }),
+      ),
+  );
+
+  it.effect("ignores another install's pending removal copy", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        const other = path.join(
+          folder,
+          `.Morning dashboard.app.removing-${"a".repeat(32)}.${"b".repeat(32)}`,
+        );
+        yield* fileSystem.copy(bundle, other);
+
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.equal(h.calls.trashed.length, 1);
+        assert.notEqual(h.calls.trashed[0], other);
+        assert.isTrue(yield* fileSystem.exists(other));
+        assert.deepEqual(yield* h.records.list, []);
+      }),
+    ),
   );
 
   it.effect("never removes through an apps folder that became a link", () =>

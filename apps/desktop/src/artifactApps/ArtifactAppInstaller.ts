@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -91,6 +92,7 @@ class ArtifactAppLauncherWriteError extends Schema.TaggedError<ArtifactAppLaunch
       "move-into-place",
       "write-shortcut",
       "remove-launcher",
+      "read-launcher",
     ]),
     path: Schema.String,
     cause: Schema.Defect(),
@@ -374,6 +376,18 @@ const make = Effect.gen(function* () {
   const isNotFound = (error: { readonly reason: { readonly _tag: string } }) =>
     error.reason._tag === "NotFound";
 
+  // A missing file reads as null (not this install's); any other read error
+  // fails, so a file that cannot be read is never taken for someone else's.
+  const readOrMissing =
+    (path: string) =>
+    <A>(read: Effect.Effect<A, PlatformError.PlatformError>) =>
+      read.pipe(
+        Effect.catchTags({
+          PlatformError: (error) => (isNotFound(error) ? Effect.succeed(null) : Effect.fail(error)),
+        }),
+        Effect.mapError(writeError("read-launcher", path)),
+      );
+
   const exists = (path: string) => fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
 
   const isSymbolicLink = (path: string) =>
@@ -412,9 +426,7 @@ const make = Effect.gen(function* () {
             current = rules.join(current, part);
             if (yield* isSymbolicLink(current)) return false;
           }
-          const onDisk = yield* fileSystem
-            .readFileString(current)
-            .pipe(Effect.orElseSucceed(() => null));
+          const onDisk = yield* fileSystem.readFileString(current).pipe(readOrMissing(current));
           if (onDisk !== file.contents) return false;
         }
         return true;
@@ -432,9 +444,7 @@ const make = Effect.gen(function* () {
         // Exactly the entry this install wrote, so an Exec pointed elsewhere is
         // not it. The Icon line is left out: the app's icon can move between
         // versions while the entry stays this install's.
-        const onDisk = yield* fileSystem
-          .readFileString(path)
-          .pipe(Effect.orElseSucceed(() => null));
+        const onDisk = yield* fileSystem.readFileString(path).pipe(readOrMissing(path));
         return onDisk !== null && withoutIconLine(onDisk) === withoutIconLine(location.contents);
       }
     }
@@ -651,13 +661,14 @@ const make = Effect.gen(function* () {
 
   /**
    * Copies of a macOS bundle a failed Trash left under a private removal name:
-   * exactly `.<name>.app.removing-<32 hex>`, nothing looser. A folder that
+   * exactly `.<name>.app.removing-<installId>.<32 hex>`, nothing looser, so another
+   * install's copies never block this one. A folder that
    * cannot be listed fails, so a pending removal is never mistaken for none.
    */
-  const pendingRemovals = (location: LauncherLocation) =>
+  const pendingRemovals = (location: LauncherLocation, installId: string) =>
     Effect.gen(function* () {
       if (location.kind !== "mac-bundle") return [] as ReadonlyArray<string>;
-      const prefix = `.${rules.basename(location.path)}.removing-`;
+      const prefix = `.${rules.basename(location.path)}.removing-${installId}.`;
       const entries = yield* fileSystem.readDirectory(location.folder).pipe(
         Effect.catchTags({
           PlatformError: (error) =>
@@ -690,8 +701,8 @@ const make = Effect.gen(function* () {
           // is never moved back: whatever appears at the old path is left
           // alone. A copy a failed Trash left under a private name is found
           // and trashed by the next uninstall, and its record stays until then.
-          const prefix = `.${rules.basename(location.path)}.removing-`;
-          const candidates = [...(yield* pendingRemovals(location))];
+          const prefix = `.${rules.basename(location.path)}.removing-${installId}.`;
+          const candidates = [...(yield* pendingRemovals(location, installId))];
           if (yield* owned(location.path)) {
             const claimed = rules.join(location.folder, `${prefix}${newArtifactAppInstallId()}`);
             // A random name nothing uses yet: a rename over an empty folder would replace it.
@@ -752,9 +763,12 @@ const make = Effect.gen(function* () {
       }
       // A removal a failed Trash left pending is finished first; when it cannot
       // be, the install fails and the record stays for uninstall to retry.
-      if (Option.isSome(location) && (yield* pendingRemovals(location.value)).length > 0) {
+      if (
+        Option.isSome(location) &&
+        (yield* pendingRemovals(location.value, existing.installId)).length > 0
+      ) {
         yield* removeLauncher(location.value, existing.installId);
-        if ((yield* pendingRemovals(location.value)).length > 0) {
+        if ((yield* pendingRemovals(location.value, existing.installId)).length > 0) {
           return failed("This page's earlier app is still being removed. Try again.");
         }
       }
@@ -843,7 +857,7 @@ const make = Effect.gen(function* () {
       yield* removeLauncher(location.value, installId);
       // A copy still under a private removal name (one this pass could not
       // read or trash) keeps the record too: the install is not gone yet.
-      if ((yield* pendingRemovals(location.value)).length > 0) {
+      if ((yield* pendingRemovals(location.value, installId)).length > 0) {
         yield* logWarning("installed page removal is still pending", { installId });
         return false;
       }
