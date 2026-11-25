@@ -2279,7 +2279,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
           variablesOf(action === "merge" ? "mergePullRequest(" : "enablePullRequestAutoMerge("),
         ).toEqual([
           {
-            input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "head-at-read" },
+            input: {
+              pullRequestId: "PR_7",
+              mergeMethod: "SQUASH",
+              expectedHeadOid: "head-at-read",
+            },
           },
         ]);
       }),

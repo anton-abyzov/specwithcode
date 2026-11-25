@@ -5933,7 +5933,11 @@ it.effect("returns large diff slices intact without retaining them in either cac
               commentsTruncated: false,
               reviewThreads: [],
               commits: [
-                { oid: "a".repeat(40), messageHeadline: "a", committedDate: "2026-11-20T00:00:00.000Z" },
+                {
+                  oid: "a".repeat(40),
+                  messageHeadline: "a",
+                  committedDate: "2026-11-20T00:00:00.000Z",
+                },
               ],
             }),
           getDiff: () =>
@@ -5968,7 +5972,10 @@ it.effect("returns large diff slices intact without retaining them in either cac
 
 const LISTED_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
-const commitScopedService = (seen: { diff: Array<string | undefined>; file: Array<string | undefined> }) =>
+const commitScopedService = (seen: {
+  diff: Array<string | undefined>;
+  file: Array<string | undefined>;
+}) =>
   makeService({
     projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
     providers: [
