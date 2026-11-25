@@ -560,16 +560,25 @@ export const make = Effect.gen(function* () {
   // Re-validate at delivery time that the user still has live work. A failed
   // read skips the start, as the other rechecks do: a start the relay cannot
   // confirm could birth an activity nothing ends, and the next publish while
-  // work is live queues a new one.
-  const userStillHasLiveWork = Effect.fnUntraced(function* (userId: string) {
+  // work is live queues a new one. The user's rows come only from machines
+  // they still have linked under the same key, so a start whose content names
+  // a machine that moved to another account is skipped too.
+  const startIsCurrent = Effect.fnUntraced(function* (
+    userId: string,
+    aggregate: RelayAgentActivityAggregateState | null,
+  ) {
     const now = yield* DateTime.now;
     return yield* activityRows.listForUser({ userId }).pipe(
-      Effect.map((states) =>
-        states.some(
-          (state) =>
-            !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
-        ),
-      ),
+      Effect.map((states) => {
+        const linked = new Set(states.map((state) => state.environmentId));
+        return (
+          (aggregate?.activities ?? []).every((row) => linked.has(row.environmentId)) &&
+          states.some(
+            (state) =>
+              !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
+          )
+        );
+      }),
       Effect.catchCause((cause) =>
         Effect.logWarning("live-work recheck failed; skipping queued start", { cause }).pipe(
           Effect.as(false),
@@ -773,7 +782,7 @@ export const make = Effect.gen(function* () {
     }
     if (
       input.kind === "live_activity_start" &&
-      !(yield* userStillHasLiveWork(input.target.user_id))
+      !(yield* startIsCurrent(input.target.user_id, aggregate))
     ) {
       yield* liveActivities.clearStartQueued({
         userId: input.target.user_id,

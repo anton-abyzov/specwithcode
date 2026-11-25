@@ -106,14 +106,36 @@ const failingRows = AgentActivityRows.AgentActivityRows.of({
     ),
 });
 
-const layerFor = (calls: { apns: number }) =>
+/** The user's rows: live work only on another machine of theirs. */
+const rowsOnOtherMachine = AgentActivityRows.AgentActivityRows.of({
+  ...failingRows,
+  listForUser: () =>
+    Effect.succeed([
+      {
+        environmentId: "env-kept" as never,
+        threadId: "thread-kept" as never,
+        projectTitle: "Kept",
+        threadTitle: "Kept thread",
+        modelTitle: "gpt-5.4",
+        phase: "running",
+        headline: "Running",
+        updatedAt: "9999-01-01T00:00:00.000Z",
+        deepLink: "/",
+      },
+    ]),
+});
+
+const layerFor = (
+  calls: { apns: number },
+  rows: AgentActivityRows.AgentActivityRows["Service"] = failingRows,
+) =>
   ApnsDeliveries.layer.pipe(
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(AgentActivityRows.AgentActivityRows, failingRows),
+        Layer.succeed(AgentActivityRows.AgentActivityRows, rows),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, { send: () => Effect.void }),
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
           pruneExpired: Effect.succeed(0),
@@ -228,5 +250,38 @@ describe("ApnsDeliveries when the delivery-time recheck fails", () => {
       expect(result).toMatchObject({ kind: "live_activity_start", apnsStatus: null });
       expect(calls.apns).toBe(0);
     }).pipe(Effect.provide(layerFor(calls)));
+  });
+
+  // The machine moved to another account after the start was queued. The user
+  // still has live work elsewhere, but the start's content is the moved
+  // machine's: it must not reach this user's phone.
+  it.effect("skips a queued start whose machine the user no longer has linked", () => {
+    const calls = { apns: 0 };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(
+        sign({
+          kind: "live_activity_start",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: "start-token",
+          aggregate: {
+            ...completed,
+            activeCount: 1,
+            activities: completed.activities.map((activity) => ({
+              ...activity,
+              environmentId: "env-moved" as never,
+              phase: "running",
+              status: "Working",
+            })),
+          },
+          createdAt: completedAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-start-moved-machine",
+        }),
+      );
+      expect(result).toMatchObject({ kind: "live_activity_start", apnsStatus: null });
+      expect(calls.apns).toBe(0);
+    }).pipe(Effect.provide(layerFor(calls, rowsOnOtherMachine)));
   });
 });
