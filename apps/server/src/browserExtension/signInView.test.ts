@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { newReceivingKey, seal, unseal } from "../fleet/fileTransfer/seal.ts";
 import { ChromeTools } from "./chromeTools.ts";
 import { connectFake, setup } from "./fakeChrome.testkit.ts";
+import { callTabIds } from "./relayHub.ts";
 import {
   checkSignInUrl,
   keyFingerprint,
@@ -47,6 +48,17 @@ const openFrame = (sealed: string, viewer: ReturnType<typeof newReceivingKey>): 
 
 const sealText = (publicKey: string, payload: SignInTextPayload) =>
   seal(Buffer.from(JSON.stringify(payload)), publicKey, SIGN_IN_SEAL_INFO);
+
+describe("which tabs a relay call acts in (1488)", () => {
+  it("names every tab a call can act in, and refuses one that names none", () => {
+    expect(callTabIds("chrome.tabs.remove", [[3, 4]])).toEqual([3, 4]);
+    expect(callTabIds("chrome.tabs.remove", [5])).toEqual([5]);
+    expect(callTabIds("chrome.tabs.update", [{ active: true }])).toBeNull();
+    expect(callTabIds("chrome.tabs.update", [6, { active: true }])).toEqual([6]);
+    expect(callTabIds("chrome.debugger.sendCommand", [{ tabId: 7 }, "Page.enable"])).toEqual([7]);
+    expect(callTabIds("chrome.tabs.query", [{}])).toEqual([]);
+  });
+});
 
 describe("sign-in view (1488)", () => {
   it("opens a fresh https tab, drops any old debugger session and watches for passkeys", async () => {
@@ -321,16 +333,79 @@ describe("sign-in view (1488)", () => {
     expect(listed.tabs.map((tab) => tab.tabId)).not.toContain(556);
     expect(extension.hub.heldForPerson(profile(), 556)).toBe(true);
 
+    // Found by its opener, it joins the view as the newest popup (review round 2, finding 2).
     const popupFrame = openFrame((await views.frame(viewId)).sealed, viewer).frame;
-    expect(popupFrame.startsWith("555:")).toBe(true);
+    expect(popupFrame.startsWith("556:")).toBe(true);
     await views.input(viewId, { type: "key", frame: popupFrame, key: "Tab" });
-    expect(tabOf(cdpCalls(fake, "Input.dispatchKeyEvent").at(-1))).toBe(555);
+    expect(tabOf(cdpCalls(fake, "Input.dispatchKeyEvent").at(-1))).toBe(556);
 
-    // Closed without a removal event: the next frame shows the main tab again.
+    // Closed without a removal event: the next frame shows the one below it.
+    fake.tabs.delete(556);
+    now += 1_000;
+    expect(openFrame((await views.frame(viewId)).sealed, viewer).frame.startsWith("555:")).toBe(
+      true,
+    );
     fake.tabs.delete(555);
     now += 1_000;
     const back = openFrame((await views.frame(viewId)).sealed, viewer).frame;
     expect(back.startsWith(`${main}:`)).toBe(true);
+  });
+
+  it("lets go of every tab it held on Done, popups found by their opener included", async () => {
+    const { extension, fake, views, tools, viewer, profile } = start();
+    const { viewId } = await views.start({
+      url: "https://app.squareup.com/login",
+      viewerKey: viewer.publicKey,
+    });
+    const main = newestTab(fake);
+    fake.tabs.set(700, {
+      id: 700,
+      url: "https://x.example/",
+      title: "",
+      active: false,
+      openerTabId: main,
+    });
+    await tools.tabs("t1", undefined);
+    expect(extension.hub.heldForPerson(profile(), 700)).toBe(true);
+    await views.done(viewId);
+    expect(extension.hub.heldForPerson(profile(), 700)).toBe(false);
+    expect(extension.hub.heldForPerson(profile(), main)).toBe(false);
+  });
+
+  it("closes its popups when the main tab closes, and never releases a tab Chrome did not confirm closed", async () => {
+    const { extension, fake, views, tools, viewer, profile, ends } = start();
+    const { viewId } = await views.start({
+      url: "https://app.squareup.com/login",
+      viewerKey: viewer.publicKey,
+    });
+    const main = newestTab(fake);
+    fake.tabs.set(701, {
+      id: 701,
+      url: "https://x.example/",
+      title: "",
+      active: false,
+      openerTabId: main,
+    });
+    await tools.tabs("t1", undefined);
+    fake.tabs.delete(main);
+    fake.session.receive(JSON.stringify({ method: "chrome.tabs.onRemoved", params: [main] }));
+    await vi.waitFor(() => expect(ends).toEqual([[viewId, "tab_closed"]]));
+    expect(
+      fake.calls.some((call) => call.method === "chrome.tabs.remove" && call.params[0] === 701),
+    ).toBe(true);
+    expect(extension.hub.heldForPerson(profile(), 701)).toBe(false);
+
+    // A transport failure is not a closed tab: the hold stays until Chrome says so.
+    const second = await views.start({
+      url: "https://app.squareup.com/login",
+      viewerKey: viewer.publicKey,
+    });
+    const tab = newestTab(fake);
+    fake.failNext.set("chrome.tabs.remove", "Chrome did not answer chrome.tabs.remove in time.");
+    fake.failNext.set("chrome.tabs.get", "That Chrome profile disconnected.");
+    await views.cancel(second.viewId);
+    expect(extension.hub.heldForPerson(profile(), tab)).toBe(true);
+    expect(fake.tabs.has(tab)).toBe(true);
   });
 
   it("answers a dialog and reports a passkey request only to the view, until the page changes", async () => {
@@ -365,7 +440,8 @@ describe("sign-in view (1488)", () => {
           "Runtime.bindingCalled",
           {
             name: "__swcSignInPasskey",
-            payload: JSON.stringify({ kind: "get", rpId: "squareup.com" }),
+            // A page script can name any site; the view names the one Chrome shows.
+            payload: JSON.stringify({ kind: "get", rpId: "accounts.google.com" }),
           },
         ],
       }),
@@ -373,7 +449,11 @@ describe("sign-in view (1488)", () => {
     await vi.waitFor(async () => {
       now += 1_000;
       const frame = openFrame((await views.frame(viewId)).sealed, viewer);
-      expect(frame.passkey).toEqual({ kind: "get", rpId: "squareup.com", notice: PASSKEY_NOTICE });
+      expect(frame.passkey).toEqual({
+        kind: "get",
+        rpId: "app.squareup.com",
+        notice: PASSKEY_NOTICE,
+      });
     });
     now += 1_000;
     const tab = fake.tabs.get(main)!;
@@ -484,6 +564,65 @@ describe("sign-in view (1488)", () => {
       ]),
     );
     await vi.waitFor(() => expect(extension.hub.heldForPerson(profile(), held)).toBe(false));
+  });
+
+  it("keeps holds when an install that had no instanceId starts sending one", async () => {
+    const { extension, token } = setup();
+    const fake = connectFake(extension, token, "Personal");
+    const views = new SignInViews(extension.hub);
+    const viewer = newReceivingKey();
+    await views.start({ url: "https://app.squareup.com/login", viewerKey: viewer.publicKey });
+    const held = newestTab(fake);
+    fake.session.closed();
+    const again = connectFake(extension, token, "Personal", undefined, "install-1");
+    again.tabs.set(held, { id: held, url: "https://app.squareup.com/", title: "", active: true });
+    expect(extension.hub.heldForPerson(extension.hub.profiles()[0]!, held)).toBe(true);
+    expect(views.open()).toHaveLength(1);
+  });
+
+  it("refuses input aimed at a frame it never showed, or one with no history entry", async () => {
+    const { fake, views, viewer } = start();
+    const { viewId } = await views.start({
+      url: "https://app.squareup.com/login",
+      viewerKey: viewer.publicKey,
+    });
+    const main = newestTab(fake);
+    // Never shown: the viewer cannot name a document it was not sent.
+    await expect(
+      views.input(viewId, { type: "click", frame: `${main}:1`, x: 1, y: 1 }),
+    ).rejects.toThrow(/page changed/);
+    fake.tabs.get(main)!.entry = -1;
+    const shown = openFrame((await views.frame(viewId)).sealed, viewer).frame;
+    expect(shown).toBe(`${main}:-1`);
+    await expect(views.input(viewId, { type: "click", frame: shown, x: 1, y: 1 })).rejects.toThrow(
+      /page changed/,
+    );
+  });
+
+  it("closes a popup that a cancelled view's page opened after the end", async () => {
+    const { extension, fake, views, viewer, profile } = start();
+    const { viewId } = await views.start({
+      url: "https://app.squareup.com/login",
+      viewerKey: viewer.publicKey,
+    });
+    const main = newestTab(fake);
+    await views.cancel(viewId);
+    // The opener's hold is gone, so re-hold by hand as a late opener report would.
+    fake.tabs.set(702, { id: 702, url: "https://x.example/", title: "", active: false });
+    extension.hub.holdForPerson(profile(), 702, viewId, main);
+    await vi.waitFor(() =>
+      expect(
+        fake.calls.some((call) => call.method === "chrome.tabs.remove" && call.params[0] === 702),
+      ).toBe(true),
+    );
+    await vi.waitFor(() => expect(extension.hub.heldForPerson(profile(), 702)).toBe(false));
+  });
+
+  it("leaves a held tab out of the Settings tab count", async () => {
+    const { extension, views, viewer } = start();
+    const before = (await extension.check()).profiles[0]!.tabCount;
+    await views.start({ url: "https://app.squareup.com/login", viewerKey: viewer.publicKey });
+    expect((await extension.check()).profiles[0]!.tabCount).toBe(before);
   });
 
   it("stops listening when disposed", async () => {

@@ -166,6 +166,8 @@ interface View {
   dialog: string | null;
   passkey: { kind: "get" | "create"; rpId: string; frame: string } | null;
   lastSeq: number;
+  /** Frames sent to the viewer, with the origin each showed; input must name one of them. */
+  readonly shown: Map<string, string>;
   ended: boolean;
 }
 
@@ -205,6 +207,15 @@ const originOf = (url: string) => {
   }
 };
 
+/** Only Chrome saying so proves a tab is closed; a dropped socket or a timeout does not. */
+export const tabGone = (error: unknown) =>
+  /no tab with id/i.test(error instanceof Error ? error.message : String(error));
+
+/** Orphaned teardowns are tried again this often, as well as on reconnect. */
+const ORPHAN_RETRY_MS = 30_000;
+/** Frames a person may still act on, per view. */
+const SHOWN_FRAMES = 20;
+
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
@@ -231,6 +242,9 @@ export class SignInViews {
   private readonly idleMs: number;
   private readonly onEnd: SignInViewsOptions["onEnd"];
   private readonly unsubscribe: () => void;
+  private orphanTimer: ReturnType<typeof setInterval> | null = null;
+  /** Views that ended, and whether their tabs close: a popup reported late follows its view. */
+  private readonly endedViews = new Map<string, boolean>();
 
   constructor(hub: BrowserRelayHub, options: SignInViewsOptions = {}) {
     this.hub = hub;
@@ -242,12 +256,36 @@ export class SignInViews {
     );
   }
 
-  /** Stop listening; open views end as cancelled. */
+  /** Open views end as cancelled and unfinished teardowns get one more try; then stop listening. */
   async dispose() {
-    this.unsubscribe();
     await Promise.allSettled(
       [...this.views.values()].map((view) => this.end(view, "cancelled", true)),
     );
+    await this.retryOrphans();
+    if (this.orphanTimer) clearInterval(this.orphanTimer);
+    this.orphanTimer = null;
+    this.unsubscribe();
+  }
+
+  private async retryOrphans() {
+    await Promise.allSettled(
+      [...this.orphans].map(async ([viewId, orphan]) => {
+        this.orphans.delete(viewId);
+        if (!(await this.teardown(orphan.view, orphan.closeTabs).catch(() => false)))
+          this.orphans.set(viewId, orphan);
+      }),
+    );
+    if (this.orphans.size === 0 && this.orphanTimer) {
+      clearInterval(this.orphanTimer);
+      this.orphanTimer = null;
+    }
+  }
+
+  private keepOrphan(view: View, closeTabs: boolean) {
+    this.orphans.set(view.id, { view, closeTabs });
+    if (this.orphanTimer) return;
+    this.orphanTimer = setInterval(() => void this.retryOrphans(), ORPHAN_RETRY_MS);
+    this.orphanTimer.unref?.();
   }
 
   private profile(view: View): RelayProfile {
@@ -361,6 +399,7 @@ export class SignInViews {
       dialog: null,
       passkey: null,
       lastSeq: 0,
+      shown: new Map(),
       ended: false,
     };
     this.views.set(id, view);
@@ -397,11 +436,14 @@ export class SignInViews {
   private async activeTab(view: View) {
     while (view.popups.length > 0) {
       const popup = view.popups.at(-1)!;
-      const open = await this.call(view, "chrome.tabs.get", [popup], 5_000).then(
-        () => true,
+      const gone = await this.call(view, "chrome.tabs.get", [popup], 5_000).then(
         () => false,
+        (error) => {
+          if (tabGone(error)) return true;
+          throw error;
+        },
       );
-      if (open) return popup;
+      if (!gone) return popup;
       this.dropPopup(view, popup);
     }
     return view.mainTab;
@@ -509,6 +551,9 @@ export class SignInViews {
       };
       const sealed = seal(Buffer.from(JSON.stringify(frame)), view.viewerKey, SIGN_IN_SEAL_INFO);
       view.lastFrame = { sealed, at: frame.at, location: after };
+      view.shown.delete(after.frame);
+      view.shown.set(after.frame, after.origin);
+      if (view.shown.size > SHOWN_FRAMES) view.shown.delete(view.shown.keys().next().value!);
       return { sealed };
     }
     throw new BrowserRelayError("page_error", "The page keeps changing. Try again in a moment.");
@@ -519,7 +564,13 @@ export class SignInViews {
     const tabId = await this.activeTab(view);
     await this.attach(view, tabId);
     const now = await this.location(view, tabId);
-    if (typeof frame !== "string" || frame !== now.frame) throw pageChanged();
+    if (
+      typeof frame !== "string" ||
+      frame !== now.frame ||
+      now.entryId < 0 ||
+      view.shown.get(frame) !== now.origin
+    )
+      throw pageChanged();
     return { tabId, location: now };
   }
 
@@ -649,36 +700,44 @@ export class SignInViews {
     view.lastFrame = null;
     this.views.delete(view.id);
     await Promise.allSettled(view.busy);
+    this.endedViews.set(view.id, closeTabs);
+    if (this.endedViews.size > 200) this.endedViews.delete(this.endedViews.keys().next().value!);
     const finished = await this.teardown(view, closeTabs);
-    if (!finished) this.orphans.set(view.id, { view, closeTabs });
+    if (!finished) this.keepOrphan(view, closeTabs);
     this.onEnd?.(view.id, end);
   }
 
   private async teardown(view: View, closeTabs: boolean): Promise<boolean> {
     const profile = this.hub.profileByPersonKey(view.personKey);
     if (!profile) return false;
-    const tabs = [view.mainTab, ...view.popups];
+    // Every tab held for this view, popups found by their opener included.
+    const tabs = [
+      ...new Set([view.mainTab, ...view.popups, ...this.hub.tabsHeldFor(profile, view.id)]),
+    ];
     const results = await Promise.allSettled(
       tabs.map(async (tabId) => {
         if (closeTabs) {
           await this.hub
             .call(profile.id, "chrome.tabs.remove", [tabId], 5_000, view.id)
             .catch(async (error) => {
-              // Already closed is closed.
-              const open = await this.hub
-                .call(profile.id, "chrome.tabs.get", [tabId], 5_000, view.id)
-                .then(
-                  () => true,
-                  () => false,
-                );
-              if (open) throw error;
+              if (tabGone(error)) return;
+              // Already closed is closed; only Chrome's own answer says so.
+              await this.hub.call(profile.id, "chrome.tabs.get", [tabId], 5_000, view.id).then(
+                () => {
+                  throw error;
+                },
+                (confirm) => {
+                  if (!tabGone(confirm)) throw error;
+                },
+              );
             });
         } else {
           await this.hub
             .call(profile.id, "chrome.debugger.detach", [{ tabId }], 5_000, view.id)
             .catch((error) => {
               if (
-                !/not attached|no tab/i.test(error instanceof Error ? error.message : String(error))
+                !tabGone(error) &&
+                !/not attached/i.test(error instanceof Error ? error.message : String(error))
               )
                 throw error;
             });
@@ -705,9 +764,14 @@ export class SignInViews {
       }
     }
     const view = this.views.get(viewId);
-    if (!view || view.ended || view.personKey !== profile.personKey) return;
+    if (!view || view.ended) {
+      if (event.kind === "popup") this.latePopup(profile, viewId, event.tabId);
+      return;
+    }
+    if (this.hub.profileByPersonKey(view.personKey) !== profile) return;
     switch (event.kind) {
       case "popup":
+        if (view.popups.includes(event.tabId) || event.tabId === view.mainTab) return;
         view.popups.push(event.tabId);
         view.lastFrame = null;
         // Attach at once, so the popup's own popups and its closing are reported too.
@@ -715,7 +779,8 @@ export class SignInViews {
         return;
       case "removed":
         if (event.tabId === view.mainTab) {
-          void this.end(view, "tab_closed", false);
+          // Not the person's choice: popups mid-sign-in close with it, never go to threads.
+          void this.end(view, "tab_closed", true);
           return;
         }
         this.dropPopup(view, event.tabId);
@@ -732,6 +797,27 @@ export class SignInViews {
     }
   }
 
+  /** A popup of a view that already ended: closed with a cancelled view, let go after Done. */
+  private latePopup(profile: RelayProfile, viewId: string, tabId: number) {
+    const closeTabs = this.endedViews.get(viewId);
+    const orphan = this.orphans.get(viewId);
+    if (orphan) return; // its retry finds the tab through the hold
+    if (closeTabs === undefined) return;
+    if (!closeTabs) {
+      this.hub.releasePersonTab(profile, tabId);
+      return;
+    }
+    void this.hub
+      .call(profile.id, "chrome.tabs.remove", [tabId], 5_000, viewId)
+      .then(
+        () => true,
+        (error) => tabGone(error),
+      )
+      .then((closed) => {
+        if (closed) this.hub.releasePersonTab(profile, tabId);
+      });
+  }
+
   private passkeyAsked(view: View, event: Extract<HeldTabEvent, { kind: "cdp" }>) {
     const call = (event.params ?? {}) as { name?: unknown; payload?: unknown };
     if (call.name !== PASSKEY_BINDING || typeof call.payload !== "string") return;
@@ -743,10 +829,14 @@ export class SignInViews {
     }
     const kind = asked.kind === "create" ? "create" : asked.kind === "get" ? "get" : null;
     if (!kind) return;
-    const rpId = typeof asked.rpId === "string" ? asked.rpId.slice(0, 253) : "";
-    // Tied to the document Chrome shows now; a navigation clears it.
+    // Tied to the document Chrome shows now; a navigation clears it. The site named is the one
+    // Chrome reports, never the one the page passes: any script on the page can call the binding.
     void this.location(view, event.tabId)
       .then((location) => {
+        let rpId = "";
+        try {
+          rpId = new URL(location.url).host;
+        } catch {}
         view.passkey = { kind, rpId, frame: location.frame };
         view.lastFrame = null;
       })

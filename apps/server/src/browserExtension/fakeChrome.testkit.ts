@@ -62,6 +62,14 @@ export function connectFake(
       }
       const params = message.params as unknown[];
       calls.push({ method: message.method, params });
+      // failNext also takes chrome.tabs.* names, for one failed call each.
+      const tabsFailure = message.method.startsWith("chrome.tabs.")
+        ? failNext.get(message.method)
+        : undefined;
+      if (tabsFailure !== undefined) {
+        failNext.delete(message.method);
+        return reply(message.id, { error: tabsFailure });
+      }
       switch (message.method) {
         case "chrome.tabs.query":
           return reply(message.id, { result: [...tabs.values()] });

@@ -222,7 +222,7 @@ export class ChromeTools {
     const holder =
       found?.openerTabId === undefined ? undefined : profile.personTabs.get(found.openerTabId);
     if (holder !== undefined) {
-      this.hub.holdForPerson(profile, target, holder);
+      this.hub.holdForPerson(profile, target, holder, found!.openerTabId);
       throw unavailableTab(target);
     }
     await this.attach(profile, target);
@@ -289,7 +289,7 @@ export class ChromeTools {
       const holder =
         tab.openerTabId === undefined ? undefined : profile.personTabs.get(tab.openerTabId);
       if (tab.id !== undefined && holder !== undefined)
-        this.hub.holdForPerson(profile, tab.id, holder);
+        this.hub.holdForPerson(profile, tab.id, holder, tab.openerTabId);
     }
     return {
       profile: profile.label,

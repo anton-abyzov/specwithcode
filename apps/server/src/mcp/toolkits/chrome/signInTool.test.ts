@@ -86,8 +86,8 @@ describe("chrome_sign_in_needed (1488)", () => {
       const { extension, cards, call } = harness(() => "allowed");
       const requestId = () => cards[0]!.subjects[0]!.key.slice("sign-in:".length);
       const waiting = yield* Effect.forkChild(call());
+      while (cards.length === 0) yield* Effect.yieldNow;
       yield* Effect.promise(async () => {
-        while (cards.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
         const started = await extension.signIn.start(requestId(), newReceivingKey().publicKey);
         await extension.signIn.end(started.viewId, "done");
       });
@@ -108,7 +108,7 @@ describe("chrome_sign_in_needed (1488)", () => {
     Effect.gen(function* () {
       const { call } = harness(() => "allowed", false);
       const error = yield* Effect.flip(call());
-      expect(error.reason).toMatch(/this machine's Chrome/);
+      expect(error.message).toMatch(/this machine's Chrome/);
     }),
   );
 });

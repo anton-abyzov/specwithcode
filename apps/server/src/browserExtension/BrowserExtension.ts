@@ -341,7 +341,13 @@ export function makeBrowserExtension(options: {
             id: profile.id,
             label: profile.label,
             ok: true,
-            tabCount: Array.isArray(tabs) ? tabs.length : 0,
+            // A tab held for a person's sign-in is not counted (1488).
+            tabCount: Array.isArray(tabs)
+              ? tabs.filter((tab) => {
+                  const id = (tab as { id?: unknown } | null)?.id;
+                  return typeof id !== "number" || !hub.heldForPerson(profile, id);
+                }).length
+              : 0,
             roundTripMs: Date.now() - started,
           };
         } catch (error) {
