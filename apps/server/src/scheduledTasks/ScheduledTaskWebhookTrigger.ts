@@ -40,6 +40,7 @@ import type {
   WebhookTriggerRequest,
   WebhookTriggerResult,
 } from "./ScheduledTaskTypes.ts";
+import { firstLineOf } from "./dispatchFailureReason.ts";
 import { redactHeaders, redactQuery, renderWebhookPrompt } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 
@@ -101,7 +102,8 @@ export const makeWebhookTrigger = Effect.fnUntraced(function* (deps: {
     outcome: row.outcome as ScheduledTaskWebhookDeliveryOutcome,
     signatureVerified: row.signature_verified === 1,
     missingFields: Option.getOrElse(decodeMissingFieldsJson(row.missing_fields_json), () => []),
-    error: row.error,
+    // One line, whichever writer stored it (a handoff reason can carry a machine label).
+    error: row.error === null ? null : firstLineOf(row.error),
   });
 
   const listWebhookDeliveries = (

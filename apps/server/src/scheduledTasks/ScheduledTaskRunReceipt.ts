@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { firstLineOf } from "./dispatchFailureReason.ts";
 import { taskError } from "./ScheduledTaskStorage.ts";
 
 const json = Schema.fromJsonString(ScheduledTask);
@@ -49,7 +50,11 @@ export const reserveRun = Effect.fn("ScheduledTaskService.reserveRun")(function*
             reason: "run_outcome_unknown",
             taskId: task.id,
           });
-        return yield* decode(receipt.result_json);
+        // A receipt written before the one-line rule replays with a one-line reason too.
+        const replayed = yield* decode(receipt.result_json);
+        return replayed.lastRunError === null
+          ? replayed
+          : { ...replayed, lastRunError: firstLineOf(replayed.lastRunError) };
       }),
     )
     .pipe(
