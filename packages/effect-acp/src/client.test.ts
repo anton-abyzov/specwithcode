@@ -378,6 +378,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -476,6 +477,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             clientCapabilities: {
               fs: { readTextFile: false, writeTextFile: false },
               terminal: false,
+              elicitation: { form: {} },
             },
             clientInfo: {
               name: "effect-acp-test",
@@ -531,7 +533,10 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           Ref.update(updates, (current) => [...current, notification]),
         );
 
-        yield* acp.agent.initialize({ protocolVersion: 2 });
+        yield* acp.agent.initialize({
+          protocolVersion: 2,
+          clientCapabilities: { elicitation: { form: {} } },
+        });
         yield* acp.agent.authenticate({ methodId: "cursor_login" });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
         yield* acp.agent.prompt({
@@ -654,6 +659,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -733,6 +739,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -767,6 +774,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            elicitation: { form: {} },
           },
           clientInfo: {
             name: "effect-acp-test",
@@ -1467,7 +1475,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.agent.initialize({
           protocolVersion: 2,
-          clientCapabilities: {},
+          clientCapabilities: { elicitation: { form: {} } },
           clientInfo: { name: "effect-acp-test", version: "0.0.0" },
         });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
@@ -1514,7 +1522,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         );
         yield* acp.agent.initialize({
           protocolVersion: 2,
-          clientCapabilities: {},
+          clientCapabilities: { elicitation: { form: {} } },
           clientInfo: { name: "effect-acp-test", version: "0.0.0" },
         });
         const session = yield* acp.agent.createSession({ cwd: process.cwd(), mcpServers: [] });
@@ -1688,5 +1696,86 @@ it.effect("returns method-not-found when SDK elicitation has no question handler
     );
     const response = yield* decodeWireError(yield* Queue.take(output));
     assert.equal(response.error.code, -32601);
+  }).pipe(Effect.scoped),
+);
+
+/**
+ * Initializes a client that advertises `elicitation`, then sends it an
+ * `elicitation/create` request and returns the wire answer and handler calls.
+ */
+const elicitAfterInitialize = (
+  elicitation: AcpSchema.ClientCapabilities["elicitation"],
+  params: Record<string, unknown>,
+) =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    const acp = yield* AcpClient.make(stdio);
+    let calls = 0;
+    yield* acp.handleElicitation(() => {
+      calls++;
+      return Effect.succeed({ action: "cancel" as const });
+    });
+    const initializeFiber = yield* acp.agent
+      .initialize({
+        protocolVersion: 1,
+        clientInfo: { name: "effect-acp-test", version: "0.0.0" },
+        clientCapabilities: elicitation === undefined ? {} : { elicitation },
+      })
+      .pipe(Effect.forkScoped);
+    const initializeRequest = yield* Queue.take(output).pipe(
+      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(InitializeRequestV1))),
+    );
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(InitializeResponseV1, {
+        jsonrpc: "2.0",
+        id: initializeRequest.id,
+        result: { ...antigravityInitialize, protocolVersion: 1 },
+      }),
+    );
+    yield* Fiber.join(initializeFiber);
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(jsonRpcRequest("elicitation/create", Schema.Unknown), {
+        jsonrpc: "2.0",
+        id: 75,
+        headers: [],
+        method: "elicitation/create",
+        params,
+      }),
+    );
+    const answer = yield* decodeWireResponse(yield* Queue.take(output));
+    return { answer: answer as { readonly error?: { readonly code?: number } }, calls };
+  });
+
+const elicitationUrl = {
+  sessionId: "session-1",
+  mode: "url" as const,
+  elicitationId: "sign-in",
+  url: "https://example.com/sign-in",
+  message: "Sign in",
+};
+
+it.effect("refuses an elicitation mode the client did not advertise", () =>
+  Effect.gen(function* () {
+    const urlToFormOnly = yield* elicitAfterInitialize({ form: {} }, elicitationUrl);
+    assert.equal(urlToFormOnly.answer.error?.code, -32602);
+    assert.equal(urlToFormOnly.calls, 0);
+
+    const formToNone = yield* elicitAfterInitialize(undefined, elicitationForm);
+    assert.equal(formToNone.answer.error?.code, -32602);
+    assert.equal(formToNone.calls, 0);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("still answers elicitation modes the client advertised", () =>
+  Effect.gen(function* () {
+    const form = yield* elicitAfterInitialize({ form: {} }, elicitationForm);
+    assert.equal(form.answer.error, undefined);
+    assert.equal(form.calls, 1);
+
+    const url = yield* elicitAfterInitialize({ form: {}, url: {} }, elicitationUrl);
+    assert.equal(url.answer.error, undefined);
+    assert.equal(url.calls, 1);
   }).pipe(Effect.scoped),
 );
