@@ -88,13 +88,6 @@ const COLD_IDENTITY_DELAY = Duration.millis(500);
 const MAX_REMOTE_PROJECT_PAGES = 5;
 const LAUNCH_TIMEOUT_MS = 60_000;
 
-/**
- * Another machine's "No project" folder, as its project list shows it: the
- * title every such folder is made with, in a folder named for scratch work.
- */
-export const isScratchEntry = (project: Pick<Project, "title" | "workspaceRoot">): boolean =>
-  project.title === "No project" && /scratch/i.test(project.workspaceRoot);
-
 /** The saved entry for `machine` in the project's worker machine list, if any. */
 export function savedWorkerMachine(
   project: Project,
@@ -414,6 +407,8 @@ interface Probe extends MachineProbeFacts {
   readonly projects: ReadonlyArray<Project>;
   /** Whether the project list ended within the page cap. */
   readonly complete: boolean;
+  /** That machine's "No project" folders, as it named them; older machines name none. */
+  readonly scratchProjectIds: ReadonlySet<string>;
 }
 
 const make = Effect.gen(function* () {
@@ -601,6 +596,7 @@ const make = Effect.gen(function* () {
       let cursor: number | null = 0;
       // A page without a project array is not an empty list: the list is then incomplete.
       let readable = true;
+      const scratchProjectIds = new Set<string>();
       for (let page = 0; page < MAX_REMOTE_PROJECT_PAGES && cursor !== null; page++) {
         const result: unknown = yield* client.call({
           machineId: machine.id,
@@ -612,6 +608,8 @@ const make = Effect.gen(function* () {
           break;
         }
         listed.push(...(result.projects.filter(isRecord) as unknown as Project[]));
+        if (typeof result.scratchProjectId === "string")
+          scratchProjectIds.add(result.scratchProjectId);
         cursor = typeof result.nextCursor === "number" ? result.nextCursor : null;
       }
       const next: Probe = {
@@ -619,6 +617,7 @@ const make = Effect.gen(function* () {
         providers: readProviders(capabilities),
         projects: listed,
         complete: readable && cursor === null,
+        scratchProjectIds,
         ...readMachineProbeFacts(capabilities),
       };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
@@ -716,7 +715,8 @@ const make = Effect.gen(function* () {
               // will be, so it is no sign of repositories still being read.
               const unread = () =>
                 listed.projects.some(
-                  (candidate) => !candidate.repositoryIdentity && !isScratchEntry(candidate),
+                  (candidate) =>
+                    !candidate.repositoryIdentity && !listed.scratchProjectIds.has(candidate.id),
                 );
               // A machine that just started may not have read its repositories yet: ask
               // again, as a launch does, before a fresh read says nothing matches.

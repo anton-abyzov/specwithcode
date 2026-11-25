@@ -234,6 +234,8 @@ const setup = (input: {
         interruptThread: (_scope, input) => reach(input.threadId),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        // "unlinked" stands in for this machine's "No project" folder.
+        isScratch: (projectId) => Effect.succeed(projectId === otherProject),
         namedProjectsRoot: "/projects",
         suggestedProjectsRoot: "/projects",
         // A parent that already is a project here, and one that is not.
@@ -795,6 +797,8 @@ describe("a personal assistant here, seen by another machine's work", () => {
       const ids = (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id);
       expect(ids).toEqual(expect.arrayContaining([linkedProject, otherProject]));
       expect(ids).not.toContain(householdProject);
+      // The list names this machine's "No project" folder for the other machine.
+      expect(listed.scratchProjectId).toBe(otherProject);
       const read = yield* world.call("studio_project_read", world.clientScope(M4), {
         projectId: householdProject,
       });

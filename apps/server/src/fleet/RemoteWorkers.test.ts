@@ -521,7 +521,24 @@ describe("RemoteWorkers", () => {
       orchestrator_capabilities: () => ({ result: { ...capabilities, grantProjects: "all" } }),
       studio_project_list: () => {
         lists++;
-        return { result: { projects: [scratch], nextCursor: null } };
+        return { result: { projects: [scratch], nextCursor: null, scratchProjectId: scratch.id } };
+      },
+    });
+    let lookalikeLists = 0;
+    // A real checkout with the same name and a scratch-like path, still being read: M1
+    // does not call it its "No project" folder, so the read waits and says nothing.
+    const lookalike = setup({
+      orchestrator_capabilities: () => ({ result: { ...capabilities, grantProjects: "all" } }),
+      studio_project_list: () => {
+        lookalikeLists++;
+        return {
+          result: {
+            projects: [
+              { ...scratch, id: "remote-real", workspaceRoot: "C:\\work\\scratchpad\\app" },
+            ],
+            nextCursor: null,
+          },
+        };
       },
     });
     let reads = 0;
@@ -549,6 +566,8 @@ describe("RemoteWorkers", () => {
         project: { match: "none" },
       });
       expect(lists).toBe(1);
+      expect(yield* read(lookalike)).not.toHaveProperty("project");
+      expect(lookalikeLists).toBeGreaterThan(1);
       expect(yield* read(narrowed)).toMatchObject({
         projectScope: "listed",
         status: "project_not_in_grant",

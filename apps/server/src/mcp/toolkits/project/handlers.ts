@@ -981,7 +981,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       );
       const start = input.cursor ?? 0,
         end = start + (input.limit ?? 20);
-      return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
+      const page = rows.slice(start, end);
+      // Another machine reading this list for a checkout tells this machine's
+      // "No project" folder from a repository still being read.
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const scratch = yield* Effect.findFirst(page, (project) => folders.isScratch(project.id));
+      return {
+        projects: page,
+        nextCursor: end < rows.length ? end : null,
+        ...(Option.isSome(scratch) ? { scratchProjectId: scratch.value.id } : {}),
+      };
     }),
   ),
   studio_project_read: McpToolAccess.reads((input) =>

@@ -90,7 +90,10 @@ const ProjectListTool = Tool.make("studio_project_list", {
   success: Schema.Struct({
     projects: Schema.Array(Project),
     nextCursor: Schema.NullOr(NonNegativeInt),
+    /** This machine's "No project" folder when it is on this page; it has no repository. */
+    scratchProjectId: Schema.optional(ProjectId),
   }),
+  dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
