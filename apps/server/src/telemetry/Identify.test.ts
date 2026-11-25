@@ -33,11 +33,8 @@ const makeCaptureLogger = (logs: CapturedLog[]) =>
     });
   });
 
-const findIdentityLog = (
-  logs: ReadonlyArray<CapturedLog>,
-  source: string,
-  errorTag: string,
-) => logs.find((log) => log.annotations.source === source && log.annotations.errorTag === errorTag);
+const findIdentityLog = (logs: ReadonlyArray<CapturedLog>, source: string, errorTag: string) =>
+  logs.find((log) => log.annotations.source === source && log.annotations.errorTag === errorTag);
 
 it.layer(NodeServices.layer)("telemetry identity", (it) => {
   it.effect("uses the persisted anonymous id when provider identities are absent", () =>
