@@ -1,9 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@specweave-studio/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import {
+  FLEET_INVITE_SCOPES,
+  FLEET_REDEEM_WINDOW,
+  fleetRedeemSubject,
+} from "../fleet/fleetRedemption.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -102,6 +108,39 @@ it.layer(NodeServices.layer)("revoke other clients", (it) => {
         client: { deviceType: "bot" },
         revocationEpoch: yield* auth.revocationEpoch,
       });
+    }).pipe(Effect.provide(layerEnvironmentAuth)),
+  );
+
+  it.effect("refuses a fleet session whose line was spent before the revoke", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const owner = yield* auth.issueSession();
+      const fleetLine = auth
+        .createPairingLink({
+          subject: fleetRedeemSubject(30),
+          principal: { kind: "coordinator", environmentId: EnvironmentId.make("env-coordinator") },
+          scopes: [...FLEET_INVITE_SCOPES],
+          label: "Fleet worker",
+          ttl: FLEET_REDEEM_WINDOW,
+        })
+        .pipe(Effect.map((issued) => issued.credential));
+      // What the redeem route does, in its two steps: spend the line, then issue.
+      const issueFor = (redeemed: Effect.Success<ReturnType<typeof auth.consumeFleetRedemption>>) =>
+        auth.issueSession({
+          principal: redeemed.principal,
+          scopes: redeemed.scopes,
+          revocationEpoch: redeemed.revocationEpoch,
+        });
+
+      const spent = yield* auth.consumeFleetRedemption(yield* fleetLine);
+      yield* auth.revokeOtherClientSessions(owner.sessionId);
+      const refused = yield* Effect.flip(issueFor(spent));
+      expect(refused._tag).toBe("ServerAuthSessionTokenIssueError");
+
+      // A line spent after the revoke still redeems.
+      const fresh = yield* auth.consumeFleetRedemption(yield* fleetLine);
+      const issued = yield* issueFor(fresh);
+      yield* auth.authenticateHttpRequest(bearer(issued.token));
     }).pipe(Effect.provide(layerEnvironmentAuth)),
   );
 });

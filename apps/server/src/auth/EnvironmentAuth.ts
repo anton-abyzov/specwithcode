@@ -309,6 +309,11 @@ export class EnvironmentAuth extends Context.Service<
       readonly ipAddress?: string;
       /** No row: lives in this process only (SessionStore `issue` `inMemory`). */
       readonly inMemory?: boolean;
+      /**
+       * For a session that a spent credential pays for: `revocationEpoch` from
+       * before it was spent. A revoke-all since then refuses the session.
+       */
+      readonly revocationEpoch?: number | undefined;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     /**
      * Spends a v2 fleet invitation's one-time credential. Only a grant this
@@ -323,6 +328,8 @@ export class EnvironmentAuth extends Context.Service<
         readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
         readonly label?: string;
         readonly days: number;
+        /** Read before the credential was spent; pass it to `issueSession`. */
+        readonly revocationEpoch: number;
       },
       ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
@@ -1388,8 +1395,8 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.revokePairingLink"),
     );
 
-  const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
-    sessions
+  const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) => {
+    const issue = sessions
       .issue({
         subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
         ...(input?.principal
@@ -1420,12 +1427,37 @@ export const make = Effect.gen(function* () {
             }) satisfies IssuedBearerSession,
         ),
         Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })),
-        Effect.withSpan("EnvironmentAuth.issueSession"),
       );
+    return (
+      input?.revocationEpoch === undefined
+        ? issue
+        : revocation.issueIfUnrevoked(
+            input.revocationEpoch,
+            issue,
+            () =>
+              new ServerAuthSessionTokenIssueError({
+                cause: new Error(
+                  "Every other client was signed out while this sign-in was pending.",
+                ),
+              }),
+          )
+    ).pipe(Effect.withSpan("EnvironmentAuth.issueSession"));
+  };
 
   const consumeFleetRedemption: EnvironmentAuth["Service"]["consumeFleetRedemption"] = (
     credential,
   ) =>
+    // Read before the spend, as every exchange does: the session is issued in a second call.
+    revocation.current.pipe(
+      Effect.flatMap((revocationEpoch) =>
+        consumeFleetRedeemGrant(credential).pipe(
+          Effect.map((redeemed) => ({ ...redeemed, revocationEpoch })),
+        ),
+      ),
+      Effect.withSpan("EnvironmentAuth.consumeFleetRedemption"),
+    );
+
+  const consumeFleetRedeemGrant = (credential: string) =>
     bootstrapCredentials.consume(credential).pipe(
       Effect.mapError(toBootstrapExchangeError),
       Effect.flatMap(refuseRemovedCreator),
@@ -1452,7 +1484,6 @@ export const make = Effect.gen(function* () {
               }),
             );
       }),
-      Effect.withSpan("EnvironmentAuth.consumeFleetRedemption"),
     );
 
   const listSessions: EnvironmentAuth["Service"]["listSessions"] = () =>
