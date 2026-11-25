@@ -203,6 +203,9 @@ describe("request log", () => {
         HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
         HttpClientRequest.post(`${WEBHOOK_ROUTE_PREFIX}/task-1/webhook-token`),
+        // Spelled differently, the router still sends them there.
+        HttpClientRequest.get(`${ASSET_ROUTE_PREFIX.toUpperCase()}/payload.signature/image.png`),
+        HttpClientRequest.post(`/${WEBHOOK_ROUTE_PREFIX}/task-1/webhook-token`),
       ]) {
         expect((yield* client.execute(request)).status).toBe(204);
       }
