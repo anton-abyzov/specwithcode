@@ -114,6 +114,27 @@ describe("version history", () => {
     expect(rows[2]).toContain("changed B2");
   });
 
+  it("keeps an edit that lost to one made at the same time on record", () => {
+    const html = renderToStaticMarkup(
+      <DocumentActivityList
+        activity={[
+          {
+            id: 4,
+            at: "2026-11-25T10:03:00.000Z",
+            by: { id: "w2", kind: "window" },
+            cells: 0,
+            layout: false,
+            superseded: true,
+          },
+        ]}
+        presence={PRESENCE}
+      />,
+    );
+    expect(html).toContain("Window 2");
+    expect(html).toContain("made an edit that a change at the same time replaced");
+    expect(html).not.toContain("changed the layout");
+  });
+
   it("says so when nothing has changed", () => {
     expect(renderToStaticMarkup(<DocumentActivityList activity={[]} presence={[]} />)).toContain(
       "No changes since this document was opened.",

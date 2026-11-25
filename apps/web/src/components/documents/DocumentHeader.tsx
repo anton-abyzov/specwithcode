@@ -254,6 +254,8 @@ export function DocumentActivityList(props: {
       ? tx("The file on disk")
       : (names.get(by.id) ?? by.label ?? (by.kind === "agent" ? tx("An agent") : tx("A window")));
   const what = (entry: DocumentSessionActivity): string => {
+    if (entry.superseded === true)
+      return tx("made an edit that a change at the same time replaced");
     if (entry.cells === 0) return tx("changed the layout");
     const cells =
       entry.cells === 1 && entry.first !== undefined

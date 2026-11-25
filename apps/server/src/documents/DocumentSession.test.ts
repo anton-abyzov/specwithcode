@@ -240,7 +240,13 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         expect(cells().B2).toBe(left.cells().B2);
         // Both edits are in the document's activity, each under its own window.
         const activity = seen.map((event) => event.activity!);
-        expect(activity.map((entry) => entry.first)).toEqual(["Plan!B2", "Plan!B2"]);
+        // The second either changed the cell again or lost to the first; which is settled by the merge.
+        const secondStands = left.cells().B2 === 900;
+        expect(activity.map((entry) => entry.first)).toEqual([
+          "Plan!B2",
+          secondStands ? "Plan!B2" : undefined,
+        ]);
+        expect(activity.map((entry) => entry.superseded === true)).toEqual([false, !secondStands]);
         expect(new Set(activity.map((entry) => entry.by.id)).size).toBe(2);
       }),
     );
@@ -415,6 +421,9 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
           yield* sessions.settleAll;
           expect([1500, 900]).toContain(cells().B2);
           expect(window.cells().B2).toBe(cells().B2);
+          // Whichever value stands, the window's edit is on record: as a change, or as one that lost.
+          expect(second.activity?.superseded === true).toBe(cells().B2 === 900);
+          expect(second.activity?.cells).toBe(cells().B2 === 900 ? 0 : 1);
           // A later window is told of both.
           const later = yield* openWindow(target, "window-bbbb");
           expect(later.first.activity.map((entry) => entry.by.kind)).toEqual(["agent", "window"]);

@@ -73,6 +73,8 @@ export const DocumentSessionActivity = Schema.Struct({
   first: Schema.optionalKey(bounded(120)),
   /** Whether anything but cell inputs changed. */
   layout: Schema.Boolean,
+  /** The change merged, but a change made at the same time to the same place is the one that shows. */
+  superseded: Schema.optionalKey(Schema.Boolean),
 });
 export type DocumentSessionActivity = typeof DocumentSessionActivity.Type;
 

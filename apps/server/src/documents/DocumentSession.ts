@@ -43,6 +43,7 @@ import {
   applySheetUpdate,
   cloneSheetYDoc,
   encodeSheetState,
+  encodeSheetStateVector,
   onSheetUpdate,
   readSheetYDoc,
   sheetUpdateFromBase64,
@@ -259,9 +260,12 @@ const make = Effect.gen(function* () {
     by: DocumentSessionActivity["by"],
     before: SheetDocument,
     after: SheetDocument,
+    /** The change added to the merge state; with nothing to show for it, another change stands in its place. */
+    added = false,
   ) {
     const summary = summarizeSheetChange(before, after);
-    if (summary.cells === 0 && !summary.layout) return undefined;
+    const superseded = summary.cells === 0 && !summary.layout;
+    if (superseded && !added) return undefined;
     session.counter += 1;
     const entry: DocumentSessionActivity = {
       id: session.counter,
@@ -270,6 +274,7 @@ const make = Effect.gen(function* () {
       cells: summary.cells,
       layout: summary.layout,
       ...(summary.first === undefined ? {} : { first: summary.first.slice(0, 120) }),
+      ...(superseded ? { superseded: true } : {}),
     };
     session.activity = [...session.activity, entry].slice(-DOCUMENT_SESSION_ACTIVITY_LIMIT);
     return entry;
@@ -630,7 +635,10 @@ const make = Effect.gen(function* () {
           const checked = sheetFileText(trialSnapshot);
           if (!checked.ok) return yield* refuse("refused", checked.error);
           const before = session.current;
+          const held = sheetUpdateToBase64(encodeSheetStateVector(session.doc));
           applySheetUpdate(session.doc, bytes, WINDOW_ORIGIN);
+          // New writes that change nothing on screen lost to a change made at the same time.
+          const added = sheetUpdateToBase64(encodeSheetStateVector(session.doc)) !== held;
           session.current = { document: checked.document, tabIds: trialSnapshot.tabIds };
           session.pending.push(bytes);
           session.dirty = true;
@@ -640,6 +648,7 @@ const make = Effect.gen(function* () {
             { id, kind: "window", color },
             before.document,
             checked.document,
+            added,
           );
           send(session, {
             type: "update",
