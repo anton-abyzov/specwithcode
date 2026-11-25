@@ -426,15 +426,29 @@ describe("ArtifactAppWindows", () => {
       landed("about:blank");
       landed("https://example.com/top", true);
       assert.isTrue(yield* windows.isFrameOnVersion(ID));
-      // A frame seen anywhere else ends it, until a version is set again.
+      // A frame seen anywhere else ends it, until a version is set again, and says so once.
+      const strayed: Array<string> = [];
+      yield* windows.onFrameStrayed(() => {
+        throw new Error("a listener that fails");
+      });
+      yield* windows.onFrameStrayed((installId) => strayed.push(installId));
       landed("https://example.com/next");
       assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID]);
       landed(VERSION);
+      landed("https://example.com/again");
       assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID]);
       yield* windows.setVersionUrl(ID, Option.some(VERSION));
       assert.isTrue(yield* windows.isFrameOnVersion(ID));
       landed(undefined);
       assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID, ID]);
+      // A page process that ended is a new document: the version is over as well.
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      emit(fake.contentsListeners, "render-process-gone", {}, { reason: "crashed" });
+      assert.isFalse(yield* windows.isFrameOnVersion(ID));
+      assert.deepEqual(strayed, [ID, ID, ID]);
 
       // An address that is not a web address sets no version at all.
       for (const bad of ["file:///etc/passwd", "studio://app/", "data:text/html,x", "nope"]) {

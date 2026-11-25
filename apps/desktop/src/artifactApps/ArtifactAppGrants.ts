@@ -5,8 +5,8 @@
  * that changed afterwards.
  *
  * Reading never grants by mistake: a file that is missing, malformed, from a
- * newer build or unreadable, an entry that does not decode, and two entries
- * for one version all read as "no answer".
+ * newer build or unreadable, a file with any entry that does not decode, and
+ * two entries for one version all read as "no answer".
  */
 import { ArtifactAppInstallIdSchema, ArtifactAppPowerSchema } from "@specweave-studio/contracts";
 import { fromLenientJson } from "@specweave-studio/shared/schemaJson";
@@ -113,7 +113,8 @@ function parseGrants(raw: string): GrantsRead {
   const ambiguous = new Set<string>();
   for (const entry of entries) {
     const grant = decodeGrant(entry);
-    if (Option.isNone(grant)) continue;
+    // An entry this build cannot read may be the newer answer for a version read below.
+    if (Option.isNone(grant)) return { _tag: "Malformed" };
     const key = keyOf(grant.value);
     // Two answers for one version cannot both be the person's last word, so neither counts.
     if (byKey.has(key)) ambiguous.add(key);

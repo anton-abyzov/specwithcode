@@ -192,7 +192,7 @@ const make = Effect.gen(function* () {
     );
 
   /** Gives back everything the install holds on the desktop. The one teardown. */
-  const releaseUnlocked = (installId: string) =>
+  const releaseHeld = (installId: string, session: Session | undefined) =>
     Effect.gen(function* () {
       // A copy: entries are deleted while walking.
       for (const [canonical, owner] of Array.from(shortcuts)) {
@@ -200,7 +200,6 @@ const make = Effect.gen(function* () {
         shortcuts.delete(canonical);
         yield* host.unregisterShortcut(canonical);
       }
-      const session = sessions.get(installId);
       if (session === undefined) return;
       const { tray, onTop } = session;
       session.tray = undefined;
@@ -211,19 +210,19 @@ const make = Effect.gen(function* () {
         if (Option.isSome(window)) yield* host.setAlwaysOnTop(window.value, false);
       }
     });
+  const releaseUnlocked = (installId: string) => releaseHeld(installId, sessions.get(installId));
   const release = (installId: string) => lock.withPermits(1)(releaseUnlocked(installId));
 
   yield* windows.onClosed((installId) => {
-    runFork(
-      release(installId).pipe(
-        Effect.ensuring(
-          // The notification count stays: closing a window does not start a new minute.
-          Effect.sync(() => {
-            sessions.delete(installId);
-          }),
-        ),
-      ),
-    );
+    // The version ends here and now, so a request already in flight finds no session when
+    // it comes to act. The notification count stays: closing a window does not start a new minute.
+    const session = sessions.get(installId);
+    sessions.delete(installId);
+    runFork(lock.withPermits(1)(releaseHeld(installId, session)));
+  });
+  // A frame that left its version, or a page process that ended, gives everything back at once.
+  yield* windows.onFrameStrayed((installId) => {
+    runFork(release(installId));
   });
 
   /**
@@ -238,8 +237,12 @@ const make = Effect.gen(function* () {
       if (!(yield* windows.isFrameOnVersion(installId))) return Option.none<Verified>();
       const { version, powers } = yield* grantedNow(installId, session.attachmentId);
       if (Option.isNone(version) || powers.length === 0) return Option.none<Verified>();
-      // The window may have moved to another version while the file was read.
+      // The file was read meanwhile. The window may have closed, been replaced, moved to
+      // another version, or its frame may have left: each is asked again, now.
       if (sessions.get(installId) !== session) return Option.none<Verified>();
+      const current = yield* windows.windowForInstall(installId);
+      if (Option.isNone(current) || current.value !== window.value) return Option.none<Verified>();
+      if (!(yield* windows.isFrameOnVersion(installId))) return Option.none<Verified>();
       return Option.some<Verified>({ window: window.value, app: version.value.app, powers });
     }).pipe(Effect.catchCause(() => Effect.succeed(Option.none<Verified>())));
 
@@ -250,12 +253,18 @@ const make = Effect.gen(function* () {
     power: ArtifactAppPower,
     event: DesktopArtifactAppPowerEvent,
   ) =>
-    Effect.gen(function* () {
-      const verified = yield* verify(installId, session);
-      if (Option.isNone(verified)) return yield* release(installId);
-      if (!verified.value.powers.includes(power)) return;
-      yield* host.sendToWindow(verified.value.window, ARTIFACT_APP_POWER_EVENT_CHANNEL, event);
-    }).pipe(Effect.catchCause(() => release(installId)));
+    // Under the lock, like a request: turning off or closing cannot slip in between the
+    // check and the event.
+    lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const verified = yield* verify(installId, session);
+          if (Option.isNone(verified)) return yield* releaseUnlocked(installId);
+          if (!verified.value.powers.includes(power)) return;
+          yield* host.sendToWindow(verified.value.window, ARTIFACT_APP_POWER_EVENT_CHANNEL, event);
+        }),
+      )
+      .pipe(Effect.catchCause(() => release(installId)));
 
   const run = Effect.fnUntraced(function* (
     installId: string,
@@ -389,16 +398,21 @@ const make = Effect.gen(function* () {
       );
 
   const state = (installId: string, session: Session) =>
-    grantedNow(installId, session.attachmentId).pipe(
-      Effect.map(({ version, powers }): DesktopArtifactAppPermissions => ({
+    Effect.gen(function* () {
+      const { version, powers } = yield* grantedNow(installId, session.attachmentId);
+      // Asked after the file was read: a frame that left its version has no powers to show.
+      const standing =
+        (yield* windows.isFrameOnVersion(installId)) && sessions.get(installId) === session;
+      const permissions: DesktopArtifactAppPermissions = {
         attachmentId: session.attachmentId,
         declared: Option.match(version, {
           onNone: () => session.declared,
           onSome: (read) => read.declared,
         }),
-        granted: sessions.get(installId) === session ? powers : [],
-      })),
-    );
+        granted: standing ? powers : [],
+      };
+      return permissions;
+    });
 
   /** Shows the native dialog for these bytes and saves the answer against their hash. */
   const askConsent = Effect.fnUntraced(function* (
@@ -428,10 +442,9 @@ const make = Effect.gen(function* () {
     // Only the Allow button allows. A closed dialog, a failed one and any other number do not.
     const allowed = response === ARTIFACT_APP_CONSENT_ALLOW;
     const key = versionKey(installId, session.attachmentId);
-    if (!allowed) {
-      turnedOff.set(key, version.sha256);
-      yield* release(installId);
-    }
+    if (!allowed) turnedOff.set(key, version.sha256);
+    // A new answer starts clean: what an earlier answer let the page hold may not be in this one.
+    yield* release(installId);
     const saved = yield* grants
       .record({
         installId,

@@ -153,6 +153,7 @@ const windowsLayer = (opened: Array<string>, closed: Array<string>) =>
       setVersionUrl: () => Effect.void,
       isFrameOnVersion: () => Effect.succeed(false),
       onClosed: () => Effect.void,
+      onFrameStrayed: () => Effect.void,
       close: (installId) =>
         Effect.sync(() => {
           closed.push(installId);

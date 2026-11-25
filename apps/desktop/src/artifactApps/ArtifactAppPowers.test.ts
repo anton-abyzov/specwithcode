@@ -143,6 +143,24 @@ describe("readArtifactAppPowerRequest", () => {
     });
   });
 
+  it("drops characters that reorder or hide the text a menu or notification shows", () => {
+    const request = readArtifactAppPowerRequest("app/tray/set", {
+      // A right-to-left override, an isolate, a mark and zero-width characters.
+      title: "\u202eyaP\u202c",
+      tooltip: "\u2066Bank\u2069\u200f \u200bof\u2060 \ufeffx\u061c",
+      items: [{ id: "a\u200d", label: "\u202dOpen\u200e" }],
+    });
+    assert.deepEqual(request && request.power === "tray" ? request : null, {
+      power: "tray",
+      method: "app/tray/set",
+      title: "yaP",
+      tooltip: "Bank of x",
+      items: [{ id: "a", label: "Open" }],
+    });
+    // Text that is nothing else is empty, and refused where text is required.
+    assert.isUndefined(readArtifactAppPowerRequest("app/notify", { title: "\u202e\u200b" }));
+  });
+
   it("refuses unknown methods and malformed parameters", () => {
     const items = (count: number) =>
       Array.from({ length: count }, (_, index) => ({ id: `i${index}`, label: "x" }));
@@ -245,6 +263,10 @@ describe("isArtifactAppAcceleratorFree", () => {
     assert.isTrue(free("Command+Shift+B"));
     assert.isFalse(free("Command+Shift+4"));
     assert.isFalse(free("Command+Alt+Escape"));
+    // Menu roles carry accelerators no menu template spells out.
+    for (const role of ["Command+Alt+H", "Command+Alt+I", "Command+Shift+V", "Control+Shift+I"]) {
+      assert.isFalse(free(role), role);
+    }
     assert.isFalse(free("Command+Shift+B", ["CmdOrCtrl+Shift+B"]));
     assert.isFalse(free("Command+Shift+B", ["Shift+Command+b"]));
     // Accelerators a page could never spell do not match anything.

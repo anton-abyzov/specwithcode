@@ -178,14 +178,21 @@ describe("ArtifactAppGrants", () => {
             contents.slice(0, 80),
           );
         }
-        // One bad entry does not hide a good one for another version.
-        yield* writeRaw(
-          fileSystem,
-          path,
-          grantsPath,
-          document([{ ...grant(), sha256: "short" }, grant({ attachmentId: VERSION_2 })]),
-        );
-        assert.isTrue(Option.isSome(yield* grants.find(ID_A, VERSION_2)));
+        // An entry that cannot be read may be the newer answer for any version, so a file
+        // with one grants nothing: here it could be the "off" that follows this Allow.
+        for (const unreadable of [
+          { ...grant(), sha256: "short" },
+          { ...grant(), powers: 7 },
+          null,
+        ]) {
+          yield* writeRaw(
+            fileSystem,
+            path,
+            grantsPath,
+            document([grant({ attachmentId: VERSION_2 }), unreadable]),
+          );
+          assert.deepEqual(yield* grants.find(ID_A, VERSION_2), Option.none());
+        }
       }),
     ),
   );

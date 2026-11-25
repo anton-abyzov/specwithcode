@@ -115,11 +115,18 @@ export type ArtifactAppPowerRequest =
       readonly accelerator: string;
     };
 
-// Printable text only: no control characters, so a page cannot break a menu or a notification.
+// Characters that reorder or hide the text around them: direction marks, embeddings,
+// overrides and isolates, and zero-width ones.
+const INVISIBLE_FORMATTING = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]+/g;
+
+// oxlint-disable-next-line no-control-regex -- control characters are what this strips.
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f\u2028\u2029]+/g;
+
+// Printable text only: no control characters, so a page cannot break a menu or a notification,
+// and no direction or zero-width characters, so what is shown reads as it was written.
 function text(value: unknown, max: number, allowEmpty = false): string | undefined {
   if (typeof value !== "string") return undefined;
-  // oxlint-disable-next-line no-control-regex -- control characters are what this strips.
-  const cleaned = value.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").trim();
+  const cleaned = value.replace(INVISIBLE_FORMATTING, "").replace(CONTROL_CHARACTERS, " ").trim();
   if (cleaned.length > max || (!allowEmpty && cleaned.length === 0)) return undefined;
   return cleaned;
 }
@@ -286,6 +293,13 @@ const RESERVED_ACCELERATORS: ReadonlySet<string> = new Set([
   "Command+Shift+Tab",
   "Command+Alt+Escape",
   "Command+Alt+D",
+  "Command+Alt+H",
+  "Command+Alt+I",
+  "Command+Alt+M",
+  "Command+Alt+W",
+  "Command+Shift+V",
+  "Control+Shift+I",
+  "Control+Shift+V",
   "Command+Control+Q",
   "Command+Control+F",
   "Command+Control+Space",

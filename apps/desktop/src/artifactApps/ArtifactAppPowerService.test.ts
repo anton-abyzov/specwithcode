@@ -78,6 +78,9 @@ interface Fixture {
   readonly onVersion: Map<string, boolean>;
   readonly versionUrls: Array<readonly [string, string | null]>;
   readonly closedListeners: Array<(installId: string) => void>;
+  readonly strayedListeners: Array<(installId: string) => void>;
+  /** When set, finding the page's file waits on it: a request stays in flight. */
+  pagesGate: Deferred.Deferred<void> | undefined;
   readonly opened: Array<string>;
   readonly closed: Array<string>;
   readonly notifications: Array<{ title: string; body: string; onClick: () => void }>;
@@ -137,6 +140,8 @@ const withFixture = <A, E>(
       onVersion: new Map(),
       versionUrls: [],
       closedListeners: [],
+      strayedListeners: [],
+      pagesGate: undefined,
       opened: [],
       closed: [],
       notifications: [],
@@ -155,7 +160,10 @@ const withFixture = <A, E>(
       ArtifactAppPowersHost.ArtifactAppPowersHost,
       ArtifactAppPowersHost.ArtifactAppPowersHost.of({
         platform: options.platform ?? "darwin",
-        localPages: Effect.sync(() => state.localPages),
+        localPages: Effect.gen(function* () {
+          if (state.pagesGate !== undefined) yield* Deferred.await(state.pagesGate);
+          return state.localPages;
+        }),
         showNotification: (input) =>
           Effect.sync(() => {
             if (!state.notificationsSupported) return false;
@@ -217,6 +225,10 @@ const withFixture = <A, E>(
       onClosed: (listener) =>
         Effect.sync(() => {
           state.closedListeners.push(listener);
+        }),
+      onFrameStrayed: (listener) =>
+        Effect.sync(() => {
+          state.strayedListeners.push(listener);
         }),
       open: (installId) =>
         Effect.sync(() => {
@@ -988,6 +1000,82 @@ describe("ArtifactAppPowerService permissions", () => {
         assert.deepEqual(fixture.sent, []);
         assert.deepEqual([...fixture.registered.keys()], []);
         assert.isTrue(tray.destroyed);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    [
+      "its window closed",
+      (fixture: Fixture) => {
+        fixture.liveWindows.delete(ID);
+        for (const listener of fixture.closedListeners) listener(ID);
+      },
+    ],
+    [
+      // Nothing has told the service: only asking the windows again shows it.
+      "its window was replaced",
+      (fixture: Fixture) => {
+        fixture.liveWindows.set(ID, windowOf(ID));
+      },
+    ],
+    [
+      "its frame left the version",
+      (fixture: Fixture) => {
+        fixture.onVersion.set(ID, false);
+      },
+    ],
+  ] as const)("refuses a request in flight when %s before it could act", ([, change]) =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* granted(fixture);
+        const gate = yield* Deferred.make<void>();
+        fixture.pagesGate = gate;
+        // The request has passed its first checks and is reading the page's file.
+        const request = yield* Effect.forkChild(notify(fixture));
+        yield* settle;
+        change(fixture);
+        yield* Deferred.succeed(gate, undefined);
+        assert.deepEqual(yield* Fiber.join(request), REFUSED);
+        yield* settle;
+        assert.deepEqual(fixture.notifications, []);
+      }),
+    ),
+  );
+
+  it.effect("gives everything back the moment a frame leaves the version", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* granted(fixture);
+        yield* ask(fixture, "app/shortcut/register", { accelerator: "Cmd+Alt+1" });
+        yield* ask(fixture, "app/tray/set", { tooltip: "Timer", items: [] });
+        yield* ask(fixture, "app/window/always-on-top", { on: true });
+        const window = fixture.liveWindows.get(ID)!;
+        // No request, press or click follows: the leaving itself releases.
+        fixture.onVersion.set(ID, false);
+        for (const listener of fixture.strayedListeners) listener(ID);
+        yield* settle;
+        assert.deepEqual([...fixture.registered.keys()], []);
+        assert.isTrue(fixture.trays[0]!.destroyed);
+        assert.equal(fixture.onTop.get(window), false);
+        // The Permissions menu shows nothing granted for a frame that left.
+        assert.deepEqual((yield* fixture.powers.permissions(WC, { action: "get" })).granted, []);
+      }),
+    ),
+  );
+
+  it.effect("starts clean on a new answer: what an earlier one let the page hold is gone", () =>
+    withFixture((fixture) =>
+      Effect.gen(function* () {
+        yield* granted(fixture);
+        yield* ask(fixture, "app/tray/set", { tooltip: "Timer", items: [] });
+        yield* ask(fixture, "app/shortcut/register", { accelerator: "Cmd+Alt+1" });
+        // The file now declares less, and the person allows that.
+        yield* fixture.writePage(V1, page(["notifications"]));
+        const state = yield* fixture.powers.permissions(WC, { action: "ask" });
+        assert.deepEqual(state.granted, ["notifications"]);
+        assert.isTrue(fixture.trays[0]!.destroyed);
+        assert.deepEqual([...fixture.registered.keys()], []);
       }),
     ),
   );

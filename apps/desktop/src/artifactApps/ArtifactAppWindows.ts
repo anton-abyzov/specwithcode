@@ -130,6 +130,12 @@ export class ArtifactAppWindows extends Context.Service<
     readonly isFrameOnVersion: (installId: string) => Effect.Effect<boolean>;
     /** Calls `listener` with the install id each time one of these windows has closed. */
     readonly onClosed: (listener: (installId: string) => void) => Effect.Effect<void>;
+    /**
+     * Calls `listener` with the install id the moment a window stops being on
+     * its version: a frame was seen at another address, or the window's page
+     * process ended.
+     */
+    readonly onFrameStrayed: (listener: (installId: string) => void) => Effect.Effect<void>;
     /** Closes the install's window after the current IPC reply has gone out. */
     readonly close: (installId: string) => Effect.Effect<void>;
     readonly closeAll: Effect.Effect<void>;
@@ -194,6 +200,17 @@ const make = Effect.gen(function* () {
   // Windows where a frame was seen somewhere else since the version was set.
   const strayedFrames = new Set<string>();
   const closedListeners: Array<(installId: string) => void> = [];
+  const strayedListeners: Array<(installId: string) => void> = [];
+  const tell = (listeners: ReadonlyArray<(installId: string) => void>, installId: string) => {
+    for (const listener of listeners) {
+      // One listener failing must not keep the others from releasing what they hold.
+      try {
+        listener(installId);
+      } catch {
+        // Nothing to do here: the listener owns its own failure.
+      }
+    }
+  };
 
   const openExternally = (rawUrl: string) => {
     const url = artifactAppExternalUrl(rawUrl);
@@ -268,14 +285,7 @@ const make = Effect.gen(function* () {
       if (!current) return;
       versionUrls.delete(installId);
       strayedFrames.delete(installId);
-      for (const listener of closedListeners) {
-        // One listener failing must not keep the others from releasing what they hold.
-        try {
-          listener(installId);
-        } catch {
-          // Nothing to do here: the listener owns its own failure.
-        }
-      }
+      tell(closedListeners, installId);
     });
     yield* electronWindow.registerSecondary(window, { role: "page" });
 
@@ -304,6 +314,11 @@ const make = Effect.gen(function* () {
         versionUrl: versionUrls.get(installId) ?? null,
         targetUrl: url,
       });
+    const stray = () => {
+      if (windows.get(installId) !== window || strayedFrames.has(installId)) return;
+      strayedFrames.add(installId);
+      tell(strayedListeners, installId);
+    };
     window.webContents.on("will-frame-navigate", (event) => {
       // The window's own document is `will-navigate`'s.
       if (event.isMainFrame === true) return;
@@ -318,8 +333,10 @@ const make = Effect.gen(function* () {
     window.webContents.on("did-frame-navigate", (_event, url, _code, _status, isMainFrame) => {
       if (isMainFrame === true) return;
       if (typeof url === "string" && INLINE_FRAME_URLS.has(url)) return;
-      if (typeof url !== "string" || !frameMayGoTo(url)) strayedFrames.add(installId);
+      if (typeof url !== "string" || !frameMayGoTo(url)) stray();
     });
+    // A page process that ended holds no version: what comes back is a new document.
+    window.webContents.on("render-process-gone", stray);
     window.webContents.setWindowOpenHandler(({ url }) => {
       openExternally(url);
       return { action: "deny" };
@@ -413,6 +430,10 @@ const make = Effect.gen(function* () {
     onClosed: (listener) =>
       Effect.sync(() => {
         closedListeners.push(listener);
+      }),
+    onFrameStrayed: (listener) =>
+      Effect.sync(() => {
+        strayedListeners.push(listener);
       }),
     close: (installId) =>
       Effect.suspend(() => {
