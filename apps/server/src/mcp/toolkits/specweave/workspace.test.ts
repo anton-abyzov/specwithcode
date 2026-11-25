@@ -19,58 +19,44 @@ afterEach(() => {
 });
 
 describe("resolveCallerWorkspace", () => {
-  it("runs in the thread's worktree, never the project folder, when it has one", async () => {
-    const project = folder();
+  it("reads the thread's registered worktree", async () => {
     const worktree = folder();
-    const resolved = await resolveCallerWorkspace({ worktreePath: worktree, projectRoot: project });
-    expect(resolved).toEqual({
-      ok: true,
-      workspace: worktree,
-      specweaveRoot: worktree,
-      kind: "worktree",
-    });
+    const resolved = await resolveCallerWorkspace({ worktreePath: worktree });
+    expect(resolved).toEqual({ ok: true, workspace: worktree, specweaveRoot: worktree });
   });
 
-  it("uses the project folder for a thread without a worktree", async () => {
-    const project = folder();
-    const resolved = await resolveCallerWorkspace({ worktreePath: null, projectRoot: project });
-    expect(resolved).toMatchObject({ ok: true, workspace: project, kind: "project" });
+  it("refuses a thread without a worktree of its own", async () => {
+    expect(await resolveCallerWorkspace({ worktreePath: null })).toMatchObject({
+      ok: false,
+      reason: "no-worktree",
+    });
+    expect(await workspaceHasSpecweave({ worktreePath: null })).toBe(false);
   });
 
   it("refuses a recorded worktree that is missing instead of falling back to the project", async () => {
     const project = folder();
-    const resolved = await resolveCallerWorkspace({
-      worktreePath: NodePath.join(project, "gone"),
-      projectRoot: project,
-    });
-    expect(resolved).toMatchObject({ ok: false, reason: "no-workspace" });
-    expect(
-      await workspaceHasSpecweave({
-        worktreePath: NodePath.join(project, "gone"),
-        projectRoot: project,
-      }),
-    ).toBe(false);
+    const resolved = await resolveCallerWorkspace({ worktreePath: NodePath.join(project, "gone") });
+    expect(resolved).toMatchObject({ ok: false, reason: "no-worktree" });
+    expect(await workspaceHasSpecweave({ worktreePath: NodePath.join(project, "gone") })).toBe(
+      false,
+    );
   });
 
   it("refuses a folder outside the workspace, by .. or by a link", async () => {
     const worktree = folder();
     const outside = folder();
-    expect(
-      await resolveCallerWorkspace({ worktreePath: worktree, projectRoot: null, folder: ".." }),
-    ).toMatchObject({
+    expect(await resolveCallerWorkspace({ worktreePath: worktree, folder: ".." })).toMatchObject({
       ok: false,
       reason: "outside",
     });
-    expect(
-      await resolveCallerWorkspace({ worktreePath: worktree, projectRoot: null, folder: outside }),
-    ).toMatchObject({
-      ok: false,
-      reason: "outside",
-    });
+    expect(await resolveCallerWorkspace({ worktreePath: worktree, folder: outside })).toMatchObject(
+      {
+        ok: false,
+        reason: "outside",
+      },
+    );
     NodeFS.symlinkSync(outside, NodePath.join(worktree, "link"));
-    expect(
-      await resolveCallerWorkspace({ worktreePath: worktree, projectRoot: null, folder: "link" }),
-    ).toMatchObject({
+    expect(await resolveCallerWorkspace({ worktreePath: worktree, folder: "link" })).toMatchObject({
       ok: false,
       reason: "outside",
     });
@@ -79,27 +65,19 @@ describe("resolveCallerWorkspace", () => {
   it("accepts a nested folder that holds .specweave/", async () => {
     const worktree = folder(false);
     NodeFS.mkdirSync(NodePath.join(worktree, "repo", ".specweave"), { recursive: true });
-    expect(
-      await resolveCallerWorkspace({ worktreePath: worktree, projectRoot: null, folder: "repo" }),
-    ).toMatchObject({
+    expect(await resolveCallerWorkspace({ worktreePath: worktree, folder: "repo" })).toMatchObject({
       ok: true,
       workspace: worktree,
       specweaveRoot: NodePath.join(worktree, "repo"),
     });
     // The workspace itself has none, so the tools are not offered there.
-    expect(await workspaceHasSpecweave({ worktreePath: worktree, projectRoot: null })).toBe(false);
+    expect(await workspaceHasSpecweave({ worktreePath: worktree })).toBe(false);
   });
 
-  it("refuses a workspace without .specweave/ and a thread with no folder here", async () => {
-    expect(
-      await resolveCallerWorkspace({ worktreePath: folder(false), projectRoot: null }),
-    ).toMatchObject({
+  it("refuses a worktree without .specweave/", async () => {
+    expect(await resolveCallerWorkspace({ worktreePath: folder(false) })).toMatchObject({
       ok: false,
       reason: "no-specweave",
-    });
-    expect(await resolveCallerWorkspace({ worktreePath: null, projectRoot: null })).toMatchObject({
-      ok: false,
-      reason: "no-workspace",
     });
   });
 });

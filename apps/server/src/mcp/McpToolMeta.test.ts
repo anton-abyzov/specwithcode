@@ -34,7 +34,7 @@ it("gives the six core tools alwaysLoad and every other tool a toolkit search hi
   expect(toolMeta("chrome_click")).toEqual({
     [SEARCH_HINT_KEY]: "chrome: the user's signed-in Chrome",
   });
-  expect(toolMeta("specweave_verify")[SEARCH_HINT_KEY]).toMatch(/^specweave: /);
+  expect(toolMeta("specweave_next_task")[SEARCH_HINT_KEY]).toMatch(/^specweave: /);
   expect(toolMeta("not_a_tool")).toEqual({ [SEARCH_HINT_KEY]: FALLBACK_SEARCH_HINT });
 });
 
@@ -70,12 +70,10 @@ it.effect("every tool in the real tools/list carries exactly one of the two _met
       // Hand-registered image tools pass through the same wrapper.
       const snapshot = tools.find((tool) => tool.name === "preview_snapshot");
       expect(snapshot?._meta?.[SEARCH_HINT_KEY]).toMatch(/^preview: /);
-      // In a SpecWeave workspace the four SpecWeave tools are listed.
+      // In a SpecWeave worktree the two read-only SpecWeave tools are listed.
       expect(names.filter((name) => name.startsWith("specweave_")).sort()).toEqual([
-        "specweave_pickup",
-        "specweave_task_done",
+        "specweave_next_task",
         "specweave_task_status",
-        "specweave_verify",
       ]);
     }),
   ).pipe(Effect.provide(fullLayerTestServices)),

@@ -50,7 +50,6 @@ import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
-import * as McpProgress from "./McpProgress.ts";
 import { toolMeta } from "./McpToolMeta.ts";
 import * as McpToolVisibility from "./McpToolVisibility.ts";
 import { SpecweaveToolkit } from "./toolkits/specweave/tools.ts";
@@ -1197,45 +1196,22 @@ const withToolSpans = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
   });
 
-/**
- * Every tool's `_meta` search hints (`McpToolMeta`), and a progress reporter
- * for its calls that sends `notifications/progress` when the client asked (1483).
- */
-const withToolMetaAndProgress = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
+/** Each tool's `_meta` (`McpToolMeta`, 1483); a tool with none is added as it is. */
+const withToolMeta = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const hintingServer = McpServer.McpServer.of({
+    const metaServer = McpServer.McpServer.of({
       ...server,
-      addTool: (options) =>
-        server.addTool({
+      addTool: (options) => {
+        const meta = toolMeta(options.tool.name);
+        if (Object.keys(meta).length === 0) return server.addTool(options);
+        return server.addTool({
           ...options,
-          tool: new McpSchema.Tool({
-            ...options.tool,
-            _meta: { ...options.tool._meta, ...toolMeta(options.tool.name) },
-          }),
-          handle: (payload) =>
-            Effect.serviceOption(McpSchema.McpRequestContext).pipe(
-              Effect.flatMap((request) => {
-                const token = Option.getOrUndefined(request)?.requestMetadata?.progressToken;
-                const progressToken =
-                  typeof token === "string" || typeof token === "number" ? token : undefined;
-                const reporter = McpProgress.McpProgress.of({
-                  report: (update) =>
-                    progressToken === undefined
-                      ? Effect.void
-                      : server.notifications["notifications/progress"]({
-                          progressToken,
-                          ...update,
-                        }).pipe(Effect.ignore),
-                });
-                return options
-                  .handle(payload)
-                  .pipe(Effect.provideService(McpProgress.McpProgress, reporter));
-              }),
-            ),
-        }),
+          tool: new McpSchema.Tool({ ...options.tool, _meta: { ...options.tool._meta, ...meta } }),
+        });
+      },
     });
-    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, hintingServer));
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, metaServer));
   });
 
 /**
@@ -1249,7 +1225,7 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 ) =>
   Layer.effectDiscard(
     withToolSpans(
-      withToolMetaAndProgress(
+      withToolMeta(
         withAdvertisedSchemas(
           McpServer.registerToolkit(
             inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit,
@@ -1267,7 +1243,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolSpans(withToolMetaAndProgress(register))).pipe(
+  Layer.effectDiscard(withToolSpans(withToolMeta(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 

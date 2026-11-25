@@ -42,7 +42,7 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__sheet_read",
   "mcp__studio-code__whiteboard_read",
   "mcp__studio-code__doc_read",
-  // SpecWeave reads (1483): pickup never applies a handoff, task status only lists.
-  "mcp__studio-code__specweave_pickup",
+  // SpecWeave reads (1483): task list and task next, read-only commands in the own worktree.
+  "mcp__studio-code__specweave_next_task",
   "mcp__studio-code__specweave_task_status",
 ];

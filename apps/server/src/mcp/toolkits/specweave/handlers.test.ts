@@ -7,13 +7,7 @@ import * as NodePath from "node:path";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  type ProviderInteractionMode,
-  ProviderInstanceId,
-  type RuntimeMode,
-  ThreadId,
-} from "@specweave-studio/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServer } from "effect/http";
@@ -24,7 +18,7 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import type * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import { liveThreadShell, noProjectsLayer } from "../../McpToolAccess.testkit.ts";
-import { SpecweaveCommandOverride } from "./cli.ts";
+import { SPECWEAVE_VIEW_AGENT, SpecweaveCommandOverride } from "./cli.ts";
 import * as SpecweaveHandlers from "./handlers.ts";
 import { SpecweaveToolkit } from "./tools.ts";
 
@@ -51,26 +45,26 @@ const clientScope: McpInvocationContext.McpInvocationScope = {
 };
 
 /**
- * Prints its arguments and folder as JSON. `verify 1111` prints two lines a
- * second apart first; `verify 2222` starts a child that would sleep a minute
- * and records both process ids, then waits.
+ * Prints its arguments, folder and agent as JSON. `task list` also lists one
+ * claimed task; `task next` names T-02. `task list 2222` starts a child that
+ * would sleep a minute, records both process ids, then waits.
  */
 const STAND_IN = `#!/usr/bin/env node
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
-const out = () => process.stdout.write(JSON.stringify({ argv, cwd: process.cwd(), noColor: process.env.NO_COLOR }));
-if (argv.includes("verify") && argv.includes("1111")) {
-  console.log("running unit tests");
-  setTimeout(() => console.log("running lint"), 1200);
-  setTimeout(() => { out(); process.exit(0); }, 2400);
-} else if (argv.includes("verify") && argv.includes("2222")) {
+const base = { argv, cwd: process.cwd(), noColor: process.env.NO_COLOR, agent: process.env.SPECWEAVE_AGENT };
+if (argv.includes("2222")) {
   const child = spawn("sleep", ["60"], { stdio: "ignore" });
   fs.writeFileSync(process.env.STAND_IN_PIDS, JSON.stringify([process.pid, child.pid]));
-  console.log("running a long suite");
   setTimeout(() => {}, 60000);
+} else if (argv.includes("next")) {
+  process.stdout.write(JSON.stringify({ ...base, increment: "1483-x", next: { id: "T-02" } }));
 } else {
-  out();
+  process.stdout.write(JSON.stringify({ ...base, tasks: [
+    { id: "T-01", title: "one", status: "done", by: "codex@m5" },
+    { id: "T-03", title: "three", status: "claimed", by: "claude@m5", since: "2026-11-25T00:00:00Z", evidence: "x" },
+  ] }));
 }
 `;
 
@@ -99,14 +93,7 @@ const makeFixture = Effect.acquireRelease(
     ),
 );
 
-const serve = (
-  fixture: Fixture,
-  shell: {
-    readonly worktreePath?: string;
-    readonly runtimeMode?: RuntimeMode;
-    readonly interactionMode?: ProviderInteractionMode;
-  } = {},
-) =>
+const serve = (fixture: Fixture, shell: { readonly worktreePath?: string | null } = {}) =>
   Effect.gen(function* () {
     const serverLayer = McpHttpServer.toolkitRegistration(
       SpecweaveToolkit,
@@ -131,8 +118,9 @@ const serve = (
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) =>
             Effect.succeed({
-              ...liveThreadShell(id, shell),
-              worktreePath: shell.worktreePath ?? fixture.workspace,
+              ...liveThreadShell(id),
+              worktreePath:
+                shell.worktreePath === undefined ? fixture.workspace : shell.worktreePath,
             }),
         }),
       ),
@@ -252,7 +240,7 @@ const withServer = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   );
 
 it.live(
-  "task status runs the CLI in the thread's worktree with --workspace and parses its JSON",
+  "task status runs task list in the thread's worktree with --workspace and parses its JSON",
   () =>
     withServer(
       Effect.gen(function* () {
@@ -265,72 +253,67 @@ it.live(
         expect(result.isError).toBeFalsy();
         const run = result.structuredContent;
         expect(run).toMatchObject({ ok: true, exitCode: 0, workspace: fixture.workspace });
-        expect(run.data).toEqual({
+        expect(run.data).toMatchObject({
           argv: ["--workspace", fixture.workspace, "task", "list", "1483", "--json"],
           cwd: fixture.workspace,
           noColor: "1",
+          agent: SPECWEAVE_VIEW_AGENT,
         });
-        const pickup = yield* call(port, headers, "specweave_pickup", {});
-        expect(pickup.result.structuredContent.data.argv).toEqual([
-          "--workspace",
-          fixture.workspace,
-          "pickup",
-          "--json",
-          "--no-apply",
-        ]);
       }),
     ),
 );
 
-it.live(
-  "task done passes the evidence as one argument and never a run, force or command flag",
-  () =>
-    withServer(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const port = yield* serve(fixture);
-        const headers = yield* session(port, THREAD_TOKEN);
-        const evidence = "vp test run x → exit 0; $(rm -rf /) stays text";
-        const { result } = yield* call(port, headers, "specweave_task_done", {
-          increment: "1483-some-title",
-          task: "T-04",
-          evidence,
-        });
-        expect(result.structuredContent.data.argv).toEqual([
-          "--workspace",
-          fixture.workspace,
-          "task",
-          "done",
-          "T-04",
-          "1483-some-title",
-          "--evidence",
-          evidence,
-          "--json",
-        ]);
-        const invalid = yield* call(port, headers, "specweave_task_done", {
-          increment: "1483; rm -rf /",
-          task: "T-04",
-          evidence: "x",
-        });
-        expect(invalid.result?.isError ?? true).toBe(true);
-      }),
-    ),
-);
-
-it.live("refuses a folder outside the workspace, an outside client and a missing worktree", () =>
+it.live("next task runs task next, read-only, and lists the live claims beside it", () =>
   withServer(
     Effect.gen(function* () {
       const fixture = yield* makeFixture;
       const port = yield* serve(fixture);
       const headers = yield* session(port, THREAD_TOKEN);
-      const outside = yield* call(port, headers, "specweave_task_status", {
-        increment: "1483",
-        folder: "..",
+      const { result } = yield* call(port, headers, "specweave_next_task", {
+        increment: "1483-some-title",
       });
-      expect(outside.result.isError).toBe(true);
-      expect(JSON.stringify(outside.result)).toContain(
-        "not a folder inside this thread's workspace",
-      );
+      expect(result.isError).toBeFalsy();
+      const data = result.structuredContent.data;
+      expect(data.argv).toEqual([
+        "--workspace",
+        fixture.workspace,
+        "task",
+        "next",
+        "1483-some-title",
+        "--json",
+      ]);
+      expect(data.next).toEqual({ id: "T-02" });
+      expect(data.liveClaims).toEqual([
+        {
+          id: "T-03",
+          title: "three",
+          status: "claimed",
+          by: "claude@m5",
+          since: "2026-11-25T00:00:00Z",
+        },
+      ]);
+      // Nothing from the caller but the checked increment reaches the CLI.
+      const invalid = yield* call(port, headers, "specweave_next_task", {
+        increment: "1483 --force",
+      });
+      expect(invalid.result?.isError ?? true).toBe(true);
+    }),
+  ),
+);
+
+it.live("refuses a folder outside the worktree and an outside client", () =>
+  withServer(
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture;
+      const port = yield* serve(fixture);
+      const headers = yield* session(port, THREAD_TOKEN);
+      for (const name of ["specweave_task_status", "specweave_next_task"]) {
+        const outside = yield* call(port, headers, name, { increment: "1483", folder: ".." });
+        expect(outside.result.isError, name).toBe(true);
+        expect(JSON.stringify(outside.result)).toContain(
+          "not a folder inside this thread's worktree",
+        );
+      }
 
       const clientHeaders = yield* session(port, CLIENT_TOKEN);
       const client = yield* call(port, clientHeaders, "specweave_task_status", {
@@ -342,70 +325,22 @@ it.live("refuses a folder outside the workspace, an outside client and a missing
   ),
 );
 
-it.live("a missing worktree is refused, not swapped for the project folder", () =>
+it.live.each([
+  { label: "a missing worktree", worktreePath: "gone", expected: "missing on this machine" },
+  { label: "no worktree at all", worktreePath: null, expected: "registered worktree" },
+])("$label is refused, never swapped for the project folder", ({ worktreePath, expected }) =>
   withServer(
     Effect.gen(function* () {
       const fixture = yield* makeFixture;
       const port = yield* serve(fixture, {
-        worktreePath: NodePath.join(fixture.workspace, "gone"),
+        worktreePath: worktreePath === null ? null : NodePath.join(fixture.workspace, worktreePath),
       });
       const headers = yield* session(port, THREAD_TOKEN);
       const { result } = yield* call(port, headers, "specweave_task_status", { increment: "1483" });
       expect(result.isError).toBe(true);
-      expect(JSON.stringify(result)).toContain("missing on this machine");
+      expect(JSON.stringify(result)).toContain(expected);
     }),
   ),
-);
-
-it.live.each([{ interactionMode: "plan" as const }, { runtimeMode: "approval-required" as const }])(
-  "a thread in %o runs the changing tools in its shell instead",
-  (modes) =>
-    withServer(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const port = yield* serve(fixture, modes);
-        const headers = yield* session(port, THREAD_TOKEN);
-        const verify = yield* call(port, headers, "specweave_verify", { increment: "1111" });
-        expect(verify.result.isError).toBe(true);
-        expect(JSON.stringify(verify.result)).toContain("specweave verify 1111");
-        // Reading is still fine.
-        const status = yield* call(port, headers, "specweave_task_status", { increment: "1483" });
-        expect(status.result.isError).toBeFalsy();
-      }),
-    ),
-);
-
-it.live(
-  "verify streams progress before its result",
-  () =>
-    withServer(
-      Effect.gen(function* () {
-        const fixture = yield* makeFixture;
-        const port = yield* serve(fixture);
-        const headers = yield* session(port, THREAD_TOKEN);
-        const { posted, result } = yield* call(
-          port,
-          headers,
-          "specweave_verify",
-          { increment: "1111" },
-          { progressToken: "verify-1" },
-        );
-        expect(result.structuredContent.data.argv).toEqual([
-          "--workspace",
-          fixture.workspace,
-          "verify",
-          "1111",
-          "--json",
-        ]);
-        const progress = messages(posted).filter((m) => m.method === "notifications/progress");
-        expect(progress.length).toBeGreaterThanOrEqual(2);
-        expect(progress.some((m) => m.params?.message?.includes("running lint"))).toBe(true);
-        // Progress arrived while the run went on, not bundled with the result.
-        const resultAt = posted.chunks.at(-1)!.ms;
-        expect(posted.chunks[0]!.ms).toBeLessThan(resultAt - 1_000);
-      }),
-    ),
-  15_000,
 );
 
 const alive = (pid: number) => {
@@ -418,7 +353,7 @@ const alive = (pid: number) => {
 };
 
 it.live(
-  "cancelling a verify call stops the CLI and the processes it started",
+  "a dropped call stops the CLI and the processes it started",
   () =>
     withServer(
       Effect.gen(function* () {
@@ -432,7 +367,7 @@ it.live(
             jsonrpc: "2.0",
             id: 9,
             method: "tools/call",
-            params: { name: "specweave_verify", arguments: { increment: "2222" } },
+            params: { name: "specweave_task_status", arguments: { increment: "2222" } },
           },
           1_500,
         );

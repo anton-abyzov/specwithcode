@@ -5,8 +5,7 @@
  * folder (`<home>/commands`, the managed SpecWeave and its Node.js), then the
  * server's PATH and the usual install folders. It runs with an argument
  * array, never a shell, in the workspace the caller resolved. Interrupting
- * the call stops it: Effect's spawner kills the whole process group, so test
- * runners a verify started stop with it.
+ * the call stops it: Effect's spawner kills the whole process group.
  */
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { CommandResolutionCache, resolveCommandPath } from "@specweave-studio/shared/shell";
@@ -47,9 +46,14 @@ export interface SpecweaveRunInput {
   readonly specweaveRoot: string;
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Input;
-  /** Called with each stdout chunk, for progress. */
-  readonly onOutput?: ((chunk: string) => void) | undefined;
 }
+
+/**
+ * The SpecWeave agent id the tools read as. Fixed, so a value inherited from
+ * the server's environment never names some other agent; `task next` then
+ * treats every live claim as someone else's, and the handler lists them.
+ */
+export const SPECWEAVE_VIEW_AGENT = "specwithcode-studio-code";
 
 const cut = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}… (${text.length - max} more characters cut)` : text;
@@ -138,8 +142,6 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
       text: "The specweave command is not installed on this machine. Install it with npm i -g specweave, or set SpecWeave up from the project's Board.",
     } satisfies SpecweaveRunResult;
   }
-  const decoder = new TextDecoder();
-  const onOutput = input.onOutput;
   const output = yield* runner
     .run({
       command: located.command,
@@ -154,12 +156,8 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
         NO_COLOR: "1",
         FORCE_COLOR: "0",
         CI: "1",
+        SPECWEAVE_AGENT: SPECWEAVE_VIEW_AGENT,
       },
-      ...(onOutput === undefined
-        ? {}
-        : {
-            onStdoutChunk: (chunk: Uint8Array) => onOutput(decoder.decode(chunk, { stream: true })),
-          }),
     })
     .pipe(
       Effect.map((run) => ({ _tag: "ran" as const, run })),

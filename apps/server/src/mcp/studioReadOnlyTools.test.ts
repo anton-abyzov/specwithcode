@@ -72,11 +72,10 @@ describe("STUDIO_READ_ONLY_TOOLS", () => {
     );
   });
 
-  it("takes SpecWeave's reads, never task done or verify", () => {
-    assert.isTrue(STUDIO_READ_ONLY_TOOLS.has("specweave_pickup"));
+  it("takes both SpecWeave tools, which only read", () => {
     assert.isTrue(STUDIO_READ_ONLY_TOOLS.has("specweave_task_status"));
-    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("specweave_task_done"));
-    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("specweave_verify"));
+    assert.isTrue(STUDIO_READ_ONLY_TOOLS.has("specweave_next_task"));
+    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("specweave_pickup"));
   });
 
   it("keeps other threads' transcripts behind approval", () => {

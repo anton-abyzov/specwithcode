@@ -4,8 +4,8 @@
  * Effect's `EnabledWhen` sees only the client's protocol profile, not who is
  * calling, so per-caller listing happens here: after sign-in, a `tools/list`
  * answer is rewritten to drop the tools this caller cannot use. Today that is
- * the SpecWeave tools, offered only to a thread whose workspace holds
- * `.specweave/`. It fails closed: if the caller's workspace cannot be read,
+ * the SpecWeave tools, offered only to a thread whose registered worktree
+ * holds `.specweave/`. It fails closed: if the caller's workspace cannot be read,
  * the tools are dropped. Their handlers refuse such a caller as well, so a
  * client that calls an unlisted tool gets a refusal, not a run.
  */
@@ -14,7 +14,6 @@ import * as Option from "effect/Option";
 import { HttpServerResponse, type HttpServerRequest } from "effect/http";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import { SPECWEAVE_TOOL_PREFIX } from "./toolkits/specweave/tools.ts";
 import { workspaceHasSpecweave } from "./toolkits/specweave/workspace.ts";
@@ -83,11 +82,11 @@ const isToolsList = (body: string) => {
 
 /**
  * Built once with the server's services. A thread caller sees the SpecWeave
- * tools when its workspace holds `.specweave/`; an outside client never does.
+ * tools when its registered worktree holds `.specweave/`; an outside client,
+ * or a thread working in the project's shared folder, never does.
  */
 export const makeToolListFilter = Effect.gen(function* () {
   const threads = yield* Effect.serviceOption(ThreadManagement.ThreadManagementService);
-  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
 
   const offersSpecweave = (invocation: McpInvocationContext.McpInvocationScope) =>
     Effect.gen(function* () {
@@ -96,19 +95,8 @@ export const makeToolListFilter = Effect.gen(function* () {
         .getThreadShell(invocation.thread.threadId)
         .pipe(Effect.orElseSucceed(() => null));
       if (shell === null || shell.deletedAt !== null) return false;
-      // A thread with a worktree runs there; the project folder matters only without one.
-      const project =
-        shell.worktreePath !== null || Option.isNone(projects)
-          ? null
-          : yield* projects.value.getById(shell.projectId).pipe(
-              Effect.map(Option.getOrNull),
-              Effect.orElseSucceed(() => null),
-            );
       return yield* Effect.promise(() =>
-        workspaceHasSpecweave({
-          worktreePath: shell.worktreePath,
-          projectRoot: project?.workspaceRoot ?? null,
-        }),
+        workspaceHasSpecweave({ worktreePath: shell.worktreePath }),
       );
       // Fails closed on anything, a defect included: the list then leaves them out.
     }).pipe(Effect.catchCause(() => Effect.succeed(false)));

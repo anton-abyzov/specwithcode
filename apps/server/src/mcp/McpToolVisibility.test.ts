@@ -35,7 +35,7 @@ it("drops only the hidden tools from a JSON or event-stream tools/list answer", 
   const answer = {
     jsonrpc: "2.0",
     id: 2,
-    result: { tools: [{ name: "ask_user" }, { name: "specweave_verify" }], nextCursor: "x" },
+    result: { tools: [{ name: "ask_user" }, { name: "specweave_task_status" }], nextCursor: "x" },
   };
   const hide = (name: unknown) => typeof name === "string" && name.startsWith("specweave_");
   expect(JSON.parse(McpToolVisibility.rewriteToolListBody(JSON.stringify(answer), hide)!)).toEqual({
@@ -61,7 +61,10 @@ it.effect("a thread whose worktree holds .specweave/ is offered the SpecWeave to
     Effect.gen(function* () {
       const workspace = yield* scratch(true);
       yield* serveFullLayer({ projectId: "p", worktreePath: workspace, deletedAt: null });
-      expect(specweaveNames(yield* listToolsAsThread)).toHaveLength(4);
+      expect(specweaveNames(yield* listToolsAsThread).sort()).toEqual([
+        "specweave_next_task",
+        "specweave_task_status",
+      ]);
     }),
   ).pipe(Effect.provide(fullLayerTestServices)),
 );
@@ -87,6 +90,16 @@ it.effect("a recorded worktree that is missing hides them", () =>
         worktreePath: NodePath.join(workspace, "gone"),
         deletedAt: null,
       });
+      expect(specweaveNames(yield* listToolsAsThread)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(fullLayerTestServices)),
+);
+
+it.effect("a thread with no worktree of its own is not offered them", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Its work happens in the project's shared folder, which the tools never read.
+      yield* serveFullLayer({ projectId: "p", worktreePath: null, deletedAt: null });
       expect(specweaveNames(yield* listToolsAsThread)).toEqual([]);
     }),
   ).pipe(Effect.provide(fullLayerTestServices)),
@@ -128,7 +141,7 @@ it.effect("an outside MCP client is never offered them", () =>
       JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
-        result: { tools: [{ name: "ask_user" }, { name: "specweave_pickup" }] },
+        result: { tools: [{ name: "ask_user" }, { name: "specweave_next_task" }] },
       }),
       { contentType: "application/json" },
     );

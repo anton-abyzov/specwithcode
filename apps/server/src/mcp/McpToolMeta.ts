@@ -101,7 +101,7 @@ const TOOLKIT_HINTS: ReadonlyArray<{
   },
   { hint: "chrome: the user's signed-in Chrome", toolkits: [ChromeToolkit] },
   { hint: "computer: desktop apps, screen, mouse, keyboard", toolkits: [ComputerToolkit] },
-  { hint: "specweave: increments, tasks, pickup, verify", toolkits: [SpecweaveToolkit] },
+  { hint: "specweave: increment tasks, task status, next task", toolkits: [SpecweaveToolkit] },
 ];
 
 const HINT_BY_TOOL: ReadonlyMap<string, string> = new Map(
