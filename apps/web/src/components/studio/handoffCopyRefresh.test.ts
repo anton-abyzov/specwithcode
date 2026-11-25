@@ -146,3 +146,20 @@ it("takes back only one window's own exclusions for one machine", () => {
     out: [".env.local", ".env.x", "app.env"],
   });
 });
+
+it("keeps another owner's exclusion of the same file when one owner takes its own back", () => {
+  vi.stubGlobal("localStorage", memoryStorage());
+  const key = folderCopyStorageKey("env-a", "project-1");
+  const none = { included: true, out: [] };
+  // B leaves .env.local out for machine Y; later A leaves the same file out for machine X.
+  recordExclusions(key, none, { included: true, out: [".env.local"] }, "wb|machine-y");
+  recordExclusions(key, none, { included: true, out: [".env.local"] }, "wa|machine-x");
+  recordExclusions(key, none, { included: false, out: [] }, "wb|machine-y");
+  recordExclusions(key, none, { included: false, out: [] }, "wa|machine-x");
+  // A's Sync again with secrets on X takes back only A's notes.
+  clearExclusions(key, (by) => by === "wa|machine-x");
+  expect(settledSecrets(key, none)).toEqual({ included: false, out: [".env.local"] });
+  // A person re-ticking the file, in any window, takes it back for every owner.
+  recordExclusions(key, { included: true, out: [".env.local"] }, none, "wc|machine-y");
+  expect(settledSecrets(key, none).out).toEqual([]);
+});
