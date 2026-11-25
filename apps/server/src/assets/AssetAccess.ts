@@ -106,6 +106,17 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
   ".woff",
   ".woff2",
 ]);
+/**
+ * A path an HTML preview may load as a dependency: no dot segment anywhere (hidden files and
+ * folders, `.` and `..`) and an asset extension. Applied to the name a page asks for and again
+ * to where that name really leads, so a link cannot dress another file up as an asset.
+ */
+const isPreviewDependencyPath = (filePath: string, path: Path.Path) =>
+  filePath.length > 0 &&
+  !filePath.includes("\0") &&
+  !filePath.split(/[\\/]/).some((segment) => segment.startsWith(".")) &&
+  PREVIEW_ASSET_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+
 const htmlFilePreview = (filePath: string) =>
   /\.html?$/i.test(filePath) ? ({ htmlPreview: "file" as const }) : {};
 
@@ -347,7 +358,17 @@ export const readableHostFile = Effect.fn("AssetAccess.readableHostFile")(functi
 });
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
-  function* (input: { readonly workspaceRoot: string; readonly relativePath: string }) {
+  function* (input: {
+    readonly workspaceRoot: string;
+    readonly relativePath: string;
+    /**
+     * Set for an HTML preview's dependency: the folder of the page, relative to the root. The
+     * resolved file, below that folder (or from the root when a link leads elsewhere), must
+     * pass the dependency rule itself. The page's own folder may be a dot folder, as reports
+     * under `.specweave/` are.
+     */
+    readonly previewDependencyBase?: string;
+  }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const resolved = yield* workspacePaths.resolveRelativePathWithinRoot(input).pipe(
@@ -367,6 +388,14 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const path = yield* Path.Path;
     const relative = path.relative(canonicalRoot.value, canonicalFile.value);
     if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    if (input.previewDependencyBase !== undefined) {
+      const base = path.normalize(input.previewDependencyBase);
+      const belowBase =
+        base === "." || !relative.startsWith(`${base}${path.sep}`)
+          ? relative
+          : relative.slice(base.length + 1);
+      if (!isPreviewDependencyPath(belowBase, path)) return null;
+    }
 
     const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
     return Option.isSome(info) && info.value.type === "File" ? canonicalFile.value : null;
@@ -376,6 +405,7 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
 const resolveCanonicalWorkspaceFileForRequest = (input: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
+  readonly previewDependencyBase?: string;
 }) =>
   resolveCanonicalWorkspaceFile(input).pipe(
     Effect.tapError((cause) =>
@@ -518,6 +548,12 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     );
     if (!canonicalFile || (yield* isProtectedAssetFile(resolved.absolutePath, canonicalFile))) {
       return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+      });
+    }
+    // The file is served by the type of what a link leads to, so that must be previewable too.
+    if (!isWorkspacePreviewEntryPath(canonicalFile)) {
+      return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
       });
     }
@@ -1158,7 +1194,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         unlessProtected(path.resolve(claims.workspaceRoot, claims.relativePath), file),
       ),
     );
-    return exactWorkspaceFile
+    // Checked again: a link can be repointed after its URL was issued.
+    return exactWorkspaceFile && isWorkspacePreviewEntryPath(exactWorkspaceFile)
       ? ({
           kind: "file",
           path: exactWorkspaceFile,
@@ -1166,20 +1203,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         } satisfies ResolvedAsset)
       : null;
   }
-  const segments = decodedPath.split(/[\\/]/);
-  if (
-    decodedPath.length === 0 ||
-    decodedPath.includes("\0") ||
-    segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".")) ||
-    !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase())
-  ) {
-    return null;
-  }
+  if (!isPreviewDependencyPath(decodedPath, path)) return null;
   const joinedRelativePath =
     claims.baseRelativePath === "." ? decodedPath : path.join(claims.baseRelativePath, decodedPath);
   const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
+    previewDependencyBase: claims.baseRelativePath,
   }).pipe(
     Effect.flatMap((file) =>
       unlessProtected(path.resolve(claims.workspaceRoot, joinedRelativePath), file),
