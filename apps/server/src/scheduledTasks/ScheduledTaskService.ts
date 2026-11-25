@@ -1906,9 +1906,10 @@ export const layer = Layer.effect(
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
               -- Turned back on, a finished one-shot is no longer up for removal.
+              -- Turned on or off by anyone, it is no longer paused by a project link (1472).
               run_policy_json = CASE WHEN ${input.enabled ? 1 : 0} = 1
-                THEN json_remove(${armedPolicy}, '$.finishedAt')
-                ELSE ${armedPolicy} END,
+                THEN json_remove(${armedPolicy}, '$.finishedAt', '$.linkPausedFor')
+                ELSE json_remove(${armedPolicy}, '$.linkPausedFor') END,
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
           RETURNING task_id
