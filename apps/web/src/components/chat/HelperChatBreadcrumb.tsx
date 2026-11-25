@@ -126,7 +126,7 @@ export function HelperChatBreadcrumbView({
             <FolderGit2Icon aria-hidden className="size-3.5 shrink-0" />
             <WorkspaceBreadcrumbText className="max-w-40">{label}</WorkspaceBreadcrumbText>
             {projectName && fromMachine ? (
-              <WorkspaceBreadcrumbText className="max-w-24 text-muted-foreground/70">
+              <WorkspaceBreadcrumbText className="max-w-24 text-muted-foreground">
                 {renderRich(tx("· on {machine}"), { machine: fromMachine })}
               </WorkspaceBreadcrumbText>
             ) : null}
