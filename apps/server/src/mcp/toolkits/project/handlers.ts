@@ -408,6 +408,33 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   // Windows paths come back from Node with `\`; Git writes them with `/`.
   const gitSpelling = (path: string) =>
     /^[A-Za-z]:[\\/]/u.test(path) ? path.replaceAll("\\", "/") : path;
+  // Git resolves a path one component at a time, following a link before
+  // the `..` after it; Node's realPath collapses `..` first. Undefined when
+  // the links do not settle.
+  const resolveLikeGit = (path: string) =>
+    Effect.gen(function* () {
+      const pending = path.split("/").filter((part) => part.length > 0);
+      let resolved: Array<string> = [];
+      for (let hops = 0; pending.length > 0;) {
+        const part = pending.shift() as string;
+        if (part === ".") continue;
+        if (part === "..") {
+          resolved.pop();
+          continue;
+        }
+        const target = yield* fileSystem
+          .readLink(`/${[...resolved, part].join("/")}`)
+          .pipe(Effect.option);
+        if (Option.isNone(target)) {
+          resolved.push(part);
+          continue;
+        }
+        if ((hops += 1) > 40) return undefined;
+        if (target.value.startsWith("/")) resolved = [];
+        pending.unshift(...target.value.split("/").filter((piece) => piece.length > 0));
+      }
+      return `/${resolved.join("/")}`;
+    });
   const ownsCheckout = (commonDir: string, isMain: boolean) =>
     Effect.gen(function* () {
       if (asked.includes("\n")) return false;
@@ -443,7 +470,9 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         sameBytes(bytes, named) || sameBytes(bytes, withNewline);
       if (!namesThisFolder(record.value)) return false;
       // Git looks a path up in the first slot that names it, so a path two
-      // slots name is not one registration.
+      // slots name is not one registration. Git trims a record's trailing
+      // whitespace and resolves it before that lookup, so the count does too:
+      // counting more slots than Git would only refuses more.
       const ids = yield* fileSystem
         .readDirectory(slots.slice(0, -1))
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -452,7 +481,23 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         const otherRecord = yield* fileSystem
           .readFile(`${slots}${other}/gitdir`)
           .pipe(Effect.option);
-        if (Option.isSome(otherRecord) && namesThisFolder(otherRecord.value)) naming += 1;
+        if (Option.isNone(otherRecord)) continue;
+        const trimmed = new TextDecoder().decode(otherRecord.value).trimEnd();
+        const folder = trimmed.endsWith("/.git") ? trimmed.slice(0, -"/.git".length) : trimmed;
+        const absolute =
+          folder.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(folder)
+            ? folder
+            : `${slots}${other}/${folder}`;
+        const resolved = absolute.startsWith("/")
+          ? yield* resolveLikeGit(absolute)
+          : gitSpelling(yield* real(absolute));
+        if (
+          namesThisFolder(otherRecord.value) ||
+          gitSpelling(folder) === gitSpelling(asked) ||
+          resolved === undefined ||
+          resolved === gitSpelling(asked)
+        )
+          naming += 1;
       }
       return naming === 1;
     });
@@ -477,7 +522,7 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   return yield* new OrchestratorMcpFailure({
     code: "invalid_request",
     message: listedButChanged
-      ? `git still lists ${worktreePath} as one of ${owner} worktrees, but the folder there is no longer that worktree. \`git worktree repair\` reconnects a moved worktree; \`git worktree remove\` drops the record.`
+      ? `git still lists ${worktreePath} as one of ${owner} worktrees, but the folder there is no longer that worktree. \`git worktree repair\` reconnects a moved worktree; to drop the record, unlock it if locked, move the folder away and run \`git worktree prune\`.`
       : `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
   });
 });
