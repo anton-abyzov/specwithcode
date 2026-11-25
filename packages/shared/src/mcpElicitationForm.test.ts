@@ -118,6 +118,9 @@ describe("parseMcpElicitationSchema", () => {
         ),
       },
       { type: "object", properties: { big: { type: "string", description: "x".repeat(70_000) } } },
+      // A prototype-named field would be lost from the content (review finding).
+      JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}'),
+      { type: "object", properties: { constructor: { type: "string" } } },
     ];
     for (const schema of refused) expect(parseMcpElicitationSchema(schema).ok).toBe(false);
   });
@@ -212,6 +215,22 @@ describe("validateMcpElicitationContent", () => {
     expect(validateMcpElicitationContent([day!], { day: "2028-02-29" }).ok).toBe(true);
     expect(validateMcpElicitationContent([day!], { day: "2026-02-29" }).ok).toBe(false);
     expect(validateMcpElicitationContent([day!], { day: "2026-13-01" }).ok).toBe(false);
+  });
+
+  it("never takes a value the answers object only inherits", () => {
+    const [field] = fieldsOf({
+      type: "object",
+      properties: { toString: { type: "string" } },
+      required: ["toString"],
+    });
+    expect(validateMcpElicitationContent([field!], {})).toEqual({
+      ok: false,
+      errors: { toString: "Required." },
+    });
+    expect(validateMcpElicitationContent([field!], { toString: "x" })).toEqual({
+      ok: true,
+      content: { toString: "x" },
+    });
   });
 
   it("sends empty content for a confirmation", () => {

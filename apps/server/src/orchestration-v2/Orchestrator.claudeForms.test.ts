@@ -24,6 +24,7 @@ import {
   FORM_AGENT_REFUSAL,
   FORM_ALREADY_ANSWERED,
   FORM_NEEDS_CARD,
+  FORM_OPENING,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "./ClaudeFormResponses.ts";
@@ -67,7 +68,11 @@ const confirmForm: OrchestrationV2McpElicitation = {
 };
 
 /** A pending mcp-elicitation card on a live session, with or without a Claude form. */
-const card = (name: string, elicitation: OrchestrationV2McpElicitation | undefined) =>
+const card = (
+  name: string,
+  elicitation: OrchestrationV2McpElicitation | undefined,
+  options: { readonly withItem?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -117,7 +122,15 @@ const card = (name: string, elicitation: OrchestrationV2McpElicitation | undefin
         id: requestId,
         nodeId,
         providerTurnId: null,
-        nativeRequestRef: null,
+        // The ref the Claude adapter gives a form's request.
+        nativeRequestRef:
+          elicitation === undefined
+            ? null
+            : {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                nativeId: `mcp-elicitation:github:${name}`,
+                strength: "strong",
+              },
         kind: "mcp-elicitation",
         status: "pending",
         responseCapability: { type: "live", providerSessionId: sessionId },
@@ -148,7 +161,7 @@ const card = (name: string, elicitation: OrchestrationV2McpElicitation | undefin
         completedAt: null,
       },
     });
-    yield* projections.apply({
+    if (options.withItem !== false) yield* projections.apply({
       id: EventId.make(`item:${name}`),
       type: "turn-item.updated",
       threadId,
@@ -276,5 +289,34 @@ it.effect("leaves a Codex elicitation without a form as it was", () =>
     const { respond, status } = yield* card("codex", undefined);
     yield* respond("full-access", { decision: "accept" });
     assert.equal((yield* status)?.status, "resolved");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("treats a Claude form's request as a form before its card lands", () =>
+  Effect.gen(function* () {
+    const { respond, status } = yield* card("before-item", confirmForm, { withItem: false });
+    // The adapter records the request a moment before the card's item.
+    assert.include(
+      yield* refusal(
+        respond("early-accept", { decision: "accept", answers: { confirm: "octo/repo" } }),
+      ),
+      FORM_OPENING,
+    );
+    assert.include(
+      yield* refusal(
+        respond("early-agent", {
+          decision: "accept",
+          answers: { confirm: "octo/repo" },
+          answeredByThreadId: ThreadId.make("thread:some-agent"),
+        }),
+      ),
+      FORM_OPENING,
+    );
+    assert.equal((yield* status)?.status, "pending");
+    // Decline still closes it, and nothing the person typed is kept.
+    yield* respond("early-decline", { decision: "decline", answers: { confirm: "secret" } });
+    const closed = yield* status;
+    assert.equal(closed?.status, "resolved");
+    assert.isUndefined(closed?.answers);
   }).pipe(Effect.provide(layerTest)),
 );

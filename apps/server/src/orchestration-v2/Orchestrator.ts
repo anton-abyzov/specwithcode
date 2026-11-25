@@ -9026,7 +9026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       // An MCP server's form in a Claude thread takes the person's checked answers only (1481).
-      const form = ClaudeForms.checkFormResponse(context.item, runtimeRequest.status, command);
+      const form = ClaudeForms.checkFormResponse({ ...context, request: runtimeRequest }, command);
       if (form?.refusal !== undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

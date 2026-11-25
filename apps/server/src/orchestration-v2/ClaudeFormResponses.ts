@@ -14,6 +14,7 @@
  */
 import type {
   OrchestrationV2McpElicitation,
+  OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderUserInputAnswers,
@@ -32,6 +33,10 @@ export const FORM_AGENT_REFUSAL = "Only the user can answer this form. Wait for 
 export const FORM_NEEDS_CARD = "Submit this form from its card in the thread.";
 export const FORM_ALREADY_ANSWERED = "This form was already answered.";
 export const FORM_CLOSED = "This form was closed.";
+export const FORM_OPENING = "This form is still opening. Try again in a moment.";
+
+/** The prefix of the native id the Claude adapter gives an MCP form's request. */
+export const CLAUDE_FORM_NATIVE_PREFIX = "mcp-elicitation:";
 
 const handedOff = new Map<string, ProviderUserInputAnswers>();
 
@@ -64,6 +69,15 @@ export function redactClaudeFormAnswers(
   return Object.fromEntries(Object.keys(answers).map((key) => [key, REDACTED_FORM_ANSWER]));
 }
 
+/** A request the Claude adapter raised for an MCP server's form. */
+export function isClaudeFormRequest(request: OrchestrationV2RuntimeRequest): boolean {
+  return (
+    request.kind === "mcp-elicitation" &&
+    request.nativeRequestRef?.driver === "claudeAgent" &&
+    (request.nativeRequestRef.nativeId ?? "").startsWith(CLAUDE_FORM_NATIVE_PREFIX)
+  );
+}
+
 /** The form a Claude MCP card shows; Codex elicitations carry none. */
 export function claudeFormOf(
   item: OrchestrationV2TurnItem | undefined,
@@ -90,20 +104,34 @@ export interface ClaudeFormResponseCheck {
  * second click, finds the request resolved and is told so.
  */
 export function checkFormResponse(
-  item: OrchestrationV2TurnItem | undefined,
-  status: string,
+  context: {
+    readonly request: OrchestrationV2RuntimeRequest;
+    readonly item?: OrchestrationV2TurnItem | undefined;
+  },
   command: {
     readonly decision?: ProviderApprovalDecision | undefined;
     readonly answers?: ProviderUserInputAnswers | undefined;
     readonly answeredByThreadId?: ThreadId | undefined;
   },
 ): ClaudeFormResponseCheck | undefined {
+  const { request, item } = context;
   const form = claudeFormOf(item);
-  if (form === undefined) return undefined;
+  // The Claude adapter records the request before its card: until the card
+  // lands, the request is still a form, and only Decline or Cancel go through.
+  if (form === undefined) {
+    if (!isClaudeFormRequest(request)) return undefined;
+    if (request.status !== "pending")
+      return { refusal: request.status === "resolved" ? FORM_ALREADY_ANSWERED : FORM_CLOSED };
+    return command.decision === "decline" || command.decision === "cancel"
+      ? {}
+      : { refusal: FORM_OPENING };
+  }
+  const status = request.status;
   if (status === "resolved") return { refusal: FORM_ALREADY_ANSWERED };
   if (status !== "pending") return { refusal: FORM_CLOSED };
   if (command.answeredByThreadId !== undefined) return { refusal: FORM_AGENT_REFUSAL };
-  if (command.decision === "decline" || command.decision === "cancel") return {};
+  if (command.decision === "decline" || command.decision === "cancel")
+    return {};
   if (command.answers === undefined) return { refusal: FORM_NEEDS_CARD };
   const parsed = parseMcpElicitationSchema(form.requestedSchema);
   if (!parsed.ok) return { refusal: FORM_CLOSED };

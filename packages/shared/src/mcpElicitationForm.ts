@@ -242,6 +242,8 @@ export function parseMcpElicitationSchema(schema: unknown): McpElicitationFormPa
   const fields: McpElicitationField[] = [];
   for (const key of keys) {
     if (key.trim() === "") return { ok: false, reason: "A field has no name." };
+    // Names an object treats as its own machinery would be lost or misread.
+    if (RESERVED_KEYS.has(key)) return { ok: false, reason: "A field has a reserved name." };
     const field = parseField(key, properties[key], required.has(key));
     if (typeof field === "string") return { ok: false, reason: field };
     fields.push(field);
@@ -253,7 +255,7 @@ export function parseMcpElicitationSchema(schema: unknown): McpElicitationFormPa
 export function mcpElicitationInitialValues(
   fields: ReadonlyArray<McpElicitationField>,
 ): Record<string, McpElicitationValue | undefined> {
-  const values: Record<string, McpElicitationValue | undefined> = {};
+  const values: Record<string, McpElicitationValue | undefined> = Object.create(null);
   for (const field of fields) {
     values[field.key] =
       field.kind === "boolean"
@@ -264,6 +266,8 @@ export function mcpElicitationInitialValues(
   }
   return values;
 }
+
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -357,14 +361,20 @@ export function validateMcpElicitationContent(
   fields: ReadonlyArray<McpElicitationField>,
   values: Readonly<Record<string, unknown>>,
 ): McpElicitationValidation {
-  const content: Record<string, McpElicitationValue> = {};
-  const errors: Record<string, string> = {};
+  const content: Record<string, McpElicitationValue> = Object.create(null);
+  const errors: Record<string, string> = Object.create(null);
   for (const field of fields) {
-    const checked = checkField(field, values[field.key]);
+    // Only the person's own value counts, never one an object inherits.
+    const checked = checkField(
+      field,
+      Object.hasOwn(values, field.key) ? values[field.key] : undefined,
+    );
     if (checked.error !== undefined) errors[field.key] = checked.error;
     else if (checked.value !== undefined) content[field.key] = checked.value;
   }
-  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, content };
+  return Object.keys(errors).length > 0
+    ? { ok: false, errors: { ...errors } }
+    : { ok: true, content: { ...content } };
 }
 
 // Words that name a credential in a text field's key or title, matched as
