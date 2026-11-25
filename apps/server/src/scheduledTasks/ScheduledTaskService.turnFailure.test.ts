@@ -94,6 +94,25 @@ it.effect("records a dispatched routine's failed turn on the task once", () =>
   }).pipe(Effect.provide(serviceLayer)),
 );
 
+it.effect("records only the first line of a failed turn's message", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
+    const service = yield* Service.ScheduledTaskService;
+    const { task } = yield* service.upsert(taskInput);
+    yield* service.runNow({ id: task.id });
+
+    const outcome = yield* service.recordTurnFailure({
+      id: task.id,
+      requestedAt: at("2026-10-21T19:00:00.100Z"),
+      error:
+        "Setup failed.\n    at prepare (/Users/someone/private/setup.ts:1:1)\ntoken=sk-private",
+    });
+    assert.equal(outcome, "recorded");
+    const [stored] = (yield* service.list()).tasks;
+    assert.equal(stored?.lastRunError, "Setup failed.");
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
 it.effect("reports running while the dispatch is not recorded yet", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
