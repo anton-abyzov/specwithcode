@@ -140,6 +140,74 @@ describe("AcpClientTerminals", () => {
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("never hands the server's own thread credentials to a terminal", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const printCredentials = {
+        command: process.execPath,
+        args: [
+          "-e",
+          "console.log(JSON.stringify([process.env.STUDIO_ACP_MCP_AUTHORIZATION ?? '', process.env.studio_acp_mcp_endpoint ?? '', process.env.SPECWEAVE_STUDIO_THREAD_ID ?? '', process.env.STUDIO_TEST_KEPT ?? '']))",
+        ],
+      };
+      const inherited = {
+        ...process.env,
+        STUDIO_ACP_MCP_AUTHORIZATION: "Bearer server-thread",
+        studio_acp_mcp_endpoint: "http://127.0.0.1:9/server-thread",
+        SPECWEAVE_STUDIO_THREAD_ID: "server-thread",
+        STUDIO_TEST_KEPT: "kept",
+      };
+      const run = (
+        terminals: AcpClientTerminals,
+        sessionId: string,
+      ): Effect.Effect<unknown, unknown> =>
+        Effect.gen(function* () {
+          const created = yield* terminals.create({ sessionId, ...printCredentials });
+          yield* terminals.waitForExit({ sessionId, terminalId: created.terminalId });
+          const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
+          return JSON.parse(output.output.trim());
+        });
+      const environmentForSession = (sessionId: string) =>
+        sessionId === "own"
+          ? {
+              STUDIO_ACP_MCP_AUTHORIZATION: "Bearer own",
+              SPECWEAVE_STUDIO_THREAD_ID: "own-thread",
+            }
+          : undefined;
+
+      // A base environment copied from the server.
+      const withBase = yield* makeAcpClientTerminals({
+        spawner,
+        defaultCwd: process.cwd(),
+        environment: inherited,
+        environmentForSession,
+      });
+      yield* Effect.addFinalizer(() => withBase.disposeAll);
+      expect(yield* run(withBase, "unknown")).toEqual(["", "", "", "kept"]);
+      expect(yield* run(withBase, "own")).toEqual(["Bearer own", "", "own-thread", "kept"]);
+
+      // No base environment: the terminal starts from the server's process env.
+      const saved = { ...process.env };
+      Object.assign(process.env, inherited);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const key of Object.keys(process.env)) {
+            if (!(key in saved)) delete process.env[key];
+          }
+          Object.assign(process.env, saved);
+        }),
+      );
+      const withoutBase = yield* makeAcpClientTerminals({
+        spawner,
+        defaultCwd: process.cwd(),
+        environmentForSession,
+      });
+      yield* Effect.addFinalizer(() => withoutBase.disposeAll);
+      expect(yield* run(withoutBase, "unknown")).toEqual(["", "", "", "kept"]);
+      expect(yield* run(withoutBase, "own")).toEqual(["Bearer own", "", "own-thread", "kept"]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("truncates buffered output from the beginning at the byte limit", () =>
     withTerminals((terminals) =>
       Effect.gen(function* () {
