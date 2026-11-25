@@ -69,7 +69,7 @@ import {
 } from "./ScheduledTaskRunnerWire.ts";
 import { nextRunAt } from "./ScheduledTaskStorage.ts";
 import { makeTransferIn } from "./ScheduledTaskTransferIn.ts";
-import { makeLinkMove } from "./ScheduledTaskLinkMove.ts";
+import { linkPausedNote, makeLinkMove } from "./ScheduledTaskLinkMove.ts";
 
 export { RoutineTransferRefusal, TransferRunState };
 export { ROUTINE_TRANSFER_PROTOCOL_VERSION, RoutineTransferRequest, RoutineTransferResponse };
@@ -126,6 +126,8 @@ export interface TransferOutDeps {
   readonly setEnabled: (taskId: ScheduledTask["id"], enabled: boolean) => Effect.Effect<boolean>;
   /** Writes the note the routine shows while Away keeps it off; null clears it. */
   readonly note: (taskId: ScheduledTask["id"], note: string | null) => Effect.Effect<void>;
+  /** Marks a routine off here as paused by a project link for `target` (1472). */
+  readonly markLinkPaused?: (taskId: ScheduledTask["id"], target: string) => Effect.Effect<boolean>;
   /** Writes run state onto this machine's copy (Bring back, and a move the target refused). */
   readonly writeState: (
     task: Pick<ScheduledTask, "id" | "projectId">,
@@ -155,6 +157,11 @@ export interface TransferOutDeps {
     readonly taskId: ScheduledTask["id"];
     readonly expected: RoutineRunnerRecord | null;
     readonly moving: (revision: number) => RoutineRunnerRecord;
+    /**
+     * Claims it while it is off here, only if a project link paused it for this
+     * target and nobody turned it on or off since (1472).
+     */
+    readonly fromOff?: string | undefined;
   }) => Effect.Effect<
     | {
         readonly kind: "claimed";
@@ -241,6 +248,11 @@ const MoveOperation = Schema.Struct({
   prior: Schema.NullOr(Schema.Unknown),
   /** What the owner approved that started the move, when not Away (a project link, 1472). */
   consent: Schema.optional(Schema.String),
+  /**
+   * It was off here, paused by a project link that could not move it (1472): it
+   * moves from off, and a move called off leaves it off rather than turning it on.
+   */
+  pausedHere: Schema.optional(Schema.Boolean),
 });
 type MoveOperation = typeof MoveOperation.Type;
 const decodeOperation = Schema.decodeUnknownOption(MoveOperation);
@@ -293,7 +305,13 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
     turnOn: boolean,
   ) =>
     Effect.gen(function* () {
-      if (turnOn) {
+      // One a project link paused stays off, paused for the link again, whoever
+      // called the move off: the link names why and offers Try again.
+      if (turnOn && operation.pausedHere === true) {
+        yield* deps.note(task.id, linkPausedNote(operation.targetLabel));
+        if (deps.markLinkPaused !== undefined)
+          yield* deps.markLinkPaused(task.id, operation.target);
+      } else if (turnOn) {
         yield* deps.setEnabled(task.id, true);
         // Turning on computes its own next run; the carried state keeps the due slot.
         if (operation.runState !== null) yield* deps.writeState(task, operation.runState);
@@ -456,6 +474,11 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
     readonly pausedNote?: string | undefined;
     /** Recorded on the move: what the owner approved, when not Away. */
     readonly consent?: string | undefined;
+    /**
+     * It is off here, paused by the project link that is moving it: it moves from
+     * off, never turned on here first, and stays off if the move is called off.
+     */
+    readonly fromPaused?: boolean | undefined;
   }): Effect.Effect<TransferOutcome> =>
     Effect.gen(function* () {
       const { task, target, targetLabel } = input;
@@ -500,6 +523,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
         runState: null,
         prior: existing,
         ...(input.consent === undefined ? {} : { consent: input.consent.slice(0, 500) }),
+        ...(input.fromPaused === true ? { pausedHere: true } : {}),
       };
       // 1. Claimed here, before the routine is read for sending: from now on nobody
       //    changes it, so what is staged is what moves. A move this machine cannot
@@ -507,6 +531,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       const claim = yield* deps.claim({
         taskId: task.id,
         expected: existing,
+        fromOff: input.fromPaused === true ? target : undefined,
         moving: (revision) => ({
           taskId: task.id,
           state: "moving",
@@ -551,10 +576,19 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       //    write. It is turned on there only once that write is made: otherwise it
       //    could fire on both, or a retry could not repeat the enable.
       let offOperation: MoveOperation = operation;
+      const armedAt = yield* DateTime.now;
       const offRecord = yield* deps.commitOff({
         task: claimed,
         note: (input.pausedNote ?? awayPausedNote(targetLabel)).slice(0, 500),
-        record: (runState) => {
+        record: (state) => {
+          // Off here already, it has no next run: it runs there as if turned on now.
+          const runState =
+            input.fromPaused === true && state.nextRunAt === null
+              ? {
+                  ...state,
+                  nextRunAt: nextRunAt({ enabled: true, schedule: claimed.schedule }, armedAt),
+                }
+              : state;
           offOperation = { ...operation, phase: "off", runState };
           return { ...claim.record, operation: offOperation };
         },
@@ -718,6 +752,31 @@ export const makePauseHere =
       ),
     );
 
+/**
+ * Which kept machine a project link paused a routine for, kept in its run policy
+ * (1472). Any turn on or off clears it (ScheduledTaskService.setEnabled), so a
+ * routine its owner turned off since is never taken for one the link paused.
+ */
+export const makeLinkPauseMarker = (sql: SqlClient.SqlClient) => ({
+  read: (taskId: string): Effect.Effect<string | null> =>
+    sql<{ readonly target: string | null }>`
+      SELECT json_extract(run_policy_json, '$.linkPausedFor') AS target
+      FROM scheduled_tasks WHERE task_id = ${taskId}
+    `.pipe(
+      Effect.map((rows) => rows[0]?.target ?? null),
+      Effect.orElseSucceed(() => null),
+    ),
+  mark: (taskId: string, target: string): Effect.Effect<boolean> =>
+    sql`
+      UPDATE scheduled_tasks
+      SET run_policy_json = json_set(COALESCE(run_policy_json, '{}'), '$.linkPausedFor', ${target})
+      WHERE task_id = ${taskId} AND enabled = 0
+    `.pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    ),
+});
+
 // --- the service ------------------------------------------------------------------------------
 
 export class ScheduledTaskTransfer extends Context.Service<
@@ -794,6 +853,7 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
             yield* db`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${id}`;
           }),
         ).pipe(logged("write a routine's note")(undefined)),
+      markLinkPaused: (id, target) => makeLinkPauseMarker(sql).mark(id, target),
       writeState: (task, state) =>
         withSql(writeStateRow(task.projectId, task.id, state)).pipe(
           logged("write run state")(undefined),
@@ -823,7 +883,11 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
                 if (task === undefined)
                   return { kind: "refused", detail: "This routine is gone." } as const;
                 const state = yield* withSql(readStateRow(input.taskId));
-                if (state === null || !state.enabled)
+                const pausedFor =
+                  state !== null && !state.enabled && input.fromOff !== undefined
+                    ? yield* makeLinkPauseMarker(sql).read(input.taskId)
+                    : null;
+                if (state === null || (!state.enabled && pausedFor !== input.fromOff))
                   return {
                     kind: "refused",
                     detail: "Stays here, off: it was turned off on this machine.",
@@ -980,6 +1044,7 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
       settle: runner.reconcile({ force: true }).pipe(logged("settle routine runners")(undefined)),
       moveOut: out.moveOut,
       pauseHere,
+      linkPause: makeLinkPauseMarker(sql),
     });
 
     return ScheduledTaskTransfer.of({ ...out, receive, pauseHere, moveForLink });

@@ -46,9 +46,15 @@ export interface LinkMoveDeps {
     readonly adapt?: ((copy: CoordinatorRoutineCopy) => CoordinatorRoutineCopy) | undefined;
     readonly pausedNote?: string | undefined;
     readonly consent?: string | undefined;
+    readonly fromPaused?: boolean | undefined;
   }) => Effect.Effect<TransferOutcome>;
   /** Turns a routine off here with `note`, or with null back on; true when done. */
   readonly pauseHere: (taskId: string, note: string | null) => Effect.Effect<boolean>;
+  /** Which kept machine a link paused a routine for; cleared by any turn on or off. */
+  readonly linkPause: {
+    readonly read: (taskId: string) => Effect.Effect<string | null>;
+    readonly mark: (taskId: string, target: string) => Effect.Effect<boolean>;
+  };
 }
 
 const clip = (text: string) => text.slice(0, 500);
@@ -79,7 +85,11 @@ export function rewriteFolder(text: string, from: string, to: string): string {
   const source = from.replace(/[\\/]+$/, "");
   const target = to.replace(/[\\/]+$/, "");
   if (source.length < 2 || source === target) return text;
-  return text.replace(new RegExp(`${escapeRegExp(source)}(?![A-Za-z0-9._-])`, "g"), () => target);
+  // Bounded on both sides: a path that only ends in the folder (another root, a URL) is not it.
+  return text.replace(
+    new RegExp(`(?<![A-Za-z0-9._~/\\\\-])${escapeRegExp(source)}(?![A-Za-z0-9._-])`, "g"),
+    () => target,
+  );
 }
 
 /** The routine as the kept machine saves it: this copy's folder becomes the kept copy's. */
@@ -107,9 +117,11 @@ export const adaptToKept =
   };
 
 const isUrl = (location: string) => /^https?:\/\//i.test(location.trim());
-const insideFolder = (location: string, folder: string | undefined) =>
-  folder !== undefined &&
-  (location === folder || location.startsWith(`${folder.replace(/[\\/]+$/, "")}/`));
+const insideFolder = (location: string, folder: string | undefined) => {
+  if (folder === undefined) return false;
+  const root = folder.replace(/[\\/]+$/, "");
+  return location === root || location.startsWith(`${root}/`) || location.startsWith(`${root}\\`);
+};
 const BROWSER_WORDS = /\b(chrome|browser|signed[- ]in|sign in|log ?in)\b/i;
 
 /**
@@ -144,21 +156,43 @@ export function setupNotes(
   return notes.slice(0, PROJECT_LINK_ROUTINE_SETUP_MAX).map(clip);
 }
 
-/** The kept machine's refusals that its work grant for this machine leaves routines out. */
-const GRANT_REFUSAL =
-  /does not let that machine|manage routines|work grant (for that machine|does not allow)/;
+/**
+ * The kept machine's refusals that it has no grant for this machine, or one with
+ * Routines off. Its other refusals (a project or sign-in left out) are shown as said.
+ */
+const GRANT_REFUSAL = /does not let that machine(?: run work here|'s coordinator manage routines)/;
 const grantDetail = (targetLabel: string) =>
   `${targetLabel} does not let this machine move routines there. On ${targetLabel}: turn on Routines for this machine in Settings > Machines > Who can run work here, then choose Try again.`;
 /** Every machine of the project must confirm it rests its copy before one moves. */
 const unconfirmedDetail = (targetLabel: string) =>
   `${targetLabel} did not confirm it rests its copy of this routine, so it cannot move yet. Check that ${targetLabel} is online and lets this machine run routines there (on ${targetLabel}: Settings > Machines > Who can run work here > Routines), then choose Try again.`;
 
+/** The kept machine's own refusal says "This machine" of itself: named here as that machine. */
+const refusedThere = (targetLabel: string, detail: string) =>
+  /^This machine/.test(detail)
+    ? `${targetLabel}: ${detail.replace(/^This machine/, "That machine")}`
+    : detail;
+
 const refuse = (code: ProjectLinkError["code"], detail: string) =>
   Effect.fail(new ProjectLinkError({ code, detail }));
 
-export const makeLinkMove =
-  (deps: LinkMoveDeps) =>
-  (
+export const makeLinkMove = (deps: LinkMoveDeps) => {
+  // One move per routine at a time: a second call (a double Try again, another
+  // window) would read the first's open move as cut off and call it off.
+  const inFlight = new Set<string>();
+  const once = (input: ProjectLinkMoveRoutineInput) =>
+    Effect.suspend(() => {
+      if (inFlight.has(input.routineId))
+        return Effect.succeed<ProjectLinkMoveRoutineResult>({
+          routineId: input.routineId,
+          outcome: "failed",
+          detail: "It is being moved right now. Try again in a moment.",
+          setup: [],
+        });
+      inFlight.add(input.routineId);
+      return run(input).pipe(Effect.ensuring(Effect.sync(() => inFlight.delete(input.routineId))));
+    });
+  const run = (
     input: ProjectLinkMoveRoutineInput,
   ): Effect.Effect<ProjectLinkMoveRoutineResult, ProjectLinkError> =>
     Effect.gen(function* () {
@@ -206,10 +240,21 @@ export const makeLinkMove =
       if (!isCoordinatorOwnedRoutine(task))
         return result("stays", "Stays on this machine: it follows its worker thread.");
       const record = yield* deps.record(task.id);
-      if (record?.state === "disarmed")
+      if (record?.state === "disarmed") {
+        const runner =
+          record.runnerEnvironmentId === input.target
+            ? targetLabel
+            : (record.runnerLabel ?? "another machine");
+        // Another machine runs it: this machine neither moves it nor turns it off there.
+        if (input.choice === "leave-off")
+          return result(
+            "stays",
+            `Not changed: ${runner} runs it, not this machine. Turn it off in Routines if it should stop.`,
+          );
         return record.runnerEnvironmentId === input.target
           ? result("moved", `Runs on ${targetLabel}; off here.`)
-          : result("stays", `Stays as it is: ${record.runnerLabel ?? "another machine"} runs it.`);
+          : result("stays", `Stays as it is: ${runner} runs it.`);
+      }
 
       if (input.choice === "leave-off") {
         if (record?.state === "staged" || record?.state === "moving")
@@ -222,7 +267,17 @@ export const makeLinkMove =
 
       const paused = (detail: string) =>
         Effect.gen(function* () {
-          const off = yield* deps.pauseHere(task.id, linkPausedNote(targetLabel));
+          // Marked only when it was on, or still carries this link's mark: one its
+          // owner turned on or off meanwhile is left as the owner set it.
+          const markable = task.enabled || (yield* deps.linkPause.read(task.id)) === input.target;
+          if (!markable)
+            return result(
+              "failed",
+              `${detail} It was turned on or off here meanwhile, so it stays as it is now.`,
+            );
+          const off =
+            (yield* deps.pauseHere(task.id, linkPausedNote(targetLabel))) &&
+            (yield* deps.linkPause.mark(task.id, input.target));
           return result(
             "failed",
             off
@@ -231,15 +286,13 @@ export const makeLinkMove =
           );
         });
 
+      // Off here: only a routine this link paused for this target moves, and it
+      // moves from off, never turned on here first. One its owner turned on or
+      // off since carries no mark and is left as the owner set it.
+      const fromPaused = !task.enabled;
       if (record?.state !== "moving") {
-        if (!task.enabled) {
-          // Only a routine this link paused is turned back on to move; one the
-          // owner turned off stays off.
-          if (task.lastRunError !== linkPausedNote(targetLabel))
-            return result("failed", "It is off on this machine. Turn it on here, then try again.");
-          if (!(yield* deps.pauseHere(task.id, null)))
-            return result("failed", "It could not be turned on here to move. Try again.");
-        }
+        if (fromPaused && (yield* deps.linkPause.read(task.id)) !== input.target)
+          return result("failed", "It is off on this machine. Turn it on here, then try again.");
         // A copy just linked has no settled runner yet; the move needs one.
         if (record?.state !== "settled") {
           yield* deps.settle;
@@ -258,6 +311,7 @@ export const makeLinkMove =
         adapt: adaptToKept(project.workspaceRoot, kept.workspaceRoot),
         pausedNote: linkMovedNote(targetLabel),
         consent: `project-link:${here.linkId ?? project.workspaceSettings?.logicalProject?.id ?? "link"}`,
+        fromPaused,
       });
       if (moved.kind === "moved")
         return result(
@@ -274,6 +328,8 @@ export const makeLinkMove =
       return yield* paused(
         GRANT_REFUSAL.test(moved.detail)
           ? grantDetail(targetLabel)
-          : moved.detail.replace(/^Stays here:\s*/, ""),
+          : refusedThere(targetLabel, moved.detail.replace(/^Stays here:\s*/, "")),
       );
     });
+  return once;
+};

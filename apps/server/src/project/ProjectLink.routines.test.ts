@@ -23,6 +23,7 @@ import {
   rewriteFolder,
   setupNotes,
 } from "../scheduledTasks/ScheduledTaskLinkMove.ts";
+import { makeLinkPauseMarker } from "../scheduledTasks/ScheduledTaskTransfer.ts";
 import { COORDINATES, fleet, type Machine } from "../scheduledTasks/ScheduledTaskRunner.testkit.ts";
 import { legacyPair, link, removeCheckouts } from "./ProjectLink.testkit.ts";
 
@@ -86,6 +87,7 @@ const moverOn = (joining: Machine, kept: Machine, keptRoot?: string) =>
     settle: joining.runner.reconcile({ force: true }),
     moveOut: joining.transfer!.moveOut,
     pauseHere: joining.transfer!.pauseHere,
+    linkPause: makeLinkPauseMarker(joining.sql),
   });
 
 const listed = (machine: Machine) =>
@@ -202,6 +204,120 @@ describe("project link routine moves", () => {
       assert.isTrue(yield* enabledOn(kept));
       assert.isFalse(yield* enabledOn(joining));
       assert.equal(network.log.filter((entry) => entry.endsWith(":runner-enable")).length, 1);
+    }),
+  );
+
+  it.effect("AC-03: Try again moves a paused routine from off, never turning it on here", () =>
+    Effect.gen(function* () {
+      const { kept, joining, network, everyoneLooks, fires } = yield* linked;
+      yield* seedOnJoining(joining);
+      kept.state.unlinked.add(joining.environmentId);
+      assert.equal((yield* moverOn(joining, kept)(move(joining, kept))).outcome, "failed");
+      kept.state.unlinked.clear();
+
+      const onHere: Array<string> = [];
+      const check = (_from: string, _to: string, op: string) =>
+        Effect.gen(function* () {
+          if (yield* enabledOn(joining)) onHere.push(op);
+        });
+      network.before = check;
+      network.during = check;
+      const again = yield* moverOn(joining, kept)(move(joining, kept));
+      network.before = undefined;
+      network.during = undefined;
+      assert.equal(again.outcome, "moved");
+      assert.deepEqual(onHere, []);
+      assert.isFalse(yield* enabledOn(joining));
+      // It arrives with a next run, as if turned on now, and runs once, there.
+      assert.isTrue(yield* enabledOn(kept));
+      assert.isNotNull((yield* kept.row)?.next_run_at);
+      yield* kept.makeDue(DUE);
+      yield* everyoneLooks;
+      assert.equal(fires(), 1);
+      assert.equal(kept.fires(), 1);
+    }),
+  );
+
+  it.effect("a routine its owner turned on and off again after the link paused it stays off", () =>
+    Effect.gen(function* () {
+      const { kept, joining, network } = yield* linked;
+      const task = yield* seedOnJoining(joining);
+      kept.state.unlinked.add(joining.environmentId);
+      assert.equal((yield* moverOn(joining, kept)(move(joining, kept))).outcome, "failed");
+      kept.state.unlinked.clear();
+      // The note still reads as the link's, but the owner chose off.
+      yield* joining.service.setEnabled({ id: task.id, enabled: true }).pipe(Effect.orDie);
+      yield* joining.service.setEnabled({ id: task.id, enabled: false }).pipe(Effect.orDie);
+      assert.equal((yield* joining.row)?.last_run_error, linkPausedNote("kept"));
+
+      const again = yield* moverOn(joining, kept)(move(joining, kept));
+      assert.equal(again.outcome, "failed");
+      assert.match(again.detail, /off on this machine/);
+      assert.isFalse(yield* enabledOn(joining));
+      assert.isUndefined(yield* listed(kept));
+      assert.isFalse(network.log.some((entry) => /runner-(stage|enable)/.test(entry)));
+    }),
+  );
+
+  it.effect("the owner turning it on and off while Try again is under way keeps it off", () =>
+    Effect.gen(function* () {
+      const { kept, joining, network } = yield* linked;
+      const task = yield* seedOnJoining(joining);
+      kept.state.unlinked.add(joining.environmentId);
+      assert.equal((yield* moverOn(joining, kept)(move(joining, kept))).outcome, "failed");
+      kept.state.unlinked.clear();
+      // Another window, while the move asks the kept machine for its status.
+      let toggled = false;
+      network.before = (_from, _to, op) =>
+        op !== "status" || toggled
+          ? Effect.void
+          : Effect.gen(function* () {
+              toggled = true;
+              yield* joining.service.setEnabled({ id: task.id, enabled: true }).pipe(Effect.orDie);
+              yield* joining.service.setEnabled({ id: task.id, enabled: false }).pipe(Effect.orDie);
+            });
+      const again = yield* moverOn(joining, kept)(move(joining, kept));
+      network.before = undefined;
+      assert.isTrue(toggled);
+      assert.equal(again.outcome, "failed");
+      assert.isFalse(yield* enabledOn(joining));
+      assert.isFalse(yield* enabledOn(kept));
+      // Not paused for the link again: a later Try again leaves it off too.
+      const later = yield* moverOn(joining, kept)(move(joining, kept));
+      assert.equal(later.outcome, "failed");
+      assert.match(later.detail, /off on this machine/);
+      assert.isFalse(yield* enabledOn(kept));
+      assert.isFalse(network.log.some((entry) => /runner-(stage|enable)/.test(entry)));
+    }),
+  );
+
+  it.effect("two moves of one routine at once: one moves it, the other waits its turn", () =>
+    Effect.gen(function* () {
+      const { kept, joining, network } = yield* linked;
+      yield* seedOnJoining(joining);
+      const mover = moverOn(joining, kept);
+      const [first, second] = yield* Effect.all(
+        [mover(move(joining, kept)), mover(move(joining, kept))],
+        { concurrency: "unbounded" },
+      );
+      assert.deepEqual([first.outcome, second.outcome].sort(), ["failed", "moved"]);
+      assert.match((first.outcome === "failed" ? first : second).detail, /being moved right now/);
+      assert.equal(network.log.filter((entry) => entry.endsWith(":runner-enable")).length, 1);
+      assert.isTrue(yield* enabledOn(kept));
+      assert.isFalse(yield* enabledOn(joining));
+      assert.equal((yield* joining.record)?.state, "disarmed");
+    }),
+  );
+
+  it.effect("Leave off on a routine another machine already runs says so and changes nothing", () =>
+    Effect.gen(function* () {
+      const { kept, joining } = yield* linked;
+      yield* seedOnJoining(joining);
+      assert.equal((yield* moverOn(joining, kept)(move(joining, kept))).outcome, "moved");
+      const result = yield* moverOn(joining, kept)({ ...move(joining, kept), choice: "leave-off" });
+      assert.equal(result.outcome, "stays");
+      assert.match(result.detail, /Not changed: kept runs it/);
+      assert.isTrue(yield* enabledOn(kept));
     }),
   );
 
@@ -340,6 +456,7 @@ describe("AC-04 webhook routines and folders", () => {
             Effect.as({ kind: "failed", detail: "", offHere: false } as const),
           ),
         pauseHere: (id) => Effect.sync(() => posts.push(`pause:${id}`)).pipe(Effect.as(true)),
+        linkPause: { read: () => Effect.succeed(null), mark: () => Effect.succeed(true) },
       });
       const result = yield* mover({
         projectId: ProjectId.make("project-joining"),
@@ -364,6 +481,15 @@ describe("AC-04 webhook routines and folders", () => {
     );
     assert.equal(rewriteFolder("nothing here", JOINING_ROOT, KEPT_ROOT), "nothing here");
     assert.equal(rewriteFolder("/ stays", "/", KEPT_ROOT), "/ stays");
+    // A path that only ends in the folder, under another root or in a URL, is not it.
+    assert.equal(
+      rewriteFolder(
+        `compare /backup${JOINING_ROOT}/a.md and https://x.test${JOINING_ROOT}/help, "${JOINING_ROOT}/c"`,
+        JOINING_ROOT,
+        KEPT_ROOT,
+      ),
+      `compare /backup${JOINING_ROOT}/a.md and https://x.test${JOINING_ROOT}/help, "${KEPT_ROOT}/c"`,
+    );
   });
 
   it("names what to set up when the kept folder is unknown", () => {
@@ -417,6 +543,26 @@ describe("a kept machine whose work grant leaves routines out", () => {
       assert.isTrue(yield* enabledOn(kept));
       assert.isFalse(yield* enabledOn(joining));
     }),
+  );
+
+  it.effect(
+    "Routines turned off there after the runner settled: the stage refusal names the setting",
+    () =>
+      Effect.gen(function* () {
+        const { kept, joining, network } = yield* linked;
+        yield* seedOnJoining(joining);
+        yield* joining.runner.reconcile({ force: true });
+        assert.equal((yield* joining.record)?.state, "settled");
+        network.grant = () => noRoutines(joining) as never;
+        const refused = yield* moverOn(joining, kept)(move(joining, kept));
+        assert.equal(refused.outcome, "failed");
+        assert.match(
+          refused.detail,
+          /On kept: turn on Routines for this machine in Settings > Machines > Who can run work here/,
+        );
+        assert.isFalse(yield* enabledOn(joining));
+        assert.isUndefined(yield* listed(kept));
+      }),
   );
 
   it.effect("Leave off works while the runner is still being settled", () =>
@@ -478,6 +624,7 @@ describe("the joining copy after a real prepare, accept and commit", () => {
           return { kind: "moved", targetProjectId: pair.kept.projectId, detail: "" } as const;
         }),
       pauseHere: () => Effect.succeed(true),
+      linkPause: { read: () => Effect.succeed(null), mark: () => Effect.succeed(true) },
     });
     const result = await Effect.runPromise(
       mover({
