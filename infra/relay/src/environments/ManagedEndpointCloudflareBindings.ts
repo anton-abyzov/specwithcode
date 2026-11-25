@@ -4,6 +4,7 @@ import type * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import {
   layer,
@@ -28,6 +29,8 @@ export const CLOUDFLARE_CALL_RETRY: CloudflareRetry.Options = {
     : { while: CloudflareRetry.transientOptions.while }),
   schedule: Schedule.max([Schedule.exponential(250, 2), Schedule.recurs(4)]),
 };
+
+const isTunnelClientError = Schema.is(ManagedEndpointTunnelClientError);
 
 export const limitCloudflareCall = <A, E, R>(call: Effect.Effect<A, E, R>) =>
   call.pipe(CloudflareRetry.policy(CLOUDFLARE_CALL_RETRY), Effect.timeout("8 seconds"));
@@ -89,6 +92,34 @@ export const layerCloudflareBindings = (
               ),
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
+          putConfigurationAfter: (check, tunnelId, config) => {
+            const putFailed = (cause: unknown) =>
+              new ManagedEndpointTunnelClientError({
+                operation: "put-configuration",
+                tunnelId,
+                cause,
+              });
+            // The client's own retry is off for this write, so a retry runs the
+            // check again before writing; other callers keep the client retry.
+            return check.pipe(
+              Effect.andThen(
+                tunnelClient
+                  .putConfiguration(tunnelId, config)
+                  .pipe(CloudflareRetry.none, Effect.mapError(putFailed)),
+              ),
+              Effect.retry({
+                schedule: CLOUDFLARE_CALL_RETRY.schedule ?? Schedule.recurs(0),
+                while: (error) =>
+                  isTunnelClientError(error) &&
+                  (CLOUDFLARE_CALL_RETRY.while?.(error.cause) ?? false),
+              }),
+              Effect.timeoutOrElse({
+                duration: "8 seconds",
+                orElse: () => Effect.fail(putFailed("timed out")),
+              }),
+              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+            );
+          },
           getToken: (tunnelId) =>
             limitCloudflareCall(tunnelClient.getToken(tunnelId)).pipe(
               Effect.mapError(

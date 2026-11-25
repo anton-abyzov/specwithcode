@@ -285,6 +285,16 @@ export class ManagedEndpointTunnelClient extends Context.Service<
         }>;
       },
     ) => Effect.Effect<unknown, ManagedEndpointTunnelClientError>;
+    /**
+     * `putConfiguration` after `check`, retried as one: every try runs the
+     * check first, so a provision never retries a write its check would now
+     * refuse. Without it, the check and one `putConfiguration` run once.
+     */
+    readonly putConfigurationAfter?: <E>(
+      check: Effect.Effect<void, E>,
+      tunnelId: string,
+      config: { readonly ingress: Array<{ readonly hostname?: string; readonly service: string }> },
+    ) => Effect.Effect<unknown, E | ManagedEndpointTunnelClientError>;
     readonly getToken: (
       tunnelId: string,
     ) => Effect.Effect<string, ManagedEndpointTunnelClientError>;
@@ -1238,23 +1248,32 @@ export const make = Effect.gen(function* () {
             generation: tunnelGeneration,
           },
           // Ownership is read inside the claim, after its generation read: a
-          // link commit leaves that generation alone, so only this read sees it.
-          (input.ownsOrigin ?? Effect.succeed(true)).pipe(
-            Effect.mapError((cause) => configureFailed({ cause })),
-            Effect.filterOrFail(
-              (owned) => owned,
-              () => configureFailed({ reason: "key-conflict" }),
+          // link commit leaves that generation alone, so only this read sees
+          // it. A retried write reads it again (see putConfigurationAfter).
+          (
+            tunnels.putConfigurationAfter ??
+            ((check, tunnelId, body) =>
+              Effect.andThen(check, tunnels.putConfiguration(tunnelId, body)))
+          )(
+            (input.ownsOrigin ?? Effect.succeed(true)).pipe(
+              Effect.mapError((cause) => configureFailed({ cause })),
+              Effect.filterOrFail(
+                (owned) => owned,
+                () => configureFailed({ reason: "key-conflict" }),
+              ),
+              Effect.asVoid,
             ),
-            Effect.andThen(
-              tunnels
-                .putConfiguration(tunnel.id, {
-                  ingress: [
-                    { hostname, service: formatOriginService(input.origin) },
-                    { service: "http_status:404" },
-                  ],
-                })
-                .pipe(Effect.mapError((cause) => configureFailed({ cause }))),
-            ),
+            tunnel.id,
+            {
+              ingress: [
+                { hostname, service: formatOriginService(input.origin) },
+                { service: "http_status:404" },
+              ],
+            },
+          ).pipe(
+            Effect.catchTags({
+              ManagedEndpointTunnelClientError: (cause) => Effect.fail(configureFailed({ cause })),
+            }),
           ),
         )
         .pipe(
