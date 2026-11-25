@@ -78,6 +78,8 @@ export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartEr
 export interface DeviceHubEndpoint {
   /** Loopback origin of expo-device-hub, e.g. `http://127.0.0.1:3400`. */
   readonly origin: string;
+  /** The hub's session token, sent on every hub call; it never leaves the server. See hubToken.ts. */
+  readonly token?: string | undefined;
 }
 
 export interface AgentDeviceEndpoint {

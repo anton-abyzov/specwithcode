@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost.ts";
+import { withHubToken } from "./hubToken.ts";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
@@ -74,13 +75,15 @@ const vendorPrefix = (platform: DevicePlatform) =>
 export const makeDeviceHubOperations = (options: {
   readonly hostId: DeviceHostId;
   readonly origin: string;
+  /** The hub's session token, when it requires one. */
+  readonly token?: string | undefined;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
   /** Whether to list AVDs, which the hub does not report until they boot. */
   readonly androidAvailable: Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
-  const httpClient = options.http.pipe(HttpClient.withScope);
+  const httpClient = withHubToken(options.http, options.token).pipe(HttpClient.withScope);
 
   const hubJson = <A, I>(
     request: HttpClientRequest.HttpClientRequest,
