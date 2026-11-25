@@ -7341,7 +7341,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         )}
                       />
                     </ComposerBanner.Content>
-                    <ComposerBanner.Actions hidden={isMcpElicitationFormApproval(activePendingApproval)}>
+                    <ComposerBanner.Actions
+                      hidden={isMcpElicitationFormApproval(activePendingApproval)}
+                    >
                       <ComposerPendingApprovalActions
                         requestId={activePendingApproval.requestId}
                         disabled={!canOperateThread}
