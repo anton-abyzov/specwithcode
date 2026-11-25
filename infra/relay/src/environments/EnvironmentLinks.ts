@@ -239,7 +239,7 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      yield* db
+      const upsertLink = db
         .insert(relayEnvironmentLinks)
         .values({
           userId: input.userId,
@@ -278,18 +278,35 @@ const make = Effect.gen(function* () {
               ? {}
               : { hardwareIdentity: input.hardwareIdentity }),
           },
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentLinkUpsertPersistenceError({
-                userId: input.userId,
-                environmentId,
-                ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
-                cause,
-              }),
+        });
+      // One machine key belongs to one account at a time. A machine that links
+      // under another account ends the previous account's link in the same
+      // atomic batch, so no moment has both accounts receiving its pushes and
+      // routes. Runs after the upsert, whose webhook-hold inheritance still sees
+      // the previous link. Credentials stay: they belong to the key, which the
+      // new link uses.
+      const revokeOtherAccounts = db
+        .update(relayEnvironmentLinks)
+        .set({ revokedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, proof.environmentPublicKey),
+            ne(relayEnvironmentLinks.userId, input.userId),
+            isNull(relayEnvironmentLinks.revokedAt),
           ),
         );
+      yield* RelayDb.batch(db, [upsertLink, revokeOtherAccounts]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentLinkUpsertPersistenceError({
+              userId: input.userId,
+              environmentId,
+              ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
+              cause,
+            }),
+        ),
+      );
     }),
 
     findActiveForHardware: Effect.fn("relay.environment_links.find_active_for_hardware")(
