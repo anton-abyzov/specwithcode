@@ -84,6 +84,20 @@ class PairingInputTest {
         assertFalse(PairingInput.isCleartext(safe))
     }
 
+    @Test fun theBannerReadsHostsTheWayPairingDoes() {
+        // A DNS label with a leading underscore pairs (OkHttp accepts it) but java.net.URI
+        // reads no host, which left the banner empty and Connect enabled.
+        val underscore = "https://_svc.example.com/pair#token=$code"
+        assertEquals("_svc.example.com", PairingInput.host(underscore))
+        assertFalse(PairingInput.isPublicCleartext(underscore))
+        val hosted = "https://x.example/pair?host=https%3A%2F%2F_svc.example.com#token=$code"
+        assertEquals("_svc.example.com", PairingInput.host(hosted))
+
+        // When no machine address can be read at all, an external link is not used.
+        assertNull(PairingInput.host("not a pairing link"))
+        assertTrue(PairingInput.isPublicCleartext("not a pairing link"))
+    }
+
     @Test fun deepLinksOpenPairingOrAThread() {
         val real = "https://m4.example.ts.net/pair#token=$code"
         assertEquals(DeepLink.Pair(real), DeepLink.parse("studio://pair?pairingUrl=" + java.net.URLEncoder.encode(real, "UTF-8")))
