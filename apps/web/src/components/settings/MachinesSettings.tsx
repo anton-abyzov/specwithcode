@@ -4,6 +4,8 @@ import { CommandLineCard } from "./CommandLineCard";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import type { FleetMachineCardExtras } from "./StudioFleetConnections";
 import { MachineRemoteControl } from "./MachineRemoteControl";
+import { ScreenShareSettings } from "../screenShare/ScreenShareSettings";
+import { ViewScreenButton } from "../screenShare/ViewScreenButton";
 import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import type { StudioFleetMachine } from "@specweave-studio/contracts/studioFleet";
 import { Link } from "@tanstack/react-router";
@@ -229,10 +231,16 @@ export function MachinesSettingsPanel() {
       onConnect={(machine) => void connect(machine)}
       remoteControl={
         row.seen.state === "this-machine" ? null : (
-          <MachineRemoteControl
-            environmentId={row.environmentId}
-            name={machineName(row.environmentId, row.label)}
-          />
+          <>
+            <MachineRemoteControl
+              environmentId={row.environmentId}
+              name={machineName(row.environmentId, row.label)}
+            />
+            <ViewScreenButton
+              environmentId={row.environmentId}
+              name={machineName(row.environmentId, row.label)}
+            />
+          </>
         )
       }
       addForAgents={
@@ -290,7 +298,10 @@ export function MachinesSettingsPanel() {
         <MachineSummary environmentId={fleet.primaryEnvironmentId} rows={rows} setup={setup} />
       ) : null}
       {fleet.primaryEnvironmentId ? (
-        <ConnectDevicesSection environmentId={fleet.primaryEnvironmentId} />
+        <>
+          <ConnectDevicesSection environmentId={fleet.primaryEnvironmentId} />
+          <ScreenShareSettings />
+        </>
       ) : null}
       {hereRow ? (
         <details data-machine-here-details className="rounded-xl border border-border/60 text-sm">

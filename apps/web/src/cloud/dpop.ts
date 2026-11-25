@@ -183,3 +183,18 @@ export function createBrowserDpopProof(input: {
     return { proof, thumbprint: input.proofKey.thumbprint };
   });
 }
+
+/**
+ * Signs bytes with this device's proof key: ES256 as the 64 bytes r then s.
+ * For signatures that are not DPoP proofs (their own `typ`, so neither
+ * verifier takes the other's): the screen sharing session proof uses it, and a
+ * `signWithDeviceKey(typ, payload)` for whole tokens can sit on top of it.
+ */
+export async function signBytesWithDeviceKey(
+  proofKey: BrowserDpopKey,
+  data: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array> {
+  return new Uint8Array(
+    await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, proofKey.privateKey, data),
+  );
+}
