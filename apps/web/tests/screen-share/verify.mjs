@@ -79,9 +79,10 @@ try {
       );
       check(`${tag}: settings show the switch, the allowed device and the sessions`);
 
-      // With things to fix: three notices and who is viewing.
+      // With things to fix: four notices and who is viewing.
       const notices = at("notices");
-      NodeAssert.equal(await notices.locator("[data-screen-share-notice]").count(), 3);
+      NodeAssert.equal(await notices.locator("[data-screen-share-notice]").count(), 4);
+      NodeAssert.match(await notices.innerText(), /could not save a change/);
       NodeAssert.match(
         await notices.innerText(),
         /Another program holds this machine's screen sharing link/,

@@ -67,21 +67,28 @@ export const SCREEN_SHARE_NO_PICTURE_MS = 10_000;
  * session id on the host socket. What follows it: for hello, challenge and
  * proof, the message as UTF-8 JSON; for sealed, one sealed record, whose own
  * first byte inside the seal is a `SCREEN_SHARE_RECORD` type. The two number
- * spaces are separate on purpose and share no value.
+ * spaces are separate on purpose and share no value (wire 1 to 5, records
+ * from 16), so one read as the other is never a valid type.
  */
 export const SCREEN_SHARE_WIRE = {
   hello: 1,
   challenge: 2,
   proof: 3,
   sealed: 4,
+  /**
+   * Viewer to server only, first, and never passed on: the device's signature
+   * over the server's nonce (`ScreenShareViewerProve`). Until it holds, the
+   * server counts nothing against the device and tells the app nothing.
+   */
+  knock: 5,
 } as const;
 
 /** Record types inside the sealed session. Slice 1 has no others. */
 export const SCREEN_SHARE_RECORD = {
   /** Machine to viewer: `ScreenShareSessionState` as JSON. */
-  state: 1,
+  state: 32,
   /** Machine to viewer: a frame (`encodeScreenShareFrame`). */
-  frame: 2,
+  frame: 33,
   /** Viewer to machine: `{ seq }`, the frame it has drawn. */
   frameReceived: 16,
   /** Viewer to machine: `{ displayId }`. */
@@ -177,7 +184,24 @@ export const ScreenShareHostOutbound = Schema.Union([
 ]);
 export type ScreenShareHostOutbound = typeof ScreenShareHostOutbound.Type;
 
-/** Server to viewer, once, before any binary message. */
+/** How long a viewer has to answer the server's nonce with its device key. */
+export const SCREEN_SHARE_KNOCK_MS = 5_000;
+/** Viewer sockets that may wait to answer at once. One more drops the one that waited longest. */
+export const SCREEN_SHARE_MAX_WAITING = 8;
+
+/**
+ * Server to viewer, first: sign this nonce with the device's key. A sign-in
+ * ticket can be copied; the key cannot, so nothing is opened, counted against
+ * the device or shown to the app until the answer holds.
+ */
+export const ScreenShareViewerProve = Schema.Struct({
+  t: Schema.Literal("prove"),
+  nonce: Schema.String,
+  environmentId: Schema.String,
+});
+export type ScreenShareViewerProve = typeof ScreenShareViewerProve.Type;
+
+/** Server to viewer, once the nonce was answered, before any other binary message. */
 export const ScreenShareViewerOpened = Schema.Struct({
   t: Schema.Literal("open"),
   sid: Schema.String,
@@ -367,6 +391,8 @@ export const ScreenShareLocalState = Schema.Struct({
   screenRecording: Schema.Boolean,
   /** False when the store could not be read; sharing is then off until it is turned on again. */
   storeHealthy: Schema.Boolean,
+  /** False while a change could not be written: a choice may not have been kept. */
+  storeWritable: Schema.Boolean,
   grants: Schema.Array(ScreenShareGrant),
   audit: Schema.Array(ScreenShareAuditEntry),
   active: Schema.NullOr(

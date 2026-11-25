@@ -5,10 +5,14 @@ import {
   acceptScreenShareProof,
   answerScreenShareChallenge,
   fromBase64Url,
+  makeScreenShareKnock,
   makeScreenShareOpener,
   makeScreenShareSealer,
   newScreenShareMachineKey,
+  SCREEN_SHARE_KNOCK_TYP,
+  SCREEN_SHARE_PROOF_MAX_SKEW_SECONDS,
   SCREEN_SHARE_PROOF_TYP,
+  screenShareKnockHolds,
   screenShareCodeMatches,
   ScreenShareHandshakeError,
   startScreenShareTarget,
@@ -475,6 +479,132 @@ describe("screen share handshake", () => {
         }),
       ),
     ).toBe("malformed");
+  });
+});
+
+describe("the knock", () => {
+  const NONCE = "b3f1c2d4e5a697887766554433221100";
+
+  it("holds for the device's own key, this nonce, this machine and this moment, and for nothing else", async () => {
+    const mine = await device();
+    const other = await device();
+    const jws = await makeScreenShareKnock({
+      deviceJwk: mine.jwk,
+      environmentId: ENV,
+      nonce: NONCE,
+      nowEpochSeconds: NOW,
+      sign: mine.sign,
+    });
+    const asked = {
+      jws,
+      environmentId: ENV,
+      nonce: NONCE,
+      thumbprint: mine.thumbprint,
+      nowEpochSeconds: NOW,
+    };
+    expect(screenShareKnockHolds(asked)).toBe(true);
+    expect(screenShareKnockHolds({ ...asked, nonce: `${NONCE}0` })).toBe(false);
+    expect(screenShareKnockHolds({ ...asked, environmentId: "env-other" })).toBe(false);
+    expect(screenShareKnockHolds({ ...asked, thumbprint: other.thumbprint })).toBe(false);
+    expect(
+      screenShareKnockHolds({
+        ...asked,
+        nowEpochSeconds: NOW + SCREEN_SHARE_PROOF_MAX_SKEW_SECONDS + 1,
+      }),
+    ).toBe(false);
+    // One changed character anywhere, and nothing that is not three parts.
+    const [header, payload, signature] = jws.split(".") as [string, string, string];
+    const flipped = `${signature.slice(0, -2)}${signature.at(-2) === "A" ? "B" : "A"}${signature.at(-1)}`;
+    expect(screenShareKnockHolds({ ...asked, jws: `${header}.${payload}.${flipped}` })).toBe(false);
+    for (const bad of ["", "a.b", `${header}.${payload}`, `${jws}.x`, "not a knock at all"])
+      expect(screenShareKnockHolds({ ...asked, jws: bad })).toBe(false);
+  });
+
+  it("signed by another key under the device's name does not hold", async () => {
+    const mine = await device();
+    const thief = await device();
+    // The thief's signature with the real device's public key in the header.
+    const forged = await makeScreenShareKnock({
+      deviceJwk: mine.jwk,
+      environmentId: ENV,
+      nonce: NONCE,
+      nowEpochSeconds: NOW,
+      sign: thief.sign,
+    });
+    // The thief's own key, signed properly, against the real device's sign-in.
+    const own = await makeScreenShareKnock({
+      deviceJwk: thief.jwk,
+      environmentId: ENV,
+      nonce: NONCE,
+      nowEpochSeconds: NOW,
+      sign: thief.sign,
+    });
+    for (const jws of [forged, own])
+      expect(
+        screenShareKnockHolds({
+          jws,
+          environmentId: ENV,
+          nonce: NONCE,
+          thumbprint: mine.thumbprint,
+          nowEpochSeconds: NOW,
+        }),
+      ).toBe(false);
+  });
+
+  it("is not a session proof, and a session proof is not a knock", async () => {
+    const { viewerDevice, target, answer } = await handshake();
+    expect(
+      screenShareKnockHolds({
+        jws: answer.proof.jws,
+        environmentId: ENV,
+        nonce: NONCE,
+        thumbprint: viewerDevice.thumbprint,
+        nowEpochSeconds: NOW,
+      }),
+    ).toBe(false);
+    const knock = await makeScreenShareKnock({
+      deviceJwk: viewerDevice.jwk,
+      environmentId: ENV,
+      nonce: NONCE,
+      nowEpochSeconds: NOW,
+      sign: viewerDevice.sign,
+    });
+    expect(() =>
+      acceptScreenShareProof({
+        start: target,
+        proof: { jws: knock },
+        environmentId: ENV,
+        sessionId: SID,
+        nowEpochSeconds: NOW,
+      }),
+    ).toThrow();
+    // Nor a DPoP proof for the server's own sign-in: its type says what it is.
+    const header = JSON.parse(
+      new TextDecoder().decode(fromBase64Url(knock.split(".")[0]!)),
+    ) as Record<string, unknown>;
+    expect(header.typ).toBe(SCREEN_SHARE_KNOCK_TYP);
+    expect(SCREEN_SHARE_KNOCK_TYP).not.toBe(SCREEN_SHARE_PROOF_TYP);
+    expect(header.typ).not.toBe("dpop+jwt");
+  });
+
+  it("signs nothing that is not shaped like a server's nonce", async () => {
+    const mine = await device();
+    for (const nonce of [
+      "",
+      "short",
+      "has spaces in it, and is long",
+      `${"a".repeat(65)}`,
+      '{"aud":"x"}',
+    ])
+      await expect(
+        makeScreenShareKnock({
+          deviceJwk: mine.jwk,
+          environmentId: ENV,
+          nonce,
+          nowEpochSeconds: NOW,
+          sign: mine.sign,
+        }),
+      ).rejects.toThrow();
   });
 });
 

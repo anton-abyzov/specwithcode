@@ -67,12 +67,30 @@ export function currentScreenShareHostProof(secret: string, nowMs: number): stri
   return deriveScreenShareHostProof(secret, Math.floor(nowMs / SCREEN_SHARE_HOST_PROOF_WINDOW_MS));
 }
 
-/** Whether `proof` is the previous, current or next window's host proof at `nowMs`. */
-export function isValidScreenShareHostProof(secret: string, proof: string, nowMs: number): boolean {
+/**
+ * When `proof` stops being accepted, in epoch milliseconds, or null when it is
+ * not the previous, current or next window's host proof at `nowMs`. A proof is
+ * good for its own window and one either side, so it ends with the window
+ * after its own, whenever inside that span it was presented.
+ */
+export function screenShareHostProofEnd(
+  secret: string,
+  proof: string,
+  nowMs: number,
+): number | null {
   const presented = Buffer.from(proof);
   const current = Math.floor(nowMs / SCREEN_SHARE_HOST_PROOF_WINDOW_MS);
-  return [current - 1, current, current + 1].some((window) => {
+  let matched: number | null = null;
+  // All three are compared whichever matches, so the time taken says nothing.
+  for (const window of [current - 1, current, current + 1]) {
     const expected = Buffer.from(deriveScreenShareHostProof(secret, window));
-    return expected.length === presented.length && NodeCrypto.timingSafeEqual(expected, presented);
-  });
+    if (expected.length === presented.length && NodeCrypto.timingSafeEqual(expected, presented))
+      matched = window;
+  }
+  return matched === null ? null : (matched + 2) * SCREEN_SHARE_HOST_PROOF_WINDOW_MS;
+}
+
+/** Whether `proof` is the previous, current or next window's host proof at `nowMs`. */
+export function isValidScreenShareHostProof(secret: string, proof: string, nowMs: number): boolean {
+  return screenShareHostProofEnd(secret, proof, nowMs) !== null;
 }

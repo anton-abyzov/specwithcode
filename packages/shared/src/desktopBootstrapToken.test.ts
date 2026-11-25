@@ -5,6 +5,7 @@ import {
   currentDesktopBootstrapToken,
   currentScreenShareHostProof,
   isValidScreenShareHostProof,
+  screenShareHostProofEnd,
   SCREEN_SHARE_HOST_PROOF_WINDOW_MS,
   isValidDesktopBootstrapToken,
 } from "./desktopBootstrapToken.ts";
@@ -63,6 +64,12 @@ describe("screen sharing host proof", () => {
     expect(isValidScreenShareHostProof(SECRET, proof, NOW + STEP)).toBe(true);
     expect(isValidScreenShareHostProof(SECRET, proof, NOW - STEP)).toBe(true);
     expect(isValidScreenShareHostProof(SECRET, proof, NOW + 2 * STEP)).toBe(false);
+    // It ends with the window after its own, whenever in its life it is asked about.
+    const end = (Math.floor(NOW / STEP) + 2) * STEP;
+    for (const at of [NOW - STEP, NOW, NOW + STEP, end - 1])
+      expect(screenShareHostProofEnd(SECRET, proof, at)).toBe(end);
+    expect(screenShareHostProofEnd(SECRET, proof, end)).toBeNull();
+    expect(screenShareHostProofEnd("another-secret", proof, NOW)).toBeNull();
     expect(isValidScreenShareHostProof("another-secret", proof, NOW)).toBe(false);
     expect(isValidScreenShareHostProof(SECRET, "", NOW)).toBe(false);
   });

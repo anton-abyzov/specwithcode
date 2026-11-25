@@ -166,6 +166,13 @@ export function ScreenShareSettingsView({
             )}
           </Notice>
         )}
+        {state.storeWritable ? null : (
+          <Notice>
+            {tx(
+              "Screen sharing could not save a change on this machine. A choice you just made may not have been kept, and a session that cannot be listed does not start.",
+            )}
+          </Notice>
+        )}
         {state.link === "refused" || state.link === "replaced" ? (
           <Notice>
             {tx(
@@ -293,9 +300,14 @@ export function ScreenShareSettingsView({
   );
 }
 
-/** The block wired to this machine's own app. In a browser tab it only says where to go. */
-export function ScreenShareSettings() {
-  const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.screenShare;
+/**
+ * The block wired to this machine's own app. In a browser tab it only says
+ * where to go, and so does an app window whose page is about another machine:
+ * the switch would act on the Mac the window is on, not the one being read about.
+ */
+export function ScreenShareSettings({ otherMachine = false }: { readonly otherMachine?: boolean }) {
+  const bridge =
+    typeof window === "undefined" || otherMachine ? undefined : window.desktopBridge?.screenShare;
   const [state, setState] = useState<ScreenShareLocalState | null>(null);
   const [busy, setBusy] = useState(false);
 

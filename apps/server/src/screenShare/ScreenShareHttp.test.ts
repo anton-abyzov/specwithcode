@@ -21,7 +21,9 @@ import {
   SCREEN_SHARE_CLOSE_REFUSED,
   SCREEN_SHARE_HOST_HELLO_MS,
   SCREEN_SHARE_HOST_PATH,
+  SCREEN_SHARE_MAX_WAITING,
   SCREEN_SHARE_RECORD,
+  SCREEN_SHARE_RELAY_OPENS,
   SCREEN_SHARE_ROUTE_PREFIX,
   SCREEN_SHARE_VIEW_PATH,
   SCREEN_SHARE_WIRE,
@@ -34,6 +36,7 @@ import { computeDpopJwkThumbprint, type DpopPublicJwk } from "@specweave-studio/
 import {
   acceptScreenShareProof,
   answerScreenShareChallenge,
+  makeScreenShareKnock,
   makeScreenShareOpener,
   makeScreenShareSealer,
   newScreenShareMachineKey,
@@ -304,15 +307,44 @@ const attachedHost = (server: Server) =>
     return host;
   });
 
+type Device = Effect.Success<typeof makeDevice>;
+type Socket = Effect.Success<ReturnType<typeof open>>;
+
+/** The device's signature over the nonce a viewer socket was sent, as the knock message. */
+const knockFor = (server: Server, device: Device, viewer: Socket) =>
+  Effect.gen(function* () {
+    const prove = yield* viewer.text("prove");
+    assert.strictEqual(prove.environmentId, server.environmentId);
+    const jws = yield* Effect.promise(() =>
+      makeScreenShareKnock({
+        deviceJwk: device.jwk,
+        environmentId: server.environmentId,
+        nonce: String(prove.nonce),
+        nowEpochSeconds: Math.floor(Date.now() / 1000),
+        sign: device.sign,
+      }),
+    );
+    return new Uint8Array([SCREEN_SHARE_WIRE.knock, ...encoder.encode(jws)]);
+  });
+
+/** A viewer socket on the device's ticket that answered the server's nonce with the device's key. */
+const knockedViewer = (server: Server, device: Device) =>
+  Effect.gen(function* () {
+    const viewer = yield* open(
+      `${server.ws}${SCREEN_SHARE_VIEW_PATH}?wsTicket=${yield* server.deviceTicket}`,
+    );
+    yield* viewer.send(yield* knockFor(server, device, viewer));
+    return viewer;
+  });
+
 /**
  * A viewer whose session the machine's app was told of. The app's status has
  * no answer to wait for, so a viewer that arrived before it is read tries again.
  */
-const openedViewer = (server: Server) =>
+const openedViewer = (server: Server, device: Device) =>
   Effect.gen(function* () {
-    const ticket = yield* server.deviceTicket;
     for (let attempt = 0; attempt < 40; attempt += 1) {
-      const viewer = yield* open(`${server.ws}${SCREEN_SHARE_VIEW_PATH}?wsTicket=${ticket}`);
+      const viewer = yield* knockedViewer(server, device);
       const opened = yield* viewer.text("open").pipe(Effect.option);
       if (opened._tag === "Some") return { viewer, opened: opened.value };
       const { reason } = yield* viewer.closed;
@@ -363,9 +395,7 @@ describe("the host socket", () => {
           assert.deepStrictEqual(host.heard, []);
         }
         // Refused hosts never became the host: a viewer still finds none.
-        const viewer = yield* open(
-          `${server.ws}${SCREEN_SHARE_VIEW_PATH}?wsTicket=${yield* server.deviceTicket}`,
-        );
+        const viewer = yield* knockedViewer(server, device);
         assert.deepStrictEqual(yield* viewer.closed, {
           code: SCREEN_SHARE_CLOSE_REFUSED,
           reason: "no_host",
@@ -439,9 +469,7 @@ describe("the viewer socket", () => {
       Effect.gen(function* () {
         const device = yield* makeDevice;
         const server = yield* startServer(device.thumbprint);
-        const early = yield* open(
-          `${server.ws}${SCREEN_SHARE_VIEW_PATH}?wsTicket=${yield* server.deviceTicket}`,
-        );
+        const early = yield* knockedViewer(server, device);
         assert.deepStrictEqual(yield* early.closed, {
           code: SCREEN_SHARE_CLOSE_REFUSED,
           reason: "no_host",
@@ -450,7 +478,7 @@ describe("the viewer socket", () => {
         const host = yield* attachedHost(server);
         // A viewer comes in on a ticket, and the route lets in no session without
         // an expiry: this opening is the proof that a ticketed session carries one.
-        const { opened } = yield* openedViewer(server);
+        const { opened } = yield* openedViewer(server, device);
         assert.strictEqual(opened.environmentId, server.environmentId);
         const told = yield* host.text("open");
         assert.strictEqual(told.sid, opened.sid);
@@ -471,7 +499,7 @@ describe("the viewer socket", () => {
         const device = yield* makeDevice;
         const server = yield* startServer(device.thumbprint);
         const host = yield* attachedHost(server);
-        const { viewer, opened } = yield* openedViewer(server);
+        const { viewer, opened } = yield* openedViewer(server, device);
         const sid = String(opened.sid);
         const environmentId = server.environmentId;
         yield* host.text("open");
@@ -570,13 +598,85 @@ describe("the viewer socket", () => {
     ),
   );
 
+  it.live(
+    "a copy of the device's ticket without its key opens nothing, costs the device nothing and never reaches the app",
+    () =>
+      live(
+        Effect.gen(function* () {
+          const device = yield* makeDevice;
+          const thief = yield* makeDevice;
+          const server = yield* startServer(device.thumbprint);
+          const host = yield* attachedHost(server);
+          const url = () =>
+            server.deviceTicket.pipe(
+              Effect.map((ticket) => `${server.ws}${SCREEN_SHARE_VIEW_PATH}?wsTicket=${ticket}`),
+            );
+          const refused = { code: SCREEN_SHARE_CLOSE_REFUSED, reason: "handshake_failed" };
+          const wire = (type: number, text: string) =>
+            new Uint8Array([type, ...encoder.encode(text)]);
+
+          // More copies than the device may open in a window, each failing a different way.
+          for (let round = 0; round < SCREEN_SHARE_RELAY_OPENS + 4; round += 1) {
+            const copy = yield* open(yield* url());
+            const prove = yield* copy.text("prove");
+            const forged = yield* Effect.promise(() =>
+              makeScreenShareKnock({
+                // Another key, or another key under the device's name.
+                deviceJwk: round % 2 === 0 ? thief.jwk : device.jwk,
+                environmentId: server.environmentId,
+                nonce: String(prove.nonce),
+                nowEpochSeconds: Math.floor(Date.now() / 1000),
+                sign: thief.sign,
+              }),
+            );
+            yield* copy.send(
+              round % 3 === 0
+                ? wire(SCREEN_SHARE_WIRE.hello, "{}")
+                : round % 3 === 1
+                  ? wire(SCREEN_SHARE_WIRE.knock, forged)
+                  : "text is no answer",
+            );
+            assert.deepStrictEqual(yield* copy.closed, refused);
+          }
+
+          // The device's own answer to one socket's nonce does not open another socket.
+          const first = yield* open(yield* url());
+          const second = yield* open(yield* url());
+          const answer = yield* knockFor(server, device, first);
+          yield* second.text("prove");
+          yield* second.send(answer);
+          assert.deepStrictEqual(yield* second.closed, refused);
+
+          // Copies that only wait are dropped, oldest first, once there are too many.
+          const silent: Array<Socket> = [];
+          for (let index = 0; index < SCREEN_SHARE_MAX_WAITING + 1; index += 1) {
+            const copy = yield* open(yield* url());
+            yield* copy.text("prove");
+            silent.push(copy);
+          }
+          assert.deepStrictEqual(yield* silent[0]!.closed, refused);
+
+          // Through all of it the app heard of no session, and the device is still let in.
+          const { opened } = yield* openedViewer(server, device);
+          const told = yield* host.text("open");
+          assert.strictEqual(told.sid, opened.sid);
+          assert.deepStrictEqual(
+            host.heard.filter(
+              (message) => typeof message === "string" && message.includes('"open"'),
+            ),
+            [JSON.stringify(told)],
+          );
+        }),
+      ),
+  );
+
   it.live("ends the session on any text from a viewer, and tells the app", () =>
     live(
       Effect.gen(function* () {
         const device = yield* makeDevice;
         const server = yield* startServer(device.thumbprint);
         const host = yield* attachedHost(server);
-        const { viewer, opened } = yield* openedViewer(server);
+        const { viewer, opened } = yield* openedViewer(server, device);
         yield* host.text("open");
         yield* viewer.send(JSON.stringify({ t: "status", status: ON.status }));
         assert.deepStrictEqual(yield* viewer.closed, {

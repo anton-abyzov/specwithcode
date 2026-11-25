@@ -503,6 +503,86 @@ const jsonPart = (text: string): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+// ---------------------------------------------------------------------------
+// The knock: the device's key, shown to the server before anything is opened.
+
+/** Its own type, so a knock is never a session proof and a session proof never a knock. */
+export const SCREEN_SHARE_KNOCK_TYP = "swc-screen-share-knock+jws";
+
+/** What a server's nonce looks like: nothing else is signed. */
+const KNOCK_NONCE = /^[A-Za-z0-9_-]{16,64}$/;
+
+/**
+ * Signs the server's nonce with the device's key, for one machine. `sign` is
+ * the same as for the session proof: the bytes in, 64 signature bytes out.
+ */
+export const makeScreenShareKnock = async (input: {
+  readonly deviceJwk: DpopPublicJwk;
+  readonly environmentId: string;
+  readonly nonce: string;
+  readonly nowEpochSeconds: number;
+  readonly sign: (data: Uint8Array<ArrayBuffer>) => Promise<Uint8Array>;
+}): Promise<string> => {
+  if (!KNOCK_NONCE.test(input.nonce)) throw new ScreenShareHandshakeError("malformed");
+  const header = toBase64Url(
+    encoder.encode(
+      JSON.stringify({ typ: SCREEN_SHARE_KNOCK_TYP, alg: "ES256", jwk: input.deviceJwk }),
+    ),
+  );
+  const payload = toBase64Url(
+    encoder.encode(
+      JSON.stringify({
+        aud: input.environmentId,
+        nonce: input.nonce,
+        iat: Math.floor(input.nowEpochSeconds),
+      }),
+    ),
+  );
+  const signature = await input.sign(encoder.encode(`${header}.${payload}`));
+  if (signature.length !== 64) throw new ScreenShareHandshakeError("device_signature");
+  return `${header}.${payload}.${toBase64Url(signature)}`;
+};
+
+/**
+ * Whether `jws` is this device's signature over this nonce for this machine,
+ * made just now. `thumbprint` is the key the device's sign-in is bound to.
+ * Needs no secret: the server checks it and still holds no key.
+ */
+export const screenShareKnockHolds = (input: {
+  readonly jws: string;
+  readonly environmentId: string;
+  readonly nonce: string;
+  readonly thumbprint: string;
+  readonly nowEpochSeconds: number;
+}): boolean => {
+  try {
+    const parts = input.jws.split(".");
+    if (parts.length !== 3) return false;
+    const [headerText, payloadText, signatureText] = parts as [string, string, string];
+    const header = jsonPart(headerText);
+    const payload = jsonPart(payloadText);
+    if (header.typ !== SCREEN_SHARE_KNOCK_TYP || header.alg !== "ES256" || !isP256Jwk(header.jwk))
+      return false;
+    if (computeDpopJwkThumbprint(header.jwk) !== input.thumbprint) return false;
+    if (
+      payload.aud !== input.environmentId ||
+      payload.nonce !== input.nonce ||
+      typeof payload.iat !== "number" ||
+      !Number.isInteger(payload.iat) ||
+      Math.abs(input.nowEpochSeconds - payload.iat) > SCREEN_SHARE_PROOF_MAX_SKEW_SECONDS
+    )
+      return false;
+    return p256.verify(
+      keyBytes(signatureText, 64),
+      sha256(encoder.encode(`${headerText}.${payloadText}`)),
+      p256PublicBytes(header.jwk),
+      { prehash: false, format: "compact" },
+    );
+  } catch {
+    return false;
+  }
+};
+
 /** Checks the viewer's proof against the challenge this machine sent, and gives the session. */
 export const acceptScreenShareProof = (input: {
   readonly start: ScreenShareTargetStart;

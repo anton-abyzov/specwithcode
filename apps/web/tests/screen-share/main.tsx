@@ -42,6 +42,7 @@ const SHARING: ScreenShareLocalState = {
   link: "attached",
   screenRecording: true,
   storeHealthy: true,
+  storeWritable: true,
   grants: [
     {
       thumbprint: "thumb-laptop",
@@ -107,6 +108,7 @@ const TROUBLED: ScreenShareLocalState = {
   link: "replaced",
   screenRecording: false,
   storeHealthy: false,
+  storeWritable: false,
   grants: [],
   audit: [],
   active: { label: "Work laptop", shortId: "7F3A", startedAt: ago(4) },

@@ -66,14 +66,21 @@ const frame = (digest: string): ScreenShareGrab => ({
 function rig(options?: { readonly enabled?: boolean; readonly supported?: boolean }) {
   let now = START;
   const timers: Array<{ at: number; run: () => void; live: boolean }> = [];
-  const file: { bytes: Uint8Array | null; failWrites: boolean } = {
+  const file: {
+    bytes: Uint8Array | null;
+    failWrites: boolean;
+    /** Fails only the writes whose content this says yes to. */
+    failWhen: ((stored: { readonly grants: ReadonlyArray<unknown> }) => boolean) | null;
+  } = {
     bytes: null,
     failWrites: false,
+    failWhen: null,
   };
   const io: ScreenShareStoreIo = {
     read: () => file.bytes,
     write: (bytes) => {
       if (file.failWrites) throw new Error("disk full");
+      if (file.failWhen?.(JSON.parse(decoder.decode(bytes))) === true) throw new Error("disk full");
       file.bytes = bytes;
     },
     canSeal: () => true,
@@ -95,6 +102,8 @@ function rig(options?: { readonly enabled?: boolean; readonly supported?: boolea
     bannerShows: true,
     auth: (() => Promise.resolve(true)) as () => Promise<boolean>,
     grabs: [] as Array<ScreenShareGrab>,
+    /** When set, the next look at the screen waits on this. */
+    heldGrab: null as Promise<ScreenShareGrab> | null,
     grabbed: [] as Array<string>,
     awake: false,
     promptVisible: false,
@@ -152,7 +161,9 @@ function rig(options?: { readonly enabled?: boolean; readonly supported?: boolea
       ],
       grab: (displayId) => {
         state.grabbed.push(displayId);
-        return Promise.resolve(state.grabs.shift() ?? { kind: "none" });
+        const held = state.heldGrab;
+        state.heldGrab = null;
+        return held ?? Promise.resolve(state.grabs.shift() ?? { kind: "none" });
       },
       keepAwake: (on) => {
         state.awake = on;
@@ -299,7 +310,7 @@ describe("starting a session", () => {
     expect(r.prompts).toHaveLength(1);
   });
 
-  it("refuses a hello for another device key than the server named, and counts it", async () => {
+  it("refuses a hello for another device key than the server named", async () => {
     const r = rig();
     const mine = await makeDevice();
     const thief = await makeDevice();
@@ -310,7 +321,7 @@ describe("starting a session", () => {
     expect(r.store.audit.at(-1)).toMatchObject({ outcome: "refused", reason: "handshake_failed" });
   });
 
-  it("gives a handshake 15 seconds, then gives up and counts it", async () => {
+  it("gives a handshake 15 seconds, then gives up", async () => {
     const r = rig();
     const device = await makeDevice();
     r.sessions.opened(SID, ENV, device.device);
@@ -328,6 +339,30 @@ describe("starting a session", () => {
     r.sessions.received(SID, new Uint8Array([SCREEN_SHARE_WIRE.proof, 1, 2, 3]));
     await settle(r);
     expect(r.closes[0]?.reason).toBe("handshake_failed");
+  });
+
+  it("does not hold failures before a proof against the device: a copied ticket cannot keep it away", async () => {
+    const r = rig();
+    const mine = await makeDevice();
+    const thief = await makeDevice();
+    // Whoever replays the device's ticket has no key of its: it can only fail, any way it likes.
+    for (let round = 0; round < 4; round += 1) {
+      expect(await connect(r, { ...thief, device: mine.device }, { onRecord: false })).toBeNull();
+      r.sessions.opened(SID2, ENV, mine.device);
+      await r.advance(SCREEN_SHARE_HANDSHAKE_MS + 1);
+      r.sessions.opened(SID, ENV, mine.device);
+      r.sessions.received(SID, new Uint8Array([SCREEN_SHARE_WIRE.proof, 1, 2, 3]));
+      await settle(r);
+      r.sessions.opened(SID2, ENV, mine.device);
+      r.sessions.closed(SID2);
+      await settle(r);
+    }
+    expect(r.closes.filter((close) => close.reason === "handshake_failed")).toHaveLength(12);
+    expect(r.prompts).toEqual([]);
+    expect(r.store.inCooldown(mine.device.thumbprint)).toBe(false);
+    // The device itself is still asked about.
+    expect(await connect(r, mine)).not.toBeNull();
+    expect(r.prompts).toHaveLength(1);
   });
 });
 
@@ -818,7 +853,54 @@ describe("a live session", () => {
   });
 });
 
+describe("what was sealed as the session ended", () => {
+  it("a frame still being sealed when Stop is pressed is not sent after the banner is down", async () => {
+    const r = rig();
+    const viewer = await live(r, await makeDevice());
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS);
+    await viewer.drain();
+    const before = r.sent.length;
+    // The next look at the screen comes back, and Stop lands while its frame is being sealed.
+    let release: (grab: ScreenShareGrab) => void = () => {};
+    r.state.heldGrab = new Promise((resolve) => {
+      release = resolve;
+    });
+    const timers = r.advance(SCREEN_SHARE_FRAME_MIN_MS);
+    release(frame("late"));
+    // Promise turns only: the frame is handed to the sealer, and sealing takes longer than these.
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+    r.sessions.stop();
+    expect(r.state.bannerVisible).toBe(false);
+    await timers;
+    await settle(r);
+    // It was captured and counted, and never left this machine.
+    expect(r.store.audit.at(-1)).toMatchObject({ reason: "stopped_at_machine", frames: 1 });
+    expect(r.sent.length).toBe(before);
+    expect(r.closes.at(-1)).toEqual({ sid: SID, reason: "stopped_at_machine" });
+  });
+
+  it("with nothing held back, the last word is sealed and says why", async () => {
+    const r = rig();
+    const viewer = await live(r, await makeDevice());
+    r.sessions.stop();
+    await viewer.drain();
+    expect(viewer.states.at(-1)).toEqual({ phase: "ended", reason: "stopped_at_machine" });
+  });
+});
+
 describe("the list of sessions", () => {
+  it("Always allow that cannot be saved is an allow for this once, and the list says so", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    const viewer = (await connect(r, device))!;
+    r.file.failWhen = (stored) => stored.grants.length > 0;
+    await r.sessions.answerPrompt(SID, "always");
+    await viewer.drain();
+    expect(viewer.states.at(-1)?.phase).toBe("live");
+    expect(r.store.hasGrant(device.device.thumbprint)).toBe(false);
+    expect(r.store.audit.at(-1)).toMatchObject({ id: SID, outcome: "allowed_once" });
+  });
+
   it("a session that cannot be written to the list does not start", async () => {
     const r = rig();
     const device = await makeDevice();
@@ -843,6 +925,14 @@ describe("the list of sessions", () => {
       await settle(r);
     }
     expect(r.store.inCooldown(device.device.thumbprint)).toBe(true);
+    // Nor is sending nonsense a way round it, once a person was made to look.
+    const noisy = rig();
+    for (const sid of [SID, SID2, "2f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9"]) {
+      const viewer = (await connect(noisy, device, { sid }))!;
+      await viewer.tell(SCREEN_SHARE_RECORD.showDisplay, { displayId: "1" });
+      expect(noisy.closes.at(-1)).toEqual({ sid, reason: "protocol_error" });
+    }
+    expect(noisy.store.inCooldown(device.device.thumbprint)).toBe(true);
     // Leaving before anyone was asked does not.
     const quiet = rig();
     for (const sid of [SID, SID2, "2f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9"]) {

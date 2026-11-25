@@ -13,7 +13,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { hostHelloProof, screenShareSocketOf, viewerSessionEnd } from "./ScreenShareHttp.ts";
+import {
+  hostHelloProof,
+  screenShareSocketOf,
+  screenShareSocketRefusal,
+  viewerSessionEnd,
+} from "./ScreenShareHttp.ts";
 
 /**
  * Screen sharing has no path an agent can take (1490 AC-16): no RPC method, so
@@ -69,8 +74,10 @@ describe("screen sharing has no agent path", () => {
     expect(http.indexOf("if (which === null) return notFound;")).toBeLessThan(
       http.indexOf("authenticateMediaRequest("),
     );
-    const guard = http.indexOf("asHost ? !isOwnApp(session, request) : device === null");
-    expect(guard).toBeGreaterThan(0);
+    // The one decision that lets a socket in is made, and acted on, before the one upgrade.
+    expect(http.match(/screenShareSocketRefusal\(/g)).toHaveLength(1);
+    const guard = http.indexOf("if (refusal !== null) {");
+    expect(guard).toBeGreaterThan(http.indexOf("screenShareSocketRefusal({"));
     expect(guard).toBeLessThan(http.indexOf("request.upgrade"));
     expect(http.match(/request\.upgrade/g)).toHaveLength(1);
     expect(http).toContain("personDeviceOf(session, approvedNameFrom(trust))");
@@ -104,11 +111,33 @@ describe("screen sharing has no agent path", () => {
   it("lets in no viewer whose session has no end", () => {
     expect(viewerSessionEnd(undefined)).toBeNull();
     expect(viewerSessionEnd(DateTime.makeUnsafe(1_800_000_000_000))).toBe(1_800_000_000_000);
-    const http = NodeFs.readFileSync(
-      NodePath.join(serverSource, "screenShare", "ScreenShareHttp.ts"),
-      "utf8",
+    const device = { device: {} };
+    expect(
+      screenShareSocketRefusal({ socket: "view", ownApp: false, device, expiresAtMs: null }),
+    ).toBe("session_without_expiry");
+    expect(
+      screenShareSocketRefusal({ socket: "view", ownApp: false, device, expiresAtMs: 1 }),
+    ).toBeNull();
+  });
+
+  it("refuses a socket for every reason but being the right kind of caller", () => {
+    const device = { device: {} };
+    const refusal = screenShareSocketRefusal;
+    // A host is this machine's app or nothing; a device is no help to it.
+    expect(refusal({ socket: "host", ownApp: false, device: null, expiresAtMs: 1 })).toBe(
+      "not_this_machines_app",
     );
-    expect(http).toContain("const noEnd = !asHost && expiresAtMs === null;");
+    expect(refusal({ socket: "host", ownApp: false, device, expiresAtMs: 1 })).toBe(
+      "not_this_machines_app",
+    );
+    expect(refusal({ socket: "host", ownApp: true, device: null, expiresAtMs: null })).toBeNull();
+    // A viewer is a person's approved device; being the app is no help to it.
+    expect(refusal({ socket: "view", ownApp: true, device: null, expiresAtMs: 1 })).toBe(
+      "not_a_persons_device",
+    );
+    expect(
+      refusal({ socket: "view", ownApp: true, device: { refusal: "agent" }, expiresAtMs: 1 }),
+    ).toBe("agent");
   });
 
   it("reads a host's proof only from a small hello", () => {
@@ -157,6 +186,7 @@ describe("screen sharing has no agent path", () => {
       "export const hostHelloProof",
       "export const screenShareSocketOf",
       "export const viewerSessionEnd",
+      "export const screenShareSocketRefusal",
       "export const routeLayer",
     ]);
     const server = NodeFs.readFileSync(NodePath.join(serverSource, "server.ts"), "utf8");

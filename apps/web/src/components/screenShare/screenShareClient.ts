@@ -20,6 +20,7 @@ import type { DpopPublicJwk } from "@specweave-studio/shared/dpop";
 import {
   ScreenShareHandshakeError,
   answerScreenShareChallenge,
+  makeScreenShareKnock,
   makeScreenShareOpener,
   makeScreenShareSealer,
   startScreenShareViewer,
@@ -94,6 +95,8 @@ export class ScreenViewerSession {
   private opener: ScreenShareOpener | null = null;
   private stopTicks: (() => void) | null = null;
   private disposed = false;
+  /** The server's nonce was answered with this device's key. Once. */
+  private knocked = false;
   /** The surface is gone: nothing is drawn or reported any more. */
   private quiet = false;
   /** Everything happens one after another, in the order it came. */
@@ -201,8 +204,9 @@ export class ScreenViewerSession {
     }
   }
 
-  private heardText(text: string): Promise<void> | void {
-    // The server says one thing in text, once: which session this is.
+  private async heardText(text: string): Promise<void> {
+    // The server says two things in text, once each and in this order: sign this
+    // nonce with the device's key, then which session this is.
     if (this.sid !== null || this.key === null || this.socket === null) return;
     let opened: Record<string, unknown>;
     try {
@@ -211,8 +215,29 @@ export class ScreenViewerSession {
       return this.fail("malformed");
     }
     const { sid, environmentId } = opened;
+    if (opened.t === "prove" && !this.knocked) {
+      this.knocked = true;
+      // Signed for the machine that was asked for, and no other.
+      if (typeof opened.nonce !== "string" || environmentId !== this.deps.environmentId)
+        return this.fail("malformed");
+      try {
+        const knock = await makeScreenShareKnock({
+          deviceJwk: this.key.publicJwk,
+          environmentId: this.deps.environmentId,
+          nonce: opened.nonce,
+          nowEpochSeconds: Math.floor(this.deps.now() / 1000),
+          sign: this.key.sign,
+        });
+        this.socket?.send(wire(SCREEN_SHARE_WIRE.knock, encoder.encode(knock)));
+      } catch {
+        return this.fail("malformed");
+      }
+      return;
+    }
     if (
       opened.t !== "open" ||
+      // A session nobody knocked for is not this device's.
+      !this.knocked ||
       typeof sid !== "string" ||
       !isScreenShareSessionId(sid) ||
       // The session is signed for the machine that was asked for, and no other.

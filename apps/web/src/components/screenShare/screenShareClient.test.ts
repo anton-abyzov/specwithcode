@@ -11,6 +11,7 @@ import {
   makeScreenShareOpener,
   makeScreenShareSealer,
   newScreenShareMachineKey,
+  screenShareKnockHolds,
   startScreenShareTarget,
 } from "@specweave-studio/shared/screenShareChannel";
 import { describe, expect, it } from "vite-plus/test";
@@ -24,6 +25,7 @@ import type { ScreenViewerModel } from "./screenViewer.logic";
 
 const ENV = "environment-1";
 const SID = "0f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9";
+const NONCE = "b3f1c2d4e5a697887766554433221100";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const DISPLAYS = [{ id: "1", label: "Built-in display", primary: true }];
@@ -105,8 +107,25 @@ async function rig(options?: {
   session.start();
   await session.idle();
 
+  /** The server's first word: sign this. Takes the answer off `sent` and says whether it holds. */
+  const knock = async (environmentId = ENV) => {
+    socket.onText?.(JSON.stringify({ t: "prove", nonce: NONCE, environmentId }));
+    await session.idle();
+    const answer = sent.shift();
+    if (answer === undefined) return null;
+    expect(answer[0]).toBe(SCREEN_SHARE_WIRE.knock);
+    return screenShareKnockHolds({
+      jws: decoder.decode(answer.subarray(1)),
+      environmentId: ENV,
+      nonce: NONCE,
+      thumbprint: device.thumbprint,
+      nowEpochSeconds: Math.floor(now / 1000),
+    });
+  };
+
   /** The machine's half: answers the hello, takes the proof, then speaks sealed. */
   const machine = async () => {
+    expect(await knock()).toBe(true);
     socket.onText?.(JSON.stringify({ t: "open", sid: SID, environmentId: ENV }));
     await session.idle();
     const hello = sent[0]!;
@@ -185,6 +204,7 @@ async function rig(options?: {
     pins,
     state,
     machine,
+    knock,
     machineKey,
     live,
     advance: async (ms: number) => {
@@ -263,11 +283,39 @@ describe("ScreenViewerSession", () => {
 
   it("ends when the server names another machine than the one asked for, and sends nothing", async () => {
     const r = await rig();
+    expect(await r.knock()).toBe(true);
     r.socket.onText?.(JSON.stringify({ t: "open", sid: SID, environmentId: "another" }));
     await r.session.idle();
     expect(r.sent).toEqual([]);
     expect(r.session.model.phase).toEqual({ kind: "ended", end: { kind: "handshake" } });
     expect(r.state.closed).toBe(true);
+  });
+
+  it("signs the server's nonce with the device's key first, once, and only for the machine asked for", async () => {
+    // Asked to sign for another machine: nothing is signed, and the view ends.
+    const other = await rig();
+    expect(await other.knock("another")).toBeNull();
+    expect(other.session.model.phase).toEqual({ kind: "ended", end: { kind: "handshake" } });
+
+    // A session that arrives before the nonce was answered is not this device's.
+    const early = await rig();
+    early.socket.onText?.(JSON.stringify({ t: "open", sid: SID, environmentId: ENV }));
+    await early.session.idle();
+    expect(early.sent).toEqual([]);
+    expect(early.session.model.phase).toEqual({ kind: "ended", end: { kind: "handshake" } });
+
+    // A second nonce on the same socket gets no second signature.
+    const twice = await rig();
+    expect(await twice.knock()).toBe(true);
+    expect(await twice.knock()).toBeNull();
+    expect(twice.session.model.phase).toEqual({ kind: "ended", end: { kind: "handshake" } });
+
+    // Something that is not shaped like a nonce is not signed either.
+    const odd = await rig();
+    odd.socket.onText?.(JSON.stringify({ t: "prove", nonce: '{"aud":"x"}', environmentId: ENV }));
+    await odd.session.idle();
+    expect(odd.sent).toEqual([]);
+    expect(odd.session.model.phase).toEqual({ kind: "ended", end: { kind: "handshake" } });
   });
 
   it("ends on a sealed record that was changed on the way, and draws nothing from it", async () => {
@@ -291,8 +339,9 @@ describe("ScreenViewerSession", () => {
     await r.session.idle();
     expect(r.session.model.phase).toEqual({ kind: "ended", end: { kind: "not_let_in" } });
 
+    // The machine's answer to a device that did prove its key: sharing is off there.
     const refused = await rig();
-    refused.socket.onText?.(JSON.stringify({ t: "open", sid: SID, environmentId: ENV }));
+    expect(await refused.knock()).toBe(true);
     refused.socket.onClose?.(4460, "off");
     await refused.session.idle();
     expect(refused.session.model.phase).toEqual({

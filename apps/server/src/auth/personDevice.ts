@@ -20,7 +20,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import {
   isValidScreenShareHostProof,
-  SCREEN_SHARE_HOST_PROOF_WINDOW_MS,
+  screenShareHostProofEnd,
 } from "@specweave-studio/shared/desktopBootstrapToken";
 
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
@@ -211,9 +211,13 @@ export const ownAppStanding = (
 ): OwnAppStanding | null => {
   const kind = ownAppProofKind(input);
   if (kind === null) return null;
-  return kind === "launch"
-    ? { kind, untilMs: input.nowMs + SCREEN_SHARE_HOST_PROOF_WINDOW_MS }
-    : { kind, verifier: Uint8Array.from(input.verifier ?? []) };
+  if (kind === "owner") return { kind, verifier: Uint8Array.from(input.verifier ?? []) };
+  // The standing ends when the proof itself would stop being accepted, not later.
+  const untilMs =
+    input.launchSecret === undefined
+      ? null
+      : screenShareHostProofEnd(input.launchSecret, input.proof, input.nowMs);
+  return untilMs === null ? null : { kind, untilMs };
 };
 
 /** Whether an accepted proof still holds: the verifier file is unchanged, or the launch proof has not run out. */
@@ -221,7 +225,7 @@ export const ownAppStandingHolds = (
   standing: OwnAppStanding,
   now: { readonly verifier: Uint8Array | null; readonly nowMs: number },
 ): boolean => {
-  if (standing.kind === "launch") return now.nowMs <= standing.untilMs;
+  if (standing.kind === "launch") return now.nowMs < standing.untilMs;
   const { verifier } = now;
   if (verifier === null || verifier.byteLength !== standing.verifier.byteLength) return false;
   let different = 0;

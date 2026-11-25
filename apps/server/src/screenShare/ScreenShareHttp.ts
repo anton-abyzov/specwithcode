@@ -11,7 +11,10 @@
  * - `GET /api/screen-share/view`: a person's approved device (`personDeviceOf`)
  *   on a session that has an end. Agents, worker grants, management keys,
  *   pairing codes and the local command line are refused here, before the app
- *   hears of them.
+ *   hears of them. The socket then has to answer a nonce with the device's own
+ *   key (the knock) before anything is opened: the ticket that carried the
+ *   sign-in here can be copied, and a copy must not be able to use up the
+ *   device's opens, hold the one session or reach the app.
  *
  * Neither socket has a scope of its own on purpose: a scope says what a
  * session may do, never who it is. The decision is read from the whole session.
@@ -22,10 +25,17 @@ import {
   SCREEN_SHARE_CLOSE_REFUSED,
   SCREEN_SHARE_HOST_HELLO_MS,
   SCREEN_SHARE_HOST_PATH,
+  SCREEN_SHARE_KNOCK_MS,
   SCREEN_SHARE_MAX_HOST_PROOF_LENGTH,
+  SCREEN_SHARE_MAX_WAITING,
   SCREEN_SHARE_ROUTE_PREFIX,
   SCREEN_SHARE_VIEW_PATH,
+  SCREEN_SHARE_WIRE,
+  type ScreenShareViewerProve,
 } from "@specweave-studio/contracts";
+import { screenShareKnockHolds } from "@specweave-studio/shared/screenShareChannel";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - one unpredictable nonce per viewer socket.
+import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -97,6 +107,38 @@ export const screenShareSocketOf = (
 export const viewerSessionEnd = (expiresAt: DateTime.DateTime | undefined): number | null =>
   expiresAt === undefined ? null : DateTime.toEpochMillis(expiresAt);
 
+/**
+ * Why a socket is refused before any upgrade, or null when it may go on. A
+ * host must be this machine's app; a viewer must be a person's approved device
+ * on a session that ends by itself.
+ */
+export const screenShareSocketRefusal = (input: {
+  readonly socket: "host" | "view";
+  readonly ownApp: boolean;
+  readonly device: { readonly refusal: string } | { readonly device: unknown } | null;
+  readonly expiresAtMs: number | null;
+}): string | null => {
+  if (input.socket === "host") return input.ownApp ? null : "not_this_machines_app";
+  if (input.device === null) return "not_a_persons_device";
+  if ("refusal" in input.device) return input.device.refusal;
+  return input.expiresAtMs === null ? "session_without_expiry" : null;
+};
+
+/** How often a host's standing is looked at again while a device is viewing. */
+const HOST_RECHECK_MS = 60_000;
+
+/** The longest knock worth reading: a signed line with the device's public key in it. */
+const MAX_KNOCK_BYTES = 2048;
+
+const proveText = (prove: ScreenShareViewerProve): string => JSON.stringify(prove);
+
+/** The signed answer in a viewer's first message, or null for anything else. */
+const knockOf = (chunk: string | Uint8Array): string | null => {
+  if (typeof chunk === "string" || chunk.length < 2 || chunk.length > MAX_KNOCK_BYTES) return null;
+  if (chunk[0] !== SCREEN_SHARE_WIRE.knock) return null;
+  return Buffer.from(chunk.subarray(1)).toString("latin1");
+};
+
 interface Services {
   readonly relay: ScreenShareRelay<OwnAppStanding>;
   readonly trust: ConnectDeviceTrust.ConnectDeviceTrustShape;
@@ -106,6 +148,13 @@ interface Services {
 }
 
 const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Services) => {
+  /**
+   * Viewer sockets that have not yet answered with their device's key, oldest
+   * first. They hold nothing but a place here; one too many drops the oldest,
+   * never the newcomer, so a crowd of copies cannot keep a real device out.
+   */
+  const waiting: Array<{ readonly drop: () => void }> = [];
+
   /** Read each time: the app writes a new verifier when it starts. Unreadable means no. */
   const verifierNow = secrets.get(DESKTOP_OWNER_VERIFIER_SECRET).pipe(
     Effect.map(Option.getOrNull),
@@ -129,6 +178,18 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
       });
     });
 
+  /**
+   * The app that attached may no longer be the app: its latest proof ran out,
+   * or the file it is checked against was rewritten since. Then it is dropped,
+   * and whatever it was showing ends with it.
+   */
+  const dropStaleHost = Effect.gen(function* () {
+    const standing = relay.hostStanding();
+    if (standing === undefined || (yield* stillHolds(standing))) return;
+    yield* Effect.logWarning("Dropped a screen sharing host whose proof no longer holds.");
+    relay.dropHost("proof_stale");
+  });
+
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
@@ -142,17 +203,17 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
     const device = asHost ? null : yield* personDeviceOf(session, approvedNameFrom(trust));
     // A viewer's session must end by itself: one with no expiry is not let in.
     const expiresAtMs = viewerSessionEnd(session.expiresAt);
-    const noEnd = !asHost && expiresAtMs === null;
-    if (asHost ? !isOwnApp(session, request) : device === null || "refusal" in device || noEnd) {
+    const refusal = screenShareSocketRefusal({
+      socket: which,
+      ownApp: asHost && isOwnApp(session, request),
+      device,
+      expiresAtMs,
+    });
+    if (refusal !== null) {
       yield* Effect.logInfo("Refused a screen sharing socket.", {
-        socket: asHost ? "host" : "view",
+        socket: which,
         subject: session.subject,
-        reason:
-          device !== null && "refusal" in device
-            ? device.refusal
-            : noEnd
-              ? "session_without_expiry"
-              : "not_this_machines_app",
+        reason: refusal,
       });
       return forbidden;
     }
@@ -234,42 +295,93 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
             Effect.andThen(Effect.never),
           );
         } else if ("device" in device && expiresAtMs !== null) {
-          // The app that attached may no longer be the app: its latest proof ran out, or
-          // the file it is checked against was rewritten since.
-          const standing = relay.hostStanding();
-          if (standing !== undefined && !(yield* stillHolds(standing))) {
-            yield* Effect.logWarning("Dropped a screen sharing host whose proof no longer holds.");
-            relay.dropHost("proof_stale");
-          }
-          const { claimedLabel } = device.device;
-          const opened = relay.openViewer(
-            peer,
-            {
-              thumbprint: device.device.thumbprint,
-              label: device.device.label,
-              ...(claimedLabel === undefined ? {} : { claimedLabel }),
-              shortId: device.device.shortId,
-              kind: device.device.kind,
-            },
-            environmentId,
-          );
-          if ("refused" in opened) {
-            // A refused upgrade reads as a failed sign-in to ticket clients, so say it in the close.
-            yield* writer.write(new Socket.CloseEvent(SCREEN_SHARE_CLOSE_REFUSED, opened.refused));
-            return HttpServerResponse.empty();
-          }
+          const viewer = device.device;
+          const nonce = NodeCrypto.randomBytes(16).toString("hex");
+          type Opened = Exclude<ReturnType<typeof relay.openViewer>, { readonly refused: unknown }>;
+          let stage: "waiting" | "over" | Opened = "waiting";
+          const refuse = (reason: string) => {
+            stage = "over";
+            peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason);
+          };
+          const place = { drop: () => refuse("handshake_failed") };
+          const leave = () => {
+            const index = waiting.indexOf(place);
+            if (index >= 0) waiting.splice(index, 1);
+          };
+          waiting.push(place);
+          if (waiting.length > SCREEN_SHARE_MAX_WAITING) waiting.shift()?.drop();
+          peer.sendText(proveText({ t: "prove", nonce, environmentId }));
+
           onChunk = (chunk) =>
-            Effect.sync(() => {
-              if (typeof chunk === "string") opened.text();
-              else opened.binary(chunk);
+            Effect.gen(function* () {
+              if (stage === "over") return;
+              if (stage !== "waiting")
+                return typeof chunk === "string" ? stage.text() : stage.binary(chunk);
+              // The first message is the knock or the end: nothing before it is opened,
+              // counted against the device, or told to the app.
+              leave();
+              const jws = knockOf(chunk);
+              const holds =
+                jws !== null &&
+                screenShareKnockHolds({
+                  jws,
+                  environmentId,
+                  nonce,
+                  thumbprint: viewer.thumbprint,
+                  nowEpochSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1000),
+                });
+              if (!holds) {
+                yield* Effect.logInfo("A screen sharing viewer did not show its device's key.", {
+                  device: viewer.shortId,
+                });
+                return refuse("handshake_failed");
+              }
+              yield* dropStaleHost;
+              const { claimedLabel } = viewer;
+              const opened = relay.openViewer(
+                peer,
+                {
+                  thumbprint: viewer.thumbprint,
+                  label: viewer.label,
+                  ...(claimedLabel === undefined ? {} : { claimedLabel }),
+                  shortId: viewer.shortId,
+                  kind: viewer.kind,
+                },
+                environmentId,
+              );
+              // A refused upgrade reads as a failed sign-in to ticket clients, so say it in the close.
+              if ("refused" in opened) return refuse(opened.refused);
+              stage = opened;
+              yield* Effect.logInfo("A device asked to view this machine's screen.", {
+                device: viewer.shortId,
+                kind: viewer.kind,
+              });
             });
-          onClosed = opened.closed;
+          onClosed = () => {
+            leave();
+            if (stage !== "waiting" && stage !== "over") stage.closed();
+            stage = "over";
+          };
           // These sessions' expiry is not watched elsewhere, so the screen stops at it here.
-          untilOver = Effect.sleep(Math.max(0, expiresAtMs - (yield* Clock.currentTimeMillis)));
-          yield* Effect.logInfo("A device asked to view this machine's screen.", {
-            device: device.device.shortId,
-            kind: device.device.kind,
-          });
+          // While the device is in, the app's standing is looked at again every minute:
+          // an app that stopped renewing its proof does not keep showing a screen.
+          untilOver = Effect.raceFirst(
+            Effect.raceFirst(
+              Effect.sleep(Math.max(0, expiresAtMs - (yield* Clock.currentTimeMillis))),
+              Effect.forever(Effect.sleep(HOST_RECHECK_MS).pipe(Effect.andThen(dropStaleHost))),
+            ),
+            // No answer in time: the place is given up. Once in, this waits for nothing.
+            Effect.sleep(SCREEN_SHARE_KNOCK_MS).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  if (stage !== "waiting") return Effect.never;
+                  leave();
+                  refuse("handshake_failed");
+                  return Effect.never;
+                }),
+              ),
+            ),
+          );
         } else {
           return HttpServerResponse.empty();
         }

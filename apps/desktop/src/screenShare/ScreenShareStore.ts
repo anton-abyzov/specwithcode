@@ -136,6 +136,8 @@ const parseStored = (text: string): Stored | null => {
 export class ScreenShareStore {
   private state: Stored;
   private healthy: boolean;
+  /** False after a change could not be written, until one can be again. */
+  private writable = true;
   private readonly io: ScreenShareStoreIo;
 
   constructor(io: ScreenShareStoreIo) {
@@ -182,10 +184,12 @@ export class ScreenShareStore {
     try {
       this.io.write(this.io.seal(JSON.stringify(next)));
     } catch {
+      this.writable = false;
       return false;
     }
     this.state = next;
     this.healthy = true;
+    this.writable = true;
     return true;
   }
 
@@ -196,6 +200,11 @@ export class ScreenShareStore {
 
   get storeHealthy(): boolean {
     return this.healthy;
+  }
+
+  /** False while the last change could not be written to the file. */
+  get storeWritable(): boolean {
+    return this.writable;
   }
 
   get enabled(): boolean {
@@ -225,12 +234,12 @@ export class ScreenShareStore {
     return this.liveGrants().some((grant) => grant.thumbprint === thumbprint);
   }
 
-  /** A person at this machine chose "Always allow" for this device. */
+  /** A person at this machine chose "Always allow" for this device. False when it could not be kept. */
   addGrant(device: {
     readonly thumbprint: string;
     readonly label: string;
     readonly shortId: string;
-  }) {
+  }): boolean {
     const at = new Date(this.io.now()).toISOString();
     const others = this.liveGrants().filter((grant) => grant.thumbprint !== device.thumbprint);
     return this.save({
@@ -295,11 +304,13 @@ export class ScreenShareStore {
   }
 
   /**
-   * Counts a refusal, a prompt nobody answered, a handshake that did not finish
-   * or a wrong code. The third within the window starts the quiet time. Kept
-   * in the file so restarting the app does not clear it.
+   * Counts a refusal, a prompt nobody answered, a wrong code, or a device that
+   * left or made no sense after a person was asked. The third within the window
+   * starts the quiet time. Kept in the file so restarting the app does not
+   * clear it; when the file cannot be written it still counts until the app
+   * quits, and false says so.
    */
-  addStrike(thumbprint: string): void {
+  addStrike(thumbprint: string): boolean {
     const now = this.io.now();
     const recent = [
       ...(this.state.strikes[thumbprint]?.at ?? []).filter(
@@ -316,7 +327,7 @@ export class ScreenShareStore {
             entry.at.some((at) => now - at < SCREEN_SHARE_COOLDOWN_WINDOW_MS)),
       )
       .slice(-MAX_STRIKE_DEVICES);
-    this.save({
+    const next: Stored = {
       ...this.state,
       strikes: {
         ...Object.fromEntries(others),
@@ -327,6 +338,10 @@ export class ScreenShareStore {
             : (this.state.strikes[thumbprint]?.quietUntil ?? 0),
         },
       },
-    });
+    };
+    if (this.save(next)) return true;
+    // A count that is lost is a prompt that keeps coming back: it holds in memory at least.
+    this.state = next;
+    return false;
   }
 }

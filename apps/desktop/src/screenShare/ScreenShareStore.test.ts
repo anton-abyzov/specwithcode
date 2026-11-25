@@ -10,12 +10,16 @@ import { ScreenShareStore, type ScreenShareStoreIo } from "./ScreenShareStore.ts
 
 /** A stand-in for the system's encryption: only the same `machine` opens what it sealed. */
 function disk(machine = "m1") {
-  const file: { bytes: Uint8Array | null } = { bytes: null };
+  const file: { bytes: Uint8Array | null; failWrites: boolean } = {
+    bytes: null,
+    failWrites: false,
+  };
   let now = Date.parse("2026-11-25T12:00:00Z");
   let sealing = true;
   const io: ScreenShareStoreIo = {
     read: () => file.bytes,
     write: (bytes) => {
+      if (file.failWrites) throw new Error("disk full");
       file.bytes = bytes;
     },
     canSeal: () => sealing,
@@ -234,6 +238,31 @@ describe("ScreenShareStore", () => {
     expect(store.inCooldown("t1")).toBe(true);
     advance(2000);
     expect(store.inCooldown("t1")).toBe(false);
+  });
+
+  it("still counts refusals when the file cannot be written, and says a change was not kept", () => {
+    const { io, file } = disk();
+    const store = new ScreenShareStore(io);
+    expect(store.setEnabled(true)).toBe(true);
+    expect(store.storeWritable).toBe(true);
+    file.failWrites = true;
+    expect(store.addStrike("t1")).toBe(false);
+    expect(store.storeWritable).toBe(false);
+    expect(store.addStrike("t1")).toBe(false);
+    expect(store.inCooldown("t1")).toBe(false);
+    expect(store.addStrike("t1")).toBe(false);
+    // Lost on disk, held in memory: the prompts stop for as long as this app runs.
+    expect(store.inCooldown("t1")).toBe(true);
+    expect(new ScreenShareStore(io).inCooldown("t1")).toBe(false);
+    // A grant and its use say when they were not kept, and nothing changes.
+    expect(store.addGrant(DEVICE)).toBe(false);
+    expect(store.hasGrant(DEVICE.thumbprint)).toBe(false);
+    file.failWrites = false;
+    expect(store.addGrant(DEVICE)).toBe(true);
+    expect(store.storeWritable).toBe(true);
+    file.failWrites = true;
+    expect(store.touchGrant(DEVICE.thumbprint)).toBe(false);
+    expect(store.storeWritable).toBe(false);
   });
 
   it("does not go quiet for refusals spread wider than the window", () => {

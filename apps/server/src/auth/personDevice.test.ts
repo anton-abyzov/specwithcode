@@ -313,16 +313,25 @@ describe("ownAppStanding", () => {
   });
 
   it("keeps only an end time for a launch proof, which runs out unless the app sends a new one", () => {
+    const STEP = SCREEN_SHARE_HOST_PROOF_WINDOW_MS;
     const proof = currentScreenShareHostProof(secret, NOW);
     const standing = ownAppStanding({ proof, launchSecret: secret, verifier: null, nowMs: NOW })!;
-    expect(standing).toEqual({ kind: "launch", untilMs: NOW + SCREEN_SHARE_HOST_PROOF_WINDOW_MS });
+    // Until the end of the window after the proof's own: when the proof itself stops passing.
+    const end = (Math.floor(NOW / STEP) + 2) * STEP;
+    expect(standing).toEqual({ kind: "launch", untilMs: end });
     expect(ownAppStandingHolds(standing, { verifier: null, nowMs: NOW + 60_000 })).toBe(true);
-    expect(
-      ownAppStandingHolds(standing, {
-        verifier: null,
-        nowMs: NOW + SCREEN_SHARE_HOST_PROOF_WINDOW_MS + 1,
-      }),
-    ).toBe(false);
+    expect(ownAppStandingHolds(standing, { verifier: null, nowMs: end - 1 })).toBe(true);
+    expect(ownAppStandingHolds(standing, { verifier: null, nowMs: end })).toBe(false);
+  });
+
+  it("gives a launch proof shown in its last moments no longer than the proof has", () => {
+    const STEP = SCREEN_SHARE_HOST_PROOF_WINDOW_MS;
+    const proof = currentScreenShareHostProof(secret, NOW);
+    const end = (Math.floor(NOW / STEP) + 2) * STEP;
+    // Presented a second before it stops passing, it stands for that second and no more.
+    const late = ownAppStanding({ proof, launchSecret: secret, verifier: null, nowMs: end - 1000 });
+    expect(late).toEqual({ kind: "launch", untilMs: end });
+    expect(ownAppStanding({ proof, launchSecret: secret, verifier: null, nowMs: end })).toBeNull();
   });
 
   it("gives nothing for a proof that does not hold", () => {

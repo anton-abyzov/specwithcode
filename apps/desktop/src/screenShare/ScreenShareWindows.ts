@@ -7,6 +7,9 @@
  * A click here is not approval by itself: `ScreenShareSessions` asks the
  * system to authenticate a person before anything is allowed.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - one existence check of the app's own preload file.
+import * as NodeFs from "node:fs";
+
 import * as Electron from "electron";
 
 import { createDesktopBrowserWindow } from "../electron/DesktopOffscreen.ts";
@@ -44,6 +47,8 @@ const overEverything = (window: Electron.BrowserWindow) => {
 export class ScreenShareWindows {
   private prompt: Electron.BrowserWindow | undefined;
   private banners: Array<Electron.BrowserWindow> = [];
+  /** The banner's page while banners are up, for a display that arrives later. */
+  private bannerUrl: string | undefined;
   private readonly onMessage: (event: Electron.IpcMainEvent, message: unknown) => void;
   private readonly preload: string;
   private readonly handlers: ScreenShareWindowHandlers;
@@ -116,49 +121,74 @@ export class ScreenShareWindows {
     if (window !== undefined && !window.isDestroyed()) window.destroy();
   }
 
-  /** One banner per display. False when none could be put up. */
+  /** A display plugged in while the screen is viewed gets its banner too. */
+  private readonly onDisplayAdded = (_event: unknown, display: Electron.Display): void => {
+    const html = this.bannerUrl;
+    if (html === undefined) return;
+    try {
+      this.addBanner(display, html);
+    } catch {
+      this.handlers.bannerLost();
+    }
+  };
+
+  /**
+   * One banner per display. False when none could be put up, or when the file
+   * that carries its Stop button is missing: a banner that cannot stop is not one.
+   */
   showBanner(view: ScreenShareBannerView): boolean {
     this.hideBanner();
+    if (!NodeFs.existsSync(this.preload)) return false;
     const html = dataUrl(bannerHtml(view));
     try {
-      for (const display of Electron.screen.getAllDisplays()) {
-        const window = createDesktopBrowserWindow({
-          ...SCREEN_SHARE_BANNER_SIZE,
-          ...bannerPosition(display.workArea, SCREEN_SHARE_BANNER_SIZE),
-          show: false,
-          frame: false,
-          transparent: true,
-          backgroundColor: "#00000000",
-          hasShadow: false,
-          resizable: false,
-          minimizable: false,
-          maximizable: false,
-          fullscreenable: false,
-          closable: false,
-          focusable: false,
-          skipTaskbar: true,
-          title: "Screen sharing",
-          webPreferences: this.webPreferences(),
-        });
-        overEverything(window);
-        this.banners.push(window);
-        const lost = () => {
-          if (this.banners.includes(window)) this.handlers.bannerLost();
-        };
-        window.once("closed", lost);
-        window.on("hide", lost);
-        window.webContents.once("render-process-gone", lost);
-        void window.loadURL(html).catch(lost);
-        window.showInactive();
-      }
+      for (const display of Electron.screen.getAllDisplays()) this.addBanner(display, html);
     } catch {
       this.hideBanner();
       return false;
     }
-    return this.banners.length > 0 && this.banners.every((window) => window.isVisible());
+    if (this.banners.length === 0 || !this.banners.every((window) => window.isVisible())) {
+      this.hideBanner();
+      return false;
+    }
+    this.bannerUrl = html;
+    Electron.screen.on("display-added", this.onDisplayAdded);
+    return true;
+  }
+
+  private addBanner(display: Electron.Display, html: string): void {
+    const window = createDesktopBrowserWindow({
+      ...SCREEN_SHARE_BANNER_SIZE,
+      ...bannerPosition(display.workArea, SCREEN_SHARE_BANNER_SIZE),
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: "#00000000",
+      hasShadow: false,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      closable: false,
+      focusable: false,
+      skipTaskbar: true,
+      title: "Screen sharing",
+      webPreferences: this.webPreferences(),
+    });
+    overEverything(window);
+    this.banners.push(window);
+    const lost = () => {
+      if (this.banners.includes(window)) this.handlers.bannerLost();
+    };
+    window.once("closed", lost);
+    window.on("hide", lost);
+    window.webContents.once("render-process-gone", lost);
+    void window.loadURL(html).catch(lost);
+    window.showInactive();
   }
 
   hideBanner(): void {
+    this.bannerUrl = undefined;
+    Electron.screen.removeListener("display-added", this.onDisplayAdded);
     const windows = this.banners;
     // Emptied first, so their closing is not taken for a lost banner.
     this.banners = [];

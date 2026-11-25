@@ -300,7 +300,13 @@ export function MachinesSettingsPanel() {
       {fleet.primaryEnvironmentId ? (
         <>
           <ConnectDevicesSection environmentId={fleet.primaryEnvironmentId} />
-          <ScreenShareSettings />
+          <ScreenShareSettings
+            otherMachine={((entry) => entry !== undefined && !isThisMachineTarget(entry))(
+              environments.find(
+                (environment) => environment.environmentId === fleet.primaryEnvironmentId,
+              )?.entry,
+            )}
+          />
         </>
       ) : null}
       {hereRow ? (

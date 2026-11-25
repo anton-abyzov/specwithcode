@@ -159,6 +159,8 @@ interface Session {
   showingLocked: boolean;
   frames: number;
   lastHeard: number;
+  /** A sealed record was held back after the end, so nothing sealed after it would open. */
+  gap?: true;
   /** Cancels for the timers this session holds: the stage's deadline, the time limit, the next frame. */
   cancelStage?: () => void;
   cancelLimit?: () => void;
@@ -176,12 +178,20 @@ export const AUTHENTICATE_PAUSE_MS = 3_000;
 /** System dialogs one prompt may put up that end without a person, before it counts as Deny. */
 export const AUTHENTICATE_TRIES = 3;
 
-/** Refusals that count toward a device's quiet time. */
+/**
+ * Ends that count toward a device's quiet time, and only once a person here
+ * was asked. Before that the device has proved nothing: whoever holds a copy
+ * of its sign-in ticket could open and fail as often as the server lets it,
+ * and counting those would keep the real device away. The server's own limit
+ * on opens bounds them instead.
+ */
 const STRIKES: ReadonlySet<ScreenShareEndReason> = new Set([
   "denied",
   "prompt_timeout",
-  "handshake_failed",
   "wrong_code",
+  // Leaving, or sending something that makes no sense, after a person was made to look.
+  "viewer_ended",
+  "protocol_error",
 ]);
 
 export class ScreenShareSessions {
@@ -579,8 +589,11 @@ export class ScreenShareSessions {
     session.displays = displays;
     session.displayId = (displays.find((display) => display.primary) ?? displays[0]!).id;
     const { thumbprint, label, shortId } = session.device;
-    if (session.grantOnLive) store.addGrant({ thumbprint, label, shortId });
-    else if (session.outcome === "allowed_by_grant") store.touchGrant(thumbprint);
+    if (session.grantOnLive && !store.addGrant({ thumbprint, label, shortId })) {
+      // "Always allow" that could not be kept is an allow for this once, and the list says so.
+      session.outcome = "allowed_once";
+      this.audit({ id: session.sid, device: session.device, outcome: session.outcome, startedAt });
+    } else if (session.outcome === "allowed_by_grant") store.touchGrant(thumbprint);
     capture.keepAwake(true);
     session.cancelLimit = this.deps.after(SCREEN_SHARE_SESSION_MAX_MS, () =>
       this.end(session, "time_limit"),
@@ -654,12 +667,30 @@ export class ScreenShareSessions {
     this.sendSealed(session, SCREEN_SHARE_RECORD.state, encoder.encode(JSON.stringify(state)));
   }
 
-  private sendSealed(session: Session, type: number, data: Uint8Array): Promise<void> {
+  /**
+   * Seals and sends one record. Sealing takes a moment, and the session can end
+   * in it: what was sealed while live is then not sent, because the banner is
+   * already down. `last` is the one record that follows the end.
+   */
+  private sendSealed(
+    session: Session,
+    type: number,
+    data: Uint8Array,
+    last = false,
+  ): Promise<void> {
     const sealer = session.sealer;
     if (sealer === undefined) return Promise.resolve();
     return this.track(
       sealer.seal(type, data).then(
-        (record) => this.deps.send(session.sid, wire(SCREEN_SHARE_WIRE.sealed, record)),
+        (record) => {
+          if (!last && this.session !== session) {
+            session.gap = true;
+            return;
+          }
+          // After a held-back record the viewer could not open this one: the plain close says why.
+          if (last && session.gap) return;
+          this.deps.send(session.sid, wire(SCREEN_SHARE_WIRE.sealed, record));
+        },
         () => {
           // A record that could not be sealed spent its counter: nothing after it would open.
           if (this.session === session) this.end(session, "protocol_error");
@@ -681,10 +712,9 @@ export class ScreenShareSessions {
       banner.hide();
     } else {
       prompt.hide();
-      // A viewer that leaves while a person is being asked has still made them look.
+      // Counted only once the device proved its key and a person was made to look.
       const asked = session.phase !== "hello" && session.phase !== "proof";
-      if (STRIKES.has(reason) || (reason === "viewer_ended" && asked))
-        store.addStrike(session.device.thumbprint);
+      if (asked && STRIKES.has(reason)) store.addStrike(session.device.thumbprint);
     }
     this.audit({
       id: session.sid,
@@ -703,6 +733,7 @@ export class ScreenShareSessions {
         encoder.encode(
           JSON.stringify({ phase: "ended", reason } satisfies ScreenShareSessionState),
         ),
+        true,
       ).finally(() => this.deps.close(session.sid, reason)),
     );
     this.deps.changed();
