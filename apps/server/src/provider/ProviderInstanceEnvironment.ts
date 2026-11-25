@@ -96,7 +96,7 @@ export function followEnvironmentPath(
   source: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  followBasePath(next, source, pathNameTest(platform));
+  followBasePath(next, source, pathNameTest(platform), platform);
   return next;
 }
 
@@ -104,6 +104,7 @@ function followBasePath(
   next: NodeJS.ProcessEnv,
   baseEnv: NodeJS.ProcessEnv,
   isPath: (name: string) => boolean,
+  platform: NodeJS.Platform,
 ): void {
   const key = Object.keys(baseEnv).find(isPath) ?? "PATH";
   Object.defineProperty(next, key, {
@@ -111,7 +112,7 @@ function followBasePath(
     configurable: true,
     get: () => {
       const value = baseEnv[Object.keys(baseEnv).find(isPath) ?? key];
-      const mount = appImageMountDir(baseEnv);
+      const mount = appImageMountDir(baseEnv, platform);
       return mount === undefined || value === undefined
         ? value
         : withoutMountEntries(value, /:/, mount);
@@ -143,10 +144,13 @@ const APPIMAGE_SEARCH_PATH_SEPARATORS: Record<string, RegExp> = {
   GSETTINGS_SCHEMA_DIR: /:/,
 };
 
-const isAppImageEnvironment = (env: NodeJS.ProcessEnv): boolean =>
-  env.APPIMAGE !== undefined || env.APPDIR !== undefined;
+// APPDIR alone is a common variable of other tools; only the Linux AppImage
+// runtime sets APPIMAGE, so that is the signal.
+const isAppImageEnvironment = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean =>
+  platform === "linux" && Boolean(env.APPIMAGE);
 
-function appImageMountDir(env: NodeJS.ProcessEnv): string | undefined {
+function appImageMountDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
+  if (!isAppImageEnvironment(env, platform)) return undefined;
   const mount = env.APPDIR?.replace(/\/+$/, "");
   return mount ? mount : undefined;
 }
@@ -162,11 +166,14 @@ function withoutMountEntries(value: string, separator: RegExp, mount: string): s
 }
 
 /** A copy of `env` without the AppImage launcher variables and mount entries. */
-export function withoutAppImageRuntimeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (!isAppImageEnvironment(env)) return env;
+export function withoutAppImageRuntimeEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (!isAppImageEnvironment(env, platform)) return env;
   const next: NodeJS.ProcessEnv = { ...env };
   for (const key of APPIMAGE_LAUNCHER_KEYS) delete next[key];
-  const mount = appImageMountDir(env);
+  const mount = appImageMountDir(env, platform);
   if (mount === undefined) return next;
   for (const [key, separator] of Object.entries(APPIMAGE_SEARCH_PATH_SEPARATORS)) {
     const value = next[key];
@@ -178,19 +185,43 @@ export function withoutAppImageRuntimeEnvironment(env: NodeJS.ProcessEnv): NodeJ
   return next;
 }
 
+/**
+ * A thread's MCP credentials and identity belong to the session that set
+ * them. The server's own environment can carry another thread's (a server
+ * started from an agent shell), so an inherited layer drops them in any case.
+ */
+export const isThreadScopedVariable = (name: string): boolean => {
+  const upper = name.toUpperCase();
+  return upper.startsWith("STUDIO_ACP_MCP_") || upper === "SPECWEAVE_STUDIO_THREAD_ID";
+};
+
+/**
+ * The server's environment as an agent may inherit it: no AppImage runtime
+ * and no thread-scoped credentials. The same object when nothing is dropped.
+ */
+export function inheritableAgentEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const scrubbed = withoutAppImageRuntimeEnvironment(env, platform);
+  const threadScoped = Object.keys(scrubbed).filter(isThreadScopedVariable);
+  if (threadScoped.length === 0) return scrubbed;
+  const next: NodeJS.ProcessEnv = { ...scrubbed };
+  for (const key of threadScoped) delete next[key];
+  return next;
+}
+
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  const appImage = isAppImageEnvironment(baseEnv);
-  if ((!environment || environment.length === 0) && !appImage) return baseEnv;
-  const next: NodeJS.ProcessEnv = appImage
-    ? withoutAppImageRuntimeEnvironment(baseEnv)
-    : { ...baseEnv };
+  const inheritable = inheritableAgentEnvironment(baseEnv, platform);
+  if ((!environment || environment.length === 0) && inheritable === baseEnv) return baseEnv;
+  const next: NodeJS.ProcessEnv = inheritable === baseEnv ? { ...baseEnv } : inheritable;
   const isPath = pathNameTest(platform);
   if (!environment?.some((variable) => isPath(variable.name)))
-    followBasePath(next, baseEnv, isPath);
+    followBasePath(next, baseEnv, isPath, platform);
   for (const variable of environment ?? []) {
     if (platform === "win32" && variable.name.toUpperCase() === "PATH") {
       setWindowsPath(next, variable.value);
@@ -217,7 +248,7 @@ export function mergeNativeSubscriptionEnvironment(
   // This second copy would freeze PATH as the first would have (see `followBasePath`).
   const isPath = pathNameTest(platform);
   if (!environment?.some((variable) => isPath(variable.name)))
-    followBasePath(next, baseEnv, isPath);
+    followBasePath(next, baseEnv, isPath, platform);
   for (const key of NATIVE_AUTH_ENVIRONMENT_KEYS) next[key] = "";
   return next;
 }

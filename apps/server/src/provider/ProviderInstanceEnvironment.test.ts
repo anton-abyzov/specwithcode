@@ -346,4 +346,46 @@ describe("AppImage runtime environment", () => {
     const base = { PATH: "/tmp/.mount_x/usr/bin:/usr/bin" };
     expect(mergeProviderInstanceEnvironment(undefined, base, "linux")).toBe(base);
   });
+
+  it("scrubs only a Linux AppImage launch; APPDIR alone is someone else's variable", () => {
+    const appDirOnly = { APPDIR: "/opt/tool", PATH: "/opt/tool/bin:/usr/bin" };
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      const merged = mergeProviderInstanceEnvironment(undefined, appDirOnly, platform);
+      expect(merged.APPDIR).toBe("/opt/tool");
+      expect(merged.PATH).toBe("/opt/tool/bin:/usr/bin");
+    }
+    const onMac = mergeProviderInstanceEnvironment(undefined, appImageBase(), "darwin");
+    expect(onMac.APPIMAGE).toBe("/home/a/SpecWithCode.AppImage");
+    expect(onMac.PATH).toBe("/tmp/.mount_Spec1/usr/bin:/usr/local/bin:/usr/bin");
+  });
+});
+
+describe("thread credentials in the server environment", () => {
+  const leaked = {
+    PATH: "/usr/bin",
+    HOME: "/home/a",
+    STUDIO_ACP_MCP_AUTHORIZATION: "Bearer other-thread",
+    studio_acp_mcp_endpoint: "http://127.0.0.1:1/mcp",
+    SPECWEAVE_STUDIO_THREAD_ID: "thread-other",
+  };
+
+  it("agent environments never inherit another thread's MCP credentials or identity", () => {
+    for (const environment of [undefined, [{ name: "EXTRA", value: "1", sensitive: false }]]) {
+      const merged = mergeProviderInstanceEnvironment(environment, leaked, "linux");
+      expect(merged.STUDIO_ACP_MCP_AUTHORIZATION).toBeUndefined();
+      expect(merged.studio_acp_mcp_endpoint).toBeUndefined();
+      expect(merged.SPECWEAVE_STUDIO_THREAD_ID).toBeUndefined();
+      expect(merged.HOME).toBe("/home/a");
+    }
+  });
+
+  it("keeps credentials an instance sets for itself", () => {
+    const merged = mergeProviderInstanceEnvironment(
+      [{ name: "STUDIO_ACP_MCP_AUTHORIZATION", value: "Bearer own", sensitive: true }],
+      leaked,
+      "linux",
+    );
+    expect(merged.STUDIO_ACP_MCP_AUTHORIZATION).toBe("Bearer own");
+    expect(merged.SPECWEAVE_STUDIO_THREAD_ID).toBeUndefined();
+  });
 });

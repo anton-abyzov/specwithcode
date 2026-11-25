@@ -36,7 +36,10 @@ import { agentWorkCgroup } from "../../resourceTelemetry/agentWorkCgroup.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import { normalizeAcpTerminalAuthMethod } from "./AcpTerminalAuthentication.ts";
 import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
-import { withoutAppImageRuntimeEnvironment } from "../ProviderInstanceEnvironment.ts";
+import {
+  inheritableAgentEnvironment,
+  withoutAppImageRuntimeEnvironment,
+} from "../ProviderInstanceEnvironment.ts";
 import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
@@ -98,18 +101,22 @@ export interface AcpSpawnInput {
 
 /**
  * The environment an agent starts with. Some launches pass only the variables
- * they add and let the child extend the server's own environment. On the Linux
- * AppImage build that would hand the agent the app's launcher variables and
- * mount folders, so there the server's environment is copied without them and
- * passed as the complete environment instead.
+ * they add and let the child extend the server's own environment. That would
+ * hand the agent another thread's MCP credentials when the server itself runs
+ * inside an agent session, and on the Linux AppImage build the app's launcher
+ * variables and mount folders. So when the server's environment would carry
+ * any of them it is copied without them and passed as the complete
+ * environment instead. Variables the launch sets itself always reach the agent.
  */
 function agentLaunchEnvironment(
   spawn: AcpSpawnInput,
   hostEnvironment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
 ): { readonly env: NodeJS.ProcessEnv | undefined; readonly extendEnv: boolean } {
-  const own = spawn.env === undefined ? undefined : withoutAppImageRuntimeEnvironment(spawn.env);
+  const own =
+    spawn.env === undefined ? undefined : withoutAppImageRuntimeEnvironment(spawn.env, platform);
   const extendEnv = spawn.extendEnv ?? true;
-  const inherited = withoutAppImageRuntimeEnvironment(hostEnvironment);
+  const inherited = inheritableAgentEnvironment(hostEnvironment, platform);
   if (!extendEnv || inherited === hostEnvironment) return { env: own, extendEnv };
   return { env: { ...inherited, ...own }, extendEnv: false };
 }
@@ -1577,7 +1584,11 @@ export const make = (
       );
 
     const hostEnvironment = yield* HostProcessEnvironment;
-    const launchEnvironment = agentLaunchEnvironment(options.spawn, hostEnvironment);
+    const launchEnvironment = agentLaunchEnvironment(
+      options.spawn,
+      hostEnvironment,
+      yield* HostProcessPlatform,
+    );
     const spawnCommand =
       options.spawn.shell === false
         ? { command: options.spawn.command, args: options.spawn.args, shell: false }
