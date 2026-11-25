@@ -727,10 +727,6 @@ export const make = Effect.gen(function* () {
         },
         cause,
       );
-    // Before the alert is recomputed below, so the alert names current content too.
-    if (input.kind === "live_activity_start") {
-      aggregate = yield* currentStartAggregate(input.target.user_id, aggregate);
-    }
     if (input.sourceJobId) {
       const claim = yield* attempts.claimSourceJob({
         userId: input.target.user_id,
@@ -760,6 +756,11 @@ export const make = Effect.gen(function* () {
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
       deliveryTarget = currentTarget;
+      // After the claim, and before the alert is recomputed below, so the
+      // alert names current content too.
+      if (input.kind === "live_activity_start") {
+        aggregate = yield* currentStartAggregate(input.target.user_id, aggregate);
+      }
       if (alert) {
         const preferences = parsePreferences(currentTarget.preferences_json);
         const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
@@ -793,6 +794,9 @@ export const make = Effect.gen(function* () {
         });
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
+    } else if (input.kind === "live_activity_start") {
+      // A start sent directly, not from the queue, reads the same rows.
+      aggregate = yield* currentStartAggregate(input.target.user_id, aggregate);
     }
     if (input.kind === "live_activity_start" && aggregate === null) {
       yield* liveActivities.clearStartQueued({

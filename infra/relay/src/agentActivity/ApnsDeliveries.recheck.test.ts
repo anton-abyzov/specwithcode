@@ -150,6 +150,7 @@ const rowsUnderReplacementKey = AgentActivityRows.AgentActivityRows.of({
 const layerFor = (
   calls: { apns: number; bodies?: Array<string> },
   rows: AgentActivityRows.AgentActivityRows["Service"] = failingRows,
+  claim: "claimed" | "completed" = "claimed",
 ) =>
   ApnsDeliveries.layer.pipe(
     Layer.provide(ApnsClient.layer),
@@ -162,7 +163,7 @@ const layerFor = (
         Layer.succeed(DeliveryAttempts.DeliveryAttempts, {
           pruneExpired: Effect.succeed(0),
           record: () => Effect.void,
-          claimSourceJob: () => Effect.succeed("claimed" as const),
+          claimSourceJob: () => Effect.succeed(claim),
           completeSourceJob: () => Effect.void,
         }),
         Layer.mock(LiveActivities.LiveActivities, {
@@ -338,5 +339,37 @@ describe("ApnsDeliveries when the delivery-time recheck fails", () => {
       expect(calls.bodies.join("\n")).not.toContain("Thread under the old key");
       expect(calls.bodies.join("\n")).toContain("Thread under the new key");
     }).pipe(Effect.provide(layerFor(calls, rowsUnderReplacementKey)));
+  });
+
+  // A duplicate delivery of a start that already went out reads nothing: the
+  // job claim comes before the start's row read.
+  it.effect("reads no rows for a start whose job was already delivered", () => {
+    const calls = { apns: 0 };
+    let reads = 0;
+    const countingRows = AgentActivityRows.AgentActivityRows.of({
+      ...rowsUnderReplacementKey,
+      listForUser: (input) =>
+        Effect.suspend(() => {
+          reads += 1;
+          return rowsUnderReplacementKey.listForUser(input);
+        }),
+    });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(
+        sign({
+          kind: "live_activity_start",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: "start-token",
+          aggregate: completed,
+          createdAt: completedAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-start-duplicate",
+        }),
+      );
+      expect(reads).toBe(0);
+      expect(calls.apns).toBe(0);
+    }).pipe(Effect.provide(layerFor(calls, countingRows, "completed")));
   });
 });
