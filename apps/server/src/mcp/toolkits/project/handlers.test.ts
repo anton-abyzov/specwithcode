@@ -1100,6 +1100,21 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+    // And so is a checkout of this repository that belongs to a different
+    // worktree: its .git file was copied from that worktree.
+    const other = path.join(root, "other");
+    yield* git.execute({
+      operation: "test.setupRepo",
+      cwd: repo,
+      args: ["worktree", "add", "-b", "other", other],
+    });
+    yield* fileSystem.remove(locked, { recursive: true });
+    yield* fileSystem.makeDirectory(locked);
+    yield* fileSystem.copyFile(path.join(other, ".git"), path.join(locked, ".git"));
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    expect((yield* launchInto(other)).at(-1)?.result).toMatchObject({ projectId });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
