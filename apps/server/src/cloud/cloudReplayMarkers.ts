@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a pure synchronous hash used to name a file.
 import * as NodeCrypto from "node:crypto";
 
 /**
