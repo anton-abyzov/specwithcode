@@ -295,6 +295,28 @@ describe("sheet as a Yjs document", () => {
     expect(read.document.tabs[0]!.cells.Z9).toBe("second");
   });
 
+  it("does not carry edits into a tab that took a removed tab's place", () => {
+    const doc = sheetYDocFrom(BUDGET);
+    const saved = readSheetYDoc(doc);
+    // Changed here and not saved; meanwhile the file drops the tab and has another in its place.
+    edit(doc, (current) => ({
+      ...current,
+      tabs: [
+        { ...current.tabs[0]!, cells: { ...current.tabs[0]!.cells, Z9: "pending" } },
+        ...current.tabs.slice(1),
+      ],
+    }));
+    const replaced = {
+      ...saved.document,
+      tabs: [{ name: "Inventory", cells: { A1: "Stock" } }, ...saved.document.tabs.slice(1)],
+    };
+    writeSheetChange(doc, saved, replaced, "file");
+    const read = readSheetYDoc(doc).document;
+    const inventory = read.tabs.find((tab) => tab.name === "Inventory")!;
+    expect(inventory.cells).toEqual({ A1: "Stock" });
+    expect(read.tabs.some((tab) => tab.name === saved.document.tabs[0]!.name)).toBe(false);
+  });
+
   it("leaves a chart someone else removed when an edit built on the earlier sheet ends", () => {
     const chart = { id: "chart-1", type: "bar", title: "Costs", labels: "A2:A3", values: "B2:B3" };
     const start = sheet({

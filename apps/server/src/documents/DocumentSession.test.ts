@@ -681,6 +681,28 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
       }),
     );
 
+    it.effect("ends a session with nothing unsaved when another file takes the sheet's name", () =>
+      Effect.gen(function* () {
+        const { target, file, read } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        const typed = window.edit(put("A4", "Still being typed"));
+        NodeFS.renameSync(
+          file,
+          NodePath.join(NodePath.dirname(NodePath.dirname(file)), "moved.json"),
+        );
+        NodeFS.writeFileSync(file, TEXT);
+        yield* sessions.reconcile(target);
+        expect((yield* window.nextOf("closed")).reason).toContain("replaced by another file");
+        // The edit that was on its way has no session to merge into, and the new file is untouched.
+        const refused = yield* sessions
+          .update({ ...target, sessionKey: "window-aaaa", update: typed })
+          .pipe(Effect.flip);
+        expect(refused.code).toBe("not_open");
+        expect(read()).toBe(TEXT);
+      }),
+    );
+
     it.effect("does not put kept edits into another file that reads the same", () =>
       Effect.gen(function* () {
         const { target, file } = yield* project;

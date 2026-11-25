@@ -187,6 +187,12 @@ export function SheetFileView(props: {
         activity={binding === null ? [] : (live?.state.activity ?? [])}
         access={(binding === null ? canWrite : binding.editable) ? "edit" : "view"}
       />
+      {live?.state.status === "closed" && live.state.problem ? (
+        // Why live editing ended, which may say where unsaved changes were kept.
+        <p className="office-sheet-note" role="alert" data-testid="sheet-live-ended">
+          {live.state.problem}
+        </p>
+      ) : null}
       <SheetView
         text={file.data.contents}
         mode={mode}

@@ -632,18 +632,17 @@ const make = Effect.gen(function* () {
         fileOf(exists) !== undefined &&
         fileOf(session.fileStat) !== undefined &&
         fileOf(exists) !== fileOf(session.fileStat);
-      if (
-        replaced &&
-        read.file.revision === session.fileRevision &&
-        session.dirty &&
-        session.authorized
-      ) {
-        // Another file under the name, reading as this one last did: the sheet these edits
-        // were made in is not here any more. They are not written into what took its place.
-        yield* setAside(session);
+      if (replaced && read.file.revision === session.fileRevision) {
+        // Another file under the name, reading as this one last did: the sheet this session
+        // is on is not here any more. Nothing made in it, now or by an edit still being typed,
+        // is written into what took its place.
+        const unsaved = session.dirty && session.authorized;
+        if (unsaved) yield* setAside(session);
         yield* endSession(
           session,
-          "The sheet was replaced by another file before the last changes were saved.",
+          unsaved
+            ? "The sheet was replaced by another file before the last changes were saved."
+            : "The sheet was replaced by another file. Open it again to edit that one.",
         );
         return;
       }

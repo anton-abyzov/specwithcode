@@ -202,9 +202,16 @@ function matchTabs(before: SheetSnapshot | null, after: SheetDocument): Array<nu
     taken.add(index);
     return index;
   });
-  // A tab with a new name in the place of one that is gone was renamed.
+  // A tab with a new name in the place of one that is gone, holding the same cells, was
+  // renamed. With other cells it is another tab that took the place: what was changed in
+  // the old one meanwhile is not carried into it.
   matches.forEach((match, index) => {
-    if (match === null && index < beforeTabs.length && !taken.has(index)) {
+    if (
+      match === null &&
+      index < beforeTabs.length &&
+      !taken.has(index) &&
+      same(beforeTabs[index]!.cells, after.tabs[index]!.cells)
+    ) {
       taken.add(index);
       matches[index] = index;
     }
