@@ -83,6 +83,24 @@ const withInstanceIdentity =
     continuation: { groupKey: input.continuationGroupKey },
   });
 
+/**
+ * Pi starts every extension's session hooks, and reads project MCP config, in
+ * the folder it runs in. The server's folder is the home folder on the desktop
+ * app, so the status check runs Pi in a private empty folder of its own.
+ */
+export const checkPiProviderStatusInProbeFolder = (
+  settings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  providerStatusCacheDir: string,
+) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const probeFolder = path.join(providerStatusCacheDir, "pi-status-probe");
+    yield* fileSystem.makeDirectory(probeFolder, { recursive: true }).pipe(Effect.ignore);
+    return yield* checkPiProviderStatus(settings, environment, probeFolder);
+  });
+
 export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
@@ -97,7 +115,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const { cwd } = yield* ServerConfig.ServerConfig;
+      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -142,9 +160,15 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       );
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkPiProviderStatus(effectiveConfig, processEnv, cwd).pipe(
+      const checkProvider = checkPiProviderStatusInProbeFolder(
+        effectiveConfig,
+        processEnv,
+        providerStatusCacheDir,
+      ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
