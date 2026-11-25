@@ -1,10 +1,13 @@
 import {
   AuthStandardClientScopes,
   EnvironmentId,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  type ExecutionEnvironmentDescriptor,
   type ServerConfig,
 } from "@specweave-studio/contracts";
 import { RelayClientTracer } from "@specweave-studio/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -27,6 +30,7 @@ import { fetchEnvironmentSessionState } from "../state/session.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
+import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 import { BearerConnectionProfile } from "./catalog.ts";
 import {
   BearerConnectionTarget,
@@ -439,6 +443,36 @@ describe("retryAfterFloorMs", () => {
   });
 });
 
+/** The failure text an exporter can read from a span: messages, stacks and causes. */
+function spanFailureText(span: Tracer.NativeSpan): ReadonlyArray<string> {
+  if (span.status._tag !== "Ended" || span.status.exit._tag !== "Failure") return [];
+  const texts: Array<string> = [];
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 4 || value === null || value === undefined) return;
+    if (typeof value === "string") {
+      texts.push(value);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const record = value as {
+      message?: unknown;
+      stack?: unknown;
+      cause?: unknown;
+      error?: unknown;
+    };
+    if (typeof record.message === "string") texts.push(record.message);
+    if (typeof record.stack === "string") texts.push(record.stack);
+    texts.push(String(value));
+    visit(record.cause, depth + 1);
+    visit(record.error, depth + 1);
+  };
+  for (const reason of span.status.exit.cause.reasons) {
+    if (Cause.isFailReason(reason)) visit(reason.error, 0);
+    if (Cause.isDieReason(reason)) visit(reason.defect, 0);
+  }
+  return texts;
+}
+
 describe("EnvironmentSupervisor", () => {
   it.effect("exports each relay setup as a standalone linked trace that ends at readiness", () =>
     Effect.gen(function* () {
@@ -513,6 +547,71 @@ describe("EnvironmentSupervisor", () => {
         expect([...span.attributes.values()]).not.toContain(RELAY_TARGET.label);
       }
     }),
+  );
+
+  it.effect.each([
+    {
+      label: "a newer server's compatibility refusal",
+      failure: () =>
+        orchestrationProtocolCompatibilityError({
+          environmentId: TARGET.environmentId,
+          label: "Studio Mac Fixture",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+          capabilities: { repositoryIdentity: true },
+        } as ExecutionEnvironmentDescriptor)!,
+      phase: "blocked" as const,
+      machine: "Studio Mac Fixture",
+    },
+    {
+      label: "a route failure that names the saved machine",
+      failure: () =>
+        new ConnectionTransientError({
+          reason: "network",
+          detail: `${RELAY_TARGET.label} did not answer on any saved route.`,
+        }),
+      phase: "backoff" as const,
+      machine: RELAY_TARGET.label,
+    },
+  ])(
+    "keeps the machine label out of what relay spans record for $label",
+    ({ failure, phase, machine }) =>
+      Effect.gen(function* () {
+        const spans: Array<Tracer.NativeSpan> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            span.end = (endTime, exit) => {
+              end(endTime, exit);
+              spans.push(span);
+            };
+            return span;
+          },
+        });
+        const harness = yield* makeHarness({ prepare: () => Effect.fail(failure()) });
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(
+          Effect.provide(harness.dependencies),
+          Effect.provideService(RelayClientTracer, Option.some(tracer)),
+        );
+        const state = yield* awaitState(supervisor.state, (next) => next.phase === phase);
+
+        // What the person sees still names the machine.
+        expect(state.lastFailure?.message).toContain(machine);
+        expect(spans.length).toBeGreaterThan(0);
+        for (const span of spans) {
+          const recorded = JSON.stringify({
+            name: span.name,
+            attributes: [...span.attributes],
+            events: span.events,
+            failure: spanFailureText(span),
+          });
+          expect(recorded).not.toContain(machine);
+        }
+      }),
   );
 
   it.effect("does not attempt a connection until it is desired", () =>

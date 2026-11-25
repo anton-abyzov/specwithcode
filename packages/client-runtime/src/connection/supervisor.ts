@@ -18,6 +18,7 @@ import * as Tracer from "effect/Tracer";
 import { clearEnvironmentRequestCooldown } from "../state/environmentHttpAuth.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
+import { withoutMachineLabelsInRelaySpans } from "./relaySpanPrivacy.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
   type ConnectionAttemptError,
@@ -385,6 +386,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // No network hint: setup reached past the relay, so the silence is the
   // machine's, not this device's network.
   const setupTimeoutDetail = `${target.label} did not respond during connection setup.`;
+  // Names a host reported for itself while connecting; relay spans leave them out too.
+  const preparedLabels = new Set<string>();
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -589,6 +592,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     progress: ConnectionDriver.ConnectionDriverProgress,
   ) {
     if ("prepared" in progress) {
+      preparedLabels.add(progress.prepared.label);
       yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
     }
     yield* setState(
@@ -649,7 +653,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             "connection.retry.reason": retry.reason,
           }),
         ),
-    }).pipe(withRelayClientTracing);
+    }).pipe(
+      withRelayClientTracing,
+      // Errors name the machine for the person; the relay never sees that name.
+      withoutMachineLabelsInRelaySpans(() => [target.label, ...preparedLabels]),
+    );
   };
 
   const establishTracedConnection = Effect.fnUntraced(function* (
