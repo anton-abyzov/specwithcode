@@ -20,7 +20,9 @@ import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
   makeOpenCodeAdapterV2,
+  openCodeAppRuleSets,
   openCodeChildPermissionRules,
+  openCodeDeniesAddedDuringUpdate,
   openCodePermissionRules,
   openCodeSessionHoldsPolicy,
   openCodeSessionPermissionUpdate,
@@ -80,16 +82,58 @@ describe("OpenCode after a thread is lowered from Full access", () => {
   it("a session keeps a deny the app did not write when a wider mode is installed", () => {
     const foreign = { permission: "bash", pattern: "rm *", action: "deny" } as const;
     const session = [...openCodePermissionRules(policy("approval-required")), foreign];
-    const update = openCodeSessionPermissionUpdate(openCodePermissionRules(policy("full-access")), [
-      ...session,
-      foreign,
-    ]);
+    const update = openCodeSessionPermissionUpdate(
+      openCodePermissionRules(policy("full-access")),
+      [...session, foreign],
+      openCodeAppRuleSets(policy("full-access")),
+    );
     // OpenCode appends the update, so the app's old Supervised denies end up
     // before the new allow and stop applying; the other deny stays last.
     assert.deepEqual(update.at(-1), foreign);
     assert.equal(update.filter((rule) => rule.action === "deny").length, 1);
     assert.equal(action(update, "bash"), "deny");
     assert.equal(action(update.slice(0, -1), "bash"), "allow");
+  });
+
+  it("keeps a deny in the app's own shape that the app did not write", () => {
+    // Full access was installed, then someone else added an allow and an
+    // `edit *` deny: the allow means the policy is installed again, and the
+    // deny must stay after it.
+    const fullAccess = openCodePermissionRules(policy("full-access"));
+    const deny = { permission: "edit", pattern: "*", action: "deny" } as const;
+    const session = [
+      ...openCodePermissionRules(policy("approval-required")),
+      ...fullAccess,
+      { permission: "read", pattern: "notes/*", action: "allow" } as const,
+      deny,
+    ];
+    assert.isFalse(openCodeSessionHoldsPolicy(fullAccess, session));
+    const update = openCodeSessionPermissionUpdate(
+      fullAccess,
+      session,
+      openCodeAppRuleSets(policy("full-access")),
+    );
+    assert.deepEqual(update, [...fullAccess, deny]);
+    assert.equal(action(update, "edit"), "deny");
+  });
+
+  it("appends again a deny added between the turn's read and its update", () => {
+    const fullAccess = openCodePermissionRules(policy("full-access"));
+    const supervised = openCodePermissionRules(policy("approval-required"));
+    const appRuleSets = openCodeAppRuleSets(policy("full-access"));
+    const sent = openCodeSessionPermissionUpdate(fullAccess, supervised, appRuleSets);
+    const late = { permission: "edit", pattern: "*", action: "deny" } as const;
+    // OpenCode returns the session's rules with the update appended after the
+    // deny that arrived in between.
+    const merged = [...supervised, late, ...sent];
+    assert.equal(action(merged, "edit"), "allow");
+    const missed = openCodeDeniesAddedDuringUpdate(sent, merged, fullAccess, appRuleSets);
+    assert.deepEqual(missed, [late]);
+    assert.equal(action([...merged, ...missed], "edit"), "deny");
+    assert.deepEqual(
+      openCodeDeniesAddedDuringUpdate(sent, [...supervised, ...sent], fullAccess, appRuleSets),
+      [],
+    );
   });
 
   it.effect("a resumed session gets the current mode's rules before the next prompt", () =>
