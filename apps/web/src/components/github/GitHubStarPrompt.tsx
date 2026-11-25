@@ -129,7 +129,8 @@ export function GitHubStarPromptHost() {
       const { value: result, quiet } = await stayedQuietDuring(() =>
         readStarred({ environmentId, input: {} }),
       );
-      if (controller.signal.aborted) return;
+      // Nothing was shown or saved, so a later render may look again.
+      if (controller.signal.aborted) return void (lookedRef.current = false);
       const now = Date.now();
       if (result._tag === "Success" && result.value.starred === true) {
         void updateSettings({ githubStarPrompt: answerStarPrompt(prompt, "detected", now) });
@@ -137,7 +138,8 @@ export function GitHubStarPromptHost() {
       }
       // The check can take seconds; never let the card land on someone who started typing.
       if (!quiet) await waitForQuietMoment(STAR_PROMPT_QUIET_MS, controller.signal);
-      if (controller.signal.aborted) return;
+      // Nothing was shown or saved, so a later render may look again.
+      if (controller.signal.aborted) return void (lookedRef.current = false);
       // Saved before it shows, so a reload or an ignored card still uses up this ask.
       void updateSettings({ githubStarPrompt: answerStarPrompt(prompt, "shown", Date.now()) });
       setVisible(true);

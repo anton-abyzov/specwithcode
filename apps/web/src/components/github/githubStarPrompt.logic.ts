@@ -71,18 +71,29 @@ export function answerStarPrompt(
   answer: StarPromptAnswer,
   now: number,
 ): GitHubStarPrompt {
-  if (answer !== "shown") return { status: "starred", asks: prompt.asks, nextAskAt: null };
+  const choice = prompt.choiceAt === undefined ? {} : { choiceAt: prompt.choiceAt };
+  if (answer !== "shown") {
+    return { status: "starred", asks: prompt.asks, nextAskAt: null, ...choice };
+  }
   const asks = Math.min(prompt.asks + 1, GITHUB_STAR_PROMPT_MAX_ASKS);
   const waitDays = STAR_PROMPT_BACKOFF_DAYS[asks - 1];
   if (asks >= GITHUB_STAR_PROMPT_MAX_ASKS || waitDays === undefined) {
-    return { status: "done", asks, nextAskAt: null };
+    return { status: "done", asks, nextAskAt: null, ...choice };
   }
-  return { status: "asking", asks, nextAskAt: new Date(now + waitDays * DAY_MS).toISOString() };
+  return {
+    status: "asking",
+    asks,
+    nextAskAt: new Date(now + waitDays * DAY_MS).toISOString(),
+    ...choice,
+  };
 }
 
-/** The Settings switch. On starts a fresh budget; the usage bar still applies. */
-export function setStarPromptEnabled(enabled: boolean): GitHubStarPrompt {
-  return enabled
-    ? { status: "asking", asks: 0, nextAskAt: null }
-    : { status: "off", asks: 0, nextAskAt: null };
+/** The Settings switch, stamped so the later choice wins across machines. On starts afresh. */
+export function setStarPromptEnabled(enabled: boolean, now: number): GitHubStarPrompt {
+  return {
+    status: enabled ? "asking" : "off",
+    asks: 0,
+    nextAskAt: null,
+    choiceAt: new Date(now).toISOString(),
+  };
 }

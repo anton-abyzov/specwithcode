@@ -534,6 +534,8 @@ export const GitHubStarPrompt = Schema.Struct({
   status: GitHubStarPromptStatus,
   asks: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: GITHUB_STAR_PROMPT_MAX_ASKS })),
   nextAskAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(64))),
+  /** When the person last turned the switch Off or On. Absent on a never-touched default. */
+  choiceAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
 });
 export type GitHubStarPrompt = typeof GitHubStarPrompt.Type;
 export const DEFAULT_GITHUB_STAR_PROMPT: GitHubStarPrompt = {
@@ -543,20 +545,30 @@ export const DEFAULT_GITHUB_STAR_PROMPT: GitHubStarPrompt = {
 };
 /**
  * Two machines' star states folded into one, so a stale machine can never undo an answer
- * (1489). Starred and done stay; a shown card only moves the count forward; an explicit
- * re-enable (asking with no asks) only lifts Off. Order-free for everything but Off/re-enable,
- * which are the person's own latest choice.
+ * (1489). A star stays. A shown card only moves the count forward. Off and On are the
+ * person's own choices: the later `choiceAt` wins between them, and a never-touched default
+ * (no `choiceAt`) changes nothing.
  */
 export function mergeGitHubStarPrompt(
   current: GitHubStarPrompt,
   incoming: GitHubStarPrompt,
 ): GitHubStarPrompt {
-  if (incoming.status === "off" || incoming.status === "starred") return incoming;
+  const choiceTime = (prompt: GitHubStarPrompt) => prompt.choiceAt ?? "";
+  if (incoming.status === "starred") return incoming;
   if (current.status === "starred") return current;
-  if (incoming.status === "asking" && incoming.asks === 0 && incoming.nextAskAt === null) {
-    return current.status === "off" ? incoming : current;
+  const incomingIsDefault =
+    incoming.status === "asking" &&
+    incoming.asks === 0 &&
+    incoming.nextAskAt === null &&
+    incoming.choiceAt === undefined;
+  if (incomingIsDefault) return current;
+  if (incoming.status === "off" || current.status === "off") {
+    if (incoming.status === "off" && current.status === "off") {
+      return choiceTime(incoming) >= choiceTime(current) ? incoming : current;
+    }
+    // Off against anything else: the later switch choice decides.
+    return choiceTime(incoming) > choiceTime(current) ? incoming : current;
   }
-  if (current.status === "off") return current;
   if (incoming.status === "done") return incoming;
   if (current.status === "done") return current;
   if (incoming.asks !== current.asks) return incoming.asks > current.asks ? incoming : current;

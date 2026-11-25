@@ -92,14 +92,22 @@ describe("answerStarPrompt", () => {
 
 describe("setStarPromptEnabled", () => {
   it("Off ends asking; On starts a fresh three-ask budget", () => {
-    expect(setStarPromptEnabled(false).status).toBe("off");
-    expect(setStarPromptEnabled(true)).toEqual(DEFAULT_GITHUB_STAR_PROMPT);
+    expect(setStarPromptEnabled(false, START).status).toBe("off");
+    expect(setStarPromptEnabled(true, START)).toEqual({
+      ...DEFAULT_GITHUB_STAR_PROMPT,
+      choiceAt: new Date(START).toISOString(),
+    });
   });
 });
 
 describe("mergeGitHubStarPrompt", () => {
   const starred: GitHubStarPrompt = { status: "starred", asks: 1, nextAskAt: null };
-  const off: GitHubStarPrompt = { status: "off", asks: 0, nextAskAt: null };
+  const off: GitHubStarPrompt = {
+    status: "off",
+    asks: 0,
+    nextAskAt: null,
+    choiceAt: "2026-11-20T00:00:00.000Z",
+  };
   const done: GitHubStarPrompt = { status: "done", asks: 3, nextAskAt: null };
   const shownOnce: GitHubStarPrompt = {
     status: "asking",
@@ -115,9 +123,8 @@ describe("mergeGitHubStarPrompt", () => {
   it("never lets a stale machine's showing undo a star, Off or the last ask", () => {
     for (const settled of [starred, off, done]) {
       expect(mergeGitHubStarPrompt(settled, shownOnce)).toEqual(settled);
-      expect(mergeGitHubStarPrompt(settled, DEFAULT_GITHUB_STAR_PROMPT)).toEqual(
-        settled === off ? DEFAULT_GITHUB_STAR_PROMPT : settled,
-      );
+      // A machine that never heard of the answer serves the default; it changes nothing.
+      expect(mergeGitHubStarPrompt(settled, DEFAULT_GITHUB_STAR_PROMPT)).toEqual(settled);
     }
   });
 
@@ -129,5 +136,15 @@ describe("mergeGitHubStarPrompt", () => {
   it("takes a star or Off from anywhere", () => {
     expect(mergeGitHubStarPrompt(shownTwice, starred)).toEqual(starred);
     expect(mergeGitHubStarPrompt(done, off)).toEqual(off);
+  });
+
+  it("lets the later switch choice win between Off and On, in either order", () => {
+    const onLater = setStarPromptEnabled(true, Date.parse("2026-11-22T00:00:00.000Z"));
+    expect(mergeGitHubStarPrompt(off, onLater)).toEqual(onLater);
+    expect(mergeGitHubStarPrompt(onLater, off)).toEqual(onLater);
+    const shownAfterOn = answerStarPrompt(onLater, "shown", Date.parse("2026-11-26T00:00:00.000Z"));
+    expect(mergeGitHubStarPrompt(shownAfterOn, off)).toEqual(shownAfterOn);
+    const offLater = setStarPromptEnabled(false, Date.parse("2026-11-28T00:00:00.000Z"));
+    expect(mergeGitHubStarPrompt(shownAfterOn, offLater)).toEqual(offLater);
   });
 });

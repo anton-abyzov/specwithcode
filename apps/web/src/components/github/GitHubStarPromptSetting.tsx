@@ -28,7 +28,9 @@ export function GitHubStarPromptSetting() {
           checked={status !== "off"}
           disabled={!available}
           onCheckedChange={(checked) =>
-            void updateSettings({ githubStarPrompt: setStarPromptEnabled(Boolean(checked)) })
+            void updateSettings({
+              githubStarPrompt: setStarPromptEnabled(Boolean(checked), Date.now()),
+            })
           }
           aria-label={tx("Ask for a GitHub star")}
         />
