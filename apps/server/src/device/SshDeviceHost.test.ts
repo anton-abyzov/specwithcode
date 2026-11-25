@@ -73,7 +73,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             nodePath: "/node",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
-            hubToken: "remote-hub-token",
+            hubAuth: { token: "remote-hub-token" },
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             ...(mode === "agent-start"
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
@@ -179,5 +179,59 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     }
     yield* host.stop;
     expect(forwards).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// A start that printed its result and then exited nonzero (a cleanup step
+// failing) must not carry the hub token into the logged SSH failure.
+it.effect("keeps the hub token out of a failed start's output", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const token = "remote-hub-token-that-must-not-leak";
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+        const output = JSON.stringify({
+          nodePath: "/node",
+          platforms: [{ platform: "ios", available: true }],
+          hubPort: 1234,
+          hubAuth: { token },
+          helpers: { serveSimAxSettings: null, serveSimCli: null },
+        });
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.make(new TextEncoder().encode(output)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        });
+      }),
+    );
+    const host = yield* SshDeviceHost.make({
+      id: "test",
+      label: "Test",
+      target: "test.example",
+    }).pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+        ),
+      ),
+    );
+    const failed = yield* host.ensureReady(() => Effect.void).pipe(Effect.flip);
+    const cause = (failed as { cause?: { stdout?: string } }).cause;
+    expect(cause?.stdout).toContain('"token":"[redacted]"');
+    expect(JSON.stringify(failed)).not.toContain(token);
+    expect(String(failed)).not.toContain(token);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

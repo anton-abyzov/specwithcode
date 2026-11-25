@@ -38,7 +38,8 @@ const Probe = Schema.Struct({
 const Started = Schema.Struct({
   ...Probe.fields,
   hubPort: Schema.Int,
-  hubToken: Schema.String,
+  // Nested under "token" so a failed run's logged output has it redacted.
+  hubAuth: Schema.Struct({ token: Schema.String }),
   daemonPort: Schema.optionalKey(Schema.Int),
   token: Schema.optionalKey(Schema.String),
   entryPath: Schema.optionalKey(Schema.String),
@@ -317,11 +318,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     const next = {
       nodePath: remote.nodePath,
       // The remote hub requires its token, and so does the forward to it here.
-      hub: { origin: hubOrigin, token: remote.hubToken },
+      hub: { origin: hubOrigin, token: remote.hubAuth.token },
       devices: makeDeviceHubOperations({
         hostId: config.id,
         origin: hubOrigin,
-        token: remote.hubToken,
+        token: remote.hubAuth.token,
         http,
         run,
         androidAvailable: platformAvailability("android").pipe(

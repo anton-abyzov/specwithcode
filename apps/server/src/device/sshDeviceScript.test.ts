@@ -158,11 +158,11 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
           expect(concurrent.hubPort).toBe(manual.hubPort);
           // The hub requires its token; the start reports it and both starts share one hub.
           expect(await hubArgs("one")).toContain("--require-token");
-          expect(manual.hubToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
-          expect(concurrent.hubToken).toBe(manual.hubToken);
+          expect(manual.hubAuth.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+          expect(concurrent.hubAuth.token).toBe(manual.hubAuth.token);
           const hubUrl = `http://127.0.0.1:${manual.hubPort}/api/devices`;
           expect((await fetch(hubUrl)).status).toBe(401);
-          const authorized = { headers: { authorization: `Bearer ${manual.hubToken}` } };
+          const authorized = { headers: { authorization: `Bearer ${manual.hubAuth.token}` } };
           expect((await fetch(hubUrl, authorized)).status).toBe(200);
           // Its log holds the token, so only the owner reads it.
           const hubLog = await NodeFSP.stat(NodePath.join(root, "hosts/one/hub.log"));
