@@ -157,15 +157,12 @@ describe("AcpClientTerminals", () => {
         SPECWEAVE_STUDIO_THREAD_ID: "server-thread",
         STUDIO_TEST_KEPT: "kept",
       };
-      const run = (
-        terminals: AcpClientTerminals,
-        sessionId: string,
-      ): Effect.Effect<unknown, unknown> =>
+      const run = (terminals: AcpClientTerminals, sessionId: string) =>
         Effect.gen(function* () {
           const created = yield* terminals.create({ sessionId, ...printCredentials });
           yield* terminals.waitForExit({ sessionId, terminalId: created.terminalId });
           const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
-          return JSON.parse(output.output.trim());
+          return JSON.parse(output.output.trim()) as unknown;
         });
       const environmentForSession = (sessionId: string) =>
         sessionId === "own"
