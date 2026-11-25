@@ -1,10 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import {
-  CommandId,
-  type ProjectId,
-  ScheduledTaskUpsertInput,
-} from "@specweave-studio/contracts";
+import { CommandId, type ProjectId, ScheduledTaskUpsertInput } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";

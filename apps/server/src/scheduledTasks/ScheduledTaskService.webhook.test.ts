@@ -189,7 +189,10 @@ it.effect("keeps the run a relay delivery starts off the relay's tracer", () =>
       // As the webhook route answers a relay delivery: the request joins the relay's trace.
       const result = yield* service
         .triggerWebhook(requestFor(task))
-        .pipe(withRelayClientTracing, Effect.provideService(RelayClientTracer, Option.some(relayTracer)));
+        .pipe(
+          withRelayClientTracing,
+          Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
+        );
       assert.equal(result._tag, "accepted");
       yield* Queue.take(launches);
       // Let the delivery fiber finish its bookkeeping after the launch.
