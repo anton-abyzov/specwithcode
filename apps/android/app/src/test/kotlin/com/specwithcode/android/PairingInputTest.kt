@@ -98,6 +98,22 @@ class PairingInputTest {
         assertTrue(PairingInput.isPublicCleartext("not a pairing link"))
     }
 
+    @Test fun aBareNameFromAnotherAppIsNotTrustedOverHttp() {
+        // A name without a dot is finished by the phone's DNS search domain, so the network
+        // the phone is on, not the link, decides which machine gets the code over plain http.
+        val bare = "http://build:3773/#token=$code"
+        assertTrue(PairingInput.isPublicCleartext(bare))
+        assertTrue(PairingInput.isPublicCleartext("specwithcode://pair?link=" + java.net.URLEncoder.encode(bare, "UTF-8")))
+        assertTrue(PairingInput.isPublicCleartext("https://x.example/pair?host=http%3A%2F%2Fbuild%3A3773#token=$code"))
+
+        // https still protects the code, and loopback, mDNS and private addresses stay local.
+        assertFalse(PairingInput.isPublicCleartext("https://build:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://localhost:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://my-mac.local:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://192.168.1.20:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://[fe80::1]:3773/#token=$code"))
+    }
+
     @Test fun deepLinksOpenPairingOrAThread() {
         val real = "https://m4.example.ts.net/pair#token=$code"
         assertEquals(DeepLink.Pair(real), DeepLink.parse("studio://pair?pairingUrl=" + java.net.URLEncoder.encode(real, "UTF-8")))
