@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as DocumentSession from "../../../documents/DocumentSession.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as OfficeArtifactService from "../../../project/OfficeArtifactService.ts";
 import * as Invocation from "../../McpInvocationContext.ts";
@@ -224,6 +225,8 @@ const SheetWriteTool = Tool.make(SHEET_WRITE_TOOL_NAME, {
   failureMode: "return",
   dependencies: [
     OfficeArtifactService.OfficeArtifactService,
+    // A sheet open in a window is written and read through its live session (1480).
+    DocumentSession.DocumentSession,
     Threads.ThreadManagementService,
     Invocation.McpInvocationContext,
   ],
@@ -283,6 +286,8 @@ const SheetReadTool = Tool.make(SHEET_READ_TOOL_NAME, {
   failureMode: "return",
   dependencies: [
     OfficeArtifactService.OfficeArtifactService,
+    // A sheet open in a window is written and read through its live session (1480).
+    DocumentSession.DocumentSession,
     Threads.ThreadManagementService,
     Invocation.McpInvocationContext,
   ],

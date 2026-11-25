@@ -86,23 +86,23 @@ export const layer = Access.toLayer(OfficeToolkit, {
       const sheets = yield* OfficeArtifactService.OfficeArtifactService;
       const sheet = { title: input.title, designSystem: input.designSystem, tabs: input.tabs };
       // A sheet that is open in a window takes the write as one merged change (1480).
-      const live = yield* Effect.serviceOption(DocumentSession.DocumentSession);
-      const merged = Option.isNone(live)
-        ? Option.none()
-        : yield* sheets.projectFolder({ projectId: caller.projectId, threadId: caller.id }).pipe(
-            Effect.flatMap((workspaceRoot) =>
-              live.value.writeSheet({
-                projectId: caller.projectId,
-                workspaceRoot,
-                sheet,
-                name: input.name,
-                merge: input.merge,
-                expectedRevision: input.expectedRevision,
-                by: { id: caller.id, label: caller.title },
-              }),
-            ),
-            Effect.mapError(failure),
-          );
+      const live = yield* DocumentSession.DocumentSession;
+      const merged = yield* sheets
+        .projectFolder({ projectId: caller.projectId, threadId: caller.id })
+        .pipe(
+          Effect.flatMap((workspaceRoot) =>
+            live.writeSheet({
+              projectId: caller.projectId,
+              workspaceRoot,
+              sheet,
+              name: input.name,
+              merge: input.merge,
+              expectedRevision: input.expectedRevision,
+              by: { id: caller.id, label: caller.title },
+            }),
+          ),
+          Effect.mapError(failure),
+        );
       const saved = Option.isSome(merged)
         ? merged.value
         : yield* sheets
@@ -139,13 +139,11 @@ export const layer = Access.toLayer(OfficeToolkit, {
       if (caller === undefined) return yield* noCaller;
       const sheets = yield* OfficeArtifactService.OfficeArtifactService;
       // An open sheet is written to its file first, so the read is what the windows show.
-      const live = yield* Effect.serviceOption(DocumentSession.DocumentSession);
-      if (Option.isSome(live)) {
-        yield* sheets.projectFolder({ projectId: caller.projectId, threadId: caller.id }).pipe(
-          Effect.flatMap((workspaceRoot) => live.value.settle({ workspaceRoot, name: input.name })),
-          Effect.ignore,
-        );
-      }
+      const live = yield* DocumentSession.DocumentSession;
+      yield* sheets.projectFolder({ projectId: caller.projectId, threadId: caller.id }).pipe(
+        Effect.flatMap((workspaceRoot) => live.settle({ workspaceRoot, name: input.name })),
+        Effect.ignore,
+      );
       const saved = yield* sheets
         .readSheet({ projectId: caller.projectId, threadId: caller.id, name: input.name })
         .pipe(Effect.mapError(failure));
