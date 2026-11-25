@@ -31,14 +31,13 @@ export function permissionOrigin(rawUrl: string | undefined): string | null {
   }
 }
 
-const PROMPT_ORIGIN_MAX_CHARS = 80;
-const truncateForPrompt = (origin: string): string =>
-  origin.length > PROMPT_ORIGIN_MAX_CHARS
-    ? `${origin.slice(0, PROMPT_ORIGIN_MAX_CHARS - 1)}…`
-    : origin;
-
+/**
+ * The prompt names the whole origin (scheme, host and port). A cut would let
+ * two origins that share a long prefix read the same, so the person could
+ * allow a site other than the one they think. The dialog wraps long text.
+ */
 export function consentPromptMessage(permission: ConsentPreviewPermission, origin: string): string {
-  const site = truncateForPrompt(origin);
+  const site = origin;
   switch (permission) {
     case "clipboard-read":
       return `${site} wants to see text and images copied to the clipboard`;

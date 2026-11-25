@@ -250,6 +250,26 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("names the whole origin in the prompt, so two long origins never look alike", () =>
+    Effect.gen(function* () {
+      const { request } = yield* permissionHandlers;
+      const prefix = `${"a".repeat(60)}.${"b".repeat(30)}`;
+      const first = `https://${prefix}.trusted.example:8443`;
+      const second = `https://${prefix}.attacker.example:8443`;
+      showMessageBox.mockResolvedValue({ response: 1 });
+      yield* Effect.promise(() => request("geolocation", `${first}/`));
+      yield* Effect.promise(() => request("geolocation", `${second}/`));
+      const messages = showMessageBox.mock.calls.map((call) => {
+        const options = call.at(-1) as { message: string };
+        return options.message;
+      });
+      assert.strictEqual(messages.length, 2);
+      assert.notStrictEqual(messages[0], messages[1]);
+      assert.include(messages[0], first);
+      assert.include(messages[1], second);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("shows one prompt for concurrent requests from the same origin", () =>
     Effect.gen(function* () {
       const { request } = yield* permissionHandlers;
