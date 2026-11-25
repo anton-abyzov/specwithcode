@@ -1185,7 +1185,10 @@ function startAnnotation(sendEnabled: boolean): void {
     hoverOutline.style.display = "none";
   };
 
+  // Selection, marquee and drawing follow only the person's own pointer (agent CDP input is
+  // trusted too, and refused while annotating), never a page script's synthetic events.
   const onPointerMove = (event: PointerEvent): void => {
+    if (!event.isTrusted) return;
     if (isAnnotationNode(event.target as Element)) {
       clearHoverOutline();
       return;
@@ -1218,7 +1221,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || isAnnotationNode(event.target as Element)) return;
+    if (!event.isTrusted || event.button !== 0 || isAnnotationNode(event.target as Element)) return;
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
@@ -1253,7 +1256,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerUp = (event: PointerEvent): void => {
-    if (!dragStart) return;
+    if (!event.isTrusted || !dragStart) return;
     event.preventDefault();
     event.stopPropagation();
     if (tool === "marquee") {
