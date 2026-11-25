@@ -298,7 +298,10 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
           const viewer = device.device;
           const nonce = NodeCrypto.randomBytes(16).toString("hex");
           type Opened = Exclude<ReturnType<typeof relay.openViewer>, { readonly refused: unknown }>;
-          let stage: "waiting" | "over" | Opened = "waiting";
+          // "checking" from the moment an answer arrives: the deadline is for answering, and
+          // an answer that came in time is not refused for the time its checking takes.
+          let stage: "waiting" | "checking" | "over" | Opened = "waiting";
+          const stageNow = () => stage;
           const refuse = (reason: string) => {
             stage = "over";
             peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason);
@@ -314,12 +317,13 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
 
           onChunk = (chunk) =>
             Effect.gen(function* () {
-              if (stage === "over") return;
+              if (stage === "over" || stage === "checking") return;
               if (stage !== "waiting")
                 return typeof chunk === "string" ? stage.text() : stage.binary(chunk);
               // The first message is the knock or the end: nothing before it is opened,
               // counted against the device, or told to the app.
               leave();
+              stage = "checking";
               const jws = knockOf(chunk);
               const holds =
                 jws !== null &&
@@ -337,6 +341,8 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
                 return refuse("handshake_failed");
               }
               yield* dropStaleHost;
+              // The socket may have closed while the app's standing was read: then nothing opens.
+              if (stageNow() !== "checking") return;
               const { claimedLabel } = viewer;
               const opened = relay.openViewer(
                 peer,
@@ -359,7 +365,7 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
             });
           onClosed = () => {
             leave();
-            if (stage !== "waiting" && stage !== "over") stage.closed();
+            if (typeof stage === "object") stage.closed();
             stage = "over";
           };
           // These sessions' expiry is not watched elsewhere, so the screen stops at it here.

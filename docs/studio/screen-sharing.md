@@ -109,8 +109,10 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
   the tab accept another machine's key or skip the code check. The installed app carries its own
   code and has no such limit.
 - **Someone on the network path making it fail.** The relay and the edge can drop or delay a
-  session, as they can any connection. They cannot see or change one, and nothing they do counts
-  against a device once they stop.
+  session, as they can any connection. They cannot see or change one. Copies of a sign-in ticket
+  without the device's key leave nothing behind. A session they break while a person is being
+  asked does count as that device giving up, since the person was asked; three of those in 10
+  minutes rest the device for 10.
 
 ## Not verified yet
 

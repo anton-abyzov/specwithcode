@@ -301,11 +301,14 @@ export function MachinesSettingsPanel() {
         <>
           <ConnectDevicesSection environmentId={fleet.primaryEnvironmentId} />
           <ScreenShareSettings
-            otherMachine={((entry) => entry !== undefined && !isThisMachineTarget(entry))(
-              environments.find(
-                (environment) => environment.environmentId === fleet.primaryEnvironmentId,
-              )?.entry,
-            )}
+            // A machine this window knows nothing about yet is not "here".
+            otherMachine={
+              !isThisMachineTarget(
+                environments.find(
+                  (environment) => environment.environmentId === fleet.primaryEnvironmentId,
+                )?.entry,
+              )
+            }
           />
         </>
       ) : null}
