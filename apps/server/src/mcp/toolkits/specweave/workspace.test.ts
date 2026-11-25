@@ -62,6 +62,25 @@ describe("resolveCallerWorkspace", () => {
     });
   });
 
+  it("refuses a .specweave link that leads outside the worktree", async () => {
+    const worktree = folder(false);
+    const outside = folder();
+    NodeFS.symlinkSync(NodePath.join(outside, ".specweave"), NodePath.join(worktree, ".specweave"));
+    expect(await resolveCallerWorkspace({ worktreePath: worktree })).toMatchObject({
+      ok: false,
+      reason: "outside",
+    });
+    expect(await workspaceHasSpecweave({ worktreePath: worktree })).toBe(false);
+    // A link that stays inside the worktree is fine.
+    const inside = folder(false);
+    NodeFS.mkdirSync(NodePath.join(inside, "real-specweave"));
+    NodeFS.symlinkSync(
+      NodePath.join(inside, "real-specweave"),
+      NodePath.join(inside, ".specweave"),
+    );
+    expect(await resolveCallerWorkspace({ worktreePath: inside })).toMatchObject({ ok: true });
+  });
+
   it("accepts a nested folder that holds .specweave/", async () => {
     const worktree = folder(false);
     NodeFS.mkdirSync(NodePath.join(worktree, "repo", ".specweave"), { recursive: true });

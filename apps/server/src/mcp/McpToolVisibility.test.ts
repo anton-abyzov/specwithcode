@@ -46,6 +46,10 @@ it("drops only the hidden tools from a JSON or event-stream tools/list answer", 
   expect(McpToolVisibility.rewriteToolListBody(stream, hide)).toBe(
     `data: ${JSON.stringify({ ...answer, result: { tools: [{ name: "ask_user" }], nextCursor: "x" } })}\n\n`,
   );
+  // An event line before the data line is kept, and the data is still filtered.
+  expect(McpToolVisibility.rewriteToolListBody(`event: message\nid: 1\n${stream}`, hide)).toBe(
+    `event: message\nid: 1\ndata: ${JSON.stringify({ ...answer, result: { tools: [{ name: "ask_user" }], nextCursor: "x" } })}\n\n`,
+  );
   expect(McpToolVisibility.rewriteToolListBody("not json", hide)).toBeNull();
   // Not a list answer: unchanged.
   expect(

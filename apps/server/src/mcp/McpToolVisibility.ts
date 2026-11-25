@@ -50,7 +50,8 @@ export function rewriteToolListBody(text: string, hide: (name: unknown) => boole
   } catch {
     // An event-stream answer: one `data:` line per message.
   }
-  if (!text.startsWith("data:")) return null;
+  // Other event-stream lines (`event:`, `id:`, comments) pass through unchanged.
+  if (!/^data:/m.test(text)) return null;
   let failed = false;
   const rewritten = text
     .split("\n")
@@ -68,6 +69,8 @@ export function rewriteToolListBody(text: string, hide: (name: unknown) => boole
 }
 
 const isToolsList = (body: string) => {
+  // Most bodies (tool calls, uploads) never mention it: skip parsing them.
+  if (!body.includes("tools/list")) return false;
   try {
     const parsed: unknown = JSON.parse(body);
     return (

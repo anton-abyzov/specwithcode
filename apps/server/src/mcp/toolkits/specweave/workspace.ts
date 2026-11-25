@@ -76,7 +76,16 @@ export async function resolveCallerWorkspace(
     }
     specweaveRoot = real;
   }
-  if (!(await isDirectory(NodePath.join(specweaveRoot, ".specweave")))) {
+  // `.specweave` itself may be a link; what it resolves to must stay in the worktree too.
+  const marker = await realPath(NodePath.join(specweaveRoot, ".specweave"));
+  if (marker !== null && !isInside(workspace, marker)) {
+    return {
+      ok: false,
+      reason: "outside",
+      message: `${specweaveRoot}/.specweave leads outside this thread's worktree ${workspace}. SpecWeave tools read only there.`,
+    };
+  }
+  if (marker === null || !(await isDirectory(marker))) {
     return {
       ok: false,
       reason: "no-specweave",
