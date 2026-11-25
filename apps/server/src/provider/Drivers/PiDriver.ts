@@ -86,10 +86,11 @@ const withInstanceIdentity =
   });
 
 /**
- * Whether no other user can rename, replace or fill `folder`: it is a folder
- * this user owns that others cannot write, and every folder above it belongs
- * to this user or the system and is either closed to others or sticky (as
- * /tmp is). Windows guards folders with ACLs, not these modes.
+ * Whether no other user can rename, replace, fill or write beside `folder`:
+ * it and every folder above it are owned by this user or the system and closed
+ * to others. A sticky folder such as /tmp does not count, because Pi also reads
+ * context files from every folder above the one it runs in. Windows guards
+ * folders with ACLs, not these modes.
  */
 const isPrivateFolderPath = (fileSystem: FileSystem.FileSystem, path: Path.Path, folder: string) =>
   Effect.gen(function* () {
@@ -99,11 +100,11 @@ const isPrivateFolderPath = (fileSystem: FileSystem.FileSystem, path: Path.Path,
     for (let depth = 0; ; depth++) {
       const info = yield* fileSystem.stat(current);
       const owner = Option.getOrUndefined(info.uid);
-      const othersWrite = (info.mode & 0o022) !== 0;
+      const closed = (info.mode & 0o022) === 0;
       const ok =
         depth === 0
-          ? info.type === "Directory" && owner === uid && !othersWrite
-          : (owner === uid || owner === 0) && (!othersWrite || (info.mode & 0o1000) !== 0);
+          ? info.type === "Directory" && owner === uid && closed
+          : (owner === uid || owner === 0) && closed;
       if (!ok) return false;
       const parent = path.dirname(current);
       if (parent === current) return true;
@@ -112,21 +113,19 @@ const isPrivateFolderPath = (fileSystem: FileSystem.FileSystem, path: Path.Path,
   });
 
 /**
- * Pi starts every extension's session hooks, and reads project MCP config, in
- * the folder it runs in. The server's folder is the home folder on the desktop
- * app, so each status check runs Pi in a new private empty folder (mode 0700,
- * removed afterwards). It is made in the system's temporary folder, which is
- * private to the user on macOS and Windows and sticky on Linux, so no other
- * user can swap it; tests pass their own `probeParent`. Pi runs in the
- * folder's real path, and only when no other user can write the folder or any
- * folder above it. When no such folder can be made the check fails without
- * starting Pi anywhere else. A relative binary path still names a file from
- * the server's folder.
+ * Pi starts every extension's session hooks, and reads project MCP config and
+ * context files, in the folder it runs in and the folders above it. The
+ * server's folder is the home folder on the desktop app, so each status check
+ * runs Pi in a new private empty folder (mode 0700, removed afterwards) under
+ * the app's status cache. Pi runs in the folder's real path, and only when it
+ * and every folder above it are closed to other users; otherwise the check
+ * fails without starting Pi anywhere else. A relative binary path names a
+ * file from the server's folder, as before.
  */
 export const checkPiProviderStatusInProbeFolder = (
   settings: PiSettings,
   environment: NodeJS.ProcessEnv,
-  probeParent?: string,
+  folders: { readonly probeParent: string; readonly serverCwd: string },
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -136,11 +135,12 @@ export const checkPiProviderStatusInProbeFolder = (
       const binaryPath = settings.binaryPath.trim();
       const probeSettings =
         binaryPath.length > 0 && /[\\/]/.test(binaryPath) && !path.isAbsolute(binaryPath)
-          ? { ...settings, binaryPath: path.resolve(binaryPath) }
+          ? { ...settings, binaryPath: path.resolve(folders.serverCwd, binaryPath) }
           : settings;
       const probeFolder = yield* Effect.gen(function* () {
+        yield* fileSystem.makeDirectory(folders.probeParent, { recursive: true });
         const made = yield* fileSystem.makeTempDirectoryScoped({
-          ...(probeParent === undefined ? {} : { directory: probeParent }),
+          directory: folders.probeParent,
           prefix: "pi-status-probe-",
         });
         const folder = yield* fileSystem.realPath(made);
@@ -170,6 +170,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const { cwd, providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -214,7 +215,10 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       );
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkPiProviderStatusInProbeFolder(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkPiProviderStatusInProbeFolder(effectiveConfig, processEnv, {
+        probeParent: providerStatusCacheDir,
+        serverCwd: cwd,
+      }).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),

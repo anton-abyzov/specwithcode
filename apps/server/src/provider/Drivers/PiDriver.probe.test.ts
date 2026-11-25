@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads the probe folder synchronously while Pi runs in it.
 import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -53,6 +52,20 @@ const recordingSpawner = (
 
 const piSettings = { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] };
 
+/**
+ * A new folder no other user can write, nor any folder above it. The system
+ * temporary folder is shared on Linux, so tests use the checkout's own cache.
+ */
+const privateFolder = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve("node_modules", ".cache", "studio-pi-probe-tests");
+  yield* fileSystem.makeDirectory(root, { recursive: true });
+  return yield* fileSystem.makeTempDirectoryScoped({ directory: root, prefix: "pi-probe-cache-" });
+});
+
+const probeFolders = (probeParent: string) => ({ probeParent, serverCwd: "/srv/studio" });
+
 describe("Pi status probe folder", () => {
   it.effect(
     "starts Pi in a fresh private empty folder under the status cache, not the server's folder",
@@ -60,7 +73,7 @@ describe("Pi status probe folder", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "pi-probe-cache-" });
+        const cacheDir = yield* privateFolder;
         const cwds: Array<string | undefined> = [];
         const observed: Array<{ entries: number; mode: number }> = [];
         const spawner = recordingSpawner(cwds, (cwd) => {
@@ -70,7 +83,7 @@ describe("Pi status probe folder", () => {
             mode: NodeFs.lstatSync(cwd).mode & 0o777,
           });
         });
-        yield* checkPiProviderStatusInProbeFolder(piSettings, {}, cacheDir).pipe(
+        yield* checkPiProviderStatusInProbeFolder(piSettings, {}, probeFolders(cacheDir)).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         assert.isAbove(cwds.length, 0);
@@ -91,13 +104,13 @@ describe("Pi status probe folder", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "pi-probe-cache-" });
+      const cacheDir = yield* privateFolder;
       const elsewhere = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "pi-probe-elsewhere-",
       });
       yield* fileSystem.symlink(elsewhere, path.join(cacheDir, "pi-status-probe"));
       const cwds: Array<string | undefined> = [];
-      yield* checkPiProviderStatusInProbeFolder(piSettings, {}, cacheDir).pipe(
+      yield* checkPiProviderStatusInProbeFolder(piSettings, {}, probeFolders(cacheDir)).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(cwds)),
       );
       assert.isAbove(cwds.length, 0);
@@ -110,12 +123,16 @@ describe("Pi status probe folder", () => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "pi-probe-cache-" });
+      const parent = yield* privateFolder;
       // A file where the cache folder should be: no folder can be made inside it.
       const cacheDir = path.join(parent, "not-a-folder");
       yield* fileSystem.writeFileString(cacheDir, "");
       const cwds: Array<string | undefined> = [];
-      const snapshot = yield* checkPiProviderStatusInProbeFolder(piSettings, {}, cacheDir).pipe(
+      const snapshot = yield* checkPiProviderStatusInProbeFolder(
+        piSettings,
+        {},
+        probeFolders(cacheDir),
+      ).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(cwds)),
       );
       assert.deepEqual(cwds, []);
@@ -129,7 +146,7 @@ describe("Pi status probe folder", () => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "pi-probe-cache-" });
+        const parent = yield* privateFolder;
         const cacheDir = path.join(parent, "shared");
         yield* fileSystem.makeDirectory(cacheDir);
         yield* fileSystem.chmod(cacheDir, 0o777);
@@ -141,7 +158,7 @@ describe("Pi status probe folder", () => {
           const snapshot = yield* checkPiProviderStatusInProbeFolder(
             piSettings,
             {},
-            candidate,
+            probeFolders(candidate),
           ).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(cwds)),
           );
@@ -152,37 +169,50 @@ describe("Pi status probe folder", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("by default makes the folder in the system's temporary folder", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const cwds: Array<string | undefined> = [];
-      const modes: Array<number> = [];
-      yield* checkPiProviderStatusInProbeFolder(piSettings, {}).pipe(
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          recordingSpawner(cwds, (cwd) => modes.push(NodeFs.lstatSync(cwd).mode & 0o777)),
-        ),
-      );
-      assert.isAbove(cwds.length, 0);
-      const folder = cwds[0]!;
-      assert.equal(path.dirname(folder), NodeFs.realpathSync(NodeOs.tmpdir()));
-      assert.isTrue(path.basename(folder).startsWith("pi-status-probe-"));
-      if (process.platform !== "win32") assert.equal(modes[0], 0o700);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  it.effect.skipIf(process.platform === "win32")(
+    "fails the check, and runs nothing, under a shared sticky folder such as /tmp",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Pi reads context files from every folder above where it runs, and
+        // anyone can write beside the probe folder in a sticky shared one.
+        const shared = path.join(yield* privateFolder, "tmp");
+        yield* fileSystem.makeDirectory(shared);
+        yield* fileSystem.chmod(shared, 0o1777);
+        const cwds: Array<string | undefined> = [];
+        const snapshot = yield* checkPiProviderStatusInProbeFolder(
+          piSettings,
+          {},
+          probeFolders(path.join(shared, "cache")),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner(cwds)),
+        );
+        assert.deepEqual(cwds, []);
+        assert.equal(snapshot.status, "error");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("runs a relative binary path from the server's folder, not the probe folder", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const commands: Array<string> = [];
-      yield* checkPiProviderStatusInProbeFolder({ ...piSettings, binaryPath: "./bin/pi" }, {}).pipe(
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          recordingSpawner([], undefined, commands),
-        ),
-      );
-      assert.isAbove(commands.length, 0);
-      for (const command of commands) assert.equal(command, path.resolve("bin/pi"));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  // Windows may wrap the command in a shell, so the spawned name differs there.
+  it.effect.skipIf(process.platform === "win32")(
+    "runs a relative binary path from the server's folder, not the probe folder",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const commands: Array<string> = [];
+        yield* checkPiProviderStatusInProbeFolder(
+          { ...piSettings, binaryPath: "./bin/pi" },
+          {},
+          probeFolders(yield* privateFolder),
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            recordingSpawner([], undefined, commands),
+          ),
+        );
+        assert.isAbove(commands.length, 0);
+        for (const command of commands)
+          assert.equal(command, path.resolve("/srv/studio", "bin/pi"));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
