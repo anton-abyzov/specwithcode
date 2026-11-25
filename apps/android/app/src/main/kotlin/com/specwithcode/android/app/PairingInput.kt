@@ -1,5 +1,6 @@
 package com.specwithcode.android.app
 
+import com.specwithcode.transport.PairingLink
 import com.specwithcode.transport.RouteKind
 import java.net.URI
 import java.net.URLDecoder
@@ -73,12 +74,24 @@ object PairingInput {
         return "$origin/pair#token=${normalizeCode(code)}"
     }
 
+    /**
+     * The address pairing will send the code to, read the way pairing reads the link, so a
+     * hosted link's `?host=` counts and not the page it sits on. Null when pairing would
+     * refuse the link anyway.
+     */
+    private fun target(link: String): String? = try {
+        PairingLink.parse(link).httpBase
+    } catch (_: Exception) {
+        null
+    }
+
     /** True when the link (after unwrapping) would send the sign-in over plain http. */
-    fun isCleartext(link: String): Boolean = unwrap(link).lowercase().startsWith("http://")
+    fun isCleartext(link: String): Boolean =
+        (target(link) ?: unwrap(link)).lowercase().startsWith("http://")
 
     /** The host the link pairs with (after unwrapping), or null when it has none. */
     fun host(link: String): String? = try {
-        URI(unwrap(link)).host?.takeIf { it.isNotEmpty() }
+        URI(target(link) ?: unwrap(link)).host?.takeIf { it.isNotEmpty() }
     } catch (_: Exception) {
         null
     }
