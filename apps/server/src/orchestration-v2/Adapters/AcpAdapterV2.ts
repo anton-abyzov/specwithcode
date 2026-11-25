@@ -379,6 +379,14 @@ export interface AcpAdapterV2Flavor {
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => AcpPermissionDisposition;
+  /**
+   * The offered options an answer may select, for agents that list options the
+   * app must never choose (Devin's plan exit into bypass permissions). Applied
+   * to automatic and personal answers alike.
+   */
+  readonly answerablePermissionOptions?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => ReadonlyArray<EffectAcpSchema.PermissionOption>;
   /** Approval choices to advertise on the approval card for a permission request. */
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -1344,22 +1352,39 @@ function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): D
 }
 
 interface SelectedPermissionOption {
-  /** The trimmed ID sent to the agent. */
+  /** The ID sent to the agent, exactly as it offered it. */
   readonly optionId: string;
   readonly kind: EffectAcpSchema.PermissionOption["kind"];
 }
 
-/** The first offered option of the decision's kind whose ID is not blank. */
+/** Option IDs that switch an agent's own permission checks off for the rest of its session. */
+const NEVER_ANSWERED_PERMISSION_OPTION_IDS: ReadonlySet<string> = new Set(["plan_bypass"]);
+
+const allowsPermission = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
+  kind === "allow_once" || kind === "allow_always";
+
+/**
+ * The first offered option of the decision's kind whose ID is not blank and
+ * that no option of the opposite answer shares, also once spaces are trimmed:
+ * an agent that reads such an ID could take a refusal for an approval.
+ */
 function selectPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
+  /** Every option the agent offered, when `request` lists only the answerable ones. */
+  offered: ReadonlyArray<EffectAcpSchema.PermissionOption> = request.options,
 ): SelectedPermissionOption | undefined {
   const optionOfKind = (
     kind: EffectAcpSchema.PermissionOption["kind"],
   ): SelectedPermissionOption | undefined => {
     for (const option of request.options) {
-      const optionId = option.optionId.trim();
-      if (option.kind === kind && optionId.length > 0) return { optionId, kind };
+      const id = option.optionId.trim();
+      if (option.kind !== kind || id.length === 0) continue;
+      const ambiguous = offered.some(
+        (other) =>
+          other.optionId.trim() === id && allowsPermission(other.kind) !== allowsPermission(kind),
+      );
+      if (!ambiguous) return { optionId: option.optionId, kind };
     }
     return undefined;
   };
@@ -1382,7 +1407,7 @@ function permissionAnswerGrantScope(
 ): "session" | "turn" | undefined {
   const kinds = new Set<string>([selected.kind]);
   for (const option of request.options) {
-    if (option.optionId.trim() === selected.optionId) kinds.add(option.kind);
+    if (option.optionId.trim() === selected.optionId.trim()) kinds.add(option.kind);
   }
   if ([...kinds].some((kind) => kind !== "allow_once" && kind !== "allow_always")) {
     return undefined;
@@ -1397,9 +1422,17 @@ function permissionAnswerGrantScope(
  */
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
+  offered: ReadonlyArray<EffectAcpSchema.PermissionOption> = request.options,
 ): string | undefined {
+  // An allow-once the agent offered but that cannot be sent safely never
+  // turns into an approval that lasts: the request is cancelled instead.
+  // `offered` still holds options the adapter never sends, such as a bypass.
+  const offersAllowOnce = offered.some(
+    (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
+  );
   return (
-    selectPermissionOption(request, "accept") ?? selectPermissionOption(request, "acceptForSession")
+    selectPermissionOption(request, "accept", offered) ??
+    (offersAllowOnce ? undefined : selectPermissionOption(request, "acceptForSession", offered))
   )?.optionId;
 }
 
@@ -6226,7 +6259,16 @@ export function makeAcpAdapterV2(
                     )
                   : nativeParams;
               const transportRequestId = requestContext.requestId;
-              const permissionQuestion = flavor.extractPermissionQuestion?.(params);
+              // No agent's option that turns its own permission checks off is ever
+              // offered or chosen, in a question either, whichever flavor runs it
+              // (a wrapper hides who the agent is).
+              const withoutBypass = {
+                ...params,
+                options: params.options.filter(
+                  (option) => !NEVER_ANSWERED_PERMISSION_OPTION_IDS.has(option.optionId.trim()),
+                ),
+              };
+              const permissionQuestion = flavor.extractPermissionQuestion?.(withoutBypass);
               if (permissionQuestion !== undefined) {
                 const userInput = yield* requestUserInputWithAdmission(
                   handlerGeneration,
@@ -6246,6 +6288,13 @@ export function makeAcpAdapterV2(
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
+              const answerable =
+                flavor.answerablePermissionOptions === undefined
+                  ? withoutBypass
+                  : {
+                      ...withoutBypass,
+                      options: [...flavor.answerablePermissionOptions(withoutBypass)],
+                    };
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
@@ -6256,7 +6305,7 @@ export function makeAcpAdapterV2(
                     flavor.permissionDisposition,
                   );
                   if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(params);
+                    const optionId = selectAutoApprovedPermissionOption(answerable, params.options);
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6266,7 +6315,11 @@ export function makeAcpAdapterV2(
                     };
                   }
                   if (disposition === "deny") {
-                    const optionId = selectPermissionOption(params, "decline")?.optionId;
+                    const optionId = selectPermissionOption(
+                      answerable,
+                      "decline",
+                      params.options,
+                    )?.optionId;
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6330,7 +6383,9 @@ export function makeAcpAdapterV2(
                 ),
               );
               const selected =
-                decision === "cancel" ? undefined : selectPermissionOption(params, decision);
+                decision === "cancel"
+                  ? undefined
+                  : selectPermissionOption(answerable, decision, params.options);
               const response =
                 selected === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)

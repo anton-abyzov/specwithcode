@@ -835,6 +835,8 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     | ((method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>)
     | undefined;
   let negotiatedProtocolGeneration: 1 | 2 | undefined;
+  // What this client told the agent it can answer, once it has initialized.
+  let advertisedCapabilities: AcpSchema.ClientCapabilities | undefined;
 
   const runNotificationHandlers = <A>(
     registration: BufferedNotificationHandler<A>,
@@ -1022,6 +1024,16 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
               cause,
             ).toProtocolError(),
           ),
+          Effect.filterOrFail(
+            (request) =>
+              advertisedCapabilities === undefined ||
+              (request.mode !== "form" && request.mode !== "url") ||
+              advertisedCapabilities.elicitation?.[request.mode] != null,
+            (request) =>
+              AcpError.AcpRequestError.invalidParams(
+                `This client did not offer '${request.mode}' elicitation.`,
+              ).toProtocolError(),
+          ),
           Effect.flatMap((request) =>
             runHandler(
               coreHandlers.elicitation,
@@ -1126,10 +1138,13 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     },
     agent: {
       initialize: (payload) =>
-        callRpc(
-          AGENT_METHODS.initialize,
-          rpc[AGENT_METHODS.initialize](toNegotiatingInitializeRequest(payload)),
-        ).pipe(
+        Effect.suspend(() => {
+          advertisedCapabilities = payload.clientCapabilities ?? {};
+          return callRpc(
+            AGENT_METHODS.initialize,
+            rpc[AGENT_METHODS.initialize](toNegotiatingInitializeRequest(payload)),
+          );
+        }).pipe(
           Effect.map((response) => {
             // ACP v1 protocolVersion values were not generation identifiers in
             // every shipped agent. Antigravity, for example, reports version 2

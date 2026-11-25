@@ -668,6 +668,10 @@ export function openCodePermissionRules(
     sandboxType === undefined && runtimePolicy.runtimeMode === "full-access";
 
   if (!requiresApproval && (externallySandboxed || dangerFullAccess || implicitFullAccess)) {
+    // No external_directory allow by name: a Task child copies the parent's
+    // external_directory rules, which would beat its own agent's deny. A Full
+    // access child's prompts are answered by its parent's mode instead
+    // (FullAccessApprovals).
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
@@ -767,8 +771,12 @@ export function openCodeChildPermissionRules(
   const inheritedRules = parentRules.filter(
     (rule) => rule.permission === "external_directory" || rule.action === "deny",
   );
+  // An external_directory allow comes only from the current parent rules: a
+  // child session copies its parent's, which may be from an earlier, wider
+  // mode. The child's own asks and denies are kept.
   const childSpecificRules = nativeChildRules.filter(
     (childRule) =>
+      (childRule.permission !== "external_directory" || childRule.action !== "allow") &&
       !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)),
   );
   return [...parentRules, ...childSpecificRules];

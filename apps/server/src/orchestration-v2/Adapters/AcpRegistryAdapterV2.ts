@@ -2,6 +2,7 @@ import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
+  devinAnswerablePermissionOptions,
 } from "./DevinAcp.ts";
 import {
   AcpRegistrySettings,
@@ -314,14 +315,16 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
-  const isDevin = registryAgentId === "devin";
-  // Local installs launch the `copilot` binary directly with no registry id.
-  const isCopilot =
-    registryAgentId === GITHUB_COPILOT_AGENT_ID ||
-    (options.settings.source === "local" &&
-      /^copilot(?:\.(?:exe|cmd|bat))?$/iu.test(
-        options.settings.commandPath.split(/[\\/]/u).pop() ?? "",
-      ));
+  // Local installs launch the agent's binary directly with no registry id.
+  const localCommandName =
+    options.settings.source === "local"
+      ? (options.settings.commandPath.split(/[\\/]/u).pop() ?? "")
+      : undefined;
+  const isLocalCommand = (name: string) =>
+    localCommandName !== undefined &&
+    new RegExp(`^${name}(?:\\.(?:exe|cmd|bat))?$`, "iu").test(localCommandName);
+  const isDevin = registryAgentId === "devin" || isLocalCommand("devin");
+  const isCopilot = registryAgentId === GITHUB_COPILOT_AGENT_ID || isLocalCommand("copilot");
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     specweaveTool: specweaveToolForAcpAgent(registryAgentId),
@@ -349,6 +352,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          answerablePermissionOptions: devinAnswerablePermissionOptions,
         }
       : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),

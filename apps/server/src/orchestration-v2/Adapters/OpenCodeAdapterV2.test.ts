@@ -2655,6 +2655,24 @@ describe("OpenCodeAdapterV2", () => {
     assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
   });
 
+  it("gives a Full access Task child no external_directory allow of its parent's", () => {
+    // A Task child starts with the parent's external_directory and deny rules,
+    // and its session rules beat its own agent's limits, so a named allow here
+    // would lift an agent's external_directory deny. Its prompts are answered
+    // by the parent's Full access instead.
+    const childStartRules = (rules: ReturnType<typeof openCodePermissionRules>) =>
+      rules.filter((rule) => rule.permission === "external_directory" || rule.action === "deny");
+    const fullAccess = openCodePermissionRules(runtimePolicy("full-access"));
+    assert.deepEqual(childStartRules(fullAccess), []);
+    assert.equal(permissionAction(fullAccess, "external_directory"), "allow");
+
+    // Supervised modes keep asking before a child leaves the workspace.
+    const approvalRequired = openCodePermissionRules(runtimePolicy("approval-required"));
+    assert.equal(permissionAction(approvalRequired, "external_directory"), "ask");
+    const autoAcceptEdits = openCodePermissionRules(runtimePolicy("auto-accept-edits"));
+    assert.equal(permissionAction(autoAcceptEdits, "external_directory"), "ask");
+  });
+
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {
     const readOnly = openCodePermissionRules(
       runtimePolicy("full-access", {

@@ -55,3 +55,14 @@ export function extractDevinSubagentUpdate(
     result: typeof completed?.summary === "string" ? completed.summary : null,
   };
 }
+
+/**
+ * Devin's plan exit offers several allow-once choices in no fixed order, one of
+ * which switches the rest of the session to bypass permissions. The app never
+ * answers with that one, whether the person approved or the mode auto-approves.
+ */
+export function devinAnswerablePermissionOptions(
+  request: AcpSchema.RequestPermissionRequest,
+): ReadonlyArray<AcpSchema.PermissionOption> {
+  return request.options.filter((option) => option.optionId.trim() !== "plan_bypass");
+}

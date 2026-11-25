@@ -6,7 +6,10 @@ import {
   workflowExecutionPathOf,
 } from "../../project/workflowCapabilities.ts";
 import {
+  codexCommandApprovalPrompt,
+  codexFileChangeScope,
   codexFileChangeApprovalPrompt,
+  codexPermissionsApprovalPrompt,
   legacyCodexFileChanges,
   projectCodexFileChanges,
 } from "./codexFileChanges.ts";
@@ -4146,7 +4149,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               driver: CODEX_PROVIDER,
               turnItem: artifacts.turnItem,
             });
-            fileChangeApprovalGuard.record(context.nativeTurnId, item.id, true);
+            fileChangeApprovalGuard.record(
+              context.nativeTurnId,
+              item.id,
+              true,
+              artifacts.turnItem.type === "file_change" && artifacts.turnItem.changes
+                ? codexFileChangeScope(artifacts.turnItem.changes)
+                : [],
+            );
           });
 
         const buildWebSearchArtifacts = (input: {
@@ -5570,14 +5580,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             const nativeRequestId = payload.approvalId ?? payload.itemId;
+            const prompt = codexCommandApprovalPrompt(payload);
+            if (prompt === undefined) {
+              yield* Effect.logWarning("orchestration-v2.codex-command-approval-without-command", {
+                itemId: payload.itemId,
+              });
+              return {
+                decision: "decline",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId,
               requestKind: "command",
-              ...((payload.reason ?? payload.command) === undefined
-                ? {}
-                : { prompt: payload.reason ?? payload.command }),
+              prompt,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5644,7 +5661,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind: "file-change",
-              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
+              prompt:
+                codexFileChangeApprovalPrompt({
+                  reason: payload.reason,
+                  grantRoot: payload.grantRoot,
+                  scope: fileChangeApprovalGuard.scope(payload),
+                }) ?? null,
               ...(payload.grantRoot === undefined ? {} : { grantRoot: payload.grantRoot }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
@@ -5711,7 +5733,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind,
-              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+              prompt: codexPermissionsApprovalPrompt(payload) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5852,12 +5874,25 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             const nativeRequestId = payload.approvalId ?? payload.callId;
+            const prompt = codexCommandApprovalPrompt({
+              argv: payload.command,
+              cwd: payload.cwd,
+              reason: payload.reason,
+            });
+            if (prompt === undefined) {
+              yield* Effect.logWarning("orchestration-v2.codex-command-approval-without-command", {
+                callId: payload.callId,
+              });
+              return {
+                decision: approvalDecisionToLegacyReviewDecision("decline"),
+              } satisfies CodexSchema.ExecCommandApprovalResponse;
+            }
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.callId,
               nativeRequestId,
               requestKind: "command",
-              prompt: payload.reason ?? payload.command.join(" "),
+              prompt,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
