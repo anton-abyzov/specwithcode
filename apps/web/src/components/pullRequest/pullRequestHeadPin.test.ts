@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeHeadPin, seenPullRequestHead } from "./pullRequestHeadPin";
+import { commentsFromOtherHeads, mergeHeadPin, seenPullRequestHead } from "./pullRequestHeadPin";
 
 describe("seenPullRequestHead", () => {
   it("keeps the first painted head, cached or fresh, when a read brings a newer one", () => {
@@ -31,5 +31,19 @@ describe("mergeHeadPin", () => {
   it("leaves other actions and an unknown head alone", () => {
     expect(mergeHeadPin("close", "abc1234")).toEqual({});
     expect(mergeHeadPin("merge", undefined)).toEqual({});
+  });
+});
+
+describe("commentsFromOtherHeads", () => {
+  const a = "a".repeat(40);
+  const b = "b".repeat(40);
+
+  it("names the line comments written on another head than the one the review is pinned to", () => {
+    const comments = [{ id: "1", headSha: a }, { id: "2", headSha: b }, { id: "3" }];
+    expect(commentsFromOtherHeads(comments, b).map((comment) => comment.id)).toEqual(["1", "3"]);
+  });
+
+  it("holds nothing back when the server cannot pin a head", () => {
+    expect(commentsFromOtherHeads([{ id: "1", headSha: a }, { id: "2" }], undefined)).toEqual([]);
   });
 });
