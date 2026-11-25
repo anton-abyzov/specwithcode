@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -7552,3 +7552,100 @@ it.effect.each([
       assert.deepStrictEqual(calls, [expected]);
     }),
 );
+
+describe("a merge or review pinned to the head the person saw", () => {
+  const HEAD = "a".repeat(40);
+  const NEWER = "b".repeat(40);
+  const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+  const pinnedProvider = (
+    head: string,
+    sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }>,
+  ) =>
+    fakeProvider("github", {
+      getChangeRequest: () => Effect.succeed({ headSha: head } as never),
+      runAction: (input) =>
+        Effect.sync(() => {
+          sent.push({
+            operation: input.action,
+            ...(input.expectedHeadSha === undefined ? {} : { expectedHeadSha: input.expectedHeadSha }),
+          });
+        }),
+      submitReview: (input) =>
+        Effect.sync(() => {
+          sent.push({
+            operation: "review",
+            ...(input.expectedHeadSha === undefined ? {} : { expectedHeadSha: input.expectedHeadSha }),
+          });
+        }),
+    });
+  const serviceWith = (provider: PullRequestProviderApi) =>
+    makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+
+  it.effect("refuses a merge and a review once new commits arrived", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(NEWER, sent));
+      const merge = yield* Effect.flip(
+        service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD }),
+      );
+      assert.strictEqual(merge._tag, "PullRequestOperationError");
+      assert.include(merge.message, "New commits arrived");
+      const review = yield* Effect.flip(
+        service.submitReview({
+          ...reference,
+          verdict: "approve",
+          body: "",
+          comments: [],
+          expectedHeadSha: HEAD,
+        }),
+      );
+      assert.strictEqual(review._tag, "PullRequestOperationError");
+      assert.deepStrictEqual(sent, []);
+    }),
+  );
+
+  it.effect("hands the full checked head on when it still matches, even from a prefix", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(HEAD, sent));
+      yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD.slice(0, 7) });
+      yield* service.submitReview({
+        ...reference,
+        verdict: "approve",
+        body: "",
+        comments: [],
+        expectedHeadSha: HEAD,
+      });
+      assert.deepStrictEqual(sent, [
+        { operation: "merge", expectedHeadSha: HEAD },
+        { operation: "review", expectedHeadSha: HEAD },
+      ]);
+    }),
+  );
+
+  it.effect("keeps an older client that sends no head working as before", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      // No head from the caller means no extra read: the provider pins to the head it sees.
+      const service = yield* serviceWith({
+        ...pinnedProvider(NEWER, sent),
+        getChangeRequest: () => Effect.die("an unpinned write must not read the head"),
+      });
+      yield* service.runAction({ ...reference, action: "merge" });
+      yield* service.submitReview({ ...reference, verdict: "comment", body: "ok", comments: [] });
+      assert.deepStrictEqual(sent, [{ operation: "merge" }, { operation: "review" }]);
+    }),
+  );
+
+  it.effect("ignores a head sent with an action that is not a merge", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(NEWER, sent));
+      yield* service.runAction({ ...reference, action: "close", expectedHeadSha: HEAD });
+      assert.deepStrictEqual(sent, [{ operation: "close" }]);
+    }),
+  );
+});
