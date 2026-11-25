@@ -12,8 +12,12 @@ import {
   RefreshCwIcon,
   SendIcon,
 } from "lucide-react";
+import { useState } from "react";
+
 import { useTx } from "../../i18n";
 import { Dialog, DialogPopup, DialogTitle, DialogTrigger } from "../ui/dialog";
+import { GuidedTourButton } from "./guidedTour/GuidedTourSetting";
+import { GUIDED_TOUR_SETTING_DESCRIPTION } from "./guidedTour/guidedTour.logic";
 
 const guides = [
   {
@@ -87,13 +91,21 @@ const guides = [
 export function QuickGuides() {
   const tx = useTx();
   const machineMenuLabels = { sync: tx("Sync…"), add: tx("Add to another machine…") };
+  const [open, setOpen] = useState(false);
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger type="button" className="studio-secondary">
         <BookOpenIcon aria-hidden="true" /> {tx("Quick guides")}
       </DialogTrigger>
       <DialogPopup className="max-w-xl gap-0 overflow-y-auto p-0">
         <DialogTitle className="px-5 pt-5 pb-4 pe-12">{tx("Quick guides")}</DialogTitle>
+        {/* 1486: the tour points at the real controls; the dialog closes first so its focus trap lets go. */}
+        <div className="flex flex-wrap items-center gap-2 px-5 pb-4">
+          <GuidedTourButton onStart={() => setOpen(false)} />
+          <span className="text-xs text-muted-foreground">
+            {tx(GUIDED_TOUR_SETTING_DESCRIPTION)}
+          </span>
+        </div>
         <Tabs.Root defaultValue="specweave">
           <Tabs.List
             aria-label={tx("Quick guides")}

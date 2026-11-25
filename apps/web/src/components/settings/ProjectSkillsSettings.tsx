@@ -945,7 +945,7 @@ function ScopedProjectSkillsView({
         </p>
       ) : snapshot.rows.length === 0 ? (
         <>
-          <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
+          <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4" data-testid="skills-empty">
             {tx("No skills or lock entries were found in this read.")}
           </p>
           <div className="px-3 pb-2 sm:px-4">
@@ -963,7 +963,10 @@ function ScopedProjectSkillsView({
             </p>
           ) : null}
           {!anyInstalled ? (
-            <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
+            <p
+              className="px-3 py-2 text-sm text-muted-foreground sm:px-4"
+              data-testid="skills-empty"
+            >
               {tx("Nothing is installed on {machine} yet.", { machine: machineName })}
             </p>
           ) : (

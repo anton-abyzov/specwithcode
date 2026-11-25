@@ -7,6 +7,7 @@ import { actionMachineZh } from "./actionMachine/zh";
 import { coordinatorMessagesZh } from "./coordinatorMessages/zh";
 import { providerSignInZh } from "./providerSignIn/zh";
 import { limitHopsZh } from "./limitHops/zh";
+import { guidedTourZh } from "./guidedTour/zh";
 import { helperChatsZh } from "./helperChats/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
@@ -19,6 +20,7 @@ export const zh: PhraseCatalog = {
   ...coordinatorMessagesZh,
   ...providerSignInZh,
   ...limitHopsZh,
+  ...guidedTourZh,
   ...helperChatsZh,
   About: "关于",
   "Accent color": "强调色",

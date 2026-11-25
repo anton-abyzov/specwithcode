@@ -7,6 +7,7 @@ import { actionMachineDe } from "./actionMachine/de";
 import { coordinatorMessagesDe } from "./coordinatorMessages/de";
 import { providerSignInDe } from "./providerSignIn/de";
 import { limitHopsDe } from "./limitHops/de";
+import { guidedTourDe } from "./guidedTour/de";
 import { helperChatsDe } from "./helperChats/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
@@ -19,6 +20,7 @@ export const de: PhraseCatalog = {
   ...coordinatorMessagesDe,
   ...providerSignInDe,
   ...limitHopsDe,
+  ...guidedTourDe,
   ...helperChatsDe,
   About: "Über",
   "Accent color": "Akzentfarbe",
