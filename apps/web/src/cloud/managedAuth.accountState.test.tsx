@@ -14,7 +14,9 @@ import { ManagedRelayAuthProvider } from "./managedAuth";
 
 const auth = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 const clerkSession = vi.hoisted(() => ({ current: null as { expireAt: Date } | null }));
-const removeRelayEnvironments = vi.hoisted(() => vi.fn(async () => ({})));
+const removeRelayEnvironments = vi.hoisted(() =>
+  vi.fn(async (_options?: { readonly forgetRemoved?: boolean }) => ({})),
+);
 
 vi.mock("@clerk/react", () => ({
   useAuth: () => auth.current,
@@ -157,5 +159,15 @@ describe("a sign-out keeps the machines reached through Connect only after an ex
     writeConnectSessionRecord({ accountId: "user-1", expireAt: Date.now() - HOUR });
     await show(signedIn("user-2", Date.now() + 7 * 24 * HOUR));
     expect(removeRelayEnvironments).toHaveBeenCalledTimes(1);
+  });
+
+  it("a switch's relay cleanup leaves skip markers; a sign-out's does not (1434, AC-05, D-02)", async () => {
+    await show(signedIn("user-1", Date.now() + 5 * HOUR));
+    await show(signedIn("user-2", Date.now() + 5 * HOUR));
+    expect(removeRelayEnvironments).toHaveBeenLastCalledWith({ forgetRemoved: true });
+    removeRelayEnvironments.mockClear();
+    await show(signedOut());
+    expect(removeRelayEnvironments).toHaveBeenCalledTimes(1);
+    expect(removeRelayEnvironments).not.toHaveBeenCalledWith({ forgetRemoved: true });
   });
 });

@@ -83,15 +83,18 @@ export function makeOwnerSaves(owners: ReturnType<typeof makeOwnerMemory>) {
    * account saved: saving it again is a choice the new account made. Nothing
    * is recorded before the first account has settled. Fails when the note
    * cannot be stored, so the save does not go ahead untracked. Returns whether
-   * a note was made: only that save may finish or cancel it.
+   * a note was made: only that save may finish or cancel it. `saved` says
+   * whether the machine is saved now: a record left from before it was removed
+   * is not inherited, so a machine added again while signed out is new.
    */
   const beginOwnerSaveLocked = Effect.fn("EnvironmentRegistry.beginOwnerSaveLocked")(function* (
     environmentId: EnvironmentId,
     scope: string | null | undefined,
     routes: ReadonlyArray<unknown>,
+    saved: boolean,
   ) {
     const stored = yield* owners.read;
-    const owner = ownerForSave(scope, stored?.machines[environmentId]);
+    const owner = ownerForSave(scope, saved ? stored?.machines[environmentId] : undefined);
     if (owner === undefined || stored === null) return false;
     // Notes left by an earlier session are settled by the first plan, before
     // any save can begin, so a note here is never overwritten.

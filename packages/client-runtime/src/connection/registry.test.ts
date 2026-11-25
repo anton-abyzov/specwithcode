@@ -939,15 +939,22 @@ describe("EnvironmentRegistry", () => {
         const error = yield* Effect.flip(registry.removeRelayEnvironments());
 
         expect(error._tag).toBe("ConnectionPersistenceError");
-        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
         expect((yield* SubscriptionRef.get(registry.entries)).has(RELAY_TARGET.environmentId)).toBe(
           true,
         );
         expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId)).toBe(
           true,
         );
-        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
-        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([]);
+        // Cached data goes before the saved entry (1434, AC-04), so a stop in
+        // between never leaves cached chats without a saved machine. The
+        // machine stays saved and its connection starts again.
+        expect(yield* Ref.get(harness.cacheClears)).toEqual([RELAY_TARGET.environmentId]);
+        expect(yield* Ref.get(harness.ownedDataClears)).toEqual([RELAY_TARGET.environmentId]);
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

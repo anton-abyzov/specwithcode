@@ -164,10 +164,13 @@ export class AccountOwnersStore extends Context.Reference<{
   readonly write: (owners: AccountOwners) => Effect.Effect<void, ConnectionPersistenceError>;
   /** Runs before a machine is forgotten on a switch, so automatic pairing leaves it. */
   readonly forgotten: (environmentId: EnvironmentId) => Effect.Effect<void>;
+  /** Whether automatic pairing skips this machine (forgotten on a switch, or removed by hand). */
+  readonly skipped: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
 }>("@specweave-studio/client-runtime/platform/persistence/AccountOwnersStore", {
   defaultValue: () => ({
     read: Effect.succeed(null),
     write: () => Effect.void,
     forgotten: () => Effect.void,
+    skipped: () => Effect.succeed(false),
   }),
 }) {}

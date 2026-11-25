@@ -10,6 +10,7 @@ import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
+import { AwaitPlatformPrimary, followPlatformSource } from "./platformReady.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
@@ -76,7 +77,10 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const layerDriver = ConnectionDriver.layer.pipe(
     Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
   );
-  const layerRegistry = EnvironmentRegistry.layer.pipe(Layer.provide(layerDriver));
+  // Account cleanup waits for this window's own machine from the platform source (1434).
+  const layerRegistry = EnvironmentRegistry.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerDriver, Layer.succeed(AwaitPlatformPrimary, true))),
+  );
   const layerOnboarding = ConnectionOnboarding.layer.pipe(Layer.provide(layerRegistry));
   const layerConnectionServices = Layer.mergeAll(
     layerRegistry,
@@ -91,10 +95,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
       yield* registry.start;
-      yield* platformSource.registrations.pipe(
-        Stream.runForEach(registry.reconcilePlatform),
-        Effect.forkScoped,
-      );
+      yield* followPlatformSource(platformSource.registrations, registry).pipe(Effect.forkScoped);
     }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
   );
   return layerConnectionStartup.pipe(

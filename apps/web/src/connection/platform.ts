@@ -53,7 +53,7 @@ import {
 } from "../environments/primary/target";
 import { readConnectMachineOwners, writeConnectMachineOwners } from "../cloud/connectMachineOwners";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
-import { setFleetEnvironmentSkipped } from "../studio/fleetAutoConnect";
+import { readSkippedFleetEnvironments, setFleetEnvironmentSkipped } from "../studio/fleetAutoConnect";
 import { noteMachineRemoved } from "../studio/knownMachines";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -856,6 +856,7 @@ const layerAccountOwners = Layer.succeed(
         setFleetEnvironmentSkipped(environmentId, true);
         noteMachineRemoved(environmentId, true);
       }),
+    skipped: (environmentId) => Effect.sync(() => readSkippedFleetEnvironments().has(environmentId)),
   }),
 );
 

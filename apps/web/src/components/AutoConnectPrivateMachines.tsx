@@ -107,6 +107,9 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
               pairingCode: credential.pairingCode,
               expectedEnvironmentId: credential.environmentId,
               ...(forAccount !== undefined ? { forAccount } : {}),
+              // Checked again under the machine's lease: a switch that drops it
+              // while this pairing is out wins (1434, AC-05).
+              automatic: true,
             });
             if (result._tag === "Failure") throw new Error("Pairing was not saved.");
           } catch {
