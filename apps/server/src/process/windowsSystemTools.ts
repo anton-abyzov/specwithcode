@@ -9,7 +9,10 @@ import * as NodePath from "node:path";
  * Windows sets for every process.
  */
 export const windowsSystemRoot = (env: NodeJS.ProcessEnv = process.env): string =>
-  env["SystemRoot"]?.trim() || env["windir"]?.trim() || "C:\\Windows";
+  [env["SystemRoot"], env["windir"]]
+    .map((value) => value?.trim() ?? "")
+    // Only a full drive path: a relative one would be read from the working folder.
+    .find((value) => /^[A-Za-z]:[\\/]/u.test(value)) ?? "C:\\Windows";
 
 export const windowsSystem32Path = (tool: string, env: NodeJS.ProcessEnv = process.env): string =>
   NodePath.win32.join(windowsSystemRoot(env), "System32", tool);

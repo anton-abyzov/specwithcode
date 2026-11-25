@@ -33,6 +33,7 @@ import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { signalProcessGroup } from "../../process/processGroup.ts";
 import { ProviderProcessSupervisor } from "../../process/ProviderProcessSupervisor.ts";
 import { withHeadlessBrowserEnvironment } from "../../provider/RuntimeInstructions.ts";
+import { windowsSystem32Path } from "../../process/windowsSystemTools.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -272,7 +273,12 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const terminateWindowsTree = Effect.gen(function* () {
     if (hasExited()) return;
     const taskkill = yield* spawner.spawn(
-      ChildProcess.make("taskkill", ["/PID", String(child.pid), "/T", "/F"]),
+      ChildProcess.make(windowsSystem32Path("taskkill.exe"), [
+        "/PID",
+        String(child.pid),
+        "/T",
+        "/F",
+      ]),
     );
     yield* taskkill.exitCode;
   }).pipe(Effect.scoped, Effect.ignore);

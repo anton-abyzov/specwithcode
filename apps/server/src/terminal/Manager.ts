@@ -99,6 +99,7 @@ import {
   recoverElevatedRun,
 } from "./elevatedRun.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+import { windowsPowerShellPath, windowsSystem32Path } from "../process/windowsSystemTools.ts";
 
 export {
   TerminalCwdError,
@@ -634,16 +635,6 @@ function basenameForPlatform(command: string, platform: NodeJS.Platform): string
   return parts.at(-1) ?? normalized;
 }
 
-function joinWindowsPath(...parts: ReadonlyArray<string>): string {
-  return parts
-    .map((part, index) => {
-      if (index === 0) return part.replace(/[\\/]+$/g, "");
-      return part.replace(/^[\\/]+|[\\/]+$/g, "");
-    })
-    .filter((part) => part.length > 0)
-    .join("\\");
-}
-
 function shellCandidateFromCommand(
   command: string | null,
   platform: NodeJS.Platform,
@@ -678,22 +669,14 @@ export function shellCandidateArgs(
   return [...(candidate.args ?? []), "-c", command];
 }
 
-function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
-  return env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
-}
-
-function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
-  return joinWindowsPath(
-    windowsSystemRoot(env),
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  );
+/** A value only when it is a full drive path; a bare or relative one is read from the working folder. */
+function windowsDrivePath(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return /^[A-Za-z]:[\\/]/u.test(trimmed) ? trimmed : null;
 }
 
 function windowsCmdPath(env: NodeJS.ProcessEnv): string {
-  return joinWindowsPath(windowsSystemRoot(env), "System32", "cmd.exe");
+  return windowsSystem32Path("cmd.exe", env);
 }
 
 function formatShellCandidate(candidate: ShellCandidate): string {
@@ -725,14 +708,14 @@ function resolveShellCandidates(
   );
 
   if (platform === "win32") {
+    // PowerShell and cmd only from System32: a bare name is looked up in the
+    // terminal's folder first. pwsh lives outside System32 and comes from PATH.
     return uniqueShellCandidates([
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
-      shellCandidateFromCommand("powershell.exe", platform),
-      shellCandidateFromCommand(env.ComSpec ?? null, platform),
+      shellCandidateFromCommand(windowsDrivePath(env.ComSpec), platform),
       shellCandidateFromCommand(windowsCmdPath(env), platform),
-      shellCandidateFromCommand("cmd.exe", platform),
     ]);
   }
 
@@ -941,11 +924,12 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
     ProcessRunner.ProcessRunner
   > {
     const processRunner = yield* ProcessRunner.ProcessRunner;
+    const powerShell = windowsPowerShellPath();
     const command =
       'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
     const result = yield* processRunner
       .run({
-        command: "powershell.exe",
+        command: powerShell,
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
         timeout: "1500 millis",
         maxOutputBytes: 262_144,

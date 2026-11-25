@@ -47,6 +47,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsPowerShellPath } from "../process/windowsSystemTools.ts";
 import {
   describeLocalServerPage,
   readBoundedText,
@@ -790,7 +791,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
       const listeners = yield* processRunner
         .run({
-          command: "powershell.exe",
+          command: windowsPowerShellPath(),
           args: ["-NoProfile", "-NonInteractive", "-Command", command],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
           maxOutputBytes: 1024 * 1024,

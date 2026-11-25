@@ -15,6 +15,13 @@ describe("windowsSystemTools", () => {
     expect(windowsSystemRoot({ SystemRoot: "D:\\Windows", windir: "E:\\Win" })).toBe("D:\\Windows");
     expect(windowsSystemRoot({ windir: "E:\\Win" })).toBe("E:\\Win");
     expect(windowsSystemRoot({ SystemRoot: "  " })).toBe("C:\\Windows");
+    // A relative value would make every tool path relative to the working folder.
+    expect(windowsSystemRoot({ SystemRoot: "Windows", windir: "E:\\Win" })).toBe("E:\\Win");
+    expect(windowsSystemRoot({ SystemRoot: "\\Windows", windir: ".\\Win" })).toBe("C:\\Windows");
+    expect(windowsSystemRoot({ SystemRoot: "C:Windows" })).toBe("C:\\Windows");
+    expect(windowsSystem32Path("reg.exe", { SystemRoot: "Windows" })).toBe(
+      "C:\\Windows\\System32\\reg.exe",
+    );
     expect(windowsSystem32Path("taskkill.exe", { SystemRoot: "D:\\Windows" })).toBe(
       "D:\\Windows\\System32\\taskkill.exe",
     );
@@ -32,10 +39,23 @@ describe("windowsSystemTools", () => {
     "cloud/runtimeVersionRetention.ts",
     "cloud/MachineHardwareIdentity.ts",
     "cli/uninstall.ts",
+    "fleet/folderTransfer/git.ts",
+    "fleet/folderTransfer/lanInterfaces.ts",
+    "fleet/folderTransfer/confinement.ts",
+    "provider/acp/AcpSessionRuntime.ts",
+    "orchestration-v2/Adapters/PiRpc.ts",
+    "preview/PortScanner.ts",
+    "terminal/Manager.ts",
+    "serverPath.ts",
   ])("%s starts no Windows system tool by bare name", (file) => {
     const source = NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8");
+    const tool = String.raw`"(?:powershell|taskkill|schtasks|reg|cmd|ping|icacls)(?:\.exe)?"`;
+    // A call that starts the tool, or a run request naming it; an error label is neither.
     expect(source).not.toMatch(
-      /(?:spawn|run|execText|runProbe|probe|command:)\s*\(?\s*"(?:powershell|taskkill|schtasks|reg|cmd|ping)(?:\.exe)?"/i,
+      new RegExp(
+        String.raw`(?:spawn|run|make|execText|runProbe|probe)\s*\(?\s*${tool}\s*[,)]|command:\s*${tool},\s*args\b`,
+        "i",
+      ),
     );
   });
 });

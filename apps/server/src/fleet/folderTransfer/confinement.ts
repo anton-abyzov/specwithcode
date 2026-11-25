@@ -4,6 +4,7 @@ import type * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { windowsPowerShellPath, windowsSystem32Path } from "../../process/windowsSystemTools.ts";
 
 /**
  * Destination path confinement. Apply changes a folder only when nobody but the
@@ -364,7 +365,7 @@ const WINDOWS_READER_TIMEOUT_MS = 30_000;
 function windowsReaderSession(): WindowsReader {
   if (windowsReader) return windowsReader;
   const child = NodeChildProcess.spawn(
-    "powershell.exe",
+    windowsPowerShellPath(),
     ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT],
     { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
   );
@@ -451,7 +452,7 @@ let windowsUser: Promise<string> | null = null;
  * check that follows, which reads the folder's access again.
  */
 async function windowsSecure(path: string): Promise<void> {
-  windowsUser ??= run("powershell.exe", [
+  windowsUser ??= run(windowsPowerShellPath(), [
     "-NoProfile",
     "-NonInteractive",
     "-Command",
@@ -459,8 +460,8 @@ async function windowsSecure(path: string): Promise<void> {
   ]).then((result) => result.output.trim());
   const sid = await windowsUser;
   if (!/^S-[\d-]+$/.test(sid)) return;
-  await run("icacls.exe", [path, "/setowner", `*${sid}`]);
-  await run("icacls.exe", [
+  await run(windowsSystem32Path("icacls.exe"), [path, "/setowner", `*${sid}`]);
+  await run(windowsSystem32Path("icacls.exe"), [
     path,
     "/inheritance:r",
     "/grant:r",

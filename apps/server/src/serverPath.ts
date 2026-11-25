@@ -24,6 +24,7 @@ import {
   resolveKnownPosixCliDirs,
   resolveKnownWindowsCliDirs,
 } from "@specweave-studio/shared/shell";
+import { windowsSystem32Path } from "./process/windowsSystemTools.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -162,7 +163,9 @@ export async function readWindowsRegistryPath(
     if (left <= 0) break;
     try {
       const value = parseRegistryPath(
-        await run("reg.exe", ["query", key, "/v", "Path"], { timeout: left }),
+        await run(windowsSystem32Path("reg.exe", environment), ["query", key, "/v", "Path"], {
+          timeout: left,
+        }),
         environment,
       );
       if (value) parts.push(value);

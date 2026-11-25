@@ -36,6 +36,7 @@ import { agentWorkCgroup } from "../../resourceTelemetry/agentWorkCgroup.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import { normalizeAcpTerminalAuthMethod } from "./AcpTerminalAuthentication.ts";
 import { headlessChildProcessEnvironment } from "../RuntimeInstructions.ts";
+import { windowsSystem32Path } from "../../process/windowsSystemTools.ts";
 import {
   inheritableAgentEnvironment,
   withoutAppImageRuntimeEnvironment,
@@ -1101,7 +1102,7 @@ export const terminateWindowsProcessTreeWithTaskkill = (
   Effect.scoped(
     Effect.gen(function* () {
       const taskkill = yield* spawner.spawn(
-        ChildProcess.make("taskkill", ["/PID", String(pid), "/T", "/F"]),
+        ChildProcess.make(windowsSystem32Path("taskkill.exe"), ["/PID", String(pid), "/T", "/F"]),
       );
       const outputFiber = yield* Stream.decodeText(taskkill.all).pipe(
         Stream.mkString,

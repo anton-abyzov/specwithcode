@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { admitLanHost, insidePrefix } from "./lanWire.ts";
+import { windowsPowerShellPath } from "../../process/windowsSystemTools.ts";
 
 /**
  * Which of this machine's addresses may carry a folder copy on the local
@@ -77,7 +78,7 @@ async function physicalNames(platform: NodeJS.Platform): Promise<ReadonlySet<str
     return names;
   }
   if (platform === "win32") {
-    const out = await run("powershell.exe", [
+    const out = await run(windowsPowerShellPath(), [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
@@ -115,7 +116,7 @@ async function routeOf(platform: NodeJS.Platform, host: string): Promise<string 
     return /\sdev\s+(\S+)/.exec(out)?.[1] ?? null;
   }
   if (platform === "win32") {
-    const out = await run("powershell.exe", [
+    const out = await run(windowsPowerShellPath(), [
       "-NoProfile",
       "-NonInteractive",
       "-Command",

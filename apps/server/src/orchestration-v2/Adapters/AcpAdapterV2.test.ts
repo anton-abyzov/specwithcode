@@ -58,6 +58,7 @@ import * as ServerConfig from "../../config.ts";
 import { ADVISOR_GUIDANCE } from "@specweave-studio/shared/advisor";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { windowsSystem32Path } from "../../process/windowsSystemTools.ts";
 import {
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
@@ -13415,7 +13416,7 @@ describe("AcpAdapterV2", () => {
       const taskkillSpawner = makeTaskkillSpawner({ exitCode: 0, commands: taskkillCommands });
       const spawner = ChildProcessSpawner.make((command) => {
         const value = command as unknown as { readonly command: string };
-        return value.command === "taskkill"
+        return value.command === windowsSystem32Path("taskkill.exe")
           ? taskkillSpawner.spawn(command)
           : childProcessSpawner.spawn(command);
       });
@@ -13467,7 +13468,9 @@ describe("AcpAdapterV2", () => {
         makeTaskkillSpawner({ exitCode: 0, commands }),
         4321,
       );
-      assert.deepEqual(commands, [{ command: "taskkill", args: ["/PID", "4321", "/T", "/F"] }]);
+      assert.deepEqual(commands, [
+        { command: windowsSystem32Path("taskkill.exe"), args: ["/PID", "4321", "/T", "/F"] },
+      ]);
 
       for (const fixture of [
         { exitCode: 128, output: 'ERROR: The process "4321" not found.' },

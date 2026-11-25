@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 
 import { withGitHubSpawnEnvironment } from "../../sourceControl/gitHubSpawnEnvironment.ts";
+import { windowsSystem32Path } from "../../process/windowsSystemTools.ts";
 
 /**
  * Git for the folder copy. Copied repositories carry the source's `.git/config`,
@@ -142,10 +143,14 @@ export function runGit(
       if (killed || child.exitCode !== null || child.pid === undefined) return;
       killed = true;
       const fallback = () => child.kill();
-      NodeChildProcess.spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      })
+      NodeChildProcess.spawn(
+        windowsSystem32Path("taskkill.exe"),
+        ["/PID", String(child.pid), "/T", "/F"],
+        {
+          stdio: "ignore",
+          windowsHide: true,
+        },
+      )
         .on("error", fallback)
         .on("exit", (exit) => exit !== 0 && fallback());
     };
