@@ -51,6 +51,7 @@ const hostLayer = (input: {
   readonly icns?: string;
   readonly fileSystem?: FileSystem.FileSystem;
   readonly installedAppNames?: ReadonlyArray<string>;
+  readonly trashFails?: boolean;
 }) =>
   Layer.succeed(
     ArtifactAppInstaller.ArtifactAppInstallerHost,
@@ -118,6 +119,7 @@ const hostLayer = (input: {
       trashItem: (path) =>
         Effect.gen(function* () {
           input.calls.trashed.push(path);
+          if (input.trashFails === true) return yield* Effect.die(new Error("Trash refused"));
           // The real Trash moves the bundle away; the test removes it.
           if (input.fileSystem !== undefined) {
             yield* input.fileSystem.remove(path, { recursive: true }).pipe(Effect.orDie);
@@ -164,6 +166,7 @@ const harness = (
     readonly icns?: string;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly installedAppNames?: ReadonlyArray<string>;
+    readonly trashFails?: boolean;
   },
   home: string,
   recordsPath: string,
@@ -408,15 +411,13 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.deepEqual(h.calls.revealed, [bundle]);
 
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
-        // Moved to a private name and checked there before it goes to the Trash.
-        assert.deepEqual(h.calls.trashed, [
-          path.join(
-            home,
-            "Applications",
-            "SpecWithCode Apps",
-            `.Morning dashboard.app.removing-${result.app.installId}`,
-          ),
-        ]);
+        // Moved to a random private name and checked there before it goes to the Trash.
+        assert.equal(h.calls.trashed.length, 1);
+        assert.equal(path.dirname(h.calls.trashed[0]!), path.dirname(bundle));
+        assert.match(
+          path.basename(h.calls.trashed[0]!),
+          /^\.Morning dashboard\.app\.removing-[0-9a-f]{32}$/,
+        );
         assert.isFalse(yield* fileSystem.exists(bundle));
         assert.deepEqual(yield* h.records.list, []);
         assert.deepEqual(h.closed, [result.app.installId]);
@@ -520,6 +521,25 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
     ),
   );
 
+  it.effect("puts the bundle back and keeps the install when the Trash fails", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness(
+          { platform: "darwin", fileSystem, trashFails: true },
+          home,
+          recordsPath,
+        );
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+
+        assert.isFalse(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(yield* fileSystem.readDirectory(folder), ["Morning dashboard.app"]);
+        assert.equal((yield* h.records.list).length, 1);
+      }),
+    ),
+  );
+
   it.effect("never removes through an apps folder that became a link", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
@@ -582,6 +602,29 @@ describe("ArtifactAppInstaller on Linux", () => {
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
         assert.isFalse(yield* fileSystem.exists(entryPath));
         assert.deepEqual(yield* h.records.list, []);
+      }),
+    ),
+  );
+
+  it.effect("still removes its own entry after the app's icon moved", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "linux", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const entryPath = path.join(
+          home,
+          ".local/share/applications",
+          `specwithcode-app-${result.app.installId}.desktop`,
+        );
+        const entry = yield* fileSystem.readFileString(entryPath);
+        yield* fileSystem.writeFileString(
+          entryPath,
+          entry.replace(/^Icon=.*$/m, "Icon=/tmp/old-icon.png"),
+        );
+
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.isFalse(yield* fileSystem.exists(entryPath));
       }),
     ),
   );

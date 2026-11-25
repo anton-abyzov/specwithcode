@@ -260,6 +260,13 @@ function pathRules(platform: NodeJS.Platform): NodePath.PlatformPath {
   return platform === "win32" ? NodePath.win32 : NodePath.posix;
 }
 
+function withoutIconLine(entry: string): string {
+  return entry
+    .split("\n")
+    .filter((line) => !line.startsWith("Icon="))
+    .join("\n");
+}
+
 const make = Effect.gen(function* () {
   const host = yield* ArtifactAppInstallerHost;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -422,11 +429,13 @@ const make = Effect.gen(function* () {
             shortcut.appUserModelId === (location.options.appUserModelId ?? ""),
         });
       case "linux-entry": {
-        // Exactly the entry this install wrote, so an Exec pointed elsewhere is not it.
+        // Exactly the entry this install wrote, so an Exec pointed elsewhere is
+        // not it. The Icon line is left out: the app's icon can move between
+        // versions while the entry stays this install's.
         const onDisk = yield* fileSystem
           .readFileString(path)
           .pipe(Effect.orElseSucceed(() => null));
-        return onDisk === location.contents;
+        return onDisk !== null && withoutIconLine(onDisk) === withoutIconLine(location.contents);
       }
     }
   });
@@ -658,19 +667,29 @@ const make = Effect.gen(function* () {
           if (!(yield* owned(location.path))) return;
           const claimed = rules.join(
             location.folder,
-            `.${rules.basename(location.path)}.removing-${installId}`,
+            `.${rules.basename(location.path)}.removing-${newArtifactAppInstallId()}`,
           );
+          // A random name nothing uses yet: a rename over an existing empty folder would replace it.
+          if (yield* exists(claimed)) {
+            return yield* new ArtifactAppLauncherWriteError({
+              operation: "remove-launcher",
+              path: claimed,
+              cause: new Error("The private name for removal is taken."),
+            });
+          }
+          const putBack = fileSystem
+            .rename(claimed, location.path)
+            .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
           yield* fileSystem
             .rename(location.path, claimed)
             .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
-          if (yield* owned(claimed)) {
-            yield* host.trashItem(claimed);
+          if (!(yield* owned(claimed))) {
+            // Not ours after all: put it back where it was.
+            yield* putBack;
             return;
           }
-          // Not ours after all: put it back where it was.
-          yield* fileSystem
-            .rename(claimed, location.path)
-            .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
+          // A Trash that fails puts the bundle back, so the record stays and uninstall can run again.
+          yield* host.trashItem(claimed).pipe(Effect.onError(() => putBack.pipe(Effect.ignore)));
           return;
         }
         case "windows-shortcuts":
