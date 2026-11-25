@@ -6238,7 +6238,16 @@ export function makeAcpAdapterV2(
                     )
                   : nativeParams;
               const transportRequestId = requestContext.requestId;
-              const permissionQuestion = flavor.extractPermissionQuestion?.(params);
+              // No agent's option that turns its own permission checks off is ever
+              // offered or chosen, in a question either, whichever flavor runs it
+              // (a wrapper hides who the agent is).
+              const withoutBypass = {
+                ...params,
+                options: params.options.filter(
+                  (option) => !NEVER_ANSWERED_PERMISSION_OPTION_IDS.has(option.optionId.trim()),
+                ),
+              };
+              const permissionQuestion = flavor.extractPermissionQuestion?.(withoutBypass);
               if (permissionQuestion !== undefined) {
                 const userInput = yield* requestUserInputWithAdmission(
                   handlerGeneration,
@@ -6258,14 +6267,6 @@ export function makeAcpAdapterV2(
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
-              // No agent's option that turns its own permission checks off is ever
-              // chosen, whichever flavor runs it (a wrapper hides who the agent is).
-              const withoutBypass = {
-                ...params,
-                options: params.options.filter(
-                  (option) => !NEVER_ANSWERED_PERMISSION_OPTION_IDS.has(option.optionId.trim()),
-                ),
-              };
               const answerable =
                 flavor.answerablePermissionOptions === undefined
                   ? withoutBypass
