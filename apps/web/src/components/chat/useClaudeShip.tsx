@@ -54,7 +54,8 @@ export interface ClaudeShipContext {
 
 /** Set by the composer each render: clears the draft once the terminal opened. */
 export interface ClaudeShipComposerHandlers {
-  clearDraft?: () => void;
+  /** Clears the draft only while it still reads `sentText`: newer text is the person's. */
+  clearDraft?: (sentText: string) => void;
 }
 
 /**
@@ -77,11 +78,12 @@ export function useClaudeShip(context: ClaudeShipContext): {
   const threadKey = `${context.environmentId}\u0000${context.threadId ?? ""}`;
   const [card, setCard] = useState<{
     readonly line: ClaudeShipLine;
+    readonly text: string;
     readonly threadKey: string;
   } | null>(null);
   const line = card !== null && card.threadKey === threadKey ? card.line : null;
   const setLine = (next: ClaudeShipLine | null) =>
-    setCard(next === null ? null : { line: next, threadKey });
+    setCard(next === null ? null : { line: next, text: next.line, threadKey });
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const composer = useRef<ClaudeShipComposerHandlers>({}).current;
@@ -93,7 +95,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
       if (parsed === null) return false;
       sendAsWrittenRef.current = sendAsWritten;
       setError(null);
-      setCard({ line: parsed, threadKey });
+      setCard({ line: parsed, text, threadKey });
       return true;
     },
     [threadKey],
@@ -145,6 +147,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
     // another thread while the terminal opens: clear the draft of the thread
     // that asked, never the one shown when the open finishes.
     const clearDraft = composer.clearDraft;
+    const sentText = card?.text ?? line.line;
     const askedFrom = threadKey;
     setOpening(true);
     const terminalId = context.allocateTerminalId();
@@ -155,7 +158,9 @@ export function useClaudeShip(context: ClaudeShipContext): {
         threadId,
         terminalId,
         cwd,
-        ...(context.fallbackCwd !== null ? { fallbackCwd: context.fallbackCwd } : {}),
+        // No fallback folder: Claude must start in the thread's own checkout. When
+        // its worktree is gone the open fails and says so, rather than running
+        // /ship against the project root's branch.
         ...(context.worktreePath !== null ? { worktreePath: context.worktreePath } : {}),
         ...(context.providerInstanceId !== null
           ? { providerInstanceId: context.providerInstanceId }
@@ -173,7 +178,7 @@ export function useClaudeShip(context: ClaudeShipContext): {
       setError(cause instanceof Error ? cause.message : "The terminal could not open.");
       return;
     }
-    clearDraft?.();
+    clearDraft?.(sentText);
     // Only the asking thread's card closes; a card opened since on another thread stays.
     setCard((current) => (current?.threadKey === askedFrom ? null : current));
   };

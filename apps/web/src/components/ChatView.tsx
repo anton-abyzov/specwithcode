@@ -15137,7 +15137,11 @@ export default function ChatView(props: ChatViewProps) {
   // when the view may show another thread, whose prompt and cursor stay as they are.
   const claudeShipDraftTarget = composerDraftTarget;
   const composerDraftTargetRef = useLatestRef(composerDraftTarget);
-  claudeShip.composer.clearDraft = () => {
+  claudeShip.composer.clearDraft = (sentText) => {
+    // Text typed while the terminal was opening is the person's: keep it.
+    const prompt =
+      useComposerDraftStore.getState().getComposerDraft(claudeShipDraftTarget)?.prompt ?? "";
+    if (prompt.trim() !== sentText.trim()) return;
     setComposerDraftPrompt(claudeShipDraftTarget, "");
     if (!sameComposerDraftTarget(composerDraftTargetRef.current, claudeShipDraftTarget)) return;
     promptRef.current = "";
