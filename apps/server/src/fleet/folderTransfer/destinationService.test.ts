@@ -115,6 +115,40 @@ describe("DestinationCopies", () => {
     ).toBe(false);
   }, 120_000);
 
+  it("reports the check and Apply counts, not only the send (1332 AC-01)", async () => {
+    const copies = new DestinationCopies(NodePath.join(base, "dest-state-progress"), {
+      ...fast,
+      register: async () => "project-progress",
+    });
+    const patches: Array<Partial<DestinationRecord>> = [];
+    const spied = copies as unknown as {
+      update: (operationId: string, patch: Partial<DestinationRecord>) => Promise<unknown>;
+    };
+    const update = spied.update.bind(copies);
+    spied.update = (operationId, patch) => {
+      patches.push(patch);
+      return update(operationId, patch);
+    };
+    const { operationId, token } = await offer();
+    await copies.start(startInput(operationId, token, NodePath.join(base, "targets", "progress")));
+    await settle(copies, operationId, ["previewed", "failed"]);
+    await copies.approve(operationId);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    const last = (phase: string) =>
+      patches.filter((patch) => patch.progress?.phase === phase).at(-1)?.progress;
+    const verify = last("verify");
+    const apply = last("apply");
+    expect(verify?.filesTotal).toBeGreaterThan(0);
+    expect(verify?.filesDone).toBe(verify?.filesTotal);
+    expect(apply?.filesTotal).toBeGreaterThan(0);
+    expect(apply?.filesDone).toBe(apply?.filesTotal);
+    expect(apply?.bytesDone).toBe(apply?.bytesTotal);
+    // Apply's counts come after the step clears the send's.
+    const cleared = patches.findIndex((patch) => patch.state === "applying");
+    expect(patches.findIndex((patch) => patch.progress?.phase === "apply")).toBeGreaterThan(cleared);
+  }, 120_000);
+
   it("refuses early when the destination lacks the space the copy needs", async () => {
     const copies = new DestinationCopies(NodePath.join(base, "dest-state-b"), {
       ...fast,

@@ -96,7 +96,6 @@ import {
   NOT_ABSOLUTE,
   openCopiedProject,
   POLL_MS,
-  REPOSITORY_SETTLE_MS,
   useCopyReporting,
   useLiveState,
   type CopyChoices,
@@ -104,7 +103,8 @@ import {
 import { useCopyLink } from "./useCopyLink";
 import { HandoffCopyFooter } from "./HandoffCopyFooter";
 import { HandoffWorkspaceSummary, type HandoffWorkspaceContext } from "./HandoffWorkspaceSummary";
-import { reviewedSecrets, type RepositoryChoices } from "./handoffCopySecrets";
+import { reviewedSecrets } from "./handoffCopySecrets";
+import { useRepositoryReplan } from "./useRepositoryReplan";
 
 export { folderCopyStorageKey, isFolderCopyNotFound, readPendingCopy };
 export type { CopyMachine };
@@ -218,12 +218,23 @@ export function HandoffFolderCopy({
   // Why the destination compares again; null for the first compare.
   const [recompare, setRecompare] = useState<CopyRecompare>(null);
   const [working, setWorking] = useState(false);
-  // Clone and skip choices not yet in the destination's plan, and whether it is re-comparing.
-  const [repositoryChoices, setRepositoryChoices] = useState<RepositoryChoices | null>(null);
-  const [replanning, setReplanning] = useState(false);
-  const repositoryDraft = useRef<RepositoryChoices | null>(null);
-  const repositoryTimer = useRef<number | null>(null);
-  const repositorySending = useRef(false);
+  // A Measure that failed on the source: setup shows the track stopped at Measure.
+  const [measureStopped, setMeasureStopped] = useState(false);
+  const repositories = useRepositoryReplan(() => ({
+    latestPending,
+    sendChoices: async (environmentId, operationId, sent) => {
+      unwrap(
+        await decide({
+          environmentId,
+          input: { operationId, clone: sent.clone, skip: sent.skip },
+        }),
+      );
+    },
+    pollCopy,
+    withoutReplaceAll,
+    show,
+    setError,
+  }));
   const [linkDialog, setLinkDialog] = useState(false);
   // The machine a copy was just cancelled for before Apply, said once on the setup form.
   const [cancelledFor, setCancelledFor] = useState<string | null>(null);
@@ -247,10 +258,7 @@ export function HandoffFolderCopy({
   const measureStop = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = abort.current;
-    return () => {
-      controller.abort();
-      if (repositoryTimer.current !== null) window.clearTimeout(repositoryTimer.current);
-    };
+    return () => controller.abort();
   }, []);
 
   const target = machines.find((entry) => entry.id === machine) ?? null;
@@ -265,8 +273,8 @@ export function HandoffFolderCopy({
     copy,
     summaryNow,
     copyNow,
-    repositoryChoices,
-    repositoryDraft,
+    repositoryChoices: repositories.choices,
+    repositoryDraft: repositories.draft,
     latestPending,
     done: stage === "done",
     keep: (choice) => {
@@ -452,6 +460,7 @@ export function HandoffFolderCopy({
       // The dialog closed: measuring keeps going on the source and the pointer stays.
       if (isAbortError(cause)) throw cause;
       remember(null);
+      setMeasureStopped(true);
       setStage("setup");
       throw cause;
     } finally {
@@ -672,6 +681,7 @@ export function HandoffFolderCopy({
         }
         await abandonSource(saved, "The copy was not started.", false);
         setStage("setup");
+        setMeasureStopped(measuring?.state === "failed");
         if (measuring?.state === "failed" && measuring.error) throw new Error(measuring.error);
         return;
       }
@@ -748,6 +758,7 @@ export function HandoffFolderCopy({
     }
     const operationId = randomUUID();
     setSummary(null);
+    setMeasureStopped(false);
     const projectFolder = copiedProjectFolder(folder, projectRelativePath);
     const projectId = destinationProjectId(machine, mode, projectFolder);
     const existing = mode === "copy-and-move" && knownProject(machine, projectFolder) !== null;
@@ -850,52 +861,6 @@ export function HandoffFolderCopy({
       );
       show(await pollCopy(machine, pending.operationId));
     });
-
-  // Clone and skip clicks show at once and wait briefly, so several clicks re-compare
-  // once. The preview stays on screen while the destination compares; Copy waits for it.
-  const changeRepositories = (next: RepositoryChoices) => {
-    repositoryDraft.current = next;
-    setRepositoryChoices(next);
-    if (repositoryTimer.current !== null) window.clearTimeout(repositoryTimer.current);
-    repositoryTimer.current = window.setTimeout(() => {
-      repositoryTimer.current = null;
-      void sendRepositories();
-    }, REPOSITORY_SETTLE_MS);
-    setReplanning(true);
-  };
-  const sendRepositories = async () => {
-    if (repositorySending.current) return;
-    repositorySending.current = true;
-    try {
-      for (;;) {
-        const sent = repositoryDraft.current;
-        const saved = latestPending.current;
-        if (!sent || !saved) break;
-        const environmentId = saved.environmentId as EnvironmentId;
-        if (saved.replaceAll) withoutReplaceAll(saved);
-        unwrap(
-          await decide({
-            environmentId,
-            input: { operationId: saved.operationId, clone: sent.clone, skip: sent.skip },
-          }),
-        );
-        const next = await pollCopy(environmentId, saved.operationId);
-        // Clicks made while comparing go out in one more round.
-        if (repositoryDraft.current !== sent) continue;
-        repositoryDraft.current = null;
-        setRepositoryChoices(null);
-        if (next.state !== "previewed") show(next);
-        break;
-      }
-    } catch (cause) {
-      repositoryDraft.current = null;
-      setRepositoryChoices(null);
-      if (!isAbortError(cause)) setError(messageOf(cause));
-    } finally {
-      repositorySending.current = false;
-      if (repositoryTimer.current === null) setReplanning(false);
-    }
-  };
 
   /** Approves, then checks a failed answer once in case the approval landed anyway. */
   const applyNow = async (saved: PendingCopy, secretsSent = false, revision?: string) => {
@@ -1191,6 +1156,7 @@ export function HandoffFolderCopy({
     setCopyAgain(false);
     setRecompare(null);
     setCancelledFor(null);
+    setMeasureStopped(false);
     if (!keepChoices) {
       setSelection(DEFAULT_COPY_SELECTION);
       secrets.setChosen(ALL_SECRETS);
@@ -1357,9 +1323,10 @@ export function HandoffFolderCopy({
             replaceLeft={replaceLeft}
             replacingFiles={replacingFiles}
             onChange={(input) => void change(input)}
-            repositoryChoices={repositoryChoices}
-            onRepositories={changeRepositories}
-            replanning={replanning}
+            repositoryChoices={repositories.choices}
+            onRepositories={repositories.change}
+            replanning={repositories.replanning}
+            measureStopped={measureStopped}
             secretPaths={secrets.paths}
             includeSecrets={secrets.choice.included}
             onSecretsChange={(included, paths) =>
@@ -1444,7 +1411,8 @@ export function HandoffFolderCopy({
             onCompareAgain={rechoose}
             stage={stage}
             error={error}
-            busy={busy || replanning}
+            busy={busy || repositories.replanning}
+            replanning={repositories.replanning}
             working={working}
             pending={pending}
             copy={copy}

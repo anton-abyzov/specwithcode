@@ -1331,13 +1331,7 @@ export class DestinationCopies {
     await privateDirectory(paths.staging);
     const client = this.client(record, signal);
     const needs = pullRequirements(plan);
-    let last = 0;
-    const onProgress = (progress: PullProgress) => {
-      const now = Date.now();
-      if (now - last < 1_000 && progress.filesDone < progress.filesTotal) return;
-      last = now;
-      void this.update(op, { progress: { phase: "files", ...progress } }).catch(() => undefined);
-    };
+    const onProgress = this.progressWriter(op, "files");
     const batchSize = batchChunksFor(this.hooks.maxBatchChunks ?? record.sourceBatchChunks);
     const pulled = await pullFiles({
       client,
@@ -1358,6 +1352,7 @@ export class DestinationCopies {
         .filter((action) => action.entry?.type === "symlink" && action.entry.target !== undefined)
         .map((action) => ({ path: action.path, target: action.entry!.target! })),
       signal,
+      onProgress: this.progressWriter(op, "verify"),
     });
     // Refreshed files carry new hashes; Apply checks replayed writes against them.
     const refreshed = new Map([...pulled.refreshed, ...final.refreshed]);
@@ -1384,6 +1379,17 @@ export class DestinationCopies {
     await this.apply(next, signal);
   }
 
+  /** Writes a step's counts at most once a second, and always its last one. */
+  private progressWriter(op: string, phase: "files" | "verify" | "apply") {
+    let last = 0;
+    return (progress: PullProgress) => {
+      const now = Date.now();
+      if (now - last < 1_000 && progress.filesDone < progress.filesTotal) return;
+      last = now;
+      void this.update(op, { progress: { phase, ...progress } }).catch(() => undefined);
+    };
+  }
+
   private async apply(record: DestinationRecord, _signal: AbortSignal) {
     const op = record.operationId;
     const paths = this.paths(op);
@@ -1402,6 +1408,7 @@ export class DestinationCopies {
       leftBehind: leftBehind(manifest, unstable),
       unstable,
       ...(record.targetApproved ? { approved: record.targetApproved } : {}),
+      onProgress: this.progressWriter(op, "apply"),
     });
     // Apply's lines first: they name any folder it refused, and the list is cut.
     const warnings = [...result.warnings, ...record.warnings].slice(0, 200);

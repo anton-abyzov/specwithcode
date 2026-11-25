@@ -7,8 +7,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_SELECTION } from "./classify.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
-import type { ManifestEntry } from "./manifest.ts";
-import { finalPass, inFlightBudget, pullFiles, stagedPath, type PullFile } from "./pullWorker.ts";
+import { CHUNK_SIZE, type ManifestEntry } from "./manifest.ts";
+import {
+  BATCH_CONCURRENCY,
+  finalPass,
+  inFlightBudget,
+  pullFiles,
+  stagedPath,
+  type PullFile,
+  type PullProgress,
+} from "./pullWorker.ts";
+import { CHUNK_CHANGED, MAX_BATCH_BYTES } from "./wire.ts";
 import { checkSourceUrl, SourceClient, SourceClientError } from "./sourceClient.ts";
 import { SourceTransfers } from "./sourceService.ts";
 import { liveMovingCopies, serveSource } from "./sourceTestServer.testkit.ts";
@@ -311,5 +320,69 @@ describe("in-flight batch budget", () => {
     second!();
     const huge = await budget.take(500);
     huge();
+  });
+});
+
+describe("full batches in flight (1332 AC-08)", () => {
+  it("pulls 8 full 64 MiB batches at once", async () => {
+    const staging = NodePath.join(base, "staging-full-batches");
+    NodeFS.mkdirSync(staging, { recursive: true });
+    const chunksPerBatch = MAX_BATCH_BYTES / CHUNK_SIZE;
+    // Nine files of one full batch each; the files stay sparse, nothing is written.
+    const files: Array<PullFile> = Array.from({ length: BATCH_CONCURRENCY + 1 }, (_, file) => ({
+      path: `big/${file}.bin`,
+      sha256: "f".repeat(64),
+      chunks: Array.from({ length: chunksPerBatch }, (_, chunk) =>
+        NodeCrypto.createHash("sha256").update(`${file}:${chunk}`).digest("hex"),
+      ),
+      size: MAX_BATCH_BYTES,
+      mode: 0o644,
+      mtimeMs: 0,
+      localSource: null,
+    }));
+    let inFlight = 0;
+    let most = 0;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const fake = {
+      chunks: async (hashes: ReadonlyArray<string>) => {
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        if (most >= BATCH_CONCURRENCY) release();
+        await Promise.race([gate, new Promise((resolve) => setTimeout(resolve, 2_000))]);
+        inFlight -= 1;
+        return hashes.map((sha256) => ({ sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) }));
+      },
+      refresh: async (paths: ReadonlyArray<string>) =>
+        paths.map((path) => ({ path, missing: true as const })),
+    } as unknown as SourceClient;
+    const result = await pullFiles({ client: fake, stagingRoot: staging, files, directories: [] });
+    expect(most).toBe(BATCH_CONCURRENCY);
+    expect(result.vanished).toHaveLength(files.length);
+  });
+});
+
+describe("final check progress (1332 AC-01)", () => {
+  it("reports each file checked against the source", async () => {
+    const staging = NodePath.join(base, "staging-final-progress");
+    NodeFS.mkdirSync(staging, { recursive: true });
+    const files = pullList().filter((file) => file.path.startsWith("docs/"));
+    await pullFiles({ client: client(), stagingRoot: staging, files, directories: [] });
+    const seen: Array<PullProgress> = [];
+    await finalPass({
+      client: client(),
+      stagingRoot: staging,
+      files,
+      links: [],
+      onProgress: (progress) => seen.push(progress),
+    });
+    const bytes = files.reduce((sum, file) => sum + file.size, 0);
+    expect(seen.at(-1)).toEqual({
+      filesDone: files.length,
+      filesTotal: files.length,
+      bytesDone: bytes,
+      bytesTotal: bytes,
+      bytesLocal: 0,
+    });
   });
 });

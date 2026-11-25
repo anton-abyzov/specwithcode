@@ -2,10 +2,14 @@ import { useSyncExternalStore } from "react";
 import type { FolderCopySourceStatus, FolderCopyStatus } from "@specweave-studio/contracts";
 import { copiedProjectFolder, copyDestinationKey } from "./folderCopy";
 import {
+  addRateSample,
   COPY_PHASES,
+  formatRate,
+  rateOf,
   sourceProgressView,
   statusProgressView,
   type CopyProgressView,
+  type RateSample,
 } from "./copyProgress";
 
 /**
@@ -34,6 +38,11 @@ export interface CopyActivity {
   readonly source?: string;
   /** The project's name, so a waiting copy says what it copies. */
   readonly project?: string;
+  /**
+   * Bytes per second over the step, measured once here for the sidebar and the toast;
+   * null before a pace is known or while nothing moves.
+   */
+  readonly rate?: number | null;
 }
 
 /**
@@ -169,9 +178,36 @@ const sameActivity = (a: CopyActivity | undefined, b: CopyActivity | null) =>
       a.destination?.folder === b.destination?.folder &&
       a.destination?.existing === b.destination?.existing &&
       a.source === b.source &&
+      a.rate === b.rate &&
       JSON.stringify(a.progress) === JSON.stringify(b.progress);
 
-export function setCopyActivity(key: string, activity: CopyActivity | null): void {
+/** Speed readings per copy; a new step starts them again. */
+const rates = new Map<
+  string,
+  { readonly rateKey: string; readonly samples: ReadonlyArray<RateSample> }
+>();
+
+/** The activity with its speed, from a reading taken now; every reading counts, unchanged ones too. */
+function withRate(key: string, activity: CopyActivity | null, now: number): CopyActivity | null {
+  const progress = activity?.progress;
+  if (!activity || !progress?.bytes || progress.rateKey === null || progress.outcome !== "running") {
+    rates.delete(key);
+    return activity;
+  }
+  const previous = rates.get(key);
+  const sample = { at: now, bytes: progress.bytes.done - progress.bytesLocal };
+  const samples =
+    previous?.rateKey === progress.rateKey ? addRateSample(previous.samples, sample) : [sample];
+  rates.set(key, { rateKey: progress.rateKey, samples });
+  return { ...activity, rate: rateOf(samples) };
+}
+
+export function setCopyActivity(
+  key: string,
+  reported: CopyActivity | null,
+  now: number = Date.now(),
+): void {
+  const activity = withRate(key, reported, now);
   if (sameActivity(activities.get(key), activity)) return;
   const next = new Map(activities);
   if (activity) next.set(key, activity);
@@ -342,9 +378,21 @@ export function copyActivityFromStatus(
   existing = false,
   /** The machine the folder is copied from; given, the activity carries the phase view. */
   source?: string,
+  /** The source's progress while the destination compares: it reads the chosen files. */
+  measuring?: FolderCopySourceStatus["progress"],
 ): CopyActivity | null {
   const base = statusActivity(status, machine);
-  const progress = base && source ? statusProgressView(status, source, machine) : null;
+  // Comparing waits on the source reading files: its counts say more, as in the dialog.
+  const reading =
+    (status.state === "planned" || status.state === "scanning") &&
+    measuring?.step !== undefined &&
+    measuring.step !== "listing";
+  const progress =
+    base && source
+      ? reading
+        ? sourceProgressView(measuring, source)
+        : statusProgressView(status, source, machine)
+      : null;
   const activity = base && progress && source ? { ...base, progress, source } : base;
   const destination = environmentId ? moveDestination(status, environmentId, existing) : null;
   return activity && status.mode === "copy-and-move"
@@ -454,14 +502,16 @@ export function copyActivityText(activity: CopyActivity): string {
   }
   const fraction = activity.progress ? activity.progress.fraction : activity.fraction;
   const percent = fraction === null ? "" : `, ${Math.floor(fraction * 100)}%`;
+  const speed = activity.rate ? `, ${formatRate(activity.rate)}` : "";
   const step = activity.progress?.step ?? activity.label;
   const label = step.charAt(0).toLowerCase() + step.slice(1);
-  return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine}: ${label}${percent}`;
+  return `${activity.move ? "Hand off" : "Copy"} to ${activity.machine}: ${label}${percent}${speed}`;
 }
 
 /** Test helper: forgets every activity, watch and opener. */
 export function resetCopyActivityForTests(): void {
   navigators.clear();
+  rates.clear();
   activities = new Map();
   pendingReview = null;
   watches = new Map();

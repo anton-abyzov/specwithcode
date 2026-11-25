@@ -58,10 +58,8 @@ export type JournalEntry =
   | { readonly t: "write-done"; readonly path: string }
   /** Apply itself rewrote a copied file afterwards (worktree repair); Undo compares against this hash. */
   | { readonly t: "rewritten"; readonly path: string; readonly sha256: string }
-  /**
-   * Apply restores this path from the copied index (it changed on the source after
-   * the Git snapshot) and it holds this afterwards. Synced before the restore runs.
-   */
+  /** Apply restores this path from the copied index (it changed on the source after the
+   * Git snapshot) and it holds this afterwards. Synced before the restore runs. */
   | {
       readonly t: "restore";
       readonly path: string;
@@ -143,6 +141,9 @@ export interface ApplyResult {
   readonly refused: ReadonlyArray<RefusedEntry>;
 }
 
+type ApplyCount = "filesDone" | "filesTotal" | "bytesDone" | "bytesTotal" | "bytesLocal";
+export type ApplyProgress = Readonly<Record<ApplyCount, number>>;
+
 export interface ApplyInput {
   readonly operationId: string;
   readonly targetRoot: string;
@@ -154,6 +155,8 @@ export interface ApplyInput {
   /** Paths deliberately left behind (secrets, rebuildable, unstable), ignored by the status check. */
   readonly leftBehind: ReadonlySet<string>;
   readonly unstable?: ReadonlySet<string>;
+  /** After each batch of entries is in place: entries and file bytes done, of the total. */
+  readonly onProgress?: (progress: ApplyProgress) => void;
   /** Where the folder checks read the file system; tests stand in another owner here. */
   readonly confinement?: Partial<ConfinementSeam>;
   /**
@@ -240,10 +243,8 @@ export async function removePartials(
       await NodeFSP.rm(NodePath.join(folder, other), { recursive: true, force: true });
 }
 
-/**
- * Moves `from` to `to`, copying across volumes; links are moved as links. A copy
- * lands under a temporary name first, so `to` never holds half an entry.
- */
+/** Moves `from` to `to`, copying across volumes; links are moved as links. A copy lands
+ * under a temporary name first, so `to` never holds half an entry. */
 export async function moveEntry(
   from: string,
   to: string,
@@ -752,10 +753,8 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
           ),
         );
 
-    /**
-     * A write marked done by an earlier run whose target is gone: its rename was
-     * lost with the folder unsynced while the done mark survived. Redone from staging.
-     */
+    // A write marked done by an earlier run whose target is gone: its rename was lost
+    // with the folder unsynced while the done mark survived. Redone from staging.
     const lostWrite = async (action: FileAction, location: string) => {
       if (action.kind !== "write" && action.kind !== "keep-both" && action.kind !== "link")
         return false;
@@ -875,6 +874,9 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
     // The journal keeps dependency order: a folder's backup and mkdir come before
     // the intents of anything inside it, because Undo walks it newest first.
     const looked = new Map<string, "absent" | "other">();
+    const sizeOf = (action: FileAction) => (action.entry?.type === "file" ? action.entry.size : 0);
+    const progress = { filesDone: 0, bytesDone: 0, bytesTotal: 0, bytesLocal: 0 };
+    for (const action of actions) progress.bytesTotal += sizeOf(action);
     for (let start = 0; start < actions.length;) {
       // Each batch checks its folders afresh, narrowing the time another process
       // has to swap a checked folder for a link.
@@ -899,8 +901,7 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
             break;
           }
         }
-        const entry = action.entry;
-        bytes += entry?.type === "file" ? entry.size : 0;
+        bytes += sizeOf(action);
         end += 1;
       }
       const batch = actions.slice(start, end);
@@ -919,6 +920,9 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
       await journal.sync();
       // Every change, not only a batch's first, is held to the rule: before it, and again after.
       for (const action of batch) await guarded(action.writePath, () => applyAction(action));
+      for (const action of batch) progress.bytesDone += sizeOf(action);
+      progress.filesDone += batch.length;
+      input.onProgress?.({ ...progress, filesTotal: actions.length });
     }
 
     // After files: worktree repair for copied repositories, then verification.

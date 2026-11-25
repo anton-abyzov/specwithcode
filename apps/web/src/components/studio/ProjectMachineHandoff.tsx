@@ -57,6 +57,7 @@ import { addToMachineRoute } from "../../studio/addToMachine";
 import { addableMachineIds, projectFoldersElsewhere } from "../../studio/addableMachines";
 import { useTx } from "../../i18n";
 import { moveRefusal } from "./ProjectMoveOptions";
+import { closeCopyReviewToast } from "./folderCopyToasts";
 import {
   copyActivityKey,
   registerCopyOpener,
@@ -434,16 +435,19 @@ export function ProjectMachineHandoff({
   useLayoutEffect(() => {
     latestDiscard.current = discardPreview;
   });
-  const changeOpen = (value: boolean) => {
+  /** `keepWatch`: the dialog opens without the copy flow (Add held by a copy), which goes on being watched. */
+  const changeOpen = (value: boolean, keepWatch = false) => {
     // Closing cancels an unpublished review, so the next opening starts from the choices.
     if (!value && phase !== "complete" && discardPreview() === "none") setError(null);
     // The folder copy keeps running on the machines; say when it is ready.
     // The app-wide watcher follows it, whichever project is open next.
     const activityKey = copyActivityKey(project.environmentId, project.id);
-    // Closed at its review, a copy stays offered: the sidebar, banner and Needs you show
-    // Review again. The watcher only observes it: nothing is approved and no toast repeats.
+    // Closed at its review, a copy stays offered: the sidebar, banner, Needs you and one toast
+    // show Review again. The watcher only observes it: nothing is approved.
     const atReview = !copyRunning.current && copyAtReview.current && copyAwaitsReview(project);
-    if (!value && open && (copyRunning.current || atReview))
+    // Add held by an unfinished copy never showed that copy: its own watch carries on.
+    const heldOnly = addOnly && heldCopy !== null;
+    if (!value && open && !heldOnly && (copyRunning.current || atReview))
       watchCopy({
         ...(atReview ? { reviewOnly: true } : {}),
         environmentId: project.environmentId,
@@ -455,7 +459,10 @@ export function ProjectMachineHandoff({
         projectName: logicalProjectTitle(project),
       });
     // An open dialog follows the copy itself.
-    if (value) unwatchCopy(activityKey);
+    if (value && !keepWatch) {
+      unwatchCopy(activityKey);
+      closeCopyReviewToast(activityKey);
+    }
     setOpen(value);
     holdPage?.(value);
     onOpenChange?.(value);
@@ -466,6 +473,10 @@ export function ProjectMachineHandoff({
   useEffect(
     () =>
       registerCopyOpener(copyActivityKey(project.environmentId, project.id), () => {
+        // Details and Review open the running copy itself, however the dialog was last
+        // opened: Add's fresh setup would hide it (1332 AC-04, AC-09).
+        setAddOnly(false);
+        setHeldCopy(null);
         latestChangeOpen.current(true);
       }),
     [project.environmentId, project.id],
@@ -1009,8 +1020,9 @@ export function ProjectMachineHandoff({
     const unfinished = adding
       ? readPendingCopy(folderCopyStorageKey(project.environmentId, project.id))
       : null;
-    setHeldCopy(unfinished && unfinished.doneSeen !== true ? unfinished : null);
-    changeOpen(true);
+    const held = unfinished && unfinished.doneSeen !== true ? unfinished : null;
+    setHeldCopy(held);
+    changeOpen(true, held !== null);
     setMoveAsked(false);
     setSyncKey(syncCandidate ? syncTarget! : null);
     if (syncCandidate) setCopyMachine(null);
@@ -1114,7 +1126,7 @@ export function ProjectMachineHandoff({
       ) : null}
       <MachineHandoffDialog
         open={open}
-        onOpenChange={changeOpen}
+        onOpenChange={(value: boolean) => changeOpen(value)}
         machinesLoading={machinesLoading}
         machinesExtra={
           open ? <HandoffAccountMachines sourceEnvironmentId={project.environmentId} /> : null

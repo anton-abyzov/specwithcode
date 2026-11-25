@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { currentCopyActivities, resetCopyActivityForTests } from "../../studio/folderCopyActivity";
 import { resetSealedRoutes } from "../../studio/copySecretsRoute";
 import { HandoffFolderCopyWatcher } from "./HandoffFolderCopyWatcher";
+import { closeCopyReviewToast } from "./folderCopyToasts";
 
 const state = vi.hoisted(() => ({
   handlers: {} as Record<string, (input: unknown) => unknown>,
@@ -1162,10 +1163,11 @@ it("never announces again a copy that finished before a reload", async () => {
   }
 });
 
-it("only shows a copy closed at its review as waiting: no approval, no toast", async () => {
+it("offers a copy closed at its review once, with Review, and never approves it", async () => {
   vi.useFakeTimers();
   try {
     resetCopyActivityForTests();
+    closeCopyReviewToast("m4:source");
     // A one-click copy that replaces nothing would be approved by a running watch.
     pointer({ auto: true });
     const calls: string[] = [];
@@ -1189,10 +1191,31 @@ it("only shows a copy closed at its review as waiting: no approval, no toast", a
     );
     await act(async () => vi.advanceTimersByTimeAsync(6000));
     expect(calls).toEqual([]);
-    expect(state.toasts).toEqual([]);
+    // The toast offers Review as the sidebar, banner and Needs you do (1332 AC-09).
+    expect(state.toasts).toHaveLength(1);
+    expect(state.toasts[0]).toMatchObject({
+      title: "Copy Project to M3 is waiting for your review. Nothing is copied until you approve it.",
+      actionProps: { children: "Review" },
+    });
     expect(done).toBe(1);
-    // The sidebar, banner and Needs you read this and offer Review.
     expect(currentCopyActivities().get("m4:source")).toMatchObject({ waiting: true });
+    // Closing at the review again while that toast is up adds no second one.
+    await act(async () => root.render(<></>));
+    await act(async () =>
+      root.render(
+        <HandoffFolderCopyWatcher
+          environmentId={"m4" as never}
+          projectId="source"
+          projectName="Project"
+          machineLabel={() => "M3"}
+          reviewOnly
+        />,
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+    expect(state.toasts).toHaveLength(1);
+    // Opening the dialog again closes it; the next close at review offers it again.
+    closeCopyReviewToast("m4:source");
   } finally {
     vi.useRealTimers();
   }
@@ -1413,6 +1436,30 @@ it("puts the next step on the Open button when the dialog can open", async () =>
         actionProps: expect.objectContaining({ children: "Open" }),
       }),
     ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("follows the source reading files while the destination compares (1332 AC-03)", async () => {
+  vi.useFakeTimers();
+  try {
+    resetCopyActivityForTests();
+    pointer();
+    state.handlers.copyStatus = () => copyStatus("scanning");
+    state.handlers.copySourceStatus = () => ({
+      state: "building",
+      summary,
+      error: null,
+      progress: { step: "hashing", files: 469, bytes: 21_100_000, totalFiles: 121_868, totalBytes: 7_500_000_000 },
+    });
+    await renderWatcherFrom("M4");
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(currentCopyActivities().get("m4:source")?.progress).toMatchObject({
+      phase: "measure",
+      step: "Reading files on M4",
+      files: { done: 469, total: 121_868 },
+    });
   } finally {
     vi.useRealTimers();
   }
