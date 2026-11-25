@@ -138,6 +138,47 @@ describe("consumeCloudReplayGuards", () => {
     }),
   );
 
+  it.effect("refuses a proof an earlier build already marked under its plain name", () =>
+    Effect.gen(function* () {
+      const created: Array<string> = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: {
+          ...makeSecretStore((name) => Effect.sync(() => void created.push(name))),
+          get: (name) =>
+            Effect.succeed(
+              name === "cloud-health-jti-used-before-upgrade"
+                ? Option.some(new Uint8Array())
+                : Option.none(),
+            ),
+        },
+        names: ["cloud-health-jti-0123", "cloud-health-nonce-4567"],
+        legacyNames: ["cloud-health-jti-used-before-upgrade", undefined],
+        value: new Uint8Array(),
+      });
+
+      expect(consumed).toBe(false);
+      expect(created).toEqual([]);
+    }),
+  );
+
+  it.effect("accepts a new proof when no earlier marker exists", () =>
+    Effect.gen(function* () {
+      const created: Array<string> = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: {
+          ...makeSecretStore((name) => Effect.sync(() => void created.push(name))),
+          get: () => Effect.succeed(Option.none()),
+        },
+        names: ["cloud-health-jti-0123", "cloud-health-nonce-4567"],
+        legacyNames: ["cloud-health-jti-fresh", "cloud-health-nonce-fresh"],
+        value: new Uint8Array(),
+      });
+
+      expect(consumed).toBe(true);
+      expect(created.toSorted()).toEqual(["cloud-health-jti-0123", "cloud-health-nonce-4567"]);
+    }),
+  );
+
   it.effect("preserves replay-store availability failures", () =>
     Effect.gen(function* () {
       const failure = storeFailure("PermissionDenied");
