@@ -8,9 +8,14 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { isInside, resolveCallerWorkspace, workspaceHasSpecweave } from "./workspace.ts";
 
 const made: Array<string> = [];
+/** A `.specweave/` the CLI can open: `--workspace` reads its config.json first. */
+const initSpecweave = (root: string) => {
+  NodeFS.mkdirSync(NodePath.join(root, ".specweave"), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(root, ".specweave", "config.json"), "{}\n");
+};
 const folder = (withSpecweave = true) => {
   const path = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "sw-ws-")));
-  if (withSpecweave) NodeFS.mkdirSync(NodePath.join(path, ".specweave"));
+  if (withSpecweave) initSpecweave(path);
   made.push(path);
   return path;
 };
@@ -74,6 +79,7 @@ describe("resolveCallerWorkspace", () => {
     // A link that stays inside the worktree is fine.
     const inside = folder(false);
     NodeFS.mkdirSync(NodePath.join(inside, "real-specweave"));
+    NodeFS.writeFileSync(NodePath.join(inside, "real-specweave", "config.json"), "{}\n");
     NodeFS.symlinkSync(
       NodePath.join(inside, "real-specweave"),
       NodePath.join(inside, ".specweave"),
@@ -83,7 +89,7 @@ describe("resolveCallerWorkspace", () => {
 
   it("accepts a nested folder that holds .specweave/", async () => {
     const worktree = folder(false);
-    NodeFS.mkdirSync(NodePath.join(worktree, "repo", ".specweave"), { recursive: true });
+    initSpecweave(NodePath.join(worktree, "repo"));
     expect(await resolveCallerWorkspace({ worktreePath: worktree, folder: "repo" })).toMatchObject({
       ok: true,
       workspace: worktree,
@@ -99,6 +105,41 @@ describe("resolveCallerWorkspace", () => {
       reason: "no-specweave",
     });
   });
+
+  it("refuses a .specweave/ without config.json, which the CLI cannot open", async () => {
+    const worktree = folder(false);
+    NodeFS.mkdirSync(NodePath.join(worktree, ".specweave"));
+    expect(await resolveCallerWorkspace({ worktreePath: worktree })).toMatchObject({
+      ok: false,
+      reason: "no-specweave",
+    });
+    expect(await workspaceHasSpecweave({ worktreePath: worktree })).toBe(false);
+  });
+
+  it("refuses a config.json link that leads outside the worktree", async () => {
+    const worktree = folder(false);
+    const elsewhere = folder();
+    NodeFS.mkdirSync(NodePath.join(worktree, ".specweave"));
+    NodeFS.symlinkSync(
+      NodePath.join(elsewhere, ".specweave", "config.json"),
+      NodePath.join(worktree, ".specweave", "config.json"),
+    );
+    expect(await resolveCallerWorkspace({ worktreePath: worktree })).toMatchObject({
+      ok: false,
+      reason: "no-specweave",
+    });
+  });
+
+  it("accepts a child folder whose name starts with ..", async () => {
+    const worktree = folder();
+    initSpecweave(NodePath.join(worktree, "..cache"));
+    expect(
+      await resolveCallerWorkspace({ worktreePath: worktree, folder: "..cache" }),
+    ).toMatchObject({
+      ok: true,
+      specweaveRoot: NodePath.join(worktree, "..cache"),
+    });
+  });
 });
 
 describe("isInside", () => {
@@ -107,5 +148,7 @@ describe("isInside", () => {
     expect(isInside("/a/b", "/a/b/c")).toBe(true);
     expect(isInside("/a/b", "/a/bc")).toBe(false);
     expect(isInside("/a/b", "/a")).toBe(false);
+    expect(isInside("/a/b", "/a/b/..c")).toBe(true);
+    expect(isInside("/a/b", "/a/c")).toBe(false);
   });
 });
