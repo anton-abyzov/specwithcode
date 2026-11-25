@@ -279,3 +279,71 @@ describe("mergeProviderInstanceEnvironment", () => {
     });
   });
 });
+
+describe("AppImage runtime environment", () => {
+  const appImageBase = () => ({
+    APPIMAGE: "/home/a/SpecWithCode.AppImage",
+    APPDIR: "/tmp/.mount_Spec1/",
+    ARGV0: "SpecWithCode",
+    OWD: "/home/a",
+    PATH: "/tmp/.mount_Spec1/usr/bin:/usr/local/bin:/usr/bin",
+    LD_LIBRARY_PATH: "/tmp/.mount_Spec1/usr/lib:/usr/lib",
+    XDG_DATA_DIRS: "/tmp/.mount_Spec1/usr/share",
+    HOME: "/home/a",
+  });
+
+  it("agent sessions get no AppImage variables or mount entries", () => {
+    for (const environment of [undefined, [], [{ name: "EXTRA", value: "1", sensitive: false }]]) {
+      const merged = mergeProviderInstanceEnvironment(environment, appImageBase(), "linux");
+      expect(merged.APPIMAGE).toBeUndefined();
+      expect(merged.APPDIR).toBeUndefined();
+      expect(merged.ARGV0).toBeUndefined();
+      expect(merged.OWD).toBeUndefined();
+      expect(merged.PATH).toBe("/usr/local/bin:/usr/bin");
+      expect(merged.LD_LIBRARY_PATH).toBe("/usr/lib");
+      expect(Object.hasOwn(merged, "XDG_DATA_DIRS")).toBe(false);
+      expect(merged.HOME).toBe("/home/a");
+    }
+  });
+
+  it("drops mount entries ld.so reads after a semicolon", () => {
+    const merged = mergeProviderInstanceEnvironment(
+      undefined,
+      { ...appImageBase(), LD_LIBRARY_PATH: "/usr/lib;/tmp/.mount_Spec1/usr/lib" },
+      "linux",
+    );
+    expect(merged.LD_LIBRARY_PATH).toBe("/usr/lib");
+  });
+
+  it("keeps an instance's own values over the scrub", () => {
+    const merged = mergeProviderInstanceEnvironment(
+      [
+        { name: "LD_LIBRARY_PATH", value: "/tmp/.mount_Spec1/usr/lib", sensitive: false },
+        { name: "PATH", value: "/opt/agent/bin", sensitive: false },
+      ],
+      appImageBase(),
+      "linux",
+    );
+    expect(merged.LD_LIBRARY_PATH).toBe("/tmp/.mount_Spec1/usr/lib");
+    expect(merged.PATH).toBe("/opt/agent/bin");
+  });
+
+  it("follows the server's PATH without its mount entries", () => {
+    const base: NodeJS.ProcessEnv = appImageBase();
+    const merged = mergeProviderInstanceEnvironment(
+      [{ name: "EXTRA", value: "1", sensitive: false }],
+      base,
+      "linux",
+    );
+    base.PATH = "/tmp/.mount_Spec1/usr/bin:/home/a/.local/bin:/usr/bin";
+    expect(merged.PATH).toBe("/home/a/.local/bin:/usr/bin");
+    const subscription = mergeNativeSubscriptionEnvironment(undefined, base, "codex", "linux");
+    expect(subscription.PATH).toBe("/home/a/.local/bin:/usr/bin");
+    expect(subscription.APPIMAGE).toBeUndefined();
+  });
+
+  it("leaves an environment without AppImage untouched", () => {
+    const base = { PATH: "/tmp/.mount_x/usr/bin:/usr/bin" };
+    expect(mergeProviderInstanceEnvironment(undefined, base, "linux")).toBe(base);
+  });
+});

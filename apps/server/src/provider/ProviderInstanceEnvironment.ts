@@ -109,7 +109,13 @@ function followBasePath(
   Object.defineProperty(next, key, {
     enumerable: true,
     configurable: true,
-    get: () => baseEnv[Object.keys(baseEnv).find(isPath) ?? key],
+    get: () => {
+      const value = baseEnv[Object.keys(baseEnv).find(isPath) ?? key];
+      const mount = appImageMountDir(baseEnv);
+      return mount === undefined || value === undefined
+        ? value
+        : withoutMountEntries(value, /:/, mount);
+    },
     set: (value: string | undefined) => {
       Object.defineProperty(next, key, {
         enumerable: true,
@@ -121,15 +127,70 @@ function followBasePath(
   });
 }
 
+/**
+ * The Linux AppImage build runs the server from a temporary mount and sets
+ * APPIMAGE, APPDIR and friends, with mount folders first on PATH and the
+ * library and data search paths. An agent that inherits them runs the user's
+ * tools against the app's bundled libraries. Agent environments drop the
+ * launcher variables and every mount entry; the user's own entries stay.
+ */
+const APPIMAGE_LAUNCHER_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
+// The dynamic loader also splits LD_LIBRARY_PATH on semicolons.
+const APPIMAGE_SEARCH_PATH_SEPARATORS: Record<string, RegExp> = {
+  PATH: /:/,
+  LD_LIBRARY_PATH: /[:;]/,
+  XDG_DATA_DIRS: /:/,
+  GSETTINGS_SCHEMA_DIR: /:/,
+};
+
+const isAppImageEnvironment = (env: NodeJS.ProcessEnv): boolean =>
+  env.APPIMAGE !== undefined || env.APPDIR !== undefined;
+
+function appImageMountDir(env: NodeJS.ProcessEnv): string | undefined {
+  const mount = env.APPDIR?.replace(/\/+$/, "");
+  return mount ? mount : undefined;
+}
+
+/** `value` without entries inside `mount`; undefined when nothing else was in it. */
+function withoutMountEntries(value: string, separator: RegExp, mount: string): string | undefined {
+  const entries = value.split(separator);
+  const kept = entries.filter((entry) => entry !== mount && !entry.startsWith(`${mount}/`));
+  if (kept.length === entries.length) return value;
+  if (kept.length === 0) return undefined;
+  // An empty entry means the current folder; alone it must stay ":", since "" means none.
+  return kept.length === 1 && kept[0] === "" ? ":" : kept.join(":");
+}
+
+/** A copy of `env` without the AppImage launcher variables and mount entries. */
+export function withoutAppImageRuntimeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!isAppImageEnvironment(env)) return env;
+  const next: NodeJS.ProcessEnv = { ...env };
+  for (const key of APPIMAGE_LAUNCHER_KEYS) delete next[key];
+  const mount = appImageMountDir(env);
+  if (mount === undefined) return next;
+  for (const [key, separator] of Object.entries(APPIMAGE_SEARCH_PATH_SEPARATORS)) {
+    const value = next[key];
+    if (value === undefined) continue;
+    const kept = withoutMountEntries(value, separator, mount);
+    if (kept === undefined) delete next[key];
+    else next[key] = kept;
+  }
+  return next;
+}
+
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  if (!environment || environment.length === 0) return baseEnv;
-  const next: NodeJS.ProcessEnv = { ...baseEnv };
+  const appImage = isAppImageEnvironment(baseEnv);
+  if ((!environment || environment.length === 0) && !appImage) return baseEnv;
+  const next: NodeJS.ProcessEnv = appImage
+    ? withoutAppImageRuntimeEnvironment(baseEnv)
+    : { ...baseEnv };
   const isPath = pathNameTest(platform);
-  if (!environment.some((variable) => isPath(variable.name))) followBasePath(next, baseEnv, isPath);
+  if (!environment?.some((variable) => isPath(variable.name)))
+    followBasePath(next, baseEnv, isPath);
   for (const variable of environment ?? []) {
     if (platform === "win32" && variable.name.toUpperCase() === "PATH") {
       setWindowsPath(next, variable.value);
