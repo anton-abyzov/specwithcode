@@ -37,23 +37,29 @@ const contentKey = (
   privateKey: NodeCrypto.KeyObject,
   publicKey: NodeCrypto.KeyObject,
   salt: Uint8Array,
+  info: Uint8Array = INFO,
 ) =>
   Buffer.from(
     NodeCrypto.hkdfSync(
       "sha256",
       NodeCrypto.diffieHellman({ privateKey, publicKey }),
       salt,
-      INFO,
+      info,
       32,
     ),
   );
 
-export const seal = (plaintext: Uint8Array, recipientPublicKey: string): string => {
+/** `info` separates uses of the same format (the sign-in view passes its own, 1488). */
+export const seal = (
+  plaintext: Uint8Array,
+  recipientPublicKey: string,
+  info?: Uint8Array,
+): string => {
   const ephemeral = NodeCrypto.generateKeyPairSync("x25519");
   const iv = NodeCrypto.randomBytes(12);
   const cipher = NodeCrypto.createCipheriv(
     "aes-256-gcm",
-    contentKey(ephemeral.privateKey, importPublic(recipientPublicKey), iv),
+    contentKey(ephemeral.privateKey, importPublic(recipientPublicKey), iv, info),
     iv,
   );
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
@@ -67,12 +73,12 @@ export const seal = (plaintext: Uint8Array, recipientPublicKey: string): string 
     .join(".");
 };
 
-export const unseal = (sealed: string, key: ReceivingKey): Buffer => {
+export const unseal = (sealed: string, key: ReceivingKey, info?: Uint8Array): Buffer => {
   const [senderKey = "", ivText = "", tag = "", data = ""] = sealed.split(".");
   const iv = Buffer.from(ivText, "base64");
   const decipher = NodeCrypto.createDecipheriv(
     "aes-256-gcm",
-    contentKey(key.privateKey, importPublic(senderKey), iv),
+    contentKey(key.privateKey, importPublic(senderKey), iv, info),
     iv,
   );
   decipher.setAuthTag(Buffer.from(tag, "base64"));

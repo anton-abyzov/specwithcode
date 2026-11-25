@@ -79,7 +79,34 @@ interface PendingCall {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
+  /** The tab the call acts in, when it names one. */
+  readonly tabId: number | undefined;
+  /** The sign-in view that made the call; any other caller loses a held tab's answer. */
+  readonly person: string | undefined;
 }
+
+/** The tab a chrome.* call acts in: `{tabId}` for the debugger, a bare id for tabs.* calls. */
+export function callTabId(method: string, params: ReadonlyArray<unknown>): number | undefined {
+  const first = params[0];
+  if (method.startsWith("chrome.debugger.")) {
+    const tabId = (first as { tabId?: unknown } | undefined)?.tabId;
+    return typeof tabId === "number" ? tabId : undefined;
+  }
+  if (
+    method === "chrome.tabs.get" ||
+    method === "chrome.tabs.remove" ||
+    method === "chrome.tabs.update"
+  )
+    return typeof first === "number" ? first : undefined;
+  return undefined;
+}
+
+/** What a thread hears about a held tab: nothing that says a person is signing in there. */
+export const unavailableTab = (tabId: number) =>
+  new BrowserRelayError(
+    "tab_in_use",
+    `Tab ${tabId} is not available. Open your own tab with chrome_open.`,
+  );
 
 export interface RelayDialog {
   readonly type: string;
@@ -122,9 +149,12 @@ export interface RelayProfile {
   readonly tabOwners: Map<number, TabOwner>;
   /**
    * Tabs held for a person signing in (1488), by sign-in view id. No thread
-   * sees, claims or stops them, and nothing from them reaches the audit.
+   * sees, claims or stops them, and nothing from them reaches the audit. The
+   * map belongs to the Chrome profile install, so a reconnect keeps the holds.
    */
   readonly personTabs: Map<number, string>;
+  /** Names the install across reconnects: its instance id, else extension id and label. */
+  readonly personKey: string;
 }
 
 /** A CDP event or tab change in a tab held for a person, for its sign-in view only. */
@@ -137,7 +167,9 @@ export type HeldTabEvent =
     }
   | { readonly kind: "popup"; readonly tabId: number; readonly openerTabId: number }
   | { readonly kind: "removed"; readonly tabId: number }
-  | { readonly kind: "detached"; readonly tabId: number };
+  | { readonly kind: "detached"; readonly tabId: number }
+  /** The profile's extension connected again; its debugger sessions are gone. */
+  | { readonly kind: "reconnected"; readonly tabId: number };
 
 export type HeldTabListener = (profile: RelayProfile, viewId: string, event: HeldTabEvent) => void;
 
@@ -227,6 +259,10 @@ export class BrowserRelayHub {
   private lastGone: { label: string; at: number; reason: string } | null = null;
   private readonly waiters = new Set<() => void>();
   private readonly heldTabListeners = new Set<HeldTabListener>();
+  /** Person holds per Chrome profile install, kept across reconnects. */
+  private readonly personHolds = new Map<string, Map<number, string>>();
+  /** Sign-in tabs being created per install; new claims wait until each is held. */
+  private readonly personCreates = new Map<string, number>();
 
   constructor(options: BrowserRelayHubOptions) {
     this.options = options;
@@ -292,6 +328,12 @@ export class BrowserRelayHub {
             : other.profile.extensionId === extensionId && other.profile.label === hello.label;
         if (sameProfile) this.reject(other, CLOSE_REPLACED, "replaced by a newer connection");
       }
+      const personKey = hello.instanceId || `${extensionId}\u0000${hello.label}`;
+      let personTabs = this.personHolds.get(personKey);
+      if (!personTabs) {
+        personTabs = new Map();
+        this.personHolds.set(personKey, personTabs);
+      }
       connection.profile = {
         id: `p${++this.profileSeq}`,
         label: this.uniqueLabel(hello.label),
@@ -305,8 +347,12 @@ export class BrowserRelayHub {
         lastTabByThread: new Map(),
         dialogs: new Map(),
         tabOwners: new Map(),
-        personTabs: new Map(),
+        personTabs,
+        personKey,
       };
+      const reconnected = connection.profile;
+      for (const [tabId, viewId] of personTabs)
+        this.emitHeld(reconnected, viewId, { kind: "reconnected", tabId });
       this.send(connection, {
         method: "welcome",
         // heartbeat: this service answers ping with pong, so the extension can spot a dead socket.
@@ -340,6 +386,14 @@ export class BrowserRelayHub {
       if (!pending) return;
       connection.pending.delete(message.id);
       clearTimeout(pending.timer);
+      // A call that started before its tab was held for a person gets nothing back from it.
+      if (pending.tabId !== undefined && connection.profile) {
+        const holder = connection.profile.personTabs.get(pending.tabId);
+        if (holder !== undefined && holder !== pending.person) {
+          pending.reject(unavailableTab(pending.tabId));
+          return;
+        }
+      }
       if (message.error !== undefined && message.error !== null)
         pending.reject(new BrowserRelayError("page_error", chromeErrorText(message.error)));
       else pending.resolve(message.result);
@@ -520,7 +574,9 @@ export class BrowserRelayHub {
         extensionId: profile.extensionId,
         browser: profile.browser,
         connectedAt: iso(profile.connectedAt),
-        attachedTabs: profile.attachedTabs.size,
+        // A person's sign-in tab is not the agents' and is not counted.
+        attachedTabs: [...profile.attachedTabs].filter((tabId) => !profile.personTabs.has(tabId))
+          .length,
         // Older apps show one thread; give them the most recent.
         lease: latest
           ? { threadId: latest.threadId, since: latest.since, lastActionAt: latest.lastActionAt }
@@ -540,6 +596,8 @@ export class BrowserRelayHub {
     method: string,
     params: ReadonlyArray<unknown>,
     timeoutMs = DEFAULT_CALL_TIMEOUT_MS,
+    /** The sign-in view making the call; only it reaches the tabs it holds (1488). */
+    person?: string,
   ): Promise<unknown> {
     let connection: Connection;
     try {
@@ -547,13 +605,18 @@ export class BrowserRelayHub {
     } catch (error) {
       return Promise.reject(error);
     }
+    const tabId = callTabId(method, params);
+    if (tabId !== undefined) {
+      const holder = connection.profile?.personTabs.get(tabId);
+      if (holder !== undefined && holder !== person) return Promise.reject(unavailableTab(tabId));
+    }
     const id = connection.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         connection.pending.delete(id);
         reject(new BrowserRelayError("timeout", `Chrome did not answer ${method} in time.`));
       }, timeoutMs);
-      connection.pending.set(id, { resolve, reject, timer });
+      connection.pending.set(id, { resolve, reject, timer, tabId, person });
       try {
         this.send(connection, { id, method, params });
       } catch {
@@ -626,6 +689,25 @@ export class BrowserRelayHub {
     profile.personTabs.delete(tabId);
   }
 
+  /** A sign-in tab is about to be created: no new claims until `end` is called. */
+  beginPersonCreate(profile: RelayProfile): () => void {
+    const key = profile.personKey;
+    this.personCreates.set(key, (this.personCreates.get(key) ?? 0) + 1);
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      const left = (this.personCreates.get(key) ?? 1) - 1;
+      if (left <= 0) this.personCreates.delete(key);
+      else this.personCreates.set(key, left);
+    };
+  }
+
+  /** The connected profile of an install, after any reconnect. */
+  profileByPersonKey(personKey: string): RelayProfile | undefined {
+    return this.profiles().find((profile) => profile.personKey === personKey);
+  }
+
   /** Whether a tab is held for a person signing in. */
   heldForPerson(profile: RelayProfile, tabId: number): boolean {
     return profile.personTabs.has(tabId);
@@ -642,13 +724,15 @@ export class BrowserRelayHub {
    * acted in that tab in the last two minutes; other tabs stay free.
    */
   claimTab(profile: RelayProfile, threadId: string, tabId: number) {
-    if (profile.personTabs.has(tabId))
-      throw new BrowserRelayError(
-        "tab_in_use",
-        `Tab ${tabId} in the Chrome profile "${profile.label}" is held for the owner, who is signing in there. Agents cannot see or use it. Wait for the sign-in to finish, then open your own tab with chrome_open.`,
-      );
+    if (profile.personTabs.has(tabId)) throw unavailableTab(tabId);
     const now = this.now();
     const owner = profile.tabOwners.get(tabId);
+    // While a sign-in tab is being created its id is not known yet: no thread takes a new tab.
+    if ((this.personCreates.get(profile.personKey) ?? 0) > 0 && owner?.threadId !== threadId)
+      throw new BrowserRelayError(
+        "tab_in_use",
+        `Tab ${tabId} is not available yet. Try again in a moment, or open your own tab with chrome_open.`,
+      );
     if (owner && owner.threadId !== threadId && this.ownerLive(owner))
       throw new BrowserRelayError(
         "tab_in_use",

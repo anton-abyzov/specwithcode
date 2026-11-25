@@ -14,6 +14,7 @@ import {
   type BrowserRelayHub,
   OTHER_BROWSERS_LAST,
   type RelayProfile,
+  unavailableTab,
 } from "./relayHub.ts";
 import {
   appendChunkScript,
@@ -53,6 +54,7 @@ const UPLOAD_TYPES: Readonly<Record<string, string>> = {
 
 interface ChromeTab {
   readonly id?: number;
+  readonly openerTabId?: number;
   readonly title?: string;
   readonly url?: string;
   readonly pendingUrl?: string;
@@ -205,15 +207,23 @@ export class ChromeTools {
         profile.lastTabByThread.delete(threadId);
       throw error;
     }
+    let found: ChromeTab | undefined;
     try {
-      await this.hub.call(profile.id, "chrome.tabs.get", [target], 5_000);
-    } catch {
+      found = (await this.hub.call(profile.id, "chrome.tabs.get", [target], 5_000)) as ChromeTab;
+    } catch (error) {
+      if (error instanceof BrowserRelayError && error.code === "tab_in_use") throw error;
       profile.lastTabByThread.delete(threadId);
       this.hub.releaseTab(profile, target);
       throw new BrowserRelayError(
         "tab_not_found",
         `Tab ${target} is closed. Call chrome_tabs for current tabs.`,
       );
+    }
+    const holder =
+      found?.openerTabId === undefined ? undefined : profile.personTabs.get(found.openerTabId);
+    if (holder !== undefined) {
+      this.hub.holdForPerson(profile, target, holder);
+      throw unavailableTab(target);
     }
     await this.attach(profile, target);
     profile.agentTabs.add(target);
@@ -274,6 +284,13 @@ export class ChromeTools {
   async tabs(threadId: string, profileName: string | undefined) {
     const profile = this.hub.resolveProfile(profileName);
     const tabs = (await this.hub.call(profile.id, "chrome.tabs.query", [{}])) as ChromeTab[];
+    // A tab a held tab opened is held too, even when its creation was never reported (1488).
+    for (const tab of Array.isArray(tabs) ? tabs : []) {
+      const holder =
+        tab.openerTabId === undefined ? undefined : profile.personTabs.get(tab.openerTabId);
+      if (tab.id !== undefined && holder !== undefined)
+        this.hub.holdForPerson(profile, tab.id, holder);
+    }
     return {
       profile: profile.label,
       tabs: (Array.isArray(tabs) ? tabs : []).flatMap((tab) =>
