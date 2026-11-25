@@ -163,3 +163,19 @@ it("keeps another owner's exclusion of the same file when one owner takes its ow
   recordExclusions(key, { included: true, out: [".env.local"] }, none, "wc|machine-y");
   expect(settledSecrets(key, none).out).toEqual([]);
 });
+
+it("keeps applying exclusions saved before owners were recorded", () => {
+  vi.stubGlobal("localStorage", memoryStorage());
+  const key = folderCopyStorageKey("env-a", "project-1");
+  const none = { included: true, out: [] };
+  const prefix = "specwithcode:folder-copy-exclusion:env-a:project-1:";
+  localStorage.setItem(`${prefix}file:.env.local`, "1");
+  localStorage.setItem(`${prefix}off`, "wa|machine-x");
+  expect(settledSecrets(key, none)).toEqual({ included: false, out: [".env.local"] });
+  // No owner's Sync again with secrets takes them back.
+  clearExclusions(key, (by) => by === "wa|machine-x");
+  expect(settledSecrets(key, none)).toEqual({ included: false, out: [".env.local"] });
+  // A re-tick and turning secrets on still do.
+  recordExclusions(key, { included: false, out: [".env.local"] }, none, "wc|machine-y");
+  expect(settledSecrets(key, none)).toEqual(none);
+});
