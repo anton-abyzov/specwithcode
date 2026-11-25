@@ -204,7 +204,8 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
                 yield* Effect.logWarning(
                   "Refused a screen sharing host that did not prove it is this machine's app.",
                 );
-                if (host !== null) return relay.dropHost("proof_stale");
+                // Only the socket that sent it is dropped, never a newer app that took over.
+                if (host !== null) return host.drop("proof_stale");
                 return yield* refuse("not_this_machines_app");
               }
               if (host !== null) return host.reprove(proof);

@@ -463,5 +463,9 @@ describe("ScreenShareRelay", () => {
     // The replaced socket can no longer change what is checked.
     hostIn.reprove("proof-4");
     expect(relay.hostCredential()).toBe("proof-3");
+    // Nor can its failed proof drop the app that replaced it.
+    hostIn.drop("proof_stale");
+    expect(relay.status().host).toBe(true);
+    expect(next.closes).toEqual([]);
   });
 });

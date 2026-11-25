@@ -180,6 +180,8 @@ export class ScreenShareRelay {
   ): {
     /** A newer proof from the same app, already checked by the routes. */
     readonly reprove: (credential: string) => void;
+    /** Drops this app, if it is still the one attached: its newer proof did not hold. */
+    readonly drop: (reason: string) => void;
     readonly text: (message: string) => void;
     readonly binary: (message: Uint8Array) => void;
     readonly closed: () => void;
@@ -197,6 +199,10 @@ export class ScreenShareRelay {
     return {
       reprove: (next) => {
         if (current()) host.credential = next;
+      },
+      drop: (reason) => {
+        if (current()) this.dropHost(reason);
+        else peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason);
       },
       text: (message) => {
         if (!current()) return;

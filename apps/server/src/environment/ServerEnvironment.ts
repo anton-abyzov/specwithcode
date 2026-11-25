@@ -328,7 +328,8 @@ export const make = Effect.gen(function* () {
       usageMachineReport: true,
       usageDeliveredReport: true,
       deviceApproval: true,
-      screenShare: true,
+      // Only a Mac can show its screen so far; other systems do not offer "View screen".
+      screenShare: hostPlatform === "darwin",
       pullRequestChecks: true,
       inlineMessageContext: true,
       requiredWorktreeBootstrap: true,

@@ -91,7 +91,8 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
   system's dialog appears. The dialog names the device and the choice; approving it with Touch ID
   is the decision.
 - **An older copy of the app's file put back by a local program.** A grant you removed could
-  return that way. The file cannot be edited or forged, only replaced with an earlier one.
+  return that way. Sealing stops the file being edited by something that cannot run code as the
+  app; it does not stop an earlier copy being put back.
 - **What happens on the viewing device.** A viewer open in a browser tab cannot stop something
   else on that device from taking a screenshot of it.
 
