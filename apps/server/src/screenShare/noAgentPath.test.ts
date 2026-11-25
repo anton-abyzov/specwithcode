@@ -8,8 +8,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 /**
  * Screen sharing has no path an agent can take (1490 AC-16): no RPC method, so
- * nothing a scope could unlock, and no MCP tool. These fail the day someone
- * adds one without deciding to.
+ * nothing a scope could unlock, no MCP tool, and no HTTP route but the two
+ * guarded sockets. These fail the day someone adds one without deciding to.
  */
 const SCREEN_SHARE = /screen[-_ ]?shar/i;
 const serverSource = NodePath.resolve(import.meta.dirname, "..");
@@ -38,6 +38,30 @@ describe("screen sharing has no agent path", () => {
     expect(files.filter((file) => SCREEN_SHARE.test(NodeFs.readFileSync(file, "utf8")))).toEqual(
       [],
     );
+  });
+
+  it("the server's HTTP routes reach it only through the two guarded sockets", () => {
+    const paths = /SCREEN_SHARE_(?:ROUTE_PREFIX|HOST_PATH|VIEW_PATH)|\/api\/screen-share/;
+    const routed = filesUnder(serverSource)
+      .filter((file) => !file.endsWith(".test.ts"))
+      .filter((file) => paths.test(NodeFs.readFileSync(file, "utf8")))
+      .map((file) => NodePath.relative(serverSource, file));
+    expect(routed).toEqual([NodePath.join("screenShare", "ScreenShareHttp.ts")]);
+
+    const http = NodeFs.readFileSync(
+      NodePath.join(serverSource, "screenShare", "ScreenShareHttp.ts"),
+      "utf8",
+    );
+    // One registration, two paths, and each path behind its own guard before any upgrade.
+    expect(http.match(/router\.add\(/g)).toHaveLength(1);
+    expect(http).toContain(
+      "if (path !== SCREEN_SHARE_HOST_PATH && path !== SCREEN_SHARE_VIEW_PATH) return notFound;",
+    );
+    const guard = http.indexOf("asHost ? !isOwnApp(session, request) : device === null");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(http.indexOf("request.upgrade"));
+    expect(http).toContain("personDeviceOf(session, approvedNameFrom(trust))");
+    expect(http).toContain("ownAppProofKind(");
   });
 
   it("only the two socket routes and the guard touch the relay", () => {

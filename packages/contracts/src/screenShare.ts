@@ -46,6 +46,12 @@ export const SCREEN_SHARE_AUDIT_LIMIT = 500;
 export const SCREEN_SHARE_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 /** The largest single message the server passes. */
 export const SCREEN_SHARE_MAX_MESSAGE_BYTES = 4 * 1024 * 1024 + 64;
+/** The largest hello, challenge or proof the server passes. */
+export const SCREEN_SHARE_MAX_CONTROL_BYTES = 64 * 1024;
+/** Wrong first-use codes a viewer may send before the session ends. */
+export const SCREEN_SHARE_CODE_TRIES = 3;
+/** With no frame for this long while live, the viewer says the display may be asleep. */
+export const SCREEN_SHARE_NO_PICTURE_MS = 10_000;
 
 /** The first byte of a binary message on the viewer socket, and after the session id on the host socket. */
 export const SCREEN_SHARE_WIRE = {
@@ -67,6 +73,8 @@ export const SCREEN_SHARE_RECORD = {
   showDisplay: 17,
   /** Viewer to machine: the viewer is done. */
   end: 18,
+  /** Viewer to machine, first use only: `{ code }`, what a person read off the machine's screen. */
+  confirmCode: 19,
 } as const;
 
 /** Why the machine would not start, or ended, a session. Shown to the viewer in words. */
@@ -89,6 +97,10 @@ export const ScreenShareEndReason = Schema.Literals([
   "banner_lost",
   "app_quit",
   "turned_off",
+  "wrong_code",
+  "grant_removed",
+  "host_refused",
+  "host_replaced",
 ]);
 export type ScreenShareEndReason = typeof ScreenShareEndReason.Type;
 
@@ -99,14 +111,18 @@ export const SCREEN_SHARE_CLOSE_ENDED = 4461;
 export const ScreenShareViewerDevice = Schema.Struct({
   /** RFC 7638 thumbprint of the device's proof key, as the server read it from the session. */
   thumbprint: Schema.String,
+  /** The name on this machine's approved list, not what the device says now. */
   label: Schema.String,
+  /** What the device calls itself in this sign-in, when that differs from the list. */
+  claimedLabel: Schema.optionalKey(Schema.String),
   shortId: Schema.String,
   kind: Schema.Literals(["connect", "phone"]),
 });
 export type ScreenShareViewerDevice = typeof ScreenShareViewerDevice.Type;
 
-/** Server to host. */
+/** Server to host. `attached` answers the host's hello; nothing is passed before it. */
 export const ScreenShareHostInbound = Schema.Union([
+  Schema.Struct({ t: Schema.Literal("attached") }),
   Schema.Struct({
     t: Schema.Literal("open"),
     sid: Schema.String,
@@ -125,8 +141,18 @@ export const ScreenShareHostStatus = Schema.Struct({
 });
 export type ScreenShareHostStatus = typeof ScreenShareHostStatus.Type;
 
-/** Host to server. */
+/** The longest proof the server reads from a host's hello. */
+export const SCREEN_SHARE_MAX_HOST_PROOF_LENGTH = 512;
+/** How long a new host socket has to send its hello. */
+export const SCREEN_SHARE_HOST_HELLO_MS = 5_000;
+
+/**
+ * Host to server. `hello` comes first on every connection and carries the
+ * app's proof that it is this machine's app: the desktop owner proof, or the
+ * current token of the secret a backend was launched with.
+ */
 export const ScreenShareHostOutbound = Schema.Union([
+  Schema.Struct({ t: Schema.Literal("hello"), proof: Schema.String }),
   Schema.Struct({ t: Schema.Literal("status"), status: ScreenShareHostStatus }),
   Schema.Struct({ t: Schema.Literal("close"), sid: Schema.String, reason: ScreenShareEndReason }),
 ]);
@@ -140,7 +166,7 @@ export const ScreenShareViewerOpened = Schema.Struct({
 });
 export type ScreenShareViewerOpened = typeof ScreenShareViewerOpened.Type;
 
-/** `GET /api/screen-share/status`, for an approved device or the machine's own app. */
+/** What the server knows about screen sharing on this machine. No route serves it: a viewer reads the refusal from the close. */
 export const ScreenShareStatus = Schema.Struct({
   /** False when no app is attached to this server (a service with no desktop). */
   host: Schema.Boolean,
@@ -160,6 +186,8 @@ export type ScreenShareDisplay = typeof ScreenShareDisplay.Type;
 /** What the machine tells the viewer inside the sealed session. */
 export const ScreenShareSessionState = Schema.Union([
   Schema.Struct({ phase: Schema.Literal("waiting_for_approval") }),
+  /** First use: a person at the machine allowed it; now the code on its screen is typed here. */
+  Schema.Struct({ phase: Schema.Literal("needs_code"), triesLeft: Schema.Int }),
   Schema.Struct({
     phase: Schema.Literal("live"),
     displays: Schema.Array(ScreenShareDisplay),
@@ -273,9 +301,19 @@ export const ScreenShareAuditEntry = Schema.Struct({
 });
 export type ScreenShareAuditEntry = typeof ScreenShareAuditEntry.Type;
 
+/** How this app's link to its own server stands; `refused` and `replaced` mean another program holds it. */
+export const ScreenShareHostLink = Schema.Literals([
+  "connecting",
+  "attached",
+  "refused",
+  "replaced",
+]);
+export type ScreenShareHostLink = typeof ScreenShareHostLink.Type;
+
 export const ScreenShareLocalState = Schema.Struct({
   supported: Schema.Boolean,
   enabled: Schema.Boolean,
+  link: ScreenShareHostLink,
   /** macOS Screen Recording for the app: without it nothing can be shown. */
   screenRecording: Schema.Boolean,
   /** False when the store could not be read; sharing is then off until it is turned on again. */

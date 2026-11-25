@@ -9,8 +9,8 @@ import {
   makeScreenShareSealer,
   newScreenShareMachineKey,
   SCREEN_SHARE_PROOF_TYP,
+  screenShareCodeMatches,
   ScreenShareHandshakeError,
-  screenShareSafetyCode,
   startScreenShareTarget,
   startScreenShareViewer,
   toBase64Url,
@@ -82,8 +82,8 @@ const reason = async (run: () => unknown) => {
 
 describe("screen share handshake", () => {
   it("gives both sides the same keys and the same code", async () => {
-    const { target, answer, viewerDevice, machineKey } = await handshake();
-    const keys = acceptScreenShareProof({
+    const { target, answer } = await handshake();
+    const { keys, code } = acceptScreenShareProof({
       start: target,
       proof: answer.proof,
       environmentId: ENV,
@@ -93,11 +93,114 @@ describe("screen share handshake", () => {
     expect(toBase64Url(keys.toViewer)).toBe(toBase64Url(answer.keys.toViewer));
     expect(toBase64Url(keys.toTarget)).toBe(toBase64Url(answer.keys.toTarget));
     expect(toBase64Url(keys.toViewer)).not.toBe(toBase64Url(keys.toTarget));
-    expect(answer.safetyCode).toBe(target.safetyCode);
-    expect(answer.safetyCode).toMatch(/^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/);
-    expect(answer.safetyCode).toBe(
-      screenShareSafetyCode(machineKey.publicKey, viewerDevice.thumbprint),
+    expect(code).toBe(answer.code);
+    expect(code).toMatch(/^\d{6}$/);
+  });
+
+  it("gives every session its own code, even between the same two keys", async () => {
+    const mine = await device();
+    const machineKey = newScreenShareMachineKey();
+    const codes = new Set<string>();
+    for (let round = 0; round < 6; round += 1) {
+      const viewer = startScreenShareViewer({
+        mode: "view",
+        deviceJwk: mine.jwk,
+        knowsMachine: false,
+      });
+      const target = startScreenShareTarget({
+        hello: viewer.hello,
+        environmentId: ENV,
+        sessionId: SID,
+        attestedThumbprint: mine.thumbprint,
+        machineKey,
+      });
+      const answer = await answerScreenShareChallenge({
+        start: viewer,
+        challenge: target.challenge,
+        environmentId: ENV,
+        sessionId: SID,
+        pinnedMachineKey: undefined,
+        nowEpochSeconds: NOW,
+        sign: mine.sign,
+      });
+      codes.add(answer.code);
+    }
+    // Six draws from a million: a repeat here means the code is not per session.
+    expect(codes.size).toBeGreaterThanOrEqual(5);
+  });
+
+  it("the code depends on the value the viewer revealed only in its signed proof", async () => {
+    const { target, answer, viewer } = await handshake({ knowsMachine: false });
+    // The hello and the challenge are public on the wire; the reveal is not in either.
+    const onWire = JSON.stringify([viewer.hello, target.challenge]);
+    expect(onWire).not.toContain(toBase64Url(viewer.reveal));
+    const payload = JSON.parse(
+      new TextDecoder().decode(fromBase64Url(answer.proof.jws.split(".")[1]!)),
+    ) as { r: string };
+    expect(payload.r).toBe(toBase64Url(viewer.reveal));
+  });
+
+  it("the machine refuses a proof whose revealed value is not the one the hello committed to", async () => {
+    const viewerDevice = await device();
+    const machineKey = newScreenShareMachineKey();
+    const viewer = startScreenShareViewer({
+      mode: "view",
+      deviceJwk: viewerDevice.jwk,
+      knowsMachine: false,
+    });
+    const target = startScreenShareTarget({
+      hello: viewer.hello,
+      environmentId: ENV,
+      sessionId: SID,
+      attestedThumbprint: viewerDevice.thumbprint,
+      machineKey,
+    });
+    // The same device signs a proof for the same transcript with another value.
+    const answer = await answerScreenShareChallenge({
+      start: { ...viewer, reveal: crypto.getRandomValues(new Uint8Array(32)) },
+      challenge: target.challenge,
+      environmentId: ENV,
+      sessionId: SID,
+      pinnedMachineKey: undefined,
+      nowEpochSeconds: NOW,
+      sign: viewerDevice.sign,
+    });
+    expect(
+      await reason(() =>
+        acceptScreenShareProof({
+          start: target,
+          proof: answer.proof,
+          environmentId: ENV,
+          sessionId: SID,
+          nowEpochSeconds: NOW,
+        }),
+      ),
+    ).toBe("commit_mismatch");
+  });
+
+  it("a hello with no commitment, or a changed one, never yields a session", async () => {
+    expect(
+      await reason(() =>
+        handshake({
+          alterHello: (h) => {
+            const { commit: _commit, ...rest } = h;
+            return rest;
+          },
+        }),
+      ),
+    ).toBe("malformed");
+    const swapped = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+    expect(await reason(() => handshake({ alterHello: (h) => ({ ...h, commit: swapped }) }))).toBe(
+      "machine_signature",
     );
+  });
+
+  it("matches a typed code with spaces and refuses anything else", () => {
+    expect(screenShareCodeMatches("482 913", "482913")).toBe(true);
+    expect(screenShareCodeMatches(" 482913 ", "482913")).toBe(true);
+    expect(screenShareCodeMatches("482914", "482913")).toBe(false);
+    expect(screenShareCodeMatches("48291", "482913")).toBe(false);
+    expect(screenShareCodeMatches("", "482913")).toBe(false);
   });
 
   it("refuses a hello that names another device key than the server attested", async () => {

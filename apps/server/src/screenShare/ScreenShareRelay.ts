@@ -5,9 +5,10 @@
  * reached (`ScreenShareHttp.ts`); whether a session may start is decided by
  * the app, which holds the switch, the grants and the keys.
  *
- * The relay keeps three promises of its own: a viewer's bytes only reach the
- * host and the other way round, a slow reader costs a bounded amount of
- * memory, and when either end goes the other hears of it at once.
+ * The relay keeps four promises of its own: a viewer's bytes only reach the
+ * host and the other way round; a handshake is one hello, one challenge and
+ * one proof, each small, in that order; a slow reader costs a bounded amount
+ * of memory; and when either end goes the other hears of it at once.
  */
 import {
   decodeScreenShareHostFrame,
@@ -15,6 +16,7 @@ import {
   SCREEN_SHARE_CLOSE_ENDED,
   SCREEN_SHARE_CLOSE_REFUSED,
   SCREEN_SHARE_MAX_BUFFER_BYTES,
+  SCREEN_SHARE_MAX_CONTROL_BYTES,
   SCREEN_SHARE_MAX_MESSAGE_BYTES,
   SCREEN_SHARE_WIRE,
   type ScreenShareEndReason,
@@ -24,6 +26,8 @@ import {
   type ScreenShareViewerDevice,
   type ScreenShareViewerOpened,
 } from "@specweave-studio/contracts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous random id; the relay is a plain class.
+import * as NodeCrypto from "node:crypto";
 
 /** One end of a socket, as the relay uses it. */
 export interface ScreenSharePeer {
@@ -34,16 +38,11 @@ export interface ScreenSharePeer {
   readonly bufferedBytes: () => number;
 }
 
-/** What a viewer may send before and after the handshake. */
-const FROM_VIEWER: ReadonlySet<number> = new Set([
-  SCREEN_SHARE_WIRE.hello,
-  SCREEN_SHARE_WIRE.proof,
-  SCREEN_SHARE_WIRE.sealed,
-]);
-const FROM_HOST: ReadonlySet<number> = new Set([
-  SCREEN_SHARE_WIRE.challenge,
-  SCREEN_SHARE_WIRE.sealed,
-]);
+/**
+ * What each side may send next. The viewer: hello, then proof, then sealed
+ * records. The host: one challenge once the hello passed, then sealed records.
+ */
+const VIEWER_ORDER = [SCREEN_SHARE_WIRE.hello, SCREEN_SHARE_WIRE.proof] as const;
 
 const OFF: ScreenShareHostStatus = { enabled: false, supported: false, busy: false };
 
@@ -75,10 +74,15 @@ const REASON = /^[a-z_]{1,32}$/;
 interface Session {
   readonly sid: string;
   readonly viewer: ScreenSharePeer;
+  /** How many of `VIEWER_ORDER` the viewer has sent. */
+  viewerStep: number;
+  challenged: boolean;
 }
 
 interface Host {
   readonly peer: ScreenSharePeer;
+  /** What the app proved itself with when it attached; the routes check it again later. */
+  readonly credential: string | undefined;
   status: ScreenShareHostStatus;
 }
 
@@ -94,7 +98,7 @@ export class ScreenShareRelay {
   private readonly maxBufferBytes: number;
 
   constructor(options: ScreenShareRelayOptions = {}) {
-    this.newSessionId = options.newSessionId ?? (() => crypto.randomUUID());
+    this.newSessionId = options.newSessionId ?? (() => NodeCrypto.randomUUID());
     this.maxBufferBytes = options.maxBufferBytes ?? SCREEN_SHARE_MAX_BUFFER_BYTES;
   }
 
@@ -108,11 +112,29 @@ export class ScreenShareRelay {
     };
   }
 
+  /** What the attached app proved itself with, for the routes to check again. */
+  hostCredential(): string | undefined {
+    return this.host?.credential;
+  }
+
+  /** Drops the attached app (its proof no longer holds) and ends its sessions. */
+  dropHost(reason: string): void {
+    const host = this.host;
+    if (host === null) return;
+    this.host = null;
+    this.endAll("no_host");
+    host.peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason);
+  }
+
   /**
-   * The app's socket. A new one replaces the old (the app restarted), and the
-   * old one's sessions end. Returns what to call with what arrives on it.
+   * The app's socket, once the routes accepted its proof. A new one replaces
+   * the old (the app restarted), and the old one's sessions end. Returns what
+   * to call with what arrives on it.
    */
-  attachHost(peer: ScreenSharePeer): {
+  attachHost(
+    peer: ScreenSharePeer,
+    credential?: string,
+  ): {
     readonly text: (message: string) => void;
     readonly binary: (message: Uint8Array) => void;
     readonly closed: () => void;
@@ -122,8 +144,10 @@ export class ScreenShareRelay {
       this.endAll("no_host");
       previous.peer.close(1012, "replaced");
     }
-    const host: Host = { peer, status: OFF };
+    const host: Host = { peer, credential, status: OFF };
     this.host = host;
+    const attached: ScreenShareHostInbound = { t: "attached" };
+    peer.sendText(JSON.stringify(attached));
     const current = () => this.host === host;
     return {
       text: (message) => {
@@ -159,7 +183,7 @@ export class ScreenShareRelay {
         if (frame === null) return;
         const session = this.sessions.get(frame.sid);
         if (session === undefined) return;
-        if (!this.passable(frame.payload, FROM_HOST)) {
+        if (!this.fromHost(session, frame.payload)) {
           this.end(frame.sid, "protocol_error", true);
           return;
         }
@@ -195,7 +219,8 @@ export class ScreenShareRelay {
     if (!host.status.enabled) return { refused: "off" };
     if (host.status.busy || this.sessions.size > 0) return { refused: "busy" };
     const sid = this.newSessionId();
-    this.sessions.set(sid, { sid, viewer: peer });
+    const session: Session = { sid, viewer: peer, viewerStep: 0, challenged: false };
+    this.sessions.set(sid, session);
     const opened: ScreenShareViewerOpened = { t: "open", sid, environmentId };
     peer.sendText(JSON.stringify(opened));
     const inbound: ScreenShareHostInbound = { t: "open", sid, environmentId, device };
@@ -204,8 +229,8 @@ export class ScreenShareRelay {
       sid,
       binary: (message) => {
         const live = this.host;
-        if (live === null || !this.sessions.has(sid)) return;
-        if (!this.passable(message, FROM_VIEWER)) {
+        if (live === null || this.sessions.get(sid) !== session) return;
+        if (!this.fromViewer(session, message)) {
           this.end(sid, "protocol_error", true);
           return;
         }
@@ -219,11 +244,37 @@ export class ScreenShareRelay {
     };
   }
 
-  private passable(message: Uint8Array, allowed: ReadonlySet<number>): boolean {
+  private fromViewer(session: Session, message: Uint8Array): boolean {
+    const type = message[0];
+    if (session.viewerStep < VIEWER_ORDER.length) {
+      // The proof waits for the challenge it answers.
+      if (type === SCREEN_SHARE_WIRE.proof && !session.challenged) return false;
+      if (type !== VIEWER_ORDER[session.viewerStep]) return false;
+      if (message.length > SCREEN_SHARE_MAX_CONTROL_BYTES) return false;
+      session.viewerStep += 1;
+      return true;
+    }
     return (
-      message.length > 0 &&
-      message.length <= SCREEN_SHARE_MAX_MESSAGE_BYTES &&
-      allowed.has(message[0]!)
+      type === SCREEN_SHARE_WIRE.sealed &&
+      message.length > 1 &&
+      message.length <= SCREEN_SHARE_MAX_MESSAGE_BYTES
+    );
+  }
+
+  private fromHost(session: Session, message: Uint8Array): boolean {
+    const type = message[0];
+    if (type === SCREEN_SHARE_WIRE.challenge) {
+      if (session.challenged || session.viewerStep !== 1) return false;
+      if (message.length > SCREEN_SHARE_MAX_CONTROL_BYTES) return false;
+      session.challenged = true;
+      return true;
+    }
+    // Nothing is sealed before the viewer's proof went by.
+    return (
+      type === SCREEN_SHARE_WIRE.sealed &&
+      session.viewerStep === VIEWER_ORDER.length &&
+      message.length > 1 &&
+      message.length <= SCREEN_SHARE_MAX_MESSAGE_BYTES
     );
   }
 

@@ -5,18 +5,24 @@
  *
  * Handshake, three messages:
  *
- * 1. hello (viewer): mode, a fresh X25519 key, the device's proof key, and
- *    whether the viewer already holds this machine's screen-sharing key.
+ * 1. hello (viewer): mode, a fresh X25519 key, the device's proof key,
+ *    whether the viewer already holds this machine's screen-sharing key, and
+ *    the hash of a random value it keeps back.
  * 2. challenge (machine): a nonce, a fresh X25519 key, the machine's Ed25519
  *    screen-sharing key and its signature over the transcript.
  * 3. proof (viewer): a JWS over the same transcript, signed with the device
- *    key the machine approved. Its `typ` is not DPoP's, so neither verifier
- *    takes the other's token.
+ *    key the machine approved, revealing the random value. Its `typ` is not
+ *    DPoP's, so neither verifier takes the other's token.
  *
  * The device signature is what protects the screen: the machine only ever
  * seals to a key that an approved device signed together with the machine's
  * own key and nonce. The machine signature protects the viewer from a
- * stand-in machine. After the handshake each direction has its own
+ * stand-in machine. The first time a viewer meets a machine it holds no key to
+ * check, so a person reads a code off the machine's screen and types it into
+ * the viewer (`screenShareSessionCode`): it comes from the session's secret
+ * and the revealed value, which the machine could not know when it chose its
+ * own keys, so it cannot hunt for a session whose code matches another one.
+ * After the handshake each direction has its own
  * AES-256-GCM key and a counter that must never skip, repeat or go back.
  */
 import { ed25519, x25519 } from "@noble/curves/ed25519";
@@ -45,6 +51,8 @@ export interface ScreenShareHello {
   readonly deviceJwk: DpopPublicJwk;
   /** False when the viewer holds no saved key for this machine: the machine must then ask a person. */
   readonly knowsMachine: boolean;
+  /** SHA-256 of a random value the viewer reveals only in its proof, base64url. */
+  readonly commit: string;
 }
 
 export interface ScreenShareChallenge {
@@ -65,6 +73,13 @@ export interface ScreenShareSessionKeys {
   readonly toTarget: Uint8Array;
 }
 
+/** What a finished handshake gives each side. */
+export interface ScreenShareSession {
+  readonly keys: ScreenShareSessionKeys;
+  /** Six digits a person carries from the machine's screen to the viewer on first use. */
+  readonly code: string;
+}
+
 export type ScreenShareHandshakeFailure =
   | "malformed"
   | "unsupported_mode"
@@ -73,6 +88,7 @@ export type ScreenShareHandshakeFailure =
   | "device_key_mismatch"
   | "device_signature"
   | "transcript_mismatch"
+  | "commit_mismatch"
   | "stale_proof";
 
 export class ScreenShareHandshakeError extends Error {
@@ -171,34 +187,58 @@ export const screenShareTranscriptHash = (transcript: ScreenShareTranscript): Ui
       keyBytes(transcript.hello.viewerKey, 32),
       computeDpopJwkThumbprint(transcript.hello.deviceJwk),
       transcript.hello.knowsMachine ? "known" : "new",
+      keyBytes(transcript.hello.commit, 32),
       keyBytes(transcript.nonce, 32),
       keyBytes(transcript.targetKey, 32),
       keyBytes(transcript.machineKey, 32),
     ),
   );
 
-/**
- * The code a person compares between the machine's prompt and the viewer the
- * first time the two meet: four groups of four hex digits, from the machine's
- * screen-sharing key and the device's key.
- */
-export const screenShareSafetyCode = (machineKey: string, deviceThumbprint: string): string => {
-  const digest = sha256(
-    framed(`${SCREEN_SHARE_PROTOCOL} code`, keyBytes(machineKey, 32), deviceThumbprint),
-  );
-  const hex = Array.from(digest.subarray(0, 8), (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-  return [0, 4, 8, 12].map((at) => hex.slice(at, at + 4)).join("-");
+const sharedSecret = (secret: Uint8Array, theirKey: Uint8Array): Uint8Array => {
+  const shared = x25519.getSharedSecret(secret, theirKey);
+  // An all-zero secret means the other side sent a low-order point.
+  if (shared.every((byte) => byte === 0)) throw new ScreenShareHandshakeError("malformed");
+  return shared;
 };
 
-const deriveKeys = (
+/**
+ * The first-use code: six digits from the session's secret, the transcript and
+ * the viewer's revealed value. Only the two ends can compute it, and it is
+ * different for every session.
+ */
+export const screenShareSessionCode = (
   shared: Uint8Array,
   nonce: Uint8Array,
   transcriptHash: Uint8Array,
-): ScreenShareSessionKeys => {
-  // An all-zero secret means the other side sent a low-order point.
-  if (shared.every((byte) => byte === 0)) throw new ScreenShareHandshakeError("malformed");
+  reveal: Uint8Array,
+): string => {
+  const okm = hkdf(
+    sha256,
+    shared,
+    nonce,
+    framed(`${SCREEN_SHARE_PROTOCOL} code`, transcriptHash, reveal),
+    4,
+  );
+  const value = new DataView(okm.buffer, okm.byteOffset, 4).getUint32(0) % 1_000_000;
+  return value.toString().padStart(6, "0");
+};
+
+/** Whether what a person typed is the code, ignoring spaces. Constant time over the digits. */
+export const screenShareCodeMatches = (typed: string, code: string): boolean => {
+  const digits = typed.replace(/\s+/g, "");
+  if (digits.length !== code.length) return false;
+  let difference = 0;
+  for (let at = 0; at < code.length; at += 1)
+    difference |= digits.charCodeAt(at) ^ code.charCodeAt(at);
+  return difference === 0;
+};
+
+const deriveSession = (
+  shared: Uint8Array,
+  nonce: Uint8Array,
+  transcriptHash: Uint8Array,
+  reveal: Uint8Array,
+): ScreenShareSession => {
   const okm = hkdf(
     sha256,
     shared,
@@ -206,7 +246,10 @@ const deriveKeys = (
     framed(`${SCREEN_SHARE_PROTOCOL} keys`, transcriptHash),
     64,
   );
-  return { toViewer: okm.slice(0, 32), toTarget: okm.slice(32, 64) };
+  return {
+    keys: { toViewer: okm.slice(0, 32), toTarget: okm.slice(32, 64) },
+    code: screenShareSessionCode(shared, nonce, transcriptHash, reveal),
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -219,6 +262,7 @@ export const parseScreenShareHello = (value: unknown): ScreenShareHello => {
     throw new ScreenShareHandshakeError("malformed");
   if (!isMode(hello.mode)) throw new ScreenShareHandshakeError("unsupported_mode");
   keyBytes(hello.viewerKey, 32);
+  keyBytes(hello.commit, 32);
   p256PublicBytes(hello.deviceJwk);
   return {
     v: 1,
@@ -231,6 +275,7 @@ export const parseScreenShareHello = (value: unknown): ScreenShareHello => {
       y: hello.deviceJwk.y,
     } as DpopPublicJwk,
     knowsMachine: hello.knowsMachine,
+    commit: hello.commit as string,
   };
 };
 
@@ -270,6 +315,8 @@ export interface ScreenShareViewerStart {
   readonly hello: ScreenShareHello;
   /** The session's X25519 secret; lives only while the session does. */
   readonly secret: Uint8Array;
+  /** The value `hello.commit` is the hash of; sent only inside the signed proof. */
+  readonly reveal: Uint8Array;
 }
 
 export const startScreenShareViewer = (input: {
@@ -278,8 +325,10 @@ export const startScreenShareViewer = (input: {
   readonly knowsMachine: boolean;
 }): ScreenShareViewerStart => {
   const secret = x25519.utils.randomPrivateKey();
+  const reveal = crypto.getRandomValues(new Uint8Array(32));
   return {
     secret,
+    reveal,
     hello: {
       v: 1,
       mode: input.mode,
@@ -291,16 +340,15 @@ export const startScreenShareViewer = (input: {
         y: input.deviceJwk.y,
       } as DpopPublicJwk,
       knowsMachine: input.knowsMachine,
+      commit: toBase64Url(sha256(reveal)),
     },
   };
 };
 
-export interface ScreenShareViewerAnswer {
+export interface ScreenShareViewerAnswer extends ScreenShareSession {
   readonly proof: ScreenShareProof;
-  readonly keys: ScreenShareSessionKeys;
-  /** The machine key this session was checked against; save it once a person confirmed it. */
+  /** The machine key this session was checked against; save it only once the code was typed. */
   readonly machineKey: string;
-  readonly safetyCode: string;
 }
 
 /**
@@ -360,22 +408,22 @@ export const answerScreenShareChallenge = async (input: {
         sid: input.sessionId,
         mode: input.start.hello.mode,
         th: toBase64Url(transcriptHash),
-        iat: input.nowEpochSeconds,
+        iat: Math.floor(input.nowEpochSeconds),
+        r: toBase64Url(input.start.reveal),
       }),
     ),
   );
   const signature = await input.sign(encoder.encode(`${header}.${payload}`));
   if (signature.length !== 64) throw new ScreenShareHandshakeError("device_signature");
-  const deviceThumbprint = computeDpopJwkThumbprint(input.start.hello.deviceJwk);
   return {
     proof: { jws: `${header}.${payload}.${toBase64Url(signature)}` },
-    keys: deriveKeys(
-      x25519.getSharedSecret(input.start.secret, keyBytes(challenge.targetKey, 32)),
+    ...deriveSession(
+      sharedSecret(input.start.secret, keyBytes(challenge.targetKey, 32)),
       keyBytes(challenge.nonce, 32),
       transcriptHash,
+      input.start.reveal,
     ),
     machineKey: challenge.machineKey,
-    safetyCode: screenShareSafetyCode(challenge.machineKey, deviceThumbprint),
   };
 };
 
@@ -386,7 +434,6 @@ export interface ScreenShareTargetStart {
   readonly challenge: ScreenShareChallenge;
   readonly hello: ScreenShareHello;
   readonly deviceThumbprint: string;
-  readonly safetyCode: string;
   readonly transcriptHash: Uint8Array;
   readonly secret: Uint8Array;
 }
@@ -423,7 +470,6 @@ export const startScreenShareTarget = (input: {
     deviceThumbprint,
     secret,
     transcriptHash,
-    safetyCode: screenShareSafetyCode(input.machineKey.publicKey, deviceThumbprint),
     challenge: {
       nonce,
       targetKey,
@@ -445,14 +491,14 @@ const jsonPart = (text: string): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
-/** Checks the viewer's proof against the challenge this machine sent, and gives the session keys. */
+/** Checks the viewer's proof against the challenge this machine sent, and gives the session. */
 export const acceptScreenShareProof = (input: {
   readonly start: ScreenShareTargetStart;
   readonly proof: unknown;
   readonly environmentId: string;
   readonly sessionId: string;
   readonly nowEpochSeconds: number;
-}): ScreenShareSessionKeys => {
+}): ScreenShareSession => {
   const jws =
     typeof input.proof === "object" && input.proof !== null
       ? (input.proof as Record<string, unknown>).jws
@@ -489,14 +535,18 @@ export const acceptScreenShareProof = (input: {
     throw new ScreenShareHandshakeError("transcript_mismatch");
   if (
     typeof payload.iat !== "number" ||
-    !Number.isFinite(payload.iat) ||
+    !Number.isInteger(payload.iat) ||
     Math.abs(input.nowEpochSeconds - payload.iat) > SCREEN_SHARE_PROOF_MAX_SKEW_SECONDS
   )
     throw new ScreenShareHandshakeError("stale_proof");
-  return deriveKeys(
-    x25519.getSharedSecret(input.start.secret, keyBytes(input.start.hello.viewerKey, 32)),
+  const reveal = keyBytes(payload.r, 32);
+  if (toBase64Url(sha256(reveal)) !== input.start.hello.commit)
+    throw new ScreenShareHandshakeError("commit_mismatch");
+  return deriveSession(
+    sharedSecret(input.start.secret, keyBytes(input.start.hello.viewerKey, 32)),
     keyBytes(input.start.challenge.nonce, 32),
     input.start.transcriptHash,
+    reveal,
   );
 };
 
@@ -530,13 +580,18 @@ const recordAad = (sessionId: string, type: number, counter: bigint): Uint8Array
 };
 
 export interface ScreenShareSealer {
-  /** Seals one record. Results resolve in the order of the calls, which is the order to send them in. */
+  /**
+   * Seals one record. Results resolve in the order of the calls, which is the
+   * order to send them in. Once one fails every later one fails too: its
+   * counter is spent, so the other side could never open what follows.
+   */
   readonly seal: (type: number, data: Uint8Array) => Promise<Uint8Array<ArrayBuffer>>;
 }
 
 export const makeScreenShareSealer = (key: Uint8Array, sessionId: string): ScreenShareSealer => {
   const aes = importAesKey(key, "encrypt");
   let counter = 0n;
+  let broken = false;
   let tail: Promise<unknown> = Promise.resolve();
   return {
     seal: (type, data) => {
@@ -547,6 +602,7 @@ export const makeScreenShareSealer = (key: Uint8Array, sessionId: string): Scree
       const mine = counter;
       counter += 1n;
       const sealed = tail.then(async () => {
+        if (broken) throw new ScreenShareRecordError("The session already failed.");
         const body = new Uint8Array(
           await crypto.subtle.encrypt(
             {
@@ -564,7 +620,9 @@ export const makeScreenShareSealer = (key: Uint8Array, sessionId: string): Scree
         out.set(body, RECORD_HEADER_BYTES);
         return out;
       });
-      tail = sealed.catch(() => undefined);
+      tail = sealed.catch(() => {
+        broken = true;
+      });
       return sealed;
     },
   };

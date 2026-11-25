@@ -18,8 +18,14 @@ import { AuthAccessWriteScope } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
+import { isValidDesktopBootstrapToken } from "@specweave-studio/shared/desktopBootstrapToken";
+
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
-import { arrivedFromThisMachine, DESKTOP_OWNER_SUBJECT } from "./deviceApprover.ts";
+import {
+  arrivedFromThisMachine,
+  DESKTOP_OWNER_SUBJECT,
+  desktopOwnerProofMatches,
+} from "./deviceApprover.ts";
 
 export interface PersonDeviceSession extends ConnectDeviceTrust.DeviceSessionFacts {
   readonly principal?: { readonly kind: string } | undefined;
@@ -32,7 +38,14 @@ export interface PersonDevice {
   /** The RFC 7638 thumbprint of the device's proof key. */
   readonly thumbprint: string;
   readonly kind: ConnectDeviceTrust.DeviceKind;
+  /**
+   * The name to show a person. From `personDeviceOf` it is the name on this
+   * machine's approved list, which the owner saw when approving: a device
+   * cannot change it by signing in under another name.
+   */
   readonly label: string;
+  /** What the device calls itself in this sign-in, when that differs from the list. */
+  readonly claimedLabel?: string;
   readonly shortId: string;
 }
 
@@ -70,16 +83,42 @@ export const personDeviceCandidate = (
   };
 };
 
-/** The approved device a session belongs to, or the reason it is not one. */
+/**
+ * The approved device a session belongs to, or the reason it is not one.
+ * `approvedName` answers the name stored for a key on the approved list, or
+ * null when the key is not on it.
+ */
 export const personDeviceOf = (
   session: PersonDeviceSession,
-  isApproved: (key: string) => Effect.Effect<boolean>,
+  approvedName: (key: string) => Effect.Effect<string | null>,
 ): Effect.Effect<{ readonly device: PersonDevice } | { readonly refusal: PersonDeviceRefusal }> =>
   Effect.gen(function* () {
     const candidate = personDeviceCandidate(session);
     if ("refusal" in candidate) return candidate;
-    return (yield* isApproved(candidate.device.key)) ? candidate : { refusal: "not_approved" };
+    const name = yield* approvedName(candidate.device.key);
+    if (name === null) return { refusal: "not_approved" };
+    const { label: claimed, ...device } = candidate.device;
+    return {
+      device: {
+        ...device,
+        label: name,
+        ...(claimed === name ? {} : { claimedLabel: claimed }),
+      },
+    };
   });
+
+/** `approvedName` from the approved list: a damaged or unreadable list approves no one. */
+export const approvedNameFrom =
+  (trust: Pick<ConnectDeviceTrust.ConnectDeviceTrustShape, "snapshot">) =>
+  (key: string): Effect.Effect<string | null> =>
+    trust.snapshot.pipe(
+      Effect.map((snapshot) =>
+        snapshot.health === "ok"
+          ? (snapshot.devices.find((device) => device.key === key)?.label ?? null)
+          : null,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
 
 export interface OwnAppSession {
   readonly subject: string;
@@ -112,3 +151,37 @@ export const isOwnApp = (
   session.boundDevice === undefined &&
   session.deviceKey === undefined &&
   arrivedFromThisMachine(request, addresses);
+
+/** The longest proof worth checking. The owner proof is 43 characters. */
+const MAX_OWN_APP_PROOF_LENGTH = 512;
+
+/**
+ * Which secret a proof from the app matches, checked on every connection that
+ * must be the app and not merely hold its kind of session:
+ *
+ * - `launch`: the current token of the secret this backend was started with.
+ *   Only the app that started it holds that secret, and it does not change
+ *   while this process lives.
+ * - `owner`: the desktop owner proof, against the verifier file. The file can
+ *   change later, so the caller checks this kind again when it matters.
+ *
+ * Null for anything else. A process that rewrites this user's files can make
+ * its own proof match the verifier; that is the limit `deviceApprover.ts` names.
+ */
+export const ownAppProofKind = (input: {
+  readonly proof: string;
+  readonly launchSecret: string | undefined;
+  /** The verifier file's bytes, or null when there is none or it cannot be read. */
+  readonly verifier: Uint8Array | null;
+  readonly nowMs: number;
+}): "launch" | "owner" | null => {
+  if (input.proof.length === 0 || input.proof.length > MAX_OWN_APP_PROOF_LENGTH) return null;
+  if (
+    input.launchSecret !== undefined &&
+    isValidDesktopBootstrapToken(input.launchSecret, input.proof, input.nowMs)
+  )
+    return "launch";
+  return input.verifier !== null && desktopOwnerProofMatches(input.proof, input.verifier)
+    ? "owner"
+    : null;
+};

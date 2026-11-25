@@ -3,14 +3,26 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
-import { isOwnApp, personDeviceCandidate, personDeviceOf } from "./personDevice.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous hash for the fixture verifier.
+import { createHash } from "node:crypto";
+
+import { currentDesktopBootstrapToken } from "@specweave-studio/shared/desktopBootstrapToken";
+
+import {
+  approvedNameFrom,
+  isOwnApp,
+  ownAppProofKind,
+  personDeviceCandidate,
+  personDeviceOf,
+} from "./personDevice.ts";
 
 const THUMBPRINT = "0vC2F1sT6mE8Yt7j3cQk9bZx5uPa4LdR1nWg0HsXyAe";
 const KEY = `jkt:${THUMBPRINT}`;
+/** Stands for the approved list: each listed key under the name the owner approved. */
 const approved =
   (...keys: ReadonlyArray<string>) =>
   (key: string) =>
-    Effect.succeed(keys.includes(key));
+    Effect.succeed(keys.includes(key) ? "Work laptop" : null);
 
 const connect = {
   subject: "cloud-connect",
@@ -38,6 +50,36 @@ describe("personDeviceOf", () => {
       expect(outcome).toMatchObject({
         device: { key: KEY, thumbprint: THUMBPRINT, kind: "connect", label: "Work laptop" },
       });
+    }),
+  );
+
+  it.effect("names the device as the approved list does, not as it names itself now", () =>
+    Effect.gen(function* () {
+      const outcome = yield* personDeviceOf(
+        { ...connect, clientLabel: "Anton's MacBook Pro" },
+        approved(KEY),
+      );
+      expect(outcome).toMatchObject({
+        device: { label: "Work laptop", claimedLabel: "Anton's MacBook Pro" },
+      });
+      const same = yield* personDeviceOf(connect, approved(KEY));
+      expect("device" in same && "claimedLabel" in same.device).toBe(false);
+    }),
+  );
+
+  it.effect("approves no one from a damaged or unreadable list", () =>
+    Effect.gen(function* () {
+      const listed = { key: KEY, label: "Work laptop" };
+      const fromList = (snapshot: Effect.Effect<unknown, string>) =>
+        approvedNameFrom({ snapshot } as unknown as Parameters<typeof approvedNameFrom>[0]);
+      expect(yield* fromList(Effect.succeed({ health: "ok", devices: [listed] }))(KEY)).toBe(
+        "Work laptop",
+      );
+      expect(
+        yield* fromList(Effect.succeed({ health: "damaged", devices: [listed] }))(KEY),
+      ).toBeNull();
+      expect(yield* fromList(Effect.fail("unreadable"))(KEY)).toBeNull();
+      expect(yield* fromList(Effect.succeed({ health: "ok", devices: [] }))(KEY)).toBeNull();
     }),
   );
 
@@ -101,7 +143,8 @@ describe("personDeviceOf", () => {
     it.effect(`refuses ${name}`, () =>
       Effect.gen(function* () {
         // Everything is on the list here, so only the session's own shape refuses it.
-        const everything = reason === "not_approved" ? approved() : () => Effect.succeed(true);
+        const everything =
+          reason === "not_approved" ? approved() : () => Effect.succeed("Any name");
         expect(yield* personDeviceOf(session, everything)).toEqual({ refusal: reason });
       }),
     );
@@ -157,4 +200,71 @@ describe("isOwnApp", () => {
     it(`refuses ${name}`, () => {
       expect(isOwnApp(session, request("127.0.0.1"), [])).toBe(false);
     });
+});
+
+describe("ownAppProofKind", () => {
+  const NOW = Date.parse("2026-11-25T12:00:00Z");
+  const verifierOf = (proof: string) =>
+    new Uint8Array(createHash("sha256").update(proof, "utf8").digest());
+  const OWNER_PROOF = "b3duZXItcHJvb2Ytb2YtNDMtY2hhcmFjdGVycy1sb25nLQ";
+
+  it("accepts the owner proof that matches the verifier file", () => {
+    expect(
+      ownAppProofKind({
+        proof: OWNER_PROOF,
+        launchSecret: undefined,
+        verifier: verifierOf(OWNER_PROOF),
+        nowMs: NOW,
+      }),
+    ).toBe("owner");
+  });
+
+  it("accepts the current token of the secret this backend was launched with", () => {
+    const secret = "launch-secret";
+    expect(
+      ownAppProofKind({
+        proof: currentDesktopBootstrapToken(secret, NOW),
+        launchSecret: secret,
+        verifier: null,
+        nowMs: NOW,
+      }),
+    ).toBe("launch");
+  });
+
+  it("refuses everything else", () => {
+    const secret = "launch-secret";
+    const refused: ReadonlyArray<Parameters<typeof ownAppProofKind>[0]> = [
+      // No proof at all, or one too long to be one.
+      { proof: "", launchSecret: secret, verifier: verifierOf(OWNER_PROOF), nowMs: NOW },
+      {
+        proof: "x".repeat(513),
+        launchSecret: secret,
+        verifier: verifierOf(OWNER_PROOF),
+        nowMs: NOW,
+      },
+      // A proof for a verifier that was since rewritten, or with no verifier.
+      { proof: OWNER_PROOF, launchSecret: undefined, verifier: verifierOf("another"), nowMs: NOW },
+      { proof: OWNER_PROOF, launchSecret: undefined, verifier: null, nowMs: NOW },
+      // A token of another secret, a stale token, and a token with no secret configured.
+      {
+        proof: currentDesktopBootstrapToken("other-secret", NOW),
+        launchSecret: secret,
+        verifier: null,
+        nowMs: NOW,
+      },
+      {
+        proof: currentDesktopBootstrapToken(secret, NOW - 24 * 60 * 60_000),
+        launchSecret: secret,
+        verifier: null,
+        nowMs: NOW,
+      },
+      {
+        proof: currentDesktopBootstrapToken(secret, NOW),
+        launchSecret: undefined,
+        verifier: null,
+        nowMs: NOW,
+      },
+    ];
+    for (const input of refused) expect(ownAppProofKind(input)).toBeNull();
+  });
 });

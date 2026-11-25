@@ -2,7 +2,9 @@
  * The two sockets of screen sharing (1490) and who may open each:
  *
  * - `GET /api/screen-share/host`: this machine's own app, straight from this
- *   machine (`isOwnApp`). Nothing else can stand in as the screen.
+ *   machine (`isOwnApp`), and only once its first message carried the app's
+ *   proof (`ownAppProofKind`). The session class alone is not enough: a
+ *   command line on this machine can obtain the same class.
  * - `GET /api/screen-share/view`: a person's approved device (`personDeviceOf`).
  *   Agents, worker grants, management keys, pairing codes and the local
  *   command line are refused here, before the app hears of them.
@@ -14,18 +16,30 @@ import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequ
 import {
   AuthOrchestrationReadScope,
   SCREEN_SHARE_CLOSE_REFUSED,
+  SCREEN_SHARE_HOST_HELLO_MS,
   SCREEN_SHARE_HOST_PATH,
+  SCREEN_SHARE_MAX_HOST_PROOF_LENGTH,
   SCREEN_SHARE_ROUTE_PREFIX,
   SCREEN_SHARE_VIEW_PATH,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
+import { DESKTOP_OWNER_VERIFIER_SECRET } from "../auth/deviceApprover.ts";
 import { authenticateMediaRequest, serveSocketUntilSessionEnds } from "../auth/http.ts";
-import { isOwnApp, personDeviceOf } from "../auth/personDevice.ts";
+import {
+  approvedNameFrom,
+  isOwnApp,
+  ownAppProofKind,
+  personDeviceOf,
+} from "../auth/personDevice.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import { ScreenShareRelay, type ScreenSharePeer } from "./ScreenShareRelay.ts";
@@ -42,12 +56,46 @@ const outgoingBytes = (item: Outgoing) =>
       ? item.byteLength
       : 0;
 
-const makeHandler = (
-  relay: ScreenShareRelay,
-  trust: ConnectDeviceTrust.ConnectDeviceTrust["Service"],
-  environment: ServerEnvironment.ServerEnvironment["Service"],
-) =>
-  Effect.gen(function* () {
+/** The proof in a host's first message, or null when that message is anything else. */
+export const hostHelloProof = (message: string | Uint8Array): string | null => {
+  if (typeof message !== "string" || message.length > SCREEN_SHARE_MAX_HOST_PROOF_LENGTH + 64)
+    return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const hello = parsed as Record<string, unknown>;
+  return hello.t === "hello" && typeof hello.proof === "string" ? hello.proof : null;
+};
+
+interface Services {
+  readonly relay: ScreenShareRelay;
+  readonly trust: ConnectDeviceTrust.ConnectDeviceTrustShape;
+  readonly environment: ServerEnvironment.ServerEnvironment["Service"];
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+  readonly launchSecret: string | undefined;
+}
+
+const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Services) => {
+  /** Read each time: the app writes a new verifier when it starts. Unreadable means no. */
+  const proofKind = (proof: string) =>
+    Effect.gen(function* () {
+      const verifier = yield* secrets.get(DESKTOP_OWNER_VERIFIER_SECRET).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+      return ownAppProofKind({
+        proof,
+        launchSecret,
+        verifier,
+        nowMs: yield* Clock.currentTimeMillis,
+      });
+    });
+
+  return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
     if (Option.isNone(url) || request.headers.upgrade?.toLowerCase() !== "websocket")
@@ -57,7 +105,7 @@ const makeHandler = (
     const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
 
     const asHost = path === SCREEN_SHARE_HOST_PATH;
-    const device = asHost ? null : yield* personDeviceOf(session, trust.isApproved);
+    const device = asHost ? null : yield* personDeviceOf(session, approvedNameFrom(trust));
     if (asHost ? !isOwnApp(session, request) : device === null || "refusal" in device) {
       yield* Effect.logInfo("Refused a screen sharing socket.", {
         socket: asHost ? "host" : "view",
@@ -104,21 +152,55 @@ const makeHandler = (
           ),
         );
 
-        let onText: (text: string) => void = () => {};
-        let onBinary: (bytes: Uint8Array) => void;
-        let onClosed: () => void;
+        let onChunk: (chunk: string | Uint8Array) => Effect.Effect<void>;
+        let onClosed: () => void = () => {};
+        let untilOver: Effect.Effect<void> = Effect.never;
+
         if (device === null) {
-          const host = relay.attachHost(peer);
-          onText = host.text;
-          onBinary = host.binary;
-          onClosed = host.closed;
-          yield* Effect.logInfo("This machine's app attached for screen sharing.");
+          let host: ReturnType<ScreenShareRelay["attachHost"]> | null = null;
+          const refuse = (reason: string) =>
+            Effect.sync(() => peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason));
+          onChunk = (chunk) =>
+            Effect.gen(function* () {
+              if (host !== null) {
+                if (typeof chunk === "string") host.text(chunk);
+                else host.binary(chunk);
+                return;
+              }
+              // Nothing is heard from this socket until it has proved it is the app.
+              const proof = hostHelloProof(chunk);
+              const kind = proof === null ? null : yield* proofKind(proof);
+              if (proof === null || kind === null) {
+                yield* Effect.logWarning(
+                  "Refused a screen sharing host that did not prove it is this machine's app.",
+                );
+                return yield* refuse("not_this_machines_app");
+              }
+              // Only the owner proof is kept: its verifier file can change, so it is checked again.
+              host = relay.attachHost(peer, kind === "owner" ? proof : undefined);
+              onClosed = host.closed;
+              yield* Effect.logInfo("This machine's app attached for screen sharing.", { kind });
+            });
+          untilOver = Effect.sleep(SCREEN_SHARE_HOST_HELLO_MS).pipe(
+            Effect.andThen(
+              Effect.suspend(() => (host === null ? refuse("no_hello") : Effect.void)),
+            ),
+            Effect.andThen(Effect.never),
+          );
         } else if ("device" in device) {
+          // The app that attached may no longer be the app: its verifier was rewritten since.
+          const credential = relay.hostCredential();
+          if (credential !== undefined && (yield* proofKind(credential)) !== "owner") {
+            yield* Effect.logWarning("Dropped a screen sharing host whose proof no longer holds.");
+            relay.dropHost("proof_stale");
+          }
+          const { claimedLabel } = device.device;
           const opened = relay.openViewer(
             peer,
             {
               thumbprint: device.device.thumbprint,
               label: device.device.label,
+              ...(claimedLabel === undefined ? {} : { claimedLabel }),
               shortId: device.device.shortId,
               kind: device.device.kind,
             },
@@ -129,8 +211,17 @@ const makeHandler = (
             yield* writer.write(new Socket.CloseEvent(SCREEN_SHARE_CLOSE_REFUSED, opened.refused));
             return HttpServerResponse.empty();
           }
-          onBinary = opened.binary;
+          onChunk = (chunk) =>
+            Effect.sync(() => {
+              if (typeof chunk !== "string") opened.binary(chunk);
+            });
           onClosed = opened.closed;
+          // These sessions' expiry is not watched elsewhere, so the screen stops at it here.
+          if (session.expiresAt !== undefined) {
+            const left =
+              DateTime.toEpochMillis(session.expiresAt) - (yield* Clock.currentTimeMillis);
+            untilOver = Effect.sleep(Math.max(0, left));
+          }
           yield* Effect.logInfo("A device asked to view this machine's screen.", {
             device: device.device.shortId,
             kind: device.device.kind,
@@ -141,31 +232,38 @@ const makeHandler = (
 
         const receive = Effect.forever(
           reader.pull.pipe(
-            Effect.map((chunks) => {
-              for (const chunk of chunks)
-                if (typeof chunk === "string") onText(chunk);
-                else onBinary(chunk);
-            }),
+            Effect.flatMap((chunks) => Effect.forEach(chunks, onChunk, { discard: true })),
           ),
         );
-        yield* serveSocketUntilSessionEnds(socket, session, Effect.raceFirst(send, receive)).pipe(
-          Effect.ensuring(Effect.sync(() => onClosed())),
-        );
+        yield* serveSocketUntilSessionEnds(
+          socket,
+          session,
+          Effect.raceFirst(Effect.raceFirst(send, receive), untilOver),
+        ).pipe(Effect.ensuring(Effect.sync(() => onClosed())));
         return HttpServerResponse.empty();
       }),
-    ).pipe(Effect.catch(() => Effect.succeed(HttpServerResponse.empty())));
+    ).pipe(Effect.orElseSucceed(() => HttpServerResponse.empty()));
   });
+};
 
 /** One relay per server: the app's socket and the viewers' sockets meet in it. */
 export const routeLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const trust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
     const environment = yield* ServerEnvironment.ServerEnvironment;
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const config = yield* ServerConfig.ServerConfig;
     const relay = new ScreenShareRelay();
     yield* router.add(
       "GET",
       `${SCREEN_SHARE_ROUTE_PREFIX}/*`,
-      makeHandler(relay, trust, environment),
+      makeHandler({
+        relay,
+        trust,
+        environment,
+        secrets,
+        launchSecret: config.desktopBootstrapSecret,
+      }),
     );
   }),
 );
