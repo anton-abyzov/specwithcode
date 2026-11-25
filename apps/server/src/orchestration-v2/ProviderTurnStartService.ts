@@ -51,6 +51,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -90,6 +91,7 @@ import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./sett
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
 import {
   answeredCardByPerson,
+  type KnownProviderCommands,
   messageSentByPerson,
   withMessageSenderNote,
 } from "./messageSenderNote.ts";
@@ -287,6 +289,29 @@ export const layer: Layer.Layer<
     // Finds this machine's native transcripts for handoff pointers; optional.
     const agentSessions = yield* Effect.serviceOption(AgentSessionScanner.AgentSessionScanner);
     const handoffMode = yield* Effect.serviceOption(HandoffMode.HandoffMode);
+    // The commands and skills each instance lists, so an agent's command keeps working.
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    const knownProviderCommands = (instanceId: OrchestrationV2Run["providerInstanceId"]) =>
+      Option.isNone(providerRegistry)
+        ? Effect.succeed<KnownProviderCommands | undefined>(undefined)
+        : providerRegistry.value.getProviders.pipe(
+            Effect.map((providers): KnownProviderCommands | undefined => {
+              const provider = providers.find((entry) => entry.instanceId === instanceId);
+              return provider === undefined
+                ? undefined
+                : {
+                    slash: new Set(
+                      provider.slashCommands.map((command) => command.name.toLowerCase()),
+                    ),
+                    skills: new Set(
+                      provider.skills
+                        .filter((skill) => skill.enabled)
+                        .map((skill) => skill.name.toLowerCase()),
+                    ),
+                  };
+            }),
+            Effect.orElseSucceed(() => undefined),
+          );
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -1377,6 +1402,9 @@ export const layer: Layer.Layer<
           text: message.text,
           records: message.context?.records ?? [],
         }),
+        messageSentByPerson(message)
+          ? undefined
+          : yield* knownProviderCommands(run.providerInstanceId),
       );
       // An answer to a question reads, for the agent, with the questions it answers.
       const userText = yield* withAskedQuestions(projectionStore, message, composedUserText);

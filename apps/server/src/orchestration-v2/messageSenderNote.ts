@@ -26,10 +26,27 @@ export function messageSentByPerson(message: SenderFields): boolean {
   );
 }
 
-// Providers read slash commands and `$skill` mentions from the start of a prompt.
-// A command is one `/word` with no further slash, so a prompt that starts with
-// a path such as `/Users/...` is still noted.
-const LEADING_COMMAND = /^\s*(?:\/[^\s/]+(?:\s|$)|\$[A-Za-z0-9:_-]*[A-Za-z])/u;
+/** The slash commands and skills the thread's provider instance lists, without `/` or `$`. */
+export interface KnownProviderCommands {
+  readonly slash: ReadonlySet<string>;
+  readonly skills: ReadonlySet<string>;
+}
+
+const LEADING_SLASH_COMMAND = /^\s*\/([^\s/]+)(?:\s|$)/u;
+const LEADING_SKILL = /^\s*\$([A-Za-z0-9:_-]*[A-Za-z])(?:\s|$)/u;
+
+/**
+ * Whether the text starts with a command or skill the provider lists, which a
+ * leading note would stop it from reading. A path such as `/tmp` or any word
+ * the provider does not list is ordinary text.
+ */
+function startsWithKnownCommand(text: string, known: KnownProviderCommands | undefined): boolean {
+  if (known === undefined) return false;
+  const slash = LEADING_SLASH_COMMAND.exec(text)?.[1];
+  if (slash !== undefined) return known.slash.has(slash.toLowerCase());
+  const skill = LEADING_SKILL.exec(text)?.[1];
+  return skill !== undefined && known.skills.has(skill.toLowerCase());
+}
 
 function senderNote(message: SenderFields): string | undefined {
   // An agent's message, or one it forwarded under the person's name.
@@ -51,13 +68,18 @@ function senderNote(message: SenderFields): string | undefined {
 /**
  * The provider text with one leading line naming who sent it, when an agent,
  * a routine or a tool caller did, so the model never takes it for the
- * person's own instruction. A person's message, and any text that starts with
- * a slash command or a `$skill` mention, is returned unchanged. Only the text
+ * person's own instruction. A person's message, and text that starts with a
+ * slash command or `$skill` the provider lists, is returned unchanged; when the
+ * provider's list cannot be read, every such message is noted. Only the text
  * sent to the provider carries the note; the stored message keeps its words.
  */
-export function withMessageSenderNote(message: SenderFields, text: string): string {
+export function withMessageSenderNote(
+  message: SenderFields,
+  text: string,
+  known?: KnownProviderCommands,
+): string {
   const note = senderNote(message);
-  if (note === undefined || LEADING_COMMAND.test(text)) return text;
+  if (note === undefined || startsWithKnownCommand(text, known)) return text;
   return text.length === 0 ? note : `${note}\n\n${text}`;
 }
 

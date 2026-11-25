@@ -10,10 +10,34 @@ const agent = {
 } as const;
 
 describe("withMessageSenderNote", () => {
-  it("leaves slash commands and skill mentions from an agent as sent", () => {
-    expect(withMessageSenderNote(agent, "/compact")).toBe("/compact");
-    expect(withMessageSenderNote(agent, "  /goal ship it")).toBe("  /goal ship it");
-    expect(withMessageSenderNote(agent, "$deploy staging")).toBe("$deploy staging");
+  // What the thread's provider lists, as the composer offers it.
+  const known = {
+    slash: new Set(["compact", "goal", "review"]),
+    skills: new Set(["deploy"]),
+  };
+
+  it("leaves the provider's own commands and skills from an agent as sent", () => {
+    expect(withMessageSenderNote(agent, "/compact", known)).toBe("/compact");
+    expect(withMessageSenderNote(agent, "  /goal ship it", known)).toBe("  /goal ship it");
+    expect(withMessageSenderNote(agent, "/review", known)).toBe("/review");
+    expect(withMessageSenderNote(agent, "$deploy staging", known)).toBe("$deploy staging");
+  });
+
+  it("notes a leading word the provider does not list as a command", () => {
+    for (const text of [
+      "/tmp contains the results.",
+      "/etc is fine",
+      "/frobnicate",
+      "$unknown x",
+    ]) {
+      expect(withMessageSenderNote(agent, text, known)).toBe(
+        `[SpecWithCode: the agent in thread "thread-a" sent this message, not the person using this chat.]\n\n${text}`,
+      );
+    }
+  });
+
+  it("notes even a known command when the provider's commands cannot be read", () => {
+    expect(withMessageSenderNote(agent, "/compact")).toContain("[SpecWithCode:");
   });
 
   it("notes an agent's text that only mentions a command later", () => {
@@ -28,7 +52,7 @@ describe("withMessageSenderNote", () => {
     );
     expect(withMessageSenderNote(agent, "/tmp/build.log")).toContain("[SpecWithCode:");
     expect(withMessageSenderNote(agent, "/ hello")).toContain("[SpecWithCode:");
-    expect(withMessageSenderNote(agent, "/review\nthe diff")).toBe("/review\nthe diff");
+    expect(withMessageSenderNote(agent, "/review\nthe diff", known)).toBe("/review\nthe diff");
   });
 
   it("notes a message an agent forwarded under the person's name", () => {
