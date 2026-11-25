@@ -463,3 +463,64 @@ it.live("fails closed and keeps the previous secret when the replacement stays r
     assert.deepEqual(yield* fileSystem.readDirectory(secretsDir), ["fleet-worker-grant-m1.bin"]);
   }).pipe(Effect.provide(layerServerConfig().pipe(Layer.provideMerge(NodeServices.layer)))),
 );
+
+// Names become file names, so one that leaves the folder would read or write any file
+// the server can reach. Relay-signed proof fields once became names.
+it.effect("refuses a secret name that leaves the secrets directory", () =>
+  Effect.gen(function* () {
+    const secretStore = yield* ServerSecretStore.make;
+    const { secretsDir } = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (const name of ["../escape", "a/b", "a\\b", "nul\u0000x", "..", "."]) {
+      const setFailure = yield* Effect.flip(secretStore.set(name, Uint8Array.from([1])));
+      assert.instanceOf(setFailure, ServerSecretStore.SecretStoreNameError);
+      assert.instanceOf(
+        yield* Effect.flip(secretStore.create(name, Uint8Array.from([1]))),
+        ServerSecretStore.SecretStoreNameError,
+      );
+      assert.instanceOf(
+        yield* Effect.flip(secretStore.get(name)),
+        ServerSecretStore.SecretStoreNameError,
+      );
+      assert.instanceOf(
+        yield* Effect.flip(secretStore.getOrCreateRandom(name, 32)),
+        ServerSecretStore.SecretStoreNameError,
+      );
+      assert.instanceOf(
+        yield* Effect.flip(secretStore.remove(name)),
+        ServerSecretStore.SecretStoreNameError,
+      );
+    }
+    assert.isFalse(yield* fileSystem.exists(`${secretsDir}/../escape.bin`));
+    assert.deepEqual(yield* fileSystem.readDirectory(secretsDir), []);
+  }).pipe(Effect.provide(layerServerConfig().pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+// A 0-byte file (a crash between create and write, a full disk) would otherwise
+// become an empty HMAC key that signs every session.
+it.effect("replaces an empty persisted random secret, once, under concurrent reads", () =>
+  Effect.gen(function* () {
+    const secretStore = yield* ServerSecretStore.make;
+    const { secretsDir } = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.writeFile(`${secretsDir}/session-signing-key.bin`, new Uint8Array(0));
+
+    const [first, second] = yield* Effect.all(
+      [
+        secretStore.getOrCreateRandom("session-signing-key", 32),
+        secretStore.getOrCreateRandom("session-signing-key", 32),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    assert.equal(first.byteLength, 32);
+    assert.deepEqual(Array.from(second), Array.from(first));
+    const persisted = yield* fileSystem.readFile(`${secretsDir}/session-signing-key.bin`);
+    assert.deepEqual(Array.from(persisted), Array.from(first));
+    const kept = yield* secretStore.getOrCreateRandom("other-key", 16);
+    assert.deepEqual(
+      Array.from(yield* secretStore.getOrCreateRandom("other-key", 16)),
+      Array.from(kept),
+    );
+  }).pipe(Effect.provide(layerServerConfig().pipe(Layer.provideMerge(NodeServices.layer)))),
+);
