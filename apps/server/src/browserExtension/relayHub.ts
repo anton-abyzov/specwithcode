@@ -120,7 +120,26 @@ export interface RelayProfile {
   readonly dialogs: Map<number, RelayDialog>;
   /** Which thread drives each tab; a thread never acts in another thread's live tab. */
   readonly tabOwners: Map<number, TabOwner>;
+  /**
+   * Tabs held for a person signing in (1488), by sign-in view id. No thread
+   * sees, claims or stops them, and nothing from them reaches the audit.
+   */
+  readonly personTabs: Map<number, string>;
 }
+
+/** A CDP event or tab change in a tab held for a person, for its sign-in view only. */
+export type HeldTabEvent =
+  | {
+      readonly kind: "cdp";
+      readonly tabId: number;
+      readonly method: string;
+      readonly params: unknown;
+    }
+  | { readonly kind: "popup"; readonly tabId: number; readonly openerTabId: number }
+  | { readonly kind: "removed"; readonly tabId: number }
+  | { readonly kind: "detached"; readonly tabId: number };
+
+export type HeldTabListener = (profile: RelayProfile, viewId: string, event: HeldTabEvent) => void;
 
 interface Connection {
   readonly socket: RelaySocket;
@@ -207,6 +226,7 @@ export class BrowserRelayHub {
   /** The last profile that went away, so "none connected" can say which, when and why. */
   private lastGone: { label: string; at: number; reason: string } | null = null;
   private readonly waiters = new Set<() => void>();
+  private readonly heldTabListeners = new Set<HeldTabListener>();
 
   constructor(options: BrowserRelayHubOptions) {
     this.options = options;
@@ -285,6 +305,7 @@ export class BrowserRelayHub {
         lastTabByThread: new Map(),
         dialogs: new Map(),
         tabOwners: new Map(),
+        personTabs: new Map(),
       };
       this.send(connection, {
         method: "welcome",
@@ -334,18 +355,46 @@ export class BrowserRelayHub {
       case "chrome.debugger.onEvent": {
         const tabId = (args[0] as { tabId?: number } | undefined)?.tabId;
         if (tabId === undefined) return;
+        const held = profile.personTabs.get(tabId);
+        if (held !== undefined) {
+          // A person's sign-in tab: its events go to its view alone, dialogs included.
+          if (typeof args[1] === "string")
+            this.emitHeld(profile, held, { kind: "cdp", tabId, method: args[1], params: args[2] });
+          return;
+        }
         if (args[1] === "Page.javascriptDialogOpening") this.answerDialog(profile, tabId, args[2]);
         return;
       }
       case "chrome.debugger.onDetach": {
         const tabId = (args[0] as { tabId?: number } | undefined)?.tabId;
-        if (tabId !== undefined) profile.attachedTabs.delete(tabId);
+        if (tabId !== undefined) {
+          profile.attachedTabs.delete(tabId);
+          const held = profile.personTabs.get(tabId);
+          if (held !== undefined) this.emitHeld(profile, held, { kind: "detached", tabId });
+        }
         this.changed();
+        return;
+      }
+      case "chrome.tabs.onCreated": {
+        // The extension reports a popup against its opener. A popup of a held tab is held too.
+        const tab = args[0] as { id?: number; openerTabId?: number } | undefined;
+        if (typeof tab?.id !== "number" || typeof tab.openerTabId !== "number") return;
+        const held = profile.personTabs.get(tab.openerTabId);
+        if (held === undefined) return;
+        this.holdForPerson(profile, tab.id, held);
+        this.emitHeld(profile, held, {
+          kind: "popup",
+          tabId: tab.id,
+          openerTabId: tab.openerTabId,
+        });
         return;
       }
       case "chrome.tabs.onRemoved": {
         const tabId = typeof args[0] === "number" ? args[0] : undefined;
         if (tabId === undefined) return;
+        const held = profile.personTabs.get(tabId);
+        profile.personTabs.delete(tabId);
+        if (held !== undefined) this.emitHeld(profile, held, { kind: "removed", tabId });
         profile.attachedTabs.delete(tabId);
         profile.agentTabs.delete(tabId);
         profile.tabOwners.delete(tabId);
@@ -545,6 +594,43 @@ export class BrowserRelayHub {
     return owner !== undefined && this.now() - owner.lastActionAt < TAB_IDLE_MS;
   }
 
+  /** Events of tabs held for a person go only to these listeners (the sign-in views). */
+  onHeldTabEvent(listener: HeldTabListener): () => void {
+    this.heldTabListeners.add(listener);
+    return () => this.heldTabListeners.delete(listener);
+  }
+
+  private emitHeld(profile: RelayProfile, viewId: string, event: HeldTabEvent) {
+    for (const listener of this.heldTabListeners) {
+      try {
+        listener(profile, viewId, event);
+      } catch {
+        // One view's fault never reaches the relay.
+      }
+    }
+  }
+
+  /**
+   * Hold a tab for a person (1488): every thread loses it at once, whatever
+   * it held, and cannot claim it until the hold is let go.
+   */
+  holdForPerson(profile: RelayProfile, tabId: number, viewId: string) {
+    profile.personTabs.set(tabId, viewId);
+    profile.tabOwners.delete(tabId);
+    profile.agentTabs.delete(tabId);
+    for (const [thread, tab] of profile.lastTabByThread)
+      if (tab === tabId) profile.lastTabByThread.delete(thread);
+  }
+
+  releasePersonTab(profile: RelayProfile, tabId: number) {
+    profile.personTabs.delete(tabId);
+  }
+
+  /** Whether a tab is held for a person signing in. */
+  heldForPerson(profile: RelayProfile, tabId: number): boolean {
+    return profile.personTabs.has(tabId);
+  }
+
   /** The thread driving a tab right now, if any. */
   tabOwner(profile: RelayProfile, tabId: number): string | null {
     const owner = profile.tabOwners.get(tabId);
@@ -556,6 +642,11 @@ export class BrowserRelayHub {
    * acted in that tab in the last two minutes; other tabs stay free.
    */
   claimTab(profile: RelayProfile, threadId: string, tabId: number) {
+    if (profile.personTabs.has(tabId))
+      throw new BrowserRelayError(
+        "tab_in_use",
+        `Tab ${tabId} in the Chrome profile "${profile.label}" is held for the owner, who is signing in there. Agents cannot see or use it. Wait for the sign-in to finish, then open your own tab with chrome_open.`,
+      );
     const now = this.now();
     const owner = profile.tabOwners.get(tabId);
     if (owner && owner.threadId !== threadId && this.ownerLive(owner))
@@ -615,7 +706,8 @@ export class BrowserRelayHub {
     if (!profile) return;
     const tabs =
       threadId === undefined
-        ? [...profile.attachedTabs]
+        ? // A person's sign-in tab is not the agents' to stop.
+          [...profile.attachedTabs].filter((tabId) => !profile.personTabs.has(tabId))
         : [...profile.tabOwners].flatMap(([tabId, owner]) =>
             owner.threadId === threadId ? [tabId] : [],
           );

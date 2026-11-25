@@ -277,7 +277,8 @@ export class ChromeTools {
     return {
       profile: profile.label,
       tabs: (Array.isArray(tabs) ? tabs : []).flatMap((tab) =>
-        tab.id === undefined
+        // A tab held for the owner's sign-in is invisible to threads (1488).
+        tab.id === undefined || this.hub.heldForPerson(profile, tab.id)
           ? []
           : [
               {

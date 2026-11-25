@@ -110,6 +110,22 @@ export function connectFake(
           }
           if (method === "Page.captureScreenshot")
             return reply(message.id, { result: { data: PNG_1x1 } });
+          const tabId = (params[0] as { tabId?: number } | undefined)?.tabId;
+          const tab = tabId === undefined ? undefined : tabs.get(tabId);
+          if (method === "Page.navigate" && tab) tab.url = String(args.url);
+          if (method === "Page.getNavigationHistory")
+            return reply(message.id, {
+              result: {
+                currentIndex: 0,
+                entries: [{ url: tab?.url ?? "", title: tab?.title ?? "" }],
+              },
+            });
+          if (method === "Page.getLayoutMetrics")
+            return reply(message.id, {
+              result: {
+                cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 0, pageY: 0 },
+              },
+            });
           return reply(message.id, { result: {} });
         }
       }
