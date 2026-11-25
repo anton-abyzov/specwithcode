@@ -49,7 +49,7 @@ import {
   signRelayJwt,
   verifyRelayJwt,
 } from "@specweave-studio/shared/relayJwt";
-import { isSecureRelayUrl } from "@specweave-studio/shared/relayUrl";
+import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@specweave-studio/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -64,6 +64,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
@@ -1396,20 +1397,35 @@ const make = Effect.gen(function* () {
     if (Option.isNone(token)) {
       return false;
     }
-    // The link belongs to the relay it was installed against, so target the
-    // persisted URL: STUDIO_RELAY_URL may have changed since the link was made.
+    // The account token is wider than this environment, so it goes only to
+    // the relay this server is configured for, never to a stored URL a client
+    // wrote. A link made against another relay keeps its tunnel until that
+    // relay's reaper removes it.
     const relayUrl = yield* secrets.get(RELAY_URL_SECRET);
-    if (Option.isNone(relayUrl)) {
+    const configuredRelayUrl = yield* relayUrlConfig.pipe(Effect.option);
+    if (
+      Option.isNone(relayUrl) ||
+      Option.isNone(configuredRelayUrl) ||
+      normalizeSecureRelayUrl(bytesToString(relayUrl.value)) !== configuredRelayUrl.value
+    ) {
+      if (Option.isSome(relayUrl))
+        yield* Effect.logWarning(
+          "Kept the managed tunnel: the stored relay is not the configured one",
+        );
       return false;
     }
     const environmentId = yield* environment.getEnvironmentId;
     // Stop the local connector before the relay deletes the tunnel it serves.
     yield* endpointRuntime.applyConfig(null);
     const response = yield* HttpClientRequest.delete(
-      `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
+      `${configuredRelayUrl.value}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
-      httpClient.execute,
+      // A redirect would carry the token somewhere else.
+      (request) =>
+        httpClient
+          .execute(request)
+          .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" })),
       Effect.flatMap(filterRelayResponse),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
