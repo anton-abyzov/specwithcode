@@ -521,7 +521,7 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
     ),
   );
 
-  it.effect("puts the bundle back and keeps the install when the Trash fails", () =>
+  it.effect("keeps the install when the Trash fails and finishes on the next uninstall", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
         const h = yield* harness(
@@ -534,8 +534,17 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
         const folder = path.join(home, "Applications", "SpecWithCode Apps");
 
         assert.isFalse(yield* h.installer.uninstall(result.app.installId));
-        assert.deepEqual(yield* fileSystem.readDirectory(folder), ["Morning dashboard.app"]);
+        const [left] = yield* fileSystem.readDirectory(folder);
+        assert.match(left!, /^\.Morning dashboard\.app\.removing-[0-9a-f]{32}$/);
         assert.equal((yield* h.records.list).length, 1);
+
+        // Something new at the old path is never touched.
+        yield* fileSystem.makeDirectory(path.join(folder, "Morning dashboard.app"));
+        const retry = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        assert.isTrue(yield* retry.installer.uninstall(result.app.installId));
+        assert.deepEqual(retry.calls.trashed, [path.join(folder, left!)]);
+        assert.deepEqual(yield* fileSystem.readDirectory(folder), ["Morning dashboard.app"]);
+        assert.deepEqual(yield* retry.records.list, []);
       }),
     ),
   );

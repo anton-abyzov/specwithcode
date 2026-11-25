@@ -662,34 +662,40 @@ const make = Effect.gen(function* () {
         );
       switch (location.kind) {
         case "mac-bundle": {
-          // Checked under a private name it was first moved to, so nothing can
-          // take its place between the check and the Trash.
-          if (!(yield* owned(location.path))) return;
-          const claimed = rules.join(
-            location.folder,
-            `.${rules.basename(location.path)}.removing-${newArtifactAppInstallId()}`,
+          // A bundle is moved to a private name, checked again there and
+          // trashed from there, so nothing can take its place in between. It
+          // is never moved back: whatever appears at the old path is left
+          // alone. A copy a failed Trash left under a private name is found
+          // and trashed by the next uninstall, and its record stays until then.
+          const prefix = `.${rules.basename(location.path)}.removing-`;
+          const leftovers = (yield* fileSystem
+            .readDirectory(location.folder)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((entry) =>
+            entry.startsWith(prefix),
           );
-          // A random name nothing uses yet: a rename over an existing empty folder would replace it.
-          if (yield* exists(claimed)) {
-            return yield* new ArtifactAppLauncherWriteError({
-              operation: "remove-launcher",
-              path: claimed,
-              cause: new Error("The private name for removal is taken."),
-            });
+          const candidates: Array<string> = [];
+          for (const entry of leftovers) candidates.push(rules.join(location.folder, entry));
+          if (yield* owned(location.path)) {
+            const claimed = rules.join(location.folder, `${prefix}${newArtifactAppInstallId()}`);
+            // A random name nothing uses yet: a rename over an empty folder would replace it.
+            if (yield* exists(claimed)) {
+              return yield* new ArtifactAppLauncherWriteError({
+                operation: "remove-launcher",
+                path: claimed,
+                cause: new Error("The private name for removal is taken."),
+              });
+            }
+            yield* fileSystem
+              .rename(location.path, claimed)
+              .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
+            candidates.push(claimed);
           }
-          const putBack = fileSystem
-            .rename(claimed, location.path)
-            .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
-          yield* fileSystem
-            .rename(location.path, claimed)
-            .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
-          if (!(yield* owned(claimed))) {
-            // Not ours after all: put it back where it was.
-            yield* putBack;
-            return;
+          for (const candidate of candidates) {
+            // Anything under the private name that is not exactly this install's bundle stays.
+            if (yield* launcherPathOwned(location, candidate, installId)) {
+              yield* host.trashItem(candidate);
+            }
           }
-          // A Trash that fails puts the bundle back, so the record stays and uninstall can run again.
-          yield* host.trashItem(claimed).pipe(Effect.onError(() => putBack.pipe(Effect.ignore)));
           return;
         }
         case "windows-shortcuts":
