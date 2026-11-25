@@ -118,8 +118,21 @@ export const AssetImageDimensions = Schema.Struct({
 });
 export type AssetImageDimensions = typeof AssetImageDimensions.Type;
 
+/**
+ * Where a host's signed URLs may point. A remote host answers asset and upload requests, and
+ * the client resolves the answer against that host's origin, so anything but a path on the
+ * host's own route (another origin, `//host`, `data:`, a dot segment) would send the request or
+ * the upload somewhere else. A token is dot-joined `[\w-]` runs; a file name is one segment that
+ * is not made of dots, plain or percent-encoded.
+ */
+const SIGNED_ASSET_PATH = /^\/api\/assets\/[\w-]+(?:\.[\w-]+)*\/(?!(?:\.|%2[eE])+$)[^/\\?#\s]+$/;
+const SIGNED_UPLOAD_PATH = /^\/api\/attachments\/upload\/[\w-]+(?:\.[\w-]+)*$/;
+
 export const AssetCreateUrlResult = Schema.Struct({
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(SIGNED_ASSET_PATH),
+  ),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -159,7 +172,10 @@ export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInp
 
 export const AttachmentCreateUploadUrlResult = Schema.Struct({
   attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(SIGNED_UPLOAD_PATH),
+  ),
   expiresAt: Schema.Number,
 });
 export type AttachmentCreateUploadUrlResult = typeof AttachmentCreateUploadUrlResult.Type;
