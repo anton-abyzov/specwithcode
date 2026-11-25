@@ -551,8 +551,13 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
         resource: input.resource,
       });
     }
-    // The file is served by the type of what a link leads to, so that must be previewable too.
-    if (!isWorkspacePreviewEntryPath(canonicalFile)) {
+    // The file is served by the type of what a link leads to, so that must be previewable too,
+    // and of the same kind: a page name earns a token for its whole folder, a picture does not.
+    if (
+      !isWorkspacePreviewEntryPath(canonicalFile) ||
+      isWorkspaceImagePreviewPath(canonicalFile) !==
+        isWorkspaceImagePreviewPath(resolved.relativePath)
+    ) {
       return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
       });
