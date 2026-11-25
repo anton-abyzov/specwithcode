@@ -40,7 +40,7 @@ const layerTest = Layer.mergeAll(
 
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.4",
+  model: "gpt-6.2-sol",
 } satisfies ModelSelection;
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
@@ -93,7 +93,7 @@ const threadCreatedEvent = (now: DateTime.Utc) =>
 it("builds a turn_failed report with only class, provider, model and code", () => {
   const event = ProviderEventIngestor.providerTurnFailureCrashReport({
     driver: CODEX_DRIVER,
-    model: "gpt-5.4",
+    model: "gpt-6.2-sol",
     failure: makeProviderFailure({
       message: "Rate limited.",
       code: "rate_limited",
@@ -106,7 +106,7 @@ it("builds a turn_failed report with only class, provider, model and code", () =
     kind: "turn_failed",
     category: "usage_limit",
     provider: "codex",
-    model: "gpt-5.4",
+    model: "gpt-6.2-sol",
     error: { name: "rate_limited", message: "Rate limited." },
     detail: { retryable: true, code: "rate_limited", retryAttempt: 2 },
     foldKey: "usage_limit|codex|rate_limited",
@@ -124,7 +124,7 @@ it.effect("reports a persisted failed turn once, grouped by failure class", () =
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-11-24T00:00:00.000Z",
-    models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
+    models: [{ slug: "gpt-6.2-sol", name: "GPT-6.2-Sol", isCustom: false, capabilities: null }],
     slashCommands: [],
     skills: [],
   };
@@ -201,7 +201,7 @@ it.effect("reports a persisted failed turn once, grouped by failure class", () =
     assert.deepEqual(reported[0], {
       driver: CODEX_DRIVER,
       failure,
-      model: "gpt-5.4",
+      model: "gpt-6.2-sol",
     });
   }).pipe(Effect.provide(layerTest.pipe(Layer.provide(layerReports))));
 });

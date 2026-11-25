@@ -75,7 +75,7 @@ const layerTest = Layer.mergeAll(
 );
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.4",
+  model: "gpt-6.2-sol",
 } satisfies ModelSelection;
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
@@ -151,7 +151,7 @@ const codexProvider: ServerProvider = {
   auth: { status: "authenticated" },
   checkedAt: "2026-11-24T00:00:00.000Z",
   models: [
-    { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null },
+    { slug: "gpt-6.2-sol", name: "GPT-6.2-Sol", isCustom: false, capabilities: null },
     { slug: "my-gateway-deployment", name: "Gateway", isCustom: true, capabilities: null },
   ],
   slashCommands: [],
@@ -388,6 +388,30 @@ it.each([
     ProviderEventIngestor.analyticsModelLabel([claudeProvider], {
       instanceId: claudeProvider.instanceId,
       driver: "claudeAgent",
+      model,
+    }),
+    expected,
+  );
+});
+
+// Native Codex lists a gateway's models from `model/list` as non-custom rows,
+// and Cursor, Grok and Muse have no catalog in the manifest: a listing alone
+// never makes a name public.
+it.each([
+  { driver: "codex", model: "acme-gateway-gpt-prod", expected: "custom:codex" },
+  { driver: "cursor", model: "acme-cursor-deploy", expected: "custom:cursor" },
+  { driver: "codex", model: "gpt-6.2-sol", expected: "gpt-6.2-sol" },
+])("labels $model that $driver discovery lists as $expected", ({ driver, model, expected }) => {
+  const provider: ServerProvider = {
+    ...codexProvider,
+    instanceId: ProviderInstanceId.make(`${driver}-listed`),
+    driver: ProviderDriverKind.make(driver),
+    models: [{ slug: model, name: model, isCustom: false, capabilities: null }],
+  };
+  assert.equal(
+    ProviderEventIngestor.analyticsModelLabel([provider], {
+      instanceId: provider.instanceId,
+      driver,
       model,
     }),
     expected,

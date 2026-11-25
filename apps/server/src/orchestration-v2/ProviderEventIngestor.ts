@@ -158,20 +158,6 @@ export const layerFailureReports = Layer.effect(
   }),
 );
 
-/**
- * Drivers whose model lists come from the vendor. The others (OpenCode, Pi,
- * ACP Registry agents, local model servers) list the person's own
- * configuration: local tags, file paths or gateway names.
- */
-const VENDOR_MODEL_LIST_DRIVERS: ReadonlySet<string> = new Set([
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "grok",
-  "antigravity",
-  "muse",
-]);
-
 // A context-window marker such as `[1m]` after a slug.
 const MODEL_SUFFIX = /\[[^\]]*\]$/u;
 
@@ -190,14 +176,13 @@ function manifestModelSlug(
 }
 
 /**
- * The model name analytics and error reports may carry. A model the bundled
- * model manifest lists for the driver reports its manifest slug. Where the
- * manifest holds the driver's catalog (Claude, Antigravity), only that counts:
- * Claude's own discovery lists a configured backend id, such as a Bedrock
- * profile or a gateway deployment, as a vendor model. A driver without a
- * catalog there also reports a model its vendor lists for that instance. Any
- * other name can identify a person, a deployment or a file on disk, so it
- * reports only the driver, as `custom:<driver>`.
+ * The model name analytics and error reports may carry: the slug the bundled
+ * model manifest lists for the driver, by slug or alias. A provider's own
+ * listing is not enough, because discovery lists configured names as vendor
+ * models (a Bedrock profile in Claude, a gateway's models in Codex). Any other
+ * name can identify a person, a deployment or a file on disk, so it reports
+ * only the driver, as `custom:<driver>`; so does every model of a driver the
+ * manifest has no catalog for.
  */
 export function analyticsModelLabel(
   providers: ReadonlyArray<ServerProvider>,
@@ -210,23 +195,17 @@ export function analyticsModelLabel(
 ): string {
   const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
   const driver = provider?.driver ?? input.driver;
+  // An instance alias of a catalog model reports that model.
   const listed = provider?.models.find(
     (entry) =>
       !entry.isCustom &&
       (entry.slug === input.model || entry.aliases?.includes(input.model) === true),
   );
-  const catalogSlug =
+  return (
     manifestModelSlug(manifest, driver, input.model) ??
-    (listed === undefined ? undefined : manifestModelSlug(manifest, driver, listed.slug));
-  if (catalogSlug !== undefined) return catalogSlug;
-  if (
-    listed !== undefined &&
-    VENDOR_MODEL_LIST_DRIVERS.has(driver) &&
-    manifest.providers?.[driver] === undefined
-  ) {
-    return listed.slug;
-  }
-  return `custom:${input.driver}`;
+    (listed === undefined ? undefined : manifestModelSlug(manifest, driver, listed.slug)) ??
+    `custom:${input.driver}`
+  );
 }
 
 function providerTurnAnalyticsProperties(input: {
