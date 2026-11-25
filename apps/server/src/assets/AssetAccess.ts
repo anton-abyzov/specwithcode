@@ -1224,7 +1224,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       unlessProtected(path.resolve(claims.workspaceRoot, joinedRelativePath), file),
     ),
   );
-  return workspaceFile
-    ? ({ kind: "file", path: workspaceFile, ...htmlFilePreview(workspaceFile) } satisfies ResolvedAsset)
+  // The response's type follows the target, so a link must not change the file's kind: a
+  // picture name over a page would render that page, and a page name over a picture likewise.
+  return workspaceFile &&
+    path.extname(workspaceFile).toLowerCase() === path.extname(joinedRelativePath).toLowerCase()
+    ? ({
+        kind: "file",
+        path: workspaceFile,
+        ...htmlFilePreview(workspaceFile),
+      } satisfies ResolvedAsset)
     : null;
 });
