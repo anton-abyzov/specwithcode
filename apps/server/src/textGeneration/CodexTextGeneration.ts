@@ -21,7 +21,6 @@ import { expandHomePath } from "../pathExpansion.ts";
 import {
   CODEX_TEXT_GENERATION_FEATURES_OFF,
   codexExecLaunchArgs,
-  codexMcpServersOffConfig,
   resolveCodexLaunchArgs,
 } from "../provider/codexLaunchArgs.ts";
 import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
@@ -148,64 +147,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return imagePaths;
   });
 
-  /**
-   * The MCP servers Codex would start for this folder and config. Text
-   * generation turns each one off; Codex has no switch for all of them. When
-   * the list cannot be read, the request fails instead of running with them.
-   */
-  const listConfiguredMcpServers = Effect.fn("runCodexJson.listConfiguredMcpServers")(
-    function* (input: {
-      readonly operation: TextGenerationOperations.Request<Schema.Top>["operation"];
-      readonly binaryPath: string;
-      readonly launchArgs: ReadonlyArray<string>;
-      readonly environment: NodeJS.ProcessEnv;
-      readonly cwd: string;
-    }) {
-      const { operation } = input;
-      const unavailable = (detail: string) =>
-        new TextGenerationError({
-          operation,
-          detail: `Codex text generation could not list the MCP servers it turns off: ${detail}`,
-        });
-      const spawnCommand = yield* resolveSpawnCommand(
-        input.binaryPath,
-        [...input.launchArgs, "mcp", "list", "--json"],
-        { env: input.environment },
-      );
-      const child = yield* commandSpawner
-        .spawn(
-          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-            env: input.environment,
-            cwd: input.cwd,
-            shell: spawnCommand.shell,
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
-          ),
-        );
-      const [stdout, exitCode] = yield* Effect.all(
-        [
-          readStreamAsString(operation, child.stdout),
-          child.exitCode.pipe(
-            Effect.mapError((cause) =>
-              normalizeCliError("codex", operation, cause, "Failed to read Codex CLI exit code"),
-            ),
-          ),
-          readStreamAsString(operation, child.stderr),
-        ],
-        { concurrency: "unbounded" },
-      );
-      if (exitCode !== 0) return yield* unavailable(`exit code ${exitCode}.`);
-      const listed = yield* Schema.decodeEffect(
-        Schema.fromJsonString(Schema.Array(Schema.Struct({ name: Schema.String }))),
-      )(stdout).pipe(Effect.mapError(() => unavailable("unreadable output.")));
-      return listed.map((server) => server.name);
-    },
-    Effect.scoped,
-  );
-
   const runCodexJson = Effect.fn("runCodexJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -251,19 +192,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
       const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
-      const childEnvironment = withHeadlessBrowserEnvironment({
-        ...effectiveEnvironment,
-        ...(effectiveConfig.homePath
-          ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath) }
-          : {}),
-      });
-      const mcpServerNames = yield* listConfiguredMcpServers({
-        operation,
-        binaryPath: effectiveConfig.binaryPath || "codex",
-        launchArgs: codexExecLaunchArgs(launchArgs),
-        environment: childEnvironment,
-        cwd,
-      });
       const spawnCommand = yield* resolveSpawnCommand(
         effectiveConfig.binaryPath || "codex",
         [
@@ -271,7 +199,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...codexExecLaunchArgs(launchArgs),
           // After the launch args, so a user's override cannot turn them back on.
           ...CODEX_TEXT_GENERATION_FEATURES_OFF,
-          ...codexMcpServersOffConfig(mcpServerNames),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
@@ -291,7 +218,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         { env: effectiveEnvironment },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: childEnvironment,
+        env: withHeadlessBrowserEnvironment({
+          ...effectiveEnvironment,
+          ...(effectiveConfig.homePath
+            ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath) }
+            : {}),
+        }),
         cwd,
         shell: spawnCommand.shell,
         stdin: {

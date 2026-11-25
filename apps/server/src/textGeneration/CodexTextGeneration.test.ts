@@ -46,8 +46,6 @@ interface FakeCodexInput {
   stdinMustNotContain?: string;
   /** Where the stub writes its argv as JSON. */
   argsLogPath?: string;
-  /** MCP server names `mcp list --json` reports, or a failing exit code. */
-  mcpServers?: ReadonlyArray<string> | { readonly exitCode: number };
 }
 
 // The stub walks argv the way the shell script it replaced did: `--image`,
@@ -65,7 +63,6 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
     argsLogPath: input.argsLogPath ?? null,
-    mcpServers: input.mcpServers ?? [],
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -79,11 +76,6 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         'import * as NodeFS from "node:fs";',
         `const check = ${check};`,
         "const args = process.argv.slice(2);",
-        'if (args.includes("mcp") && args.includes("list")) {',
-        "  if (!Array.isArray(check.mcpServers)) process.exit(check.mcpServers.exitCode);",
-        "  process.stdout.write(JSON.stringify(check.mcpServers.map((name) => ({ name, enabled: true }))));",
-        "  process.exit(0);",
-        "}",
         "if (check.argsLogPath !== null) NodeFS.writeFileSync(check.argsLogPath, JSON.stringify(args));",
         'const originalArgs = ` ${args.join(" ")} `;',
         "let outputPath = null;",
@@ -365,71 +357,6 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         expect(args[index]).toBe(`features.${feature}=false`);
         expect(index).toBeGreaterThan(userOverride);
       }
-    }),
-  );
-
-  it.effect("turns off every configured MCP server and drops launch args that add one", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const logDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-codex-text-mcp-" });
-      const argsLogPath = path.join(logDir, "args.json");
-      yield* withFakeCodexEnv(
-        {
-          output: JSON.stringify({ subject: "Add important change", body: "" }),
-          launchArgs:
-            '-c mcp_servers.added.command="true" --config=mcp_servers.other.url=https://x.invalid -c model_verbosity=low',
-          mcpServers: ["planted", "with.dot"],
-          argsLogPath,
-        },
-        (textGeneration) =>
-          textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/codex-effect",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          }),
-      );
-      const args: Array<string> = JSON.parse(yield* fs.readFileString(argsLogPath));
-      const configs = args.flatMap((arg, index) =>
-        args[index - 1] === "--config" || args[index - 1] === "-c"
-          ? [arg]
-          : arg.startsWith("--config=")
-            ? [arg.slice("--config=".length)]
-            : [],
-      );
-      expect(configs).toContain("model_verbosity=low");
-      expect(configs.filter((value) => value.startsWith("mcp_servers"))).toEqual([
-        "mcp_servers.planted.enabled=false",
-        'mcp_servers."with.dot".enabled=false',
-      ]);
-    }),
-  );
-
-  it.effect("does not run Codex when it cannot list the MCP servers to turn off", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const logDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-codex-text-mcp-" });
-      const argsLogPath = path.join(logDir, "args.json");
-      const result = yield* withFakeCodexEnv(
-        {
-          output: JSON.stringify({ subject: "Add important change", body: "" }),
-          mcpServers: { exitCode: 3 },
-          argsLogPath,
-        },
-        (textGeneration) =>
-          textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/codex-effect",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          }),
-      ).pipe(Effect.result);
-      expect(result._tag).toBe("Failure");
-      expect(yield* fs.exists(argsLogPath)).toBe(false);
     }),
   );
 

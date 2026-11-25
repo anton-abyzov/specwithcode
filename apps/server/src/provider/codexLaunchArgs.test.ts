@@ -65,4 +65,13 @@ describe("codexExecLaunchArgs", () => {
       "--strict-config",
     ]);
   });
+
+  it("drops launch args that add or change an MCP server, in either form", () => {
+    NodeAssert.deepStrictEqual(
+      codexExecLaunchArgs(
+        "-c mcp_servers.planted.command=evil --config=mcp_servers.x.url=https://x.invalid -c=mcp_servers={} --config model_verbosity=low",
+      ),
+      ["--config", "model_verbosity=low"],
+    );
+  });
 });

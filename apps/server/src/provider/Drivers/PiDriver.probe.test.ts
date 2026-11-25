@@ -72,7 +72,9 @@ describe("Pi status probe folder", () => {
         assert.equal(folders.length, 1);
         assert.equal(path.dirname(folders[0]!), cacheDir);
         assert.isTrue(path.basename(folders[0]!).startsWith("pi-status-probe-"));
-        assert.deepEqual(observed[0], { entries: 0, mode: 0o700 });
+        assert.equal(observed[0]?.entries, 0);
+        // Windows has no POSIX mode bits to check.
+        if (process.platform !== "win32") assert.equal(observed[0]?.mode, 0o700);
         // The folder is removed once the check ends.
         assert.isFalse(yield* fileSystem.exists(folders[0]!));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
