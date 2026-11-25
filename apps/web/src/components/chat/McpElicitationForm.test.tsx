@@ -133,6 +133,25 @@ describe("McpElicitationForm", () => {
     expect(field(container, "email").textContent).toContain("Enter an email address.");
   });
 
+  it("never submits the composer form it sits in", () => {
+    const onRespond = vi.fn(async () => undefined);
+    const outerSubmit = vi.fn((event: React.FormEvent) => event.preventDefault());
+    const container = mount(<form onSubmit={outerSubmit}>{form(onRespond)}</form>);
+    click(container.querySelector('[data-approval-decision="accept"]'));
+    expect(field(container, "confirm").textContent).toContain("Required.");
+    const input = field(container, "confirm").querySelector("input")!;
+    typeInto(input, "octo/repo");
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    act(() => void input.dispatchEvent(enter));
+    expect(enter.defaultPrevented).toBe(true);
+    expect(onRespond).toHaveBeenCalledWith(
+      requestId,
+      "accept",
+      expect.objectContaining({ confirm: "octo/repo" }),
+    );
+    expect(outerSubmit).not.toHaveBeenCalled();
+  });
+
   it("maps Decline and Cancel without content", () => {
     const onRespond = vi.fn(async () => undefined);
     const container = mount(form(onRespond));

@@ -222,14 +222,20 @@ export const McpElicitationForm = memo(function McpElicitationForm({
     );
   };
 
+  // A div, not a form: the card sits inside the composer's form, and a nested
+  // form's submit would also reach the composer. Enter in a field submits here.
   return (
-    <form
+    <div
+      role="form"
       aria-label={tx("{server} asks for input", { server: elicitation.serverName })}
       className="flex min-w-0 flex-1 flex-col items-stretch gap-2.5"
       data-mcp-elicitation-form=""
-      noValidate
-      onSubmit={(event) => {
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+        if (!(event.target instanceof HTMLInputElement)) return;
+        if (event.target.type === "checkbox") return;
         event.preventDefault();
+        event.stopPropagation();
         submit();
       }}
     >
@@ -292,15 +298,16 @@ export const McpElicitationForm = memo(function McpElicitationForm({
           {tx("Decline")}
         </Button>
         <Button
-          type="submit"
+          type="button"
           size="sm"
           className={BUTTON_CLASS}
           data-approval-decision="accept"
           disabled={locked || !form.ok}
+          onClick={submit}
         >
           {tx("Submit")}
         </Button>
       </div>
-    </form>
+    </div>
   );
 });
