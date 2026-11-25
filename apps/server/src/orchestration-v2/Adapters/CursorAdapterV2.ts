@@ -310,20 +310,33 @@ function nativeThreadId(providerThread: OrchestrationV2ProviderThread): string {
 }
 
 /**
- * Every Cursor settings layer the Cursor CLI loads: project and user rules,
- * skills, hooks, and MCP servers, team and MDM admin policy, and account
- * plugins. The SDK loads none of them when `settingSources` is omitted.
- * Sandbox policy files are read either way, and hooks can only deny or ask
- * (which local SDK runs reject), so these layers do not loosen the sandbox or
- * approval mode Studio sets.
+ * The Cursor settings layers every run loads: user rules, skills, hooks and
+ * MCP servers, team and MDM admin policy, and account plugins. The SDK loads
+ * none of them when `settingSources` is omitted.
  */
 const CURSOR_AGENT_SETTING_SOURCES = [
-  "project",
   "user",
   "team",
   "mdm",
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
+
+/**
+ * The checkout's own layer (`.cursor` rules, hooks and MCP servers) comes from
+ * whoever wrote the repository, and its MCP servers start with the session
+ * before any approval. Only a run the person already gave Full access, with no
+ * sandbox and no review step, loads it.
+ */
+export function cursorAgentSettingSources(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): Array<SettingSource> {
+  const policy = cursorRuntimeAgentPolicy(runtimePolicy);
+  const unrestricted =
+    runtimePolicy.runtimeMode === "full-access" && !policy.autoReview && !policy.sandboxEnabled;
+  return unrestricted
+    ? ["project", ...CURSOR_AGENT_SETTING_SOURCES]
+    : [...CURSOR_AGENT_SETTING_SOURCES];
+}
 
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
@@ -341,7 +354,7 @@ export function makeCursorAgentOptions(input: {
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
       autoReview: policy.autoReview,
-      settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
+      settingSources: cursorAgentSettingSources(input.runtimePolicy),
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
