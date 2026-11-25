@@ -1154,6 +1154,38 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+    // Git reads the slot's record and the `.git` line byte for byte, so a
+    // record with leading spaces, one that reaches this path through a link
+    // and `..`, or a `.git` line naming a slot with a trailing space is not
+    // the registration at this path either.
+    const spare = path.join(root, "spare");
+    yield* git.execute({
+      operation: "test.setupRepo",
+      cwd: repo,
+      args: ["worktree", "add", "-b", "spare", spare],
+    });
+    const spareSlot = path.join(repo, ".git", "worktrees", "spare");
+    yield* fileSystem.remove(path.join(locked, ".git"));
+    yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${spareSlot}\n`);
+    yield* fileSystem.writeFileString(path.join(spareSlot, "gitdir"), `  ${locked}/.git\n`);
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    const deep = path.join(root, "deep", "down");
+    yield* fileSystem.makeDirectory(deep, { recursive: true });
+    yield* fileSystem.symlink(deep, path.join(root, "hop"));
+    yield* fileSystem.writeFileString(
+      path.join(spareSlot, "gitdir"),
+      `${root}/hop/../locked/.git\n`,
+    );
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    yield* fileSystem.writeFileString(path.join(spareSlot, "gitdir"), `${locked}/.git\n`);
+    yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${spareSlot} \n`);
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
     // The project's own checkout and its worktrees still launch.
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
     expect((yield* launchInto(other)).at(-1)?.result).toMatchObject({ projectId });
