@@ -26,6 +26,7 @@ import * as Path from "effect/Path";
 
 import type * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsSystem32Path } from "../process/windowsSystemTools.ts";
 import { findVskillBinary, makeRunCli, type CliRun } from "./ProjectSkillsActionsCommon.ts";
 import type * as ProjectSkillsService from "./ProjectSkillsService.ts";
 import { makeSkillRepoSources } from "./SkillRepoSources.ts";
@@ -79,7 +80,10 @@ export function openLinkCommand(
 ): { readonly command: string; readonly args: ReadonlyArray<string> } {
   if (platform === "darwin") return { command: "open", args: [url] };
   if (platform === "win32")
-    return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] };
+    return {
+      command: windowsSystem32Path("rundll32.exe"),
+      args: ["url.dll,FileProtocolHandler", url],
+    };
   return { command: "xdg-open", args: [url] };
 }
 

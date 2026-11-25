@@ -47,13 +47,15 @@ describe("windowsSystemTools", () => {
     "preview/PortScanner.ts",
     "terminal/Manager.ts",
     "serverPath.ts",
+    "fleet/folderTransfer/sourceCaptureFilesystem.ts",
+    "project/SkillUpdateRpc.ts",
   ])("%s starts no Windows system tool by bare name", (file) => {
     const source = NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8");
-    const tool = String.raw`"(?:powershell|taskkill|schtasks|reg|cmd|ping|icacls)(?:\.exe)?"`;
+    const tool = String.raw`"(?:powershell|taskkill|schtasks|reg|cmd|ping|icacls|rundll32)(?:\.exe)?"`;
     // A call that starts the tool, or a run request naming it; an error label is neither.
     expect(source).not.toMatch(
       new RegExp(
-        String.raw`(?:spawn|run|make|execText|runProbe|probe)\s*\(?\s*${tool}\s*[,)]|command:\s*${tool},\s*args\b`,
+        String.raw`(?:spawn|run|make|command|execText|runProbe|probe)\s*\(?\s*${tool}\s*[,)]|command:\s*${tool},\s*args\b`,
         "i",
       ),
     );

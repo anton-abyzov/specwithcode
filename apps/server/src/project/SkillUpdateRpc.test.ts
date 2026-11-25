@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { isVersionAtLeast } from "./SkillUpdate.ts";
 import { isGitHubReadUrl, openLinkCommand } from "./SkillUpdateRpc.ts";
+import { windowsSystem32Path } from "../process/windowsSystemTools.ts";
 
 describe("anonymous repo reads", () => {
   it("asks only GitHub's API and raw-file hosts, over https", () => {
@@ -27,7 +28,7 @@ describe("opening a note", () => {
     expect(openLinkCommand("darwin", url)).toEqual({ command: "open", args: [url] });
     expect(openLinkCommand("linux", url)).toEqual({ command: "xdg-open", args: [url] });
     expect(openLinkCommand("win32", url)).toEqual({
-      command: "rundll32",
+      command: windowsSystem32Path("rundll32.exe"),
       args: ["url.dll,FileProtocolHandler", url],
     });
   });
