@@ -3003,6 +3003,30 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each(["../../issues/1", "src/./a.ts", "src//a.ts", "/etc/passwd"])(
+    "refuses a diff file path that leaves the contents route: %s",
+    (newPath) =>
+      Effect.gen(function* () {
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+        const error = yield* Effect.flip(
+          cli.getPullRequestDiffFileContents({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number: 7,
+            commit: "a1b2c3d",
+            changeType: "change",
+            oldPath: "src/a.ts",
+            newPath,
+          }),
+        );
+
+        assert.strictEqual(error._tag, "GitHubDiffFileContentsUnavailableError");
+        assert.strictEqual(mockedExecute.mock.calls.length, 0);
+      }),
+  );
+
   it.effect("expands a new file from a root commit without requiring a parent", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
