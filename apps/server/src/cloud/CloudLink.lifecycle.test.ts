@@ -138,6 +138,47 @@ describe("consumeCloudReplayGuards", () => {
     }),
   );
 
+  it.effect("refuses a proof an earlier build already marked under its plain name", () =>
+    Effect.gen(function* () {
+      const created: Array<string> = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: {
+          ...makeSecretStore((name) => Effect.sync(() => void created.push(name))),
+          get: (name) =>
+            Effect.succeed(
+              name === "cloud-health-jti-used-before-upgrade"
+                ? Option.some(new Uint8Array())
+                : Option.none(),
+            ),
+        },
+        names: ["cloud-health-jti-0123", "cloud-health-nonce-4567"],
+        legacyNames: ["cloud-health-jti-used-before-upgrade", undefined],
+        value: new Uint8Array(),
+      });
+
+      expect(consumed).toBe(false);
+      expect(created).toEqual([]);
+    }),
+  );
+
+  it.effect("accepts a new proof when no earlier marker exists", () =>
+    Effect.gen(function* () {
+      const created: Array<string> = [];
+      const consumed = yield* consumeCloudReplayGuards({
+        secrets: {
+          ...makeSecretStore((name) => Effect.sync(() => void created.push(name))),
+          get: () => Effect.succeed(Option.none()),
+        },
+        names: ["cloud-health-jti-0123", "cloud-health-nonce-4567"],
+        legacyNames: ["cloud-health-jti-fresh", "cloud-health-nonce-fresh"],
+        value: new Uint8Array(),
+      });
+
+      expect(consumed).toBe(true);
+      expect(created.toSorted()).toEqual(["cloud-health-jti-0123", "cloud-health-nonce-4567"]);
+    }),
+  );
+
   it.effect("preserves replay-store availability failures", () =>
     Effect.gen(function* () {
       const failure = storeFailure("PermissionDenied");
@@ -251,6 +292,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respond?: () => Response;
     readonly respondEffect?: Effect.Effect<Response>;
     readonly hardwareIdentity?: string;
+    /** STUDIO_RELAY_URL for this run; the stored link uses https://relay.example.test. */
+    readonly configuredRelayUrl?: string;
   }
 
   // Writes the launcher's durable state file into this test's baseDir with
@@ -360,9 +403,19 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         // The release consults the launcher state file under the configured
         // baseDir, so every harness run gets a scoped temp baseDir.
+        // The relay URL this server is configured for comes from the environment.
         Effect.provide(
           ServerConfigModule.layerTest("/", { prefix: "studio-http-release-test-" }).pipe(
             Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    STUDIO_RELAY_URL: harness.configuredRelayUrl ?? "https://relay.example.test",
+                  },
+                }),
+              ),
+            ),
           ),
         ),
         Effect.scoped,
@@ -414,6 +467,31 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
       expect(values.has(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)).toBe(false);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  // The account token is wider than this environment: it goes only to the relay this
+  // server is configured for, never to a URL a client stored in its relay config.
+  it.effect("sends the account token to no relay but the configured one", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const released = yield* link.releaseManagedTunnelOnShutdown();
+
+      expect(released).toBe(false);
+      expect(requests).toEqual([]);
+      // The tunnel's config stays, so the next start can still recover it.
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        configuredRelayUrl: "https://relay.spec-weave.com",
+      }),
+    );
   });
 
   it.effect("does nothing for links without a stored managed tunnel runtime config", () => {
@@ -1222,6 +1300,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(storedOrigin(values)).toMatchObject({ origin: ownOrigin, source: "link" });
       }).pipe(
         provideReleaseHarness({
+          configuredRelayUrl: "https://relay.spec-weave.com",
           store,
           applyConfigCalls,
           requests,
@@ -1270,6 +1349,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(linkedId && new TextDecoder().decode(linkedId)).toBe(claims.environmentId);
       }).pipe(
         provideReleaseHarness({
+          configuredRelayUrl: "https://relay.spec-weave.com",
           store,
           applyConfigCalls: [],
           requests,
@@ -1309,6 +1389,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
       }).pipe(
         provideReleaseHarness({
+          configuredRelayUrl: "https://relay.spec-weave.com",
           store,
           applyConfigCalls,
           requests,
@@ -1349,6 +1430,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(storedOrigin(values)).toMatchObject({ origin: ownOrigin, source: "recovery" });
       }).pipe(
         provideReleaseHarness({
+          configuredRelayUrl: "https://relay.spec-weave.com",
           store,
           applyConfigCalls,
           requests,
@@ -1390,6 +1472,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
       }).pipe(
         provideReleaseHarness({
+          configuredRelayUrl: "https://relay.spec-weave.com",
           store,
           applyConfigCalls,
           requests,
@@ -1419,7 +1502,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
           Effect.provideService(ServerSecretStore.ServerSecretStore, store),
         );
         expect(values.has(CLOUD_ENDPOINT_PUBLIC_ORIGIN)).toBe(false);
-      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+        }),
+      );
     });
 
     it.effect("forgets a link deregistered elsewhere, and says so until it is linked again", () => {
@@ -1460,6 +1549,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(yield* link.linkState()).not.toHaveProperty("revokedElsewhereAt");
       }).pipe(
         provideReleaseHarness({
+          configuredRelayUrl: "https://relay.spec-weave.com",
           store,
           applyConfigCalls,
           requests,

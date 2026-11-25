@@ -153,8 +153,10 @@ export const redirectMatches = (registered: string, presented: string): boolean 
   );
 };
 
-const sameResource = (urls: McpOAuthUrls, presented: string | undefined): boolean => {
+export const sameResource = (urls: McpOAuthUrls, presented: string | undefined): boolean => {
   if (presented === undefined) return true;
+  // A trailing "#" parses to an empty hash, so the text itself is checked (RFC 8707 §2).
+  if (presented.includes("#")) return false;
   try {
     const url = new URL(presented);
     return url.hash === "" && `${url.origin}${url.pathname.replace(/\/+$/u, "")}` === urls.resource;
@@ -217,6 +219,8 @@ interface PendingCode {
   readonly principalGeneration?: number | undefined;
   /** The approved device that approved this client; its MCP session stays gated by it. */
   readonly deviceKey?: string;
+  /** The revoke-all count when it was approved; one since refuses the exchange. */
+  readonly revocationEpoch?: number;
   readonly expiresAtMs: number;
 }
 
@@ -459,6 +463,7 @@ const make = Effect.gen(function* () {
     principal?: AuthPrincipal,
     principalGeneration?: number,
     deviceKey?: string,
+    revocationEpoch?: number,
   ) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
@@ -478,6 +483,7 @@ const make = Effect.gen(function* () {
           access,
           ...(principal ? { principal, principalGeneration } : {}),
           ...(deviceKey === undefined ? {} : { deviceKey }),
+          ...(revocationEpoch === undefined ? {} : { revocationEpoch }),
           expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
         });
         return next;
@@ -488,6 +494,8 @@ const make = Effect.gen(function* () {
   const approve: McpOAuth["Service"]["approve"] = (input) =>
     Effect.gen(function* () {
       const { decision } = input;
+      // Read before the approval is checked: a revoke-all after this ends the code.
+      const revocationEpoch = yield* environmentAuth.revocationEpoch;
       let principal: AuthPrincipal | undefined;
       let principalGeneration: number | undefined;
       let deviceKey: string | undefined;
@@ -547,6 +555,7 @@ const make = Effect.gen(function* () {
         principal,
         principalGeneration,
         deviceKey,
+        revocationEpoch,
       );
       yield* Effect.logInfo("Approved an MCP client sign-in.", {
         client: input.authorization.client.name,
@@ -618,6 +627,9 @@ const make = Effect.gen(function* () {
           label: pending.clientName,
           access: pending.access,
           ...(pending.deviceKey === undefined ? {} : { deviceKey: pending.deviceKey }),
+          ...(pending.revocationEpoch === undefined
+            ? {}
+            : { revocationEpoch: pending.revocationEpoch }),
           client: deriveAuthClientMetadata({ request }),
           ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
         })

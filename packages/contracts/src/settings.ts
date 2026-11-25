@@ -28,6 +28,7 @@ import {
 import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
+  AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import * as Effect from "effect/Effect";
@@ -2852,8 +2853,20 @@ export function requiredScopesForServerSettingsPatch(
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
+    // The host runs saved scripts when a worktree is created: saving one operates the machine.
+    ...(setsProjectScripts(patch) ? [AuthOrchestrationOperateScope] : []),
   ];
 }
+
+const setsProjectScripts = (patch: ServerSettingsPatch): boolean =>
+  patch.defaultProjectScripts !== undefined ||
+  Object.values(patch.projectScriptOverrides ?? {}).some((scripts) => scripts !== null) ||
+  Object.values(patch.projectSettingsOverrides ?? {}).some(
+    (entry) => entry?.defaultProjectScripts !== undefined,
+  ) ||
+  Object.values(patch.projectSettingsOverrideChanges ?? {}).some(
+    (change) => change.set?.defaultProjectScripts !== undefined,
+  );
 
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),

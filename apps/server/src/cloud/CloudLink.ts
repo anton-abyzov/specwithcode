@@ -49,7 +49,7 @@ import {
   signRelayJwt,
   verifyRelayJwt,
 } from "@specweave-studio/shared/relayJwt";
-import { isSecureRelayUrl } from "@specweave-studio/shared/relayUrl";
+import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@specweave-studio/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -64,6 +64,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
@@ -130,6 +131,7 @@ import {
   requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
+import { legacyReplayMarkerName, replayMarkerName } from "./cloudReplayMarkers.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -391,6 +393,23 @@ function stringToBytes(value: string): Uint8Array {
 
 /** Records each one-shot marker; false when any already existed, so the request is a replay. */
 export function consumeCloudReplayGuards(input: {
+  readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+  readonly names: ReadonlyArray<string>;
+  /** Markers an earlier build wrote for the same proof: any one present is a replay. */
+  readonly legacyNames?: ReadonlyArray<string | undefined>;
+  readonly value: Uint8Array;
+}) {
+  const legacy = (input.legacyNames ?? []).filter((name) => name !== undefined);
+  return Effect.forEach(legacy, (name) => input.secrets.get(name), {
+    concurrency: legacy.length || 1,
+  }).pipe(
+    Effect.flatMap((found) =>
+      found.some(Option.isSome) ? Effect.succeed(false) : createCloudReplayGuards(input),
+    ),
+  );
+}
+
+function createCloudReplayGuards(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
   readonly value: Uint8Array;
@@ -1395,20 +1414,35 @@ const make = Effect.gen(function* () {
     if (Option.isNone(token)) {
       return false;
     }
-    // The link belongs to the relay it was installed against, so target the
-    // persisted URL: STUDIO_RELAY_URL may have changed since the link was made.
+    // The account token is wider than this environment, so it goes only to
+    // the relay this server is configured for, never to a stored URL a client
+    // wrote. A link made against another relay keeps its tunnel until that
+    // relay's reaper removes it.
     const relayUrl = yield* secrets.get(RELAY_URL_SECRET);
-    if (Option.isNone(relayUrl)) {
+    const configuredRelayUrl = yield* relayUrlConfig.pipe(Effect.option);
+    if (
+      Option.isNone(relayUrl) ||
+      Option.isNone(configuredRelayUrl) ||
+      normalizeSecureRelayUrl(bytesToString(relayUrl.value)) !== configuredRelayUrl.value
+    ) {
+      if (Option.isSome(relayUrl))
+        yield* Effect.logWarning(
+          "Kept the managed tunnel: the stored relay is not the configured one",
+        );
       return false;
     }
     const environmentId = yield* environment.getEnvironmentId;
     // Stop the local connector before the relay deletes the tunnel it serves.
     yield* endpointRuntime.applyConfig(null);
     const response = yield* HttpClientRequest.delete(
-      `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
+      `${configuredRelayUrl.value}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
-      httpClient.execute,
+      // A redirect would carry the token somewhere else.
+      (request) =>
+        httpClient
+          .execute(request)
+          .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" })),
       Effect.flatMap(filterRelayResponse),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
@@ -1697,11 +1731,15 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = `${CLOUD_HEALTH_JTI_PREFIX}${proof.jti}`;
-      const nonceSecretName = `${CLOUD_HEALTH_NONCE_PREFIX}${proof.nonce}`;
+      const jtiSecretName = replayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti);
+      const nonceSecretName = replayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
+        legacyNames: [
+          legacyReplayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti),
+          legacyReplayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce),
+        ],
         value: stringToBytes(DateTime.formatIso(now)),
       });
       if (!consumedReplayGuards) {
@@ -1803,11 +1841,15 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = `${CLOUD_MINT_JTI_PREFIX}${proof.jti}`;
-      const nonceSecretName = `${CLOUD_MINT_NONCE_PREFIX}${proof.nonce}`;
+      const jtiSecretName = replayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti);
+      const nonceSecretName = replayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
+        legacyNames: [
+          legacyReplayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti),
+          legacyReplayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce),
+        ],
         value: stringToBytes(DateTime.formatIso(now)),
       });
       if (!consumedReplayGuards) {

@@ -1026,3 +1026,20 @@ it.live("mints a static MCP client token through the auth API for an owner sessi
     }),
   ),
 );
+
+it.live("refuses an authorization code approved before every other client was signed out", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const owner = yield* auth.issueSession();
+      const before = yield* approvedCode(handler, auth, undefined);
+
+      yield* auth.revokeOtherClientSessions(owner.sessionId);
+
+      const refused = yield* before.exchange();
+      expect(refused.status).toBe(400);
+      expect(yield* json<{ error: string }>(refused)).toMatchObject({ error: "invalid_grant" });
+      const after = yield* approvedCode(handler, auth, undefined);
+      expect((yield* after.exchange()).status).toBe(200);
+    }),
+  ),
+);
