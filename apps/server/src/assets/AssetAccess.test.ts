@@ -1087,6 +1087,13 @@ describe("AssetAccess", () => {
           kind: "file",
           path: yield* fs.realPath(path.join(root, "assets", "pic.png")),
         });
+        // A link never changes what a dependency is: a picture name over a page, or a page name
+        // over a picture, is not served under the report's folder.
+        yield* fs.writeFileString(path.join(root, "assets", "other.html"), "<p>page</p>");
+        yield* fs.symlink(path.join(root, "assets", "other.html"), path.join(root, "chart.png"));
+        yield* fs.symlink(path.join(root, "assets", "pic.png"), path.join(root, "next.html"));
+        expect(yield* resolveAsset(token, "chart.png")).toBeNull();
+        expect(yield* resolveAsset(token, "next.html")).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
 
