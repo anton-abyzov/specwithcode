@@ -1030,7 +1030,7 @@ describe("CursorAdapterV2", () => {
 
   it("loads the user's Cursor settings layers in every runtime mode", () => {
     // The SDK loads no rules, skills, hooks, or MCP config from disk unless
-    // settingSources names them, so an omitted list silently drops them.
+    // settingSources names them, so an omitted list silently drops AGENTS.md.
     for (const runtimeMode of ["full-access", "auto-accept-edits", "approval-required"] as const) {
       const options = makeCursorAgentOptions({
         modelSelection: {
@@ -1040,59 +1040,14 @@ describe("CursorAdapterV2", () => {
         runtimePolicy: { runtimeMode, interactionMode: "default", cwd: "/workspace" },
         threadId: ThreadId.make("thread-cursor-setting-sources"),
       });
-      for (const source of ["user", "team", "mdm", "plugins"] as const) {
-        assert.include(options.local?.settingSources ?? [], source);
-      }
+      assert.deepEqual(options.local?.settingSources, [
+        "project",
+        "user",
+        "team",
+        "mdm",
+        "plugins",
+      ]);
     }
-  });
-
-  it("loads the checkout's project settings only in unsandboxed Full access without review", () => {
-    // A checkout's project layer can start MCP servers and hooks before any
-    // approval, so a supervised, sandboxed or reviewed run never loads it.
-    const sources = (runtimePolicy: Omit<ProviderAdapterV2RuntimePolicy, "cwd">) =>
-      makeCursorAgentOptions({
-        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
-        runtimePolicy: { ...runtimePolicy, cwd: "/workspace" },
-        threadId: ThreadId.make("thread-cursor-project-settings"),
-      }).local?.settingSources ?? [];
-    for (const runtimeMode of ["approval-required", "auto-accept-edits"] as const) {
-      assert.notInclude(sources({ runtimeMode, interactionMode: "default" }), "project");
-    }
-    assert.deepEqual(sources({ runtimeMode: "full-access", interactionMode: "default" }), [
-      "project",
-      "user",
-      "team",
-      "mdm",
-      "plugins",
-    ]);
-    assert.include(sources({ runtimeMode: "full-access", interactionMode: "plan" }), "project");
-    // Full access narrowed by a sandbox or a review step stays out of the project layer.
-    assert.notInclude(
-      sources({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        sandboxPolicy: { type: "workspaceWrite" },
-      }),
-      "project",
-    );
-    assert.notInclude(
-      sources({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        approvalPolicy: "on-request",
-      }),
-      "project",
-    );
-    // A lower mode whose overrides lift every restriction is still not Full access.
-    assert.notInclude(
-      sources({
-        runtimeMode: "auto-accept-edits",
-        interactionMode: "default",
-        approvalPolicy: "never",
-        sandboxPolicy: { type: "dangerFullAccess" },
-      }),
-      "project",
-    );
   });
 
   it("appends the advisor guidance only with the studio-code tools and the advisor on", () => {
