@@ -217,9 +217,9 @@ const make = Effect.gen(function* () {
     runFork(
       release(installId).pipe(
         Effect.ensuring(
+          // The notification count stays: closing a window does not start a new minute.
           Effect.sync(() => {
             sessions.delete(installId);
-            notificationTimes.delete(installId);
           }),
         ),
       ),

@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ThreadId,
   type DesktopArtifactApp,
+  type DesktopArtifactAppPermissions,
   type ScopedThreadRef,
 } from "@specweave-studio/contracts";
 import {
@@ -32,6 +33,12 @@ import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { toastManager } from "../ui/toast";
+import { ArtifactAppPermissions } from "./ArtifactAppPermissions";
+import {
+  artifactAppPowerNotification,
+  callArtifactAppPermissions,
+  forwardArtifactAppPowerMessage,
+} from "./artifactAppPowerMessages";
 import {
   artifactAppViewState,
   newestArtifactAppPage,
@@ -152,9 +159,21 @@ function InstalledPageWindow({ app }: { readonly app: DesktopArtifactApp }) {
     olderHistoryPending: canPageBack || (page === null && history.loading),
     waitedTooLong,
   });
+  // What the shell says the version in this window may do; null until it has answered.
+  const [permissions, setPermissions] = useState<DesktopArtifactAppPermissions | null>(null);
+  const showsPage = state === "ready" && page !== null;
+  const shownAttachmentId = showsPage ? page.attachmentId : null;
   return (
-    <ArtifactAppFrame name={app.name} installId={app.installId}>
-      {state === "ready" && page !== null ? (
+    <ArtifactAppFrame
+      name={app.name}
+      installId={app.installId}
+      // Only for the version on screen: a stale answer never fills the menu.
+      permissions={
+        permissions !== null && permissions.attachmentId === shownAttachmentId ? permissions : null
+      }
+      onPermissions={setPermissions}
+    >
+      {showsPage ? (
         // Keyed by attachment: a newer page with the title mints its own URL and frame.
         <InstalledPage
           key={page.attachmentId}
@@ -162,6 +181,7 @@ function InstalledPageWindow({ app }: { readonly app: DesktopArtifactApp }) {
           page={page}
           name={app.name}
           unreachable={unreachable || waitedTooLong}
+          onPermissions={setPermissions}
         />
       ) : (
         <ArtifactAppMessage state={state} />
@@ -181,11 +201,36 @@ function InstalledPage(props: {
   readonly name: string;
   /** The machine is down or never answered, so a page not yet loaded cannot load. */
   readonly unreachable: boolean;
+  readonly onPermissions: (permissions: DesktopArtifactAppPermissions | null) => void;
 }) {
   const tx = useTx();
   const { attachmentId, title } = props.page;
   const { src, failed } = useHtmlRenderSrc(props.environmentId, attachmentId, title);
-  if (src !== null) return <InstalledPageDocument src={src} page={props.page} name={props.name} />;
+  const { onPermissions } = props;
+  // The shell is told which version this window shows, and where, before the frame loads:
+  // it stops every frame navigation except to that address, and asks for consent when the
+  // version declares powers. The frame mounts once the shell has answered.
+  const [opened, setOpened] = useState(false);
+  useEffect(() => {
+    if (src === null) return;
+    let cancelled = false;
+    void callArtifactAppPermissions({ action: "open", attachmentId, url: src }).then(
+      (permissions) => {
+        if (cancelled) return;
+        onPermissions(permissions);
+        setOpened(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+      onPermissions(null);
+      // The version leaves the window: whatever it held on the desktop goes with it.
+      void callArtifactAppPermissions({ action: "close" });
+    };
+  }, [attachmentId, onPermissions, src]);
+  if (src !== null && opened) {
+    return <InstalledPageDocument src={src} page={props.page} name={props.name} />;
+  }
   // A cached page whose machine is away cannot mint its URL; say so rather than load forever.
   if (props.unreachable) return <ArtifactAppMessage state="thread-unavailable" />;
   return (
@@ -220,6 +265,35 @@ function InstalledPageDocument(props: {
     return () => observer.disconnect();
   }, []);
   const [contentHeight, setContentHeight] = useState<number>();
+  const { attachmentId } = props.page;
+  // The page asks for desktop powers on the frame's channel. Only a request from this
+  // window's own frame is forwarded, tagged with the version mounted here; the shell decides.
+  useEffect(() => {
+    const frameWindow = () => scrollerRef.current?.querySelector("iframe")?.contentWindow ?? null;
+    const onMessage = (event: MessageEvent) => {
+      forwardArtifactAppPowerMessage({
+        event,
+        frameWindow: frameWindow(),
+        attachmentId,
+        power: window.desktopBridge?.artifactAppPower,
+        reply: (message) => frameWindow()?.postMessage(message, "*"),
+      });
+    };
+    window.addEventListener("message", onMessage);
+    // A tray click or a shortcut press, for this version only.
+    const subscribe = window.desktopBridge?.onArtifactAppPowerEvent;
+    const unsubscribe =
+      typeof subscribe === "function"
+        ? subscribe((event) => {
+            const message = artifactAppPowerNotification(event, attachmentId);
+            if (message !== undefined) frameWindow()?.postMessage(message, "*");
+          })
+        : undefined;
+    return () => {
+      window.removeEventListener("message", onMessage);
+      unsubscribe?.();
+    };
+  }, [attachmentId]);
   const height = Math.max(
     viewport.height,
     Math.min(
@@ -241,10 +315,12 @@ function InstalledPageDocument(props: {
   );
 }
 
-/** The window's chrome: a draggable strip with the app's name and its two actions. */
+/** The window's chrome: a draggable strip with the app's name, its permissions and its two actions. */
 function ArtifactAppFrame(props: {
   readonly name: string | null;
   readonly installId?: string;
+  readonly permissions?: DesktopArtifactAppPermissions | null;
+  readonly onPermissions?: (permissions: DesktopArtifactAppPermissions) => void;
   readonly children: ReactNode;
 }) {
   const tx = useTx();
@@ -290,6 +366,9 @@ function ArtifactAppFrame(props: {
         <h1 className="min-w-0 flex-1 truncate text-compact font-semibold">
           {name ?? tx("Installed page")}
         </h1>
+        {props.permissions != null && props.onPermissions !== undefined ? (
+          <ArtifactAppPermissions permissions={props.permissions} onChange={props.onPermissions} />
+        ) : null}
         {installId !== undefined && typeof reveal === "function" ? (
           <Button variant="ghost" size="sm" onClick={() => void onReveal()}>
             <FolderOpenIcon aria-hidden className="size-4" /> {tx("Show in folder")}

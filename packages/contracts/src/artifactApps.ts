@@ -124,7 +124,7 @@ export const DesktopArtifactAppPowerInputSchema = Schema.Struct({
 });
 export type DesktopArtifactAppPowerInput = typeof DesktopArtifactAppPowerInputSchema.Type;
 
-export const ARTIFACT_APP_POWER_ERRORS = [
+const ARTIFACT_APP_POWER_ERRORS = [
   /** No grant for this power on this version, or the shell could not prove one. */
   "not-allowed",
   "invalid-request",

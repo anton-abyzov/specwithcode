@@ -28,7 +28,7 @@ const GRANTS_VERSION = 1;
 // A page republished many times leaves one answer per version; only the newest are kept.
 const GRANTS_PER_INSTALL_LIMIT = 20;
 
-export const ArtifactAppGrantSchema = Schema.Struct({
+const ArtifactAppGrantSchema = Schema.Struct({
   installId: ArtifactAppInstallIdSchema,
   attachmentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   /** The sha256 of the page file's bytes the answer was given for, in lowercase hex. */

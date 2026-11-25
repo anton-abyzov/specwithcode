@@ -25,6 +25,11 @@ const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_0
 const PAGE_RULES =
   'Write one self-contained document with inline <style> and <script>. Local images written as absolute file paths (src="/abs/shot.png", CSS url(/abs/bg.webp), or a JS string) are inlined automatically; remote http(s) URLs, such as a CDN chart library, load as-is.';
 
+// Desktop powers of a page the reader installed as an app. The desktop shell reads the manifest
+// from the published file and decides every request; see apps/desktop/src/artifactApps.
+const APP_POWERS_GUIDE =
+  'A reader can install a report page as a desktop app. An installed page may use desktop powers it declares in <script type="application/specwithcode-app+json">{"permissions":["notifications","tray","always-on-top","global-shortcuts"]}</script> (list only the ones it uses); the reader is asked once for each version of the page. Ask with window.parent.postMessage({jsonrpc:"2.0",id:1,method:"app/notify",params:{title,body}},"*"); the other methods are app/tray/set {title?,tooltip,items:[{id,label}]}, app/window/always-on-top {on} and app/shortcut/register {accelerator}, where an accelerator has two modifiers and a key, such as CommandOrControl+Shift+B. Each gets a result or an error reply with the same id; a tray click arrives as app/tray/clicked {id} and a shortcut press as app/shortcut/pressed {accelerator}. In the thread and when the reader says no every request is refused, so the page must work without them.';
+
 const HtmlRenderSuccess = Schema.Struct({
   htmlRender: Schema.Struct({
     attachmentId: Schema.String,
@@ -86,7 +91,7 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 // touches no workspace, so plan mode and read-only sandboxes can use it.
 // Open-world, since the page may load remote resources, as in a preview.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description: `Show a finished HTML page (chart, table, diagram, collage, mockup) inline in this thread, above your final text reply; call it before writing that reply. Use it only when prose cannot carry the result, or when the user asks for a page; a result that fits in a few lines stays a plain message. The reader already sees the page, so the reply should not announce it, say where it is, or restate it: add only what the page doesn't say. Preview with html_preview first. SpecWithCode fits the frame to the page's height at each reader's width. A height below the page's contentHeight caps the frame there, and the rest scrolls inside it. ${PAGE_RULES} ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
+  description: `Show a finished HTML page (chart, table, diagram, collage, mockup) inline in this thread, above your final text reply; call it before writing that reply. Use it only when prose cannot carry the result, or when the user asks for a page; a result that fits in a few lines stays a plain message. The reader already sees the page, so the reply should not announce it, say where it is, or restate it: add only what the page doesn't say. Preview with html_preview first. SpecWithCode fits the frame to the page's height at each reader's width. A height below the page's contentHeight caps the frame there, and the rest scrolls inside it. ${PAGE_RULES} ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE} ${APP_POWERS_GUIDE}`,
   parameters: Schema.Struct({
     html: Html,
     title: Schema.String.check(

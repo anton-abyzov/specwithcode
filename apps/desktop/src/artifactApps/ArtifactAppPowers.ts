@@ -7,11 +7,10 @@
 import { ARTIFACT_APP_POWERS, type ArtifactAppPower } from "@specweave-studio/contracts";
 import type * as Electron from "electron";
 
-export const ARTIFACT_APP_MANIFEST_TYPE = "application/specwithcode-app+json";
 export const ARTIFACT_APP_SHORTCUT_LIMIT = 4;
-export const ARTIFACT_APP_TRAY_ITEM_LIMIT = 12;
-export const ARTIFACT_APP_NOTIFICATION_LIMIT = 10;
-export const ARTIFACT_APP_NOTIFICATION_WINDOW_MS = 60_000;
+const ARTIFACT_APP_TRAY_ITEM_LIMIT = 12;
+const ARTIFACT_APP_NOTIFICATION_LIMIT = 10;
+const ARTIFACT_APP_NOTIFICATION_WINDOW_MS = 60_000;
 
 const MANIFEST_MAX_CHARS = 16_384;
 const MANIFEST_MAX_ENTRIES = 64;
@@ -52,7 +51,7 @@ export function readArtifactAppManifest(html: string): ReadonlyArray<ArtifactApp
 }
 
 /** Each power in plain words, as the consent dialog and the Permissions menu list them. */
-export function artifactAppPowerLabel(power: ArtifactAppPower, platform: NodeJS.Platform): string {
+function artifactAppPowerLabel(power: ArtifactAppPower, platform: NodeJS.Platform): string {
   switch (power) {
     case "notifications":
       return "Show notifications";
