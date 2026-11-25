@@ -61,6 +61,7 @@ import {
   withStartEffort,
 } from "../../../project/TaskRouting.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import { confirmScratchHelper } from "./scratchHelper.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -419,7 +420,7 @@ const projectThreadStaysInProject = Effect.fn("mcp.projectThreadStaysInProject")
         );
   return yield* new OrchestratorMcpFailure({
     code: "invalid_request",
-    message: `This thread belongs to project "${callerTitle ?? caller.projectId}", so the threads it starts stay there: omit scratch to launch in the project (its root, or one of its worktrees with workspaceStrategy). For work in a repository the project does not list, launch in the project anyway and use that repository by its absolute path, or ask the user to add it to the project. Pass projectless:true with scratch only when the user asked for a chat outside any project.`,
+    message: `This thread belongs to project "${callerTitle ?? caller.projectId}", so the threads it starts stay there: omit scratch to launch in the project (its root, or one of its worktrees with workspaceStrategy). For work in a repository the project does not list, launch in the project anyway and use that repository by its absolute path, or ask the user to add it to the project. On a machine with no copy of this project, scratch alone starts a helper for this project there. Pass projectless:true with scratch only when the user asked for a chat outside any project.`,
   });
 });
 
@@ -502,11 +503,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Start this work here, or route it with studio_project_route to a project on this machine.`,
             });
           const machine = candidate.target;
-          // A project thread's scratch work elsewhere follows the same rule as here.
+          // A project thread's scratch work elsewhere follows the same rule as here,
+          // except on a machine with no copy of the project: there a scratch folder
+          // is the project's helper, listed under it here and named for it there.
           if (
             input.scratch === true &&
             caller !== undefined &&
             input.projectless !== true &&
+            !(
+              input.machine !== undefined &&
+              (yield* confirmScratchHelper(callerProject, machine.machine))
+            ) &&
             !(yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
               Effect.flatMap((folders) => folders.isScratch(caller.projectId)),
             ))
@@ -974,7 +981,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       );
       const start = input.cursor ?? 0,
         end = start + (input.limit ?? 20);
-      return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
+      const page = rows.slice(start, end);
+      // Another machine reading this list for a checkout tells this machine's
+      // "No project" folder from a repository still being read.
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const scratch = yield* Effect.findFirst(page, (project) => folders.isScratch(project.id));
+      return {
+        projects: page,
+        nextCursor: end < rows.length ? end : null,
+        ...(Option.isSome(scratch) ? { scratchProjectId: scratch.value.id } : {}),
+      };
     }),
   ),
   studio_project_read: McpToolAccess.reads((input) =>

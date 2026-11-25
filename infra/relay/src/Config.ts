@@ -2,6 +2,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
@@ -101,6 +102,15 @@ export const adminUserIdsConfig = Config.String("RELAY_ADMIN_USER_IDS").pipe(
   ),
 );
 
+/**
+ * The Svix signing secret of the Clerk webhook endpoint for user.deleted. It
+ * is optional so a deploy without it still succeeds; blank counts as unset
+ * because an unset GitHub secret reaches the deploy as an empty string.
+ */
+export const clerkWebhookSigningSecretConfig = Config.option(
+  Config.Redacted("CLERK_WEBHOOK_SIGNING_SECRET"),
+).pipe(Config.map(Option.filter((value) => Redacted.value(value).trim().length > 0)));
+
 export interface ApnsCredentials {
   readonly teamId: string;
   readonly keyId: string;
@@ -123,6 +133,8 @@ export class RelayConfiguration extends Context.Service<
      * JWKS from Clerk's Backend API on every cold isolate.
      */
     readonly clerkJwtKey?: string;
+    /** Signs Clerk's user.deleted webhook (`whsec_...`). Unset: the webhook refuses every request. */
+    readonly clerkWebhookSigningSecret?: Redacted.Redacted<string>;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;

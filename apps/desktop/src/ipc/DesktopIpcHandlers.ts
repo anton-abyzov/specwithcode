@@ -93,6 +93,13 @@ import {
 import { startFileDrag } from "./methods/fileDrag.ts";
 import { printDocumentPdf } from "./methods/documentPdf.ts";
 import { openProjectWindow } from "./methods/projectWindow.ts";
+import {
+  getArtifactApp,
+  installArtifactApp,
+  listArtifactApps,
+  revealArtifactApp,
+  uninstallArtifactApp,
+} from "./methods/artifactApps.ts";
 import { installVoice } from "./methods/voice.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
@@ -177,6 +184,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(closeSystemSettingsHelper);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(openProjectWindow);
+  yield* ipc.handle(installArtifactApp);
+  yield* ipc.handle(uninstallArtifactApp);
+  yield* ipc.handle(listArtifactApps);
+  yield* ipc.handle(getArtifactApp);
+  yield* ipc.handle(revealArtifactApp);
   yield* ipc.handle(startFileDrag);
   yield* ipc.handle(printDocumentPdf);
   yield* ipc.handle(probeRemoteEditors);

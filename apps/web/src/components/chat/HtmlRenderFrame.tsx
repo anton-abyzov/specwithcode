@@ -16,6 +16,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 
+import { InstallAsAppButton } from "../artifactApps/InstallAsAppButton";
 import { HtmlRenderDocument, type HtmlRenderFileTarget } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 
@@ -28,7 +29,11 @@ const MIN_URL_LIFE_MS = 5 * 60_000;
  * since a frame cannot report a failed load. The page keeps its first URL for
  * its lifetime.
  */
-function useHtmlRenderSrc(environmentId: EnvironmentId, attachmentId: string, title: string) {
+export function useHtmlRenderSrc(
+  environmentId: EnvironmentId,
+  attachmentId: string,
+  title: string,
+) {
   const fileName = htmlRenderFileName(title);
   const resource = useMemo(
     () => ({
@@ -249,9 +254,26 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
           <h3 className="html-report-card-title">{title}</h3>
           <p className="html-report-card-kind">{tx("Interactive report")}</p>
         </div>
-        <Button ref={triggerRef} variant="outline" size="sm" onClick={open} disabled={src === null}>
-          {tx("Open report")} <ArrowUpRightIcon aria-hidden className="size-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* An installed page follows this thread, so it needs the thread to follow. */}
+          {threadRef ? (
+            <InstallAsAppButton
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+              attachmentId={attachmentId}
+              title={title}
+            />
+          ) : null}
+          <Button
+            ref={triggerRef}
+            variant="outline"
+            size="sm"
+            onClick={open}
+            disabled={src === null}
+          >
+            {tx("Open report")} <ArrowUpRightIcon aria-hidden className="size-4" />
+          </Button>
+        </div>
       </header>
       <div className="html-report-preview" style={{ height: previewHeight }}>
         <div ref={inlineRef} />

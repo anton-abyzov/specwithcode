@@ -8,6 +8,7 @@ import { coordinatorMessagesPt } from "./coordinatorMessages/pt";
 import { providerSignInPt } from "./providerSignIn/pt";
 import { limitHopsPt } from "./limitHops/pt";
 import { guidedTourPt } from "./guidedTour/pt";
+import { helperChatsPt } from "./helperChats/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
@@ -20,6 +21,7 @@ export const pt: PhraseCatalog = {
   ...providerSignInPt,
   ...limitHopsPt,
   ...guidedTourPt,
+  ...helperChatsPt,
   About: "Sobre",
   "Accent color": "Cor de destaque",
   Account: "Conta",

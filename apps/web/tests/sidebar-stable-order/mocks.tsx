@@ -187,6 +187,7 @@ export const useOrchestrationCommand =
 const NO_MACHINES = { projectCoordinatorMachines: {} };
 export const useClientSettings = <T,>(select: (s: typeof NO_MACHINES) => T) => select(NO_MACHINES);
 export const useAideEnabled = () => true;
+export const persistClientSettingsPatch = async () => {};
 export const useProjects = () => [];
 export const useEnvironmentsWithScope = () => ({ environments: [] });
 export const useEnvironmentScope = () => true;
@@ -276,3 +277,19 @@ const currentEnvironmentIds = () => {
   return environmentIds;
 };
 export const useEnvironmentIds = () => useFixture(currentEnvironmentIds);
+// Hooks the sidebar's imports gained after this fixture was written.
+export const useAtomSet = () => () => {};
+export const useClientSettingsHydrationStatus = () => "ready";
+export const useEnvironmentScopeAccess = () => true;
+export const readEnvironmentScopeAccess = () => true;
+export const useEnvironmentShellLive = () => true;
+export const useMachineReachStates = () => new Map();
+export const usePrimaryEnvironment = () => null;
+export const useRelayEnvironmentDiscovery = () => ({
+  refreshing: false,
+  offline: false,
+  error: { _tag: "None" },
+  environments: new Map(),
+});
+export const useThreadVisibleTurnItems = () => [];
+export const useUpdateClientSettings = () => () => {};

@@ -6,6 +6,21 @@ const sessionId = "grok-text-session";
 let currentModelId = "grok-mock-default";
 const models = ["grok-mock-default", "grok-mock-alt"];
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+let pendingPromptId;
+const finishPrompt = (id) => {
+  write({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: process.env.STUDIO_ACP_PROMPT_RESPONSE_TEXT ?? "" },
+      },
+    },
+  });
+  write({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } });
+};
 
 for await (const line of NodeReadline.createInterface({ input: process.stdin })) {
   const request = JSON.parse(line);
@@ -13,6 +28,14 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
     NodeFS.appendFileSync(process.env.STUDIO_ACP_REQUEST_LOG_PATH, `${line}\n`);
   }
   if (request.id === undefined) continue;
+  if (request.method === undefined) {
+    // The client's answer to the permission request sent during a prompt.
+    if (request.id === "permission-1" && pendingPromptId !== undefined) {
+      finishPrompt(pendingPromptId);
+      pendingPromptId = undefined;
+    }
+    continue;
+  }
   let result;
   switch (request.method) {
     case "initialize":
@@ -44,19 +67,25 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       result = {};
       break;
     case "session/prompt":
-      write({
-        jsonrpc: "2.0",
-        method: "session/update",
-        params: {
-          sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: process.env.STUDIO_ACP_PROMPT_RESPONSE_TEXT ?? "" },
+      if (process.env.STUDIO_ACP_REQUEST_PERMISSION_DURING_PROMPT === "1") {
+        pendingPromptId = request.id;
+        write({
+          jsonrpc: "2.0",
+          id: "permission-1",
+          method: "session/request_permission",
+          params: {
+            sessionId,
+            toolCall: { toolCallId: "tool-1", title: "Run a command", kind: "execute" },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "reject", name: "Reject", kind: "reject_once" },
+            ],
           },
-        },
-      });
-      result = { stopReason: "end_turn" };
-      break;
+        });
+        continue;
+      }
+      finishPrompt(request.id);
+      continue;
     default:
       write({
         jsonrpc: "2.0",

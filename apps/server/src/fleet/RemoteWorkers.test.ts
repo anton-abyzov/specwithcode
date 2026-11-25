@@ -407,6 +407,174 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("asks one machine afresh and drops a no-match read from a list cut short", () => {
+    let asked = 0;
+    let ends = true;
+    const { layer } = setup({
+      studio_project_list: () => {
+        asked++;
+        return { result: { projects: [], nextCursor: ends ? null : 1 } };
+      },
+    });
+    const list = (input: { readonly only?: string; readonly fresh?: boolean }) =>
+      RemoteWorkers.RemoteWorkers.pipe(
+        Effect.flatMap((workers) =>
+          workers.listMachines({
+            projectId: ProjectId.make("local-project"),
+            probe: true,
+            ...input,
+          }),
+        ),
+      );
+    return Effect.gen(function* () {
+      yield* allow();
+      expect((yield* list({})).machines[0]?.project).toMatchObject({ match: "none" });
+      expect(asked).toBe(1);
+      // The cached answer serves a plain listing; a fresh one asks again.
+      yield* list({});
+      expect(asked).toBe(1);
+      expect((yield* list({ only: "m1", fresh: true })).machines).toHaveLength(1);
+      expect(asked).toBe(2);
+      // Another machine named: this one is not asked at all.
+      expect((yield* list({ only: "elsewhere", fresh: true })).machines).toEqual([]);
+      expect(asked).toBe(2);
+      // More pages than the cap: "none" there proves nothing.
+      ends = false;
+      const partial = (yield* list({ only: "m1", fresh: true })).machines[0];
+      expect(partial).toMatchObject({ reachable: true });
+      expect(partial).not.toHaveProperty("project");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("a fresh read waits for unread repositories and never takes a bad page as empty", () => {
+    const fresh = RemoteWorkers.RemoteWorkers.pipe(
+      Effect.flatMap((workers) =>
+        workers.listMachines({
+          projectId: ProjectId.make("local-project"),
+          probe: true,
+          only: "m1",
+          fresh: true,
+        }),
+      ),
+      Effect.map((listed) => listed.machines[0]),
+    );
+    let lists = 0;
+    const warming = setup({
+      // Just started: the matching checkout has no repository identity on the first read.
+      studio_project_list: () => ({
+        result: {
+          projects: [
+            {
+              ...remoteProject,
+              repositoryIdentity: ++lists < 2 ? null : remoteProject.repositoryIdentity,
+            },
+          ],
+          nextCursor: null,
+        },
+      }),
+    });
+    const stillCold = setup({
+      studio_project_list: () => ({
+        result: { projects: [{ ...remoteProject, repositoryIdentity: null }], nextCursor: null },
+      }),
+    });
+    const garbled = setup({ studio_project_list: () => ({ result: {} }) });
+    const read = (world: ReturnType<typeof setup>) =>
+      Effect.gen(function* () {
+        yield* allow();
+        return yield* fresh;
+      }).pipe(Effect.provide(world.layer));
+    return Effect.gen(function* () {
+      expect((yield* read(warming))?.project).toMatchObject({ match: "identity" });
+      expect(lists).toBe(2);
+      // Repositories never read: no "none" to act on.
+      expect(yield* read(stillCold)).not.toHaveProperty("project");
+      // An answer with no project array says nothing about what is there.
+      const bad = yield* read(garbled);
+      expect(bad).toMatchObject({ reachable: true });
+      expect(bad).not.toHaveProperty("project");
+    });
+  });
+
+  it.live("a fresh read after a first helper still says no copy, from its last answer", () => {
+    const fresh = RemoteWorkers.RemoteWorkers.pipe(
+      Effect.flatMap((workers) =>
+        workers.listMachines({
+          projectId: ProjectId.make("local-project"),
+          probe: true,
+          only: "m1",
+          fresh: true,
+        }),
+      ),
+      Effect.map((listed) => listed.machines[0]),
+    );
+    // The first helper made M1's "No project" folder, which has no repository.
+    const scratch = {
+      ...remoteProject,
+      id: "remote-scratch",
+      title: "No project",
+      workspaceRoot: "C:\\Users\\b\\.specwithcode\\scratch",
+      repositoryIdentity: null,
+    };
+    let lists = 0;
+    const second = setup({
+      orchestrator_capabilities: () => ({ result: { ...capabilities, grantProjects: "all" } }),
+      studio_project_list: () => {
+        lists++;
+        return { result: { projects: [scratch], nextCursor: null, scratchProjectId: scratch.id } };
+      },
+    });
+    let lookalikeLists = 0;
+    // A real checkout with the same name and a scratch-like path, still being read: M1
+    // does not call it its "No project" folder, so the read waits and says nothing.
+    const lookalike = setup({
+      orchestrator_capabilities: () => ({ result: { ...capabilities, grantProjects: "all" } }),
+      studio_project_list: () => {
+        lookalikeLists++;
+        return {
+          result: {
+            projects: [
+              { ...scratch, id: "remote-real", workspaceRoot: "C:\\work\\scratchpad\\app" },
+            ],
+            nextCursor: null,
+          },
+        };
+      },
+    });
+    let reads = 0;
+    // The first read says every project and has an unread checkout; the retry says
+    // the grant now shows only listed projects, and none of them.
+    const narrowed = setup({
+      orchestrator_capabilities: () => ({
+        result: { ...capabilities, grantProjects: ++reads < 2 ? "all" : "listed" },
+      }),
+      studio_project_list: () => ({
+        result: {
+          projects: reads < 2 ? [{ ...remoteProject, repositoryIdentity: null }] : [],
+          nextCursor: null,
+        },
+      }),
+    });
+    const read = (world: ReturnType<typeof setup>) =>
+      Effect.gen(function* () {
+        yield* allow();
+        return yield* fresh;
+      }).pipe(Effect.provide(world.layer));
+    return Effect.gen(function* () {
+      expect(yield* read(second)).toMatchObject({
+        projectScope: "all",
+        project: { match: "none" },
+      });
+      expect(lists).toBe(1);
+      expect(yield* read(lookalike)).not.toHaveProperty("project");
+      expect(lookalikeLists).toBeGreaterThan(1);
+      expect(yield* read(narrowed)).toMatchObject({
+        projectScope: "listed",
+        status: "project_not_in_grant",
+      });
+    });
+  });
+
   it.live("lists the operating system and simulator support each machine reports", () => {
     const list = Effect.gen(function* () {
       yield* allow();

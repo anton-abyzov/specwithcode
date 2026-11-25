@@ -68,6 +68,7 @@ import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
+import { isArtifactAppWindow } from "../lib/projectWindow";
 import {
   AnchoredToastProvider,
   stackedThreadToast,
@@ -110,6 +111,9 @@ import { useRenderErrorComponentStackLines } from "../lib/renderErrorDiagnostics
 import { useRetryLoadOnBackendReady } from "../lib/retryLoadOnBackendReady";
 import { isChunkLoadError } from "../lib/chunkReloadGuard";
 
+/** Routes under this prefix are installed-page windows; see ArtifactAppLayout. */
+const ARTIFACT_APP_PATH_PREFIX = "/artifact-app/";
+
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
@@ -133,7 +137,9 @@ export const Route = createRootRoute({
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
       shouldResumeSnapShotSetupOnStartup() &&
-      location.pathname !== "/settings/snap-shot"
+      location.pathname !== "/settings/snap-shot" &&
+      // An installed page's window never takes over the main window's setup.
+      !location.pathname.startsWith(ARTIFACT_APP_PATH_PREFIX)
     ) {
       throw redirect({ to: "/settings/snap-shot", replace: true });
     }
@@ -186,12 +192,35 @@ function RootRouteView() {
     };
   }, [pathname]);
 
+  // An installed page's window shows that page only. A hash change does not
+  // reach the shell's navigation guard, so any other route renders a plain
+  // message here instead of the workspace.
+  if (isArtifactAppWindow() && !pathname.startsWith(ARTIFACT_APP_PATH_PREFIX)) {
+    return (
+      <StandalonePage tone="brand">
+        <StandalonePageHeader
+          eyebrow={APP_DISPLAY_NAME}
+          title="This window shows one installed page"
+          description="Open SpecWithCode to use the rest of the app."
+        />
+      </StandalonePage>
+    );
+  }
+
   if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
     return (
       <>
         <DocumentTitleSync />
         <Outlet />
       </>
+    );
+  }
+
+  if (pathname.startsWith(ARTIFACT_APP_PATH_PREFIX)) {
+    return (
+      <ArtifactAppLayout
+        authenticated={primaryEnvironmentAuthenticated || authGateState.status === "hosted-static"}
+      />
     );
   }
 
@@ -318,6 +347,37 @@ function RootRouteView() {
               editor has to survive navigation away from settings. */}
           <ThemeEditorHost />
         </FirstRunGate>
+      </AnchoredToastProvider>
+    </ToastProvider>
+  );
+}
+
+/**
+ * An installed page's window: the page and its own header, with the theme and
+ * toasts it needs and nothing else. No sidebar, palette, onboarding or
+ * main-window duties (keep-awake, captures, computer use, notifications), and
+ * no DocumentTitleSync, since the window is titled with the app's name.
+ */
+function ArtifactAppLayout({ authenticated }: { readonly authenticated: boolean }) {
+  if (!authenticated) {
+    return (
+      <StandalonePage tone="brand">
+        <StandalonePageHeader
+          eyebrow={APP_DISPLAY_NAME}
+          title="This app needs SpecWithCode"
+          description="Open SpecWithCode and finish signing in, then open this app again."
+        />
+      </StandalonePage>
+    );
+  }
+  return (
+    <ToastProvider>
+      <AnchoredToastProvider>
+        <ContrastAppearanceSync />
+        <EnvironmentThemeSync />
+        <GlassAppearanceSync />
+        <FontAppearanceSync />
+        <Outlet />
       </AnchoredToastProvider>
     </ToastProvider>
   );

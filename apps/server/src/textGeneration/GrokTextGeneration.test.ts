@@ -33,7 +33,7 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
     env,
     source: execScriptSource({
       scriptPath: mockAgentPath,
-      expectedArgs: ["agent", "stdio"],
+      expectedArgs: ["--permission-mode", "default", "agent", "stdio"],
     }),
   });
 }
@@ -111,6 +111,45 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         }),
     );
   });
+
+  it.effect("asks for every tool approval and grants none, whatever the user's Grok config", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-grok-text-ask-"));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.log");
+      const binaryPath = writeFakeCli({
+        directory: NodePath.join(tempDir, "bin"),
+        name: "grok",
+        env: {
+          STUDIO_ACP_REQUEST_LOG_PATH: requestLogPath,
+          STUDIO_ACP_REQUEST_PERMISSION_DURING_PROMPT: "1",
+          STUDIO_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ title: "Check the build" }),
+        },
+        source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
+      });
+      const textGeneration = yield* makeGrokTextGeneration(decodeGrokSettings({ binaryPath }));
+      const generated = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "the build is red",
+          modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+        })
+        .pipe(Effect.timeout("20 seconds"));
+      expect(generated.title).toBe("Check the build");
+
+      const argv = NodeFS.readFileSync(argvLogPath, "utf8").trim().split("\t");
+      expect(argv).toEqual(["--permission-mode", "default", "agent", "stdio"]);
+      const answer = NodeFS.readFileSync(requestLogPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id?: unknown; method?: string; result?: unknown })
+        .find((message) => message.id === "permission-1" && message.method === undefined);
+      expect(answer?.result).toEqual({ outcome: { outcome: "cancelled" } });
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("extracts the JSON object when Grok wraps it in conversational text", () =>
     withFakeAcpGrok(

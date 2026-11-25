@@ -285,6 +285,13 @@ describe("machine hardware identity on Connect links", () => {
       const sharedKey = newKeyPair();
       yield* link({ userId: ALICE, environmentId: "env-shared", keyPair: sharedKey });
       yield* link({ userId: BOB, environmentId: "env-shared", keyPair: sharedKey });
+      // A link now ends other accounts' links of the same key. Two active
+      // accounts remain only in rows written before that, so restore Alice's.
+      const db = yield* RelayDb.RelayDb;
+      yield* db
+        .update(relayEnvironmentLinks)
+        .set({ revokedAt: null })
+        .where(eq(relayEnvironmentLinks.userId, ALICE));
       const backfill = (userId: string | undefined) =>
         recordEnvironmentHardwareIdentity({
           environmentId: "env-shared",

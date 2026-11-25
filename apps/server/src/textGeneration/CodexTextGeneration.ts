@@ -18,7 +18,11 @@ import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
-import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
+import {
+  CODEX_TEXT_GENERATION_FEATURES_OFF,
+  codexExecLaunchArgs,
+  resolveCodexLaunchArgs,
+} from "../provider/codexLaunchArgs.ts";
 import { withHeadlessBrowserEnvironment } from "../provider/RuntimeInstructions.ts";
 import * as TextGenerationOperations from "./TextGenerationOperations.ts";
 import { normalizeCliError, toJsonSchemaObject } from "./TextGenerationUtils.ts";
@@ -193,6 +197,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         [
           "exec",
           ...codexExecLaunchArgs(launchArgs),
+          // After the launch args, so a user's override cannot turn them back on.
+          ...CODEX_TEXT_GENERATION_FEATURES_OFF,
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",

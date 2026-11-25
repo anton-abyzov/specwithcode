@@ -23,7 +23,10 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly environmentId: string;
     /** The stage's tunnel-name namespace, to find this link's held webhook requests. */
     readonly managedEndpointNamespace?: string | undefined;
+    /** The account is being deleted: a live host's connectors are dropped, not waited out. */
+    readonly forceDisconnect?: boolean;
   }) {
+    const forceDisconnect = input.forceDisconnect === true;
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const deprovisionTarget = yield* managedEndpointProvider.prepareDeprovision({
@@ -50,6 +53,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
+      forceDisconnect,
     });
     // Requests held for this link's endpoint go with it. Best effort: the link
     // is already gone, and its inbox drops anything left after its TTL.
@@ -75,7 +79,11 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
       if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
+        yield* managedEndpointProvider.deprovision({
+          ...key,
+          target: retryTarget,
+          forceDisconnect,
+        });
       }
     }
     return unlinked;

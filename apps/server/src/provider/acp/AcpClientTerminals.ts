@@ -7,7 +7,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
@@ -173,11 +173,40 @@ function acpTerminalCommand(input: {
   });
 }
 
+/**
+ * A thread's MCP credentials and identity reach a terminal only from the
+ * session that asked for it. The server's own environment can carry another
+ * thread's (a server started from an agent shell, or a copied instance
+ * environment), so those names are dropped from the inherited layer.
+ */
+const isThreadScopedVariable = (name: string): boolean => {
+  const upper = name.toUpperCase();
+  return upper.startsWith("STUDIO_ACP_MCP_") || upper === "SPECWEAVE_STUDIO_THREAD_ID";
+};
+
+/**
+ * Later layers win. Windows names are case-insensitive and a child gets only
+ * one spelling, so there a later `PATH` replaces an earlier `Path`.
+ */
+function layerEnvironments(
+  platform: NodeJS.Platform,
+  layers: ReadonlyArray<NodeJS.ProcessEnv | Record<string, string> | undefined>,
+): NodeJS.ProcessEnv {
+  const variables = new Map<string, readonly [string, string | undefined]>();
+  for (const layer of layers) {
+    for (const [name, value] of Object.entries(layer ?? {})) {
+      variables.set(platform === "win32" ? name.toUpperCase() : name, [name, value]);
+    }
+  }
+  return Object.fromEntries(variables.values());
+}
+
 export const makeAcpClientTerminals = (
   options: AcpClientTerminalsOptions,
 ): Effect.Effect<AcpClientTerminals> =>
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcessEnvironment;
+    const platform = yield* HostProcessPlatform;
     const creationPermit = yield* Semaphore.make(1);
     const terminals = new Map<string, ManagedAcpTerminal>();
     let nextTerminalNumber = 1;
@@ -249,20 +278,21 @@ export const makeAcpClientTerminals = (
               (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
             );
             const sessionEnvironment = options.environmentForSession?.(request.sessionId);
+            const inheritedEnvironment = Object.fromEntries(
+              Object.entries(options.environment ?? hostEnvironment).filter(
+                ([name]) => !isThreadScopedVariable(name),
+              ),
+            );
+            const layered = layerEnvironments(platform, [
+              inheritedEnvironment,
+              sessionEnvironment,
+              requestEnvironment,
+            ]);
             // With a saved or copied GitHub token, the command gets it as it is now, over
             // the full environment so git's own GIT_CONFIG_* entries stay numbered right.
-            const withGitHub = hasGitHubSpawnToken();
-            const environment = withGitHub
-              ? withGitHubSpawnEnvironment({
-                  ...(options.environment ?? hostEnvironment),
-                  ...sessionEnvironment,
-                  ...requestEnvironment,
-                })
-              : options.environment === undefined &&
-                  sessionEnvironment === undefined &&
-                  (request.env?.length ?? 0) === 0
-                ? undefined
-                : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+            const environment = hasGitHubSpawnToken()
+              ? withGitHubSpawnEnvironment(layered)
+              : layered;
             // Each terminal owns a scope so the spawned process is reliably reaped:
             // closing the scope kills a still-running command and frees the handle.
             const terminalScope = yield* Scope.make();
@@ -273,10 +303,10 @@ export const makeAcpClientTerminals = (
                     request,
                     shellCommands: options.shellCommands,
                     defaultCwd: options.defaultCwd,
+                    // The complete environment: extending the server's own would
+                    // put back the thread variables dropped above.
                     environment,
-                    // Without a base environment the session and request
-                    // variables only add to the inherited one.
-                    extendEnvironment: options.environment === undefined && !withGitHub,
+                    extendEnvironment: false,
                     forceKillAfter: options.forceKillAfter,
                   }),
                 )

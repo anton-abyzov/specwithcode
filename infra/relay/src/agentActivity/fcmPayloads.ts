@@ -5,6 +5,17 @@ import {
 } from "./agentActivityAggregate.ts";
 import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
 
+/**
+ * What an Android push carries instead of the account id. Google sees every
+ * data payload, so the relay sends SHA-256 of `<userId>:<deviceId>` as lowercase
+ * hex; a phone that knows both can still tell the push is meant for it.
+ */
+export const androidUserHashInput = (userId: string, deviceId: string): Uint8Array<ArrayBuffer> =>
+  new TextEncoder().encode(`${userId}:${deviceId}`);
+
+export const hexDigest = (digest: Uint8Array): string =>
+  Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
 /** Android focuses the priority thread while retaining rows for older clients. */
 export function androidActivityData(aggregate: RelayAgentActivityAggregateState | null) {
   const rows = [...(aggregate?.activities ?? [])].sort(

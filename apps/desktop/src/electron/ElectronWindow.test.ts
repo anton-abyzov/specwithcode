@@ -328,6 +328,27 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("keeps an installed page's window out of the app windows but answers its IPC", () =>
+    Effect.gen(function* () {
+      const mainWindow = makeAppWindow(1, 10);
+      const pageWindow = makeAppWindow(2, 20);
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      yield* electronWindow.setMain(mainWindow.window);
+      yield* electronWindow.registerSecondary(pageWindow.window, { role: "page" });
+
+      // Menus, notifications, the Dock and settings fan-out never see it.
+      assert.deepEqual(yield* electronWindow.appWindows, [mainWindow.window]);
+      // The calling window is still found, so its bridge calls are answered.
+      assert.strictEqual(
+        Option.getOrNull(yield* electronWindow.appWindowForWebContents(20)),
+        pageWindow.window,
+      );
+
+      pageWindow.close();
+      assert.isTrue(Option.isNone(yield* electronWindow.appWindowForWebContents(20)));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("preserves window enumeration failures as structured defects", () =>
     Effect.gen(function* () {
       const cause = new Error("window enumeration failed");

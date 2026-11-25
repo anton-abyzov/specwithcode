@@ -25,7 +25,12 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import * as RelayConfiguration from "../src/Config.ts";
-import { androidActivityData, fitFcmData } from "../src/agentActivity/fcmPayloads.ts";
+import {
+  androidActivityData,
+  androidUserHashInput,
+  fitFcmData,
+  hexDigest,
+} from "../src/agentActivity/fcmPayloads.ts";
 import * as WebCrypto from "../src/WebCrypto.ts";
 import * as FcmAssertionSigner from "../src/agentActivity/FcmAssertionSigner.ts";
 import * as FcmClient from "../src/agentActivity/FcmClient.ts";
@@ -71,6 +76,12 @@ const preferences = {
   notifyOnCompletion: true,
   notifyOnFailure: true,
 };
+
+/** The per-device hash Android pushes carry instead of the account id. */
+const userHash = (userId: string, deviceId: string) =>
+  Effect.promise(() =>
+    globalThis.crypto.subtle.digest("SHA-256", androidUserHashInput(userId, deviceId)),
+  ).pipe(Effect.map((digest) => hexDigest(new Uint8Array(digest))));
 
 const main = Effect.gen(function* () {
   const [credentialsPath, devicePath, connectionPath] = process.argv.slice(2);
@@ -194,7 +205,7 @@ const main = Effect.gen(function* () {
             data: fitFcmData({
               studio_kind: "agent_activity",
               device_id: device.deviceId,
-              user_id: device.userId,
+              user_hash: yield* userHash(device.userId, device.deviceId),
               updated_at: String(now),
               ...androidActivityData(aggregate),
               ...alert,

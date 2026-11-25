@@ -1,0 +1,330 @@
+/**
+ * The windows installed pages open in. Each install gets at most one window,
+ * built with the same sandbox, context isolation and preload as a project
+ * window, locked to its own route: any other document navigation and every
+ * new window goes to the system browser, so a page can never turn its window
+ * into a browser for the app's own origin.
+ */
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
+import type * as Electron from "electron";
+
+import * as DesktopAssets from "../app/DesktopAssets.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import { DESKTOP_WINDOW_ROLE_ARGUMENT, getDesktopUrl } from "../electron/ElectronProtocol.ts";
+import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as ExternalBrowsers from "../preview/ExternalBrowsers.ts";
+import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
+import {
+  ARTIFACT_APP_WINDOW_ARGUMENT,
+  artifactAppUserModelId,
+  artifactAppWindowUrl,
+  isArtifactAppInstallId,
+} from "./ArtifactAppUrl.ts";
+
+const ARTIFACT_APP_WINDOW_LIMIT = 10;
+const ARTIFACT_APP_WINDOW_ROLE = "artifact-app";
+const DEFAULT_SIZE = { width: 1000, height: 720 } as const;
+const MINIMUM_SIZE = { width: 360, height: 300 } as const;
+const MACOS_HEADER_HEIGHT = 44;
+const MACOS_WINDOW_BUTTON_RADIUS = 7;
+
+const { logInfo, logWarning } = makeComponentLogger("desktop-artifact-app-windows");
+
+/** Whether one more installed-page window may open while `openCount` are open. */
+export function canOpenAnotherArtifactAppWindow(openCount: number): boolean {
+  return openCount < ARTIFACT_APP_WINDOW_LIMIT;
+}
+
+/**
+ * Whether the window may follow a document navigation to `targetUrl`. Only its
+ * own route is allowed: same scheme, host, path, query and hash. `.origin` is
+ * not used because it is the string "null" for custom schemes. Hash-only route
+ * changes inside the client never reach this check (they are in-page).
+ */
+export function isArtifactAppWindowNavigationAllowed(input: {
+  readonly windowUrl: string;
+  readonly targetUrl: string;
+}): boolean {
+  try {
+    const own = new URL(input.windowUrl);
+    const target = new URL(input.targetUrl);
+    return (
+      own.host !== "" &&
+      target.username === "" &&
+      target.password === "" &&
+      own.protocol === target.protocol &&
+      own.host === target.host &&
+      own.pathname === target.pathname &&
+      own.search === target.search &&
+      own.hash === target.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The web address a blocked navigation or popup may open in the browser, or null. */
+export function artifactAppExternalUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export type ArtifactAppWindowOpenResult = "opened" | "focused" | "unknown" | "limit" | "failed";
+
+export class ArtifactAppWindows extends Context.Service<
+  ArtifactAppWindows,
+  {
+    /** Opens the install's window, or brings the open one forward. */
+    readonly open: (installId: string) => Effect.Effect<ArtifactAppWindowOpenResult>;
+    /** The install an installed-page window's renderer shows. */
+    readonly installIdForWebContents: (
+      webContentsId: number,
+    ) => Effect.Effect<Option.Option<string>>;
+    /** Closes the install's window after the current IPC reply has gone out. */
+    readonly close: (installId: string) => Effect.Effect<void>;
+    readonly closeAll: Effect.Effect<void>;
+  }
+>()("@specweave-studio/desktop/artifactApps/ArtifactAppWindows") {}
+
+function iconOption(
+  iconPaths: DesktopAssets.DesktopIconPaths,
+  platform: NodeJS.Platform,
+): { icon: string } | Record<string, never> {
+  // macOS takes the icon from the app bundle.
+  if (platform === "darwin") return {};
+  const icon = platform === "win32" ? iconPaths.ico : iconPaths.png;
+  return Option.match(icon, { onNone: () => ({}), onSome: (path) => ({ icon: path }) });
+}
+
+// Same title bar as every app window: the page's header sits under the window controls.
+// The app's appearance sync updates the Windows and Linux overlay, and a zoom change moves
+// the macOS buttons, on every app window, so a native title bar would break both.
+function titleBarOptions(
+  platform: NodeJS.Platform,
+  shouldUseDarkColors: boolean,
+): Pick<
+  Electron.BrowserWindowConstructorOptions,
+  "titleBarStyle" | "titleBarOverlay" | "trafficLightPosition"
+> {
+  if (platform === "darwin") {
+    return {
+      titleBarStyle: "hiddenInset",
+      // Centred in the 44px header, as the main window's buttons are.
+      trafficLightPosition: { x: 16, y: MACOS_HEADER_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS },
+    };
+  }
+  return {
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      // Fully transparent does not draw correctly on Linux.
+      color: "#01000000",
+      height: 40,
+      symbolColor: shouldUseDarkColors ? "#f8fafc" : "#1f2937",
+    },
+  };
+}
+
+const make = Effect.gen(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const assets = yield* DesktopAssets.DesktopAssets;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const electronShell = yield* ElectronShell.ElectronShell;
+  const electronTheme = yield* ElectronTheme.ElectronTheme;
+  const records = yield* ArtifactAppRecords.ArtifactAppRecords;
+  // Optional so tests need not provide it; the app always does.
+  const externalBrowsers = yield* Effect.serviceOption(ExternalBrowsers.ExternalBrowsers);
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  // One open at a time, so two launches of one install cannot make two windows or pass the cap.
+  const openLock = yield* Semaphore.make(1);
+  const windows = new Map<string, Electron.BrowserWindow>();
+  const installIdsByWebContents = new Map<number, string>();
+
+  const openExternally = (rawUrl: string) => {
+    const url = artifactAppExternalUrl(rawUrl);
+    if (url === null) return;
+    runFork(
+      Option.isSome(externalBrowsers)
+        ? externalBrowsers.value.openLink(url)
+        : electronShell.openExternal(url),
+    );
+  };
+
+  const liveWindow = (installId: string): Electron.BrowserWindow | undefined => {
+    const window = windows.get(installId);
+    if (window === undefined) return undefined;
+    if (window.isDestroyed()) {
+      windows.delete(installId);
+      return undefined;
+    }
+    return window;
+  };
+
+  const showLimitMessage = electronDialog
+    .showMessageBox({
+      type: "info",
+      message: "Too many installed pages are open",
+      detail: `SpecWithCode opens up to ${ARTIFACT_APP_WINDOW_LIMIT} installed pages at once. Close one of them, then open this page again.`,
+      buttons: ["OK"],
+      defaultId: 0,
+    })
+    .pipe(Effect.ignoreCause({ log: true }));
+
+  const createWindow = Effect.fn("desktop.artifactAppWindows.create")(function* (
+    installId: string,
+    title: string,
+  ) {
+    const windowUrl = artifactAppWindowUrl(getDesktopUrl(environment.isDevelopment), installId);
+    const iconPaths = yield* assets.iconPaths;
+    const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const window = yield* electronWindow.create({
+      ...DEFAULT_SIZE,
+      minWidth: MINIMUM_SIZE.width,
+      minHeight: MINIMUM_SIZE.height,
+      show: false,
+      autoHideMenuBar: true,
+      title,
+      ...titleBarOptions(environment.platform, shouldUseDarkColors),
+      backgroundColor: shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+      ...iconOption(iconPaths, environment.platform),
+      webPreferences: {
+        preload: environment.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // The page itself sits in a sandboxed iframe; this window never hosts a browser tab.
+        webviewTag: false,
+        additionalArguments: [
+          `${DESKTOP_WINDOW_ROLE_ARGUMENT}${ARTIFACT_APP_WINDOW_ROLE}`,
+          `${ARTIFACT_APP_WINDOW_ARGUMENT}${installId}`,
+        ],
+      },
+    });
+    const webContentsId = window.webContents.id;
+
+    // Recorded and registered before the first load: IPC only answers registered app
+    // windows, and the preload calls into the main process while the page loads.
+    windows.set(installId, window);
+    installIdsByWebContents.set(webContentsId, installId);
+    window.once("closed", () => {
+      if (windows.get(installId) === window) windows.delete(installId);
+      installIdsByWebContents.delete(webContentsId);
+    });
+    yield* electronWindow.registerSecondary(window, { role: "page" });
+
+    if (environment.platform === "win32") {
+      // Each installed page groups on its own in the taskbar, like the shortcut that opened it.
+      window.setAppDetails({
+        appId: artifactAppUserModelId(environment.appUserModelId, installId),
+      });
+    }
+    // The window keeps the app's name; the client's document title would replace it.
+    window.on("page-title-updated", (event) => event.preventDefault());
+    const guardNavigation = (event: { preventDefault: () => void }, url: string) => {
+      if (isArtifactAppWindowNavigationAllowed({ windowUrl, targetUrl: url })) return;
+      event.preventDefault();
+      openExternally(url);
+    };
+    window.webContents.on("will-navigate", guardNavigation);
+    // Only the window's own document. A frame inside the page (the report's
+    // sandboxed iframe or anything it embeds) may redirect without the person
+    // asking, and that must never open the system browser.
+    window.webContents.on("will-redirect", (event) => {
+      if (!event.isMainFrame) return;
+      guardNavigation(event, event.url);
+    });
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      openExternally(url);
+      return { action: "deny" };
+    });
+
+    let shown = false;
+    const show = () => {
+      if (shown || window.isDestroyed()) return;
+      shown = true;
+      runFork(electronWindow.reveal(window));
+    };
+    window.once("ready-to-show", show);
+    // A window whose page failed to load still shows, so the person sees the failure.
+    window.webContents.on(
+      "did-fail-load",
+      (_event, _code, _description, _url, isMainFrame) => isMainFrame && show(),
+    );
+    void window.loadURL(windowUrl).catch(() => undefined);
+    return window;
+  });
+
+  const open = Effect.fn("desktop.artifactAppWindows.open")(
+    function* (installId: string) {
+      if (!isArtifactAppInstallId(installId)) return "unknown" as const;
+      const existing = liveWindow(installId);
+      if (existing !== undefined) {
+        yield* electronWindow.reveal(existing);
+        return "focused" as const;
+      }
+      const app = yield* records.get(installId);
+      if (Option.isNone(app)) {
+        yield* logInfo("ignored an open for an install that is not recorded");
+        return "unknown" as const;
+      }
+      const openCount = [...windows.keys()].filter((id) => liveWindow(id) !== undefined).length;
+      if (!canOpenAnotherArtifactAppWindow(openCount)) {
+        yield* logInfo("installed page window limit reached", { openCount });
+        // The dialog waits for the person; the lock must not.
+        runFork(showLimitMessage);
+        return "limit" as const;
+      }
+      return yield* createWindow(installId, app.value.name).pipe(
+        Effect.as("opened" as const),
+        Effect.catchTags({
+          ElectronWindowCreateError: (error) =>
+            logWarning("installed page window could not be created", { error: error.message }).pipe(
+              Effect.as("failed" as const),
+            ),
+        }),
+      );
+    },
+    (effect, installId) => openLock.withPermits(1)(effect).pipe(Effect.annotateLogs({ installId })),
+  );
+
+  const closeWindow = (window: Electron.BrowserWindow) =>
+    // Deferred a turn so an uninstall asked from this window still gets its reply.
+    Effect.sync(() => {
+      setImmediate(() => {
+        if (!window.isDestroyed()) window.close();
+      });
+    });
+
+  return ArtifactAppWindows.of({
+    open,
+    installIdForWebContents: (webContentsId) =>
+      Effect.sync(() => {
+        const installId = installIdsByWebContents.get(webContentsId);
+        return installId !== undefined && liveWindow(installId) !== undefined
+          ? Option.some(installId)
+          : Option.none();
+      }),
+    close: (installId) =>
+      Effect.suspend(() => {
+        const window = liveWindow(installId);
+        return window === undefined ? Effect.void : closeWindow(window);
+      }),
+    closeAll: Effect.suspend(() =>
+      Effect.forEach([...windows.values()], closeWindow, { discard: true }),
+    ),
+  });
+});
+
+export const layer = Layer.effect(ArtifactAppWindows, make);

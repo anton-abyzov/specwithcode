@@ -8,6 +8,7 @@ import { coordinatorMessagesEs } from "./coordinatorMessages/es";
 import { providerSignInEs } from "./providerSignIn/es";
 import { limitHopsEs } from "./limitHops/es";
 import { guidedTourEs } from "./guidedTour/es";
+import { helperChatsEs } from "./helperChats/es";
 
 /** Spanish Settings titles and labels. "hilo" for thread, as in the message catalog. */
 export const es: PhraseCatalog = {
@@ -20,6 +21,7 @@ export const es: PhraseCatalog = {
   ...providerSignInEs,
   ...limitHopsEs,
   ...guidedTourEs,
+  ...helperChatsEs,
   About: "Acerca de",
   "Accent color": "Color de acento",
   Account: "Cuenta",

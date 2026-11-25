@@ -77,12 +77,18 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+import * as ArtifactAppInstaller from "./artifactApps/ArtifactAppInstaller.ts";
+import * as ArtifactAppRecords from "./artifactApps/ArtifactAppRecords.ts";
+import * as ArtifactAppRouting from "./artifactApps/ArtifactAppRouting.ts";
+import * as ArtifactAppWindows from "./artifactApps/ArtifactAppWindows.ts";
 
 import { configureDesktopOffscreenTest } from "./electron/DesktopOffscreen.ts";
 import { installDesktopProcessErrorGuards } from "./electron/DesktopProcessErrorGuard.ts";
 
 configureDesktopOffscreenTest();
 installDesktopProcessErrorGuards();
+// Before anything yields: the open-url that launched the app is dropped unless someone listens.
+const earlyArtifactAppLaunches = ArtifactAppRouting.bufferEarlyArtifactAppLaunches(Electron.app);
 
 if (process.argv.includes("--version")) {
   try {
@@ -235,6 +241,22 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerDesktopLocalService),
 );
 
+// Installed pages. One record store for the process: each built store has its own write lock.
+const layerArtifactAppRecords = Layer.unwrap(
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    // Beside desktop-settings.json and the other desktop stores.
+    return ArtifactAppRecords.layer(
+      environment.path.join(environment.stateDir, ArtifactAppRecords.ARTIFACT_APPS_RECORD_FILE),
+    );
+  }),
+);
+
+const layerArtifactApps = Layer.mergeAll(
+  ArtifactAppInstaller.layer.pipe(Layer.provide(ArtifactAppInstaller.layerElectronHost)),
+  ArtifactAppRouting.layer(earlyArtifactAppLaunches),
+).pipe(Layer.provideMerge(ArtifactAppWindows.layer), Layer.provideMerge(layerArtifactAppRecords));
+
 const layerDesktopApplication = Layer.mergeAll(
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
@@ -242,6 +264,7 @@ const layerDesktopApplication = Layer.mergeAll(
   DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,
   layerDesktopSsh,
+  layerArtifactApps,
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(DesktopUpdates.layer),

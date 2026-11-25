@@ -14,6 +14,7 @@ import {
 } from "@specweave-studio/shared/codexAuthHandoff";
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
+import { findArtifactAppLaunchInArgv } from "../artifactApps/ArtifactAppUrl.ts";
 import { providerAuthReturnUrl } from "@specweave-studio/shared/providerAuthReturnUrl";
 import { HostProcessArguments } from "@specweave-studio/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@specweave-studio/shared/relayAuth";
@@ -265,6 +266,14 @@ export const make = Effect.gen(function* () {
       });
       yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
         if (argv?.some((value) => startProviderAuthHandoff(value) || resumeProviderAuth(value)))
+          return;
+        // An installed page's launcher: its own listener opens the page window, not the main one.
+        if (
+          findArtifactAppLaunchInArgv(
+            argv ?? [],
+            ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+          ) !== null
+        )
           return;
         void runPromise(
           Effect.gen(function* () {

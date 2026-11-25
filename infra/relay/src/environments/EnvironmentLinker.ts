@@ -55,6 +55,7 @@ export class EnvironmentLinkProofInvalid extends Schema.TaggedError<EnvironmentL
       "consume_proof_nonce",
       "consume_challenge_nonce",
       "validate_origin",
+      "validate_existing_link",
       "validate_endpoint",
     ]),
     cause: Schema.optional(Schema.Defect()),
@@ -297,6 +298,32 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
+      // The account bearer alone must not move an active link, with its
+      // tunnel and the key phones trust, to a key the caller holds. The
+      // environment id is public. A machine whose key really changed (its
+      // secret store was reset while its environment id survived) is unlinked
+      // in Connect first. The wire reason is the existing descriptor mismatch,
+      // which older machines can decode.
+      const existing = yield* links.getForUser({
+        userId: input.userId,
+        environmentId: verified.environmentId,
+      });
+      const refuseOtherKey = Effect.logWarning(
+        "refused to relink an active environment under another key",
+        { environmentId: verified.environmentId, reason: "environment_key_mismatch" },
+      ).pipe(
+        Effect.andThen(
+          new EnvironmentLinkProofInvalid({
+            userId: input.userId,
+            environmentId: verified.environmentId,
+            reason: "descriptor_mismatch",
+            stage: "validate_existing_link",
+          }),
+        ),
+      );
+      if (existing !== null && existing.environmentPublicKey !== verified.environmentPublicKey) {
+        return yield* refuseOtherKey;
+      }
       // A machine that lost its local state (reinstall, reset, wiped home)
       // comes back with a new environment id. Its signed hardware identity
       // says it is the same machine, so the account's older link for it is
@@ -363,9 +390,63 @@ const make = Effect.gen(function* () {
           replacedEnvironmentIds,
         });
       }
+      // Another key's link can commit after the read above. The provider reads
+      // again right before it writes the tunnel's ingress, so a request that
+      // lost that race never points the winner's tunnel at its own local port.
+      const provisioned = input.request.managedTunnelsEnabled
+        ? yield* managedEndpointProvider
+            .provision({
+              userId: input.userId,
+              environmentId: verified.environmentId,
+              origin: verified.origin,
+              ownsOrigin: links
+                .getForUser({ userId: input.userId, environmentId: verified.environmentId })
+                .pipe(
+                  Effect.map(
+                    (link) =>
+                      link === null || link.environmentPublicKey === verified.environmentPublicKey,
+                  ),
+                ),
+            })
+            .pipe(
+              Effect.catchIf(
+                (error) =>
+                  error._tag === "ManagedEndpointProvisioningFailed" &&
+                  error.reason === "key-conflict",
+                () => refuseOtherKey,
+              ),
+            )
+        : null;
+      const endpoint = provisioned?.endpoint ?? verified.endpoint;
+      // The secure-endpoint requirement only matters when the relay advertises
+      // this endpoint for other devices to reach (managed tunnel). Publish-only
+      // links are reached out of band (e.g. Tailscale) and their stored endpoint
+      // is never used for routing, so a nominal endpoint is acceptable.
+      if (input.request.managedTunnelsEnabled && !isSecureManagedEndpoint(endpoint)) {
+        return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
+          environmentId: verified.environmentId,
+          reason: "endpoint_not_secure",
+          stage: "validate_endpoint",
+        });
+      }
+      yield* links
+        .upsert({
+          ...input,
+          proof: verified,
+          endpoint,
+          hardwareIdentity,
+          inheritHoldWebhooksWhileOffline,
+        })
+        .pipe(
+          // A link under another key landed after the read above: same refusal.
+          Effect.catchTags({ EnvironmentLinkKeyConflict: () => refuseOtherKey }),
+        );
       // Downgrading a managed link to publish-only must release the tunnel and
       // DNS that were provisioned for it — nothing else cleans them up until a
-      // full unlink. Best effort: a cleanup failure must not block the link
+      // full unlink. It runs after the guarded link write: a link refused there
+      // (another key committed after the read check) must not remove the
+      // winner's tunnel and DNS. Best effort: a cleanup failure must not block the link
       // itself, and the provider treats an absent allocation as already
       // deprovisioned, so retrying on every non-tunnel link is cheap.
       if (!input.request.managedTunnelsEnabled) {
@@ -384,33 +465,6 @@ const make = Effect.gen(function* () {
             Effect.ignore,
           );
       }
-      const provisioned = input.request.managedTunnelsEnabled
-        ? yield* managedEndpointProvider.provision({
-            userId: input.userId,
-            environmentId: verified.environmentId,
-            origin: verified.origin,
-          })
-        : null;
-      const endpoint = provisioned?.endpoint ?? verified.endpoint;
-      // The secure-endpoint requirement only matters when the relay advertises
-      // this endpoint for other devices to reach (managed tunnel). Publish-only
-      // links are reached out of band (e.g. Tailscale) and their stored endpoint
-      // is never used for routing, so a nominal endpoint is acceptable.
-      if (input.request.managedTunnelsEnabled && !isSecureManagedEndpoint(endpoint)) {
-        return yield* new EnvironmentLinkProofInvalid({
-          userId: input.userId,
-          environmentId: verified.environmentId,
-          reason: "endpoint_not_secure",
-          stage: "validate_endpoint",
-        });
-      }
-      yield* links.upsert({
-        ...input,
-        proof: verified,
-        endpoint,
-        hardwareIdentity,
-        inheritHoldWebhooksWhileOffline,
-      });
       // Only a managed link that succeeded creates the Connect account and,
       // while seats remain, grants its founder number. A link refused at a cap
       // or failing in provisioning never takes a seat. The limit resolved

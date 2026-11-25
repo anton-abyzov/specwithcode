@@ -1,6 +1,6 @@
 import type { DesktopBridge } from "@specweave-studio/contracts";
 
-import { isProjectWindow } from "./projectWindow";
+import { isArtifactAppWindow, isProjectWindow } from "./projectWindow";
 
 const SNAP_SHOT_FOCUS_EVENT = "studio:focus-composer";
 
@@ -30,7 +30,7 @@ export type DesktopSnapShotBridge = DesktopBridge & Required<Pick<DesktopBridge,
 export function getDesktopSnapShotBridge(): DesktopSnapShotBridge | undefined {
   // Captures are delivered by the main window only; the shell rejects snapshot
   // requests from a project window, so that window behaves as if it had none.
-  if (isProjectWindow()) return undefined;
+  if (isProjectWindow() || isArtifactAppWindow()) return undefined;
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
   if (
     typeof bridge?.requestSnapShotPermissions !== "function" ||

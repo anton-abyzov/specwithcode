@@ -2,6 +2,7 @@ import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { ThreadArtifactsMenu } from "./ThreadArtifacts";
 import { ThreadOriginBadge } from "./ThreadOriginBadge";
+import { HelperChatBreadcrumb, useHelperChatOrigin } from "./HelperChatBreadcrumb";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -103,6 +104,8 @@ export const ChatHeader = memo(function ChatHeader({
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  // A helper another machine's project thread asked for names that project.
+  const helperOrigin = useHelperChatOrigin(isChat ? activeThreadShell : null);
   const providerEntries = useProviderEntries(activeThreadEnvironmentId);
   const activeThreadProjectId = activeThreadShell?.projectId;
   const headerProject = useMemo(
@@ -303,7 +306,9 @@ export const ChatHeader = memo(function ChatHeader({
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone
             doesn't answer it. */}
-        {activeProject ? (
+        {helperOrigin ? (
+          <HelperChatBreadcrumb helper={helperOrigin} />
+        ) : activeProject ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
               <Tooltip>

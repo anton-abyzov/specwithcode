@@ -124,13 +124,19 @@ describe("EnvironmentLinks", () => {
 
   it.effect("carries the webhook-hold opt-in over only from links with the same key", () => {
     const inserted: Array<Record<string, unknown>> = [];
+    const statement = { toSQL: () => ({ sql: "", params: [] }) };
     const fakeDb = {
       insert: () => ({
         values: (values: Record<string, unknown>) => {
           inserted.push(values);
-          return { onConflictDoUpdate: () => Effect.void };
+          return { onConflictDoUpdate: () => ({ returning: () => statement }) };
         },
       }),
+      update: () => ({ set: () => ({ where: () => statement }) }),
+      $client: {
+        unsafe: () => statement,
+        batch: () => Effect.succeed([[{ user_id: "user-1" }], []]),
+      },
     } as unknown as RelayDb.RelayDb["Service"];
 
     return Effect.gen(function* () {

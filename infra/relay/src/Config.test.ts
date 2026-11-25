@@ -2,9 +2,11 @@ import { expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 
 import {
   adminUserIdsConfig,
+  clerkWebhookSigningSecretConfig,
   connectFreeTunnelLimitConfig,
   globalManagedTunnelCapConfig,
   legacyManagedEndpointCleanupModeConfig,
@@ -137,4 +139,27 @@ it.effect.each(["someone@example.com", "user_ok,not an id", "*"])(
       const error = yield* Effect.flip(adminUserIdsConfig.parse(provider));
       expect(error._tag).toBe("ConfigError");
     }),
+);
+
+it.effect.each([
+  { name: "missing", env: {} },
+  { name: "empty", env: { CLERK_WEBHOOK_SIGNING_SECRET: "" } },
+  { name: "blank", env: { CLERK_WEBHOOK_SIGNING_SECRET: "  " } },
+] as const)(
+  "leaves the Clerk webhook secret unset when $name, so the deploy still runs",
+  ({ env }) =>
+    Effect.gen(function* () {
+      const secret = yield* clerkWebhookSigningSecretConfig.parse(ConfigProvider.fromEnv({ env }));
+      expect(Option.isNone(secret)).toBe(true);
+    }),
+);
+
+it.effect("reads the Clerk webhook secret when it is set", () =>
+  Effect.gen(function* () {
+    const provider = ConfigProvider.fromEnv({
+      env: { CLERK_WEBHOOK_SIGNING_SECRET: "whsec_c2VjcmV0" },
+    });
+    const secret = yield* clerkWebhookSigningSecretConfig.parse(provider);
+    expect(Option.map(secret, Redacted.value)).toEqual(Option.some("whsec_c2VjcmV0"));
+  }),
 );

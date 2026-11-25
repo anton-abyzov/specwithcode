@@ -51,6 +51,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -88,6 +89,12 @@ import {
 } from "./ProviderFailure.ts";
 import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./settleRunBeforeStart.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
+import {
+  answeredCardByPerson,
+  type KnownProviderCommands,
+  messageSentByPerson,
+  withMessageSenderNote,
+} from "./messageSenderNote.ts";
 import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { missedBeforeRun } from "./startOnlyDispatch.ts";
@@ -282,6 +289,25 @@ export const layer: Layer.Layer<
     // Finds this machine's native transcripts for handoff pointers; optional.
     const agentSessions = yield* Effect.serviceOption(AgentSessionScanner.AgentSessionScanner);
     const handoffMode = yield* Effect.serviceOption(HandoffMode.HandoffMode);
+    // The commands and skills each instance lists, so an agent's command keeps working.
+    const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+    const knownProviderCommands = (instanceId: OrchestrationV2Run["providerInstanceId"]) =>
+      Option.isNone(providerRegistry)
+        ? Effect.succeed<KnownProviderCommands | undefined>(undefined)
+        : providerRegistry.value.getProviders.pipe(
+            Effect.map((providers): KnownProviderCommands | undefined => {
+              const provider = providers.find((entry) => entry.instanceId === instanceId);
+              return provider === undefined
+                ? undefined
+                : {
+                    slash: new Set(provider.slashCommands.map((command) => command.name)),
+                    skills: new Set(
+                      provider.skills.filter((skill) => skill.enabled).map((skill) => skill.name),
+                    ),
+                  };
+            }),
+            Effect.orElseSucceed(() => undefined),
+          );
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -547,6 +573,9 @@ export const layer: Layer.Layer<
             providerThread.id,
         );
         const authInstanceId = nativeThread?.providerInstanceId ?? run.providerInstanceId;
+        // An ask_user answer reads as the person's message even when an agent answered.
+        const sentByPerson =
+          messageSentByPerson(message) && (yield* answeredCardByPerson(projectionStore, message));
         const authResult = isEmptyCompaction
           ? null
           : yield* Effect.result(
@@ -557,6 +586,7 @@ export const layer: Layer.Layer<
                   records: message.context?.records ?? [],
                 }),
                 hasAttachments: false,
+                sentByPerson,
               }),
             );
         if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {
@@ -1367,10 +1397,17 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const composedUserText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      // An agent's, a routine's or a tool's message names its sender to the model.
+      const composedUserText = withMessageSenderNote(
+        message,
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+        messageSentByPerson(message)
+          ? undefined
+          : yield* knownProviderCommands(run.providerInstanceId),
+      );
       // An answer to a question reads, for the agent, with the questions it answers.
       const userText = yield* withAskedQuestions(projectionStore, message, composedUserText);
       // Inside the environment runtime: a fenced project or a moved folder is refused before

@@ -1707,46 +1707,24 @@ describe("relay CORS", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("gives tunnel recovery the provisioning deadline too", () =>
+  // Linking a machine and recovering its tunnel provision one; Clerk's account
+  // deletion tears tunnels down. Each gets longer than other routes.
+  it.effect.each([
+    "/v1/client/environment-links",
+    "/v1/environments/env_1/tunnel",
+    "/v1/webhooks/clerk",
+  ] as const)("gives POST %s the longer deadline", (path) =>
     Effect.gen(function* () {
       const httpEffect = yield* HttpRouter.toHttpEffect(
         Layer.mergeAll(
-          HttpRouter.add("POST", "/v1/environments/env_1/tunnel", Effect.never),
+          HttpRouter.add("POST", path, Effect.never),
           RelayHttpApi.layerNotFoundRoute,
           RelayHttpApi.layerCors,
         ),
       );
       const fiber = yield* sendRelayRequest(
         traceRelayHttpRequestWith(httpEffect, Layer.empty),
-        new Request("https://relay.test/v1/environments/env_1/tunnel", {
-          method: "POST",
-          headers: { origin },
-        }),
-      ).pipe(Effect.forkChild);
-      yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS));
-      expect(fiber.pollUnsafe()).toBeUndefined();
-      yield* TestClock.adjust(
-        Duration.millis(RELAY_LINK_REQUEST_DEADLINE_MS - RELAY_REQUEST_DEADLINE_MS),
-      );
-      expect((yield* Fiber.join(fiber)).status).toBe(504);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("gives linking a new machine longer than other routes", () =>
-    Effect.gen(function* () {
-      const httpEffect = yield* HttpRouter.toHttpEffect(
-        Layer.mergeAll(
-          HttpRouter.add("POST", "/v1/client/environment-links", Effect.never),
-          RelayHttpApi.layerNotFoundRoute,
-          RelayHttpApi.layerCors,
-        ),
-      );
-      const fiber = yield* sendRelayRequest(
-        traceRelayHttpRequestWith(httpEffect, Layer.empty),
-        new Request("https://relay.test/v1/client/environment-links", {
-          method: "POST",
-          headers: { origin },
-        }),
+        new Request(`https://relay.test${path}`, { method: "POST", headers: { origin } }),
       ).pipe(Effect.forkChild);
       yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS));
       expect(fiber.pollUnsafe()).toBeUndefined();
