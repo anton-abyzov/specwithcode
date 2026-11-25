@@ -77,7 +77,8 @@ const withService = <A, E>(
     readonly launches: Queue.Queue<LaunchInput>;
     /** Secrets the user entered for an agent, by ref; consuming one removes it. */
     readonly secretsByRef: Map<string, string>;
-  }) => Effect.Effect<A, E, never>,
+    // The same in-memory database the service writes, for a test that seeds rows directly.
+  }) => Effect.Effect<A, E, SqlClient.SqlClient>,
   options: { readonly gate?: Deferred.Deferred<void>; readonly relayHookBaseUrl?: string } = {},
 ) =>
   Effect.gen(function* () {
