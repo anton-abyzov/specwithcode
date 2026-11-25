@@ -620,8 +620,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) => {
     const traced = Effect.gen(function* () {
       const attemptSpan = yield* Effect.currentSpan.pipe(Effect.orDie);
-      yield* annotateTarget(target);
+      // Relay spans leave the device, so they carry no machine label.
       yield* Effect.annotateCurrentSpan({
+        "environment.id": target.environmentId,
+        "environment.target.kind": target._tag,
         "connection.attempt": attempt,
         "connection.generation": generation,
         "connection.retry.failure_count": Option.match(pendingRetry, {

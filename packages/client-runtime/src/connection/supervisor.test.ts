@@ -483,6 +483,38 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps the machine label out of relay attempt spans", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            spans.push(span);
+          };
+          return span;
+        },
+      });
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(
+        Effect.provide(harness.dependencies),
+        Effect.provideService(RelayClientTracer, Option.some(tracer)),
+      );
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      const attempt = spans.find((span) => span.name === "relay.connection.attempt");
+      expect(attempt?.attributes.get("environment.id")).toBe(RELAY_TARGET.environmentId);
+      for (const span of spans) {
+        expect([...span.attributes.keys()]).not.toContain("environment.label");
+        expect([...span.attributes.values()]).not.toContain(RELAY_TARGET.label);
+      }
+    }),
+  );
+
   it.effect("does not attempt a connection until it is desired", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
