@@ -411,11 +411,13 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       // `worktrees/` folder; metadata kept anywhere else is not a registration.
       const registry = yield* real(`${commonDir}/worktrees`);
       if ((yield* real(`${gitDir}/..`)) !== registry) return false;
-      const backlink = yield* fileSystem.readFileString(`${gitDir}/gitdir`).pipe(
-        Effect.flatMap((text) => real(text.trim())),
-        Effect.orElseSucceed(() => undefined),
-      );
-      return backlink === dotGit;
+      // The back-link names a worktree's `.git`; only its folder is resolved, so
+      // a `.git` link elsewhere cannot make another worktree's record name this path.
+      const backlink = yield* fileSystem
+        .readFileString(`${gitDir}/gitdir`)
+        .pipe(Effect.orElseSucceed(() => ""));
+      const named = /^(.*)[\\/]\.git$/u.exec(backlink.trim())?.[1];
+      return named !== undefined && named.length > 0 && (yield* real(named)) === asked;
     });
   const project = yield* checkoutOf(workspaceRoot);
   for (const path of registered) {
