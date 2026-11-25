@@ -130,7 +130,6 @@ it("keeps every window's exclusion in what leaves any window, whatever order the
   expect(keys.filter((name) => name?.startsWith("specwithcode:folder-copy:"))).toEqual([key]);
 });
 
-
 it("takes back only one window's own exclusions for one machine", () => {
   vi.stubGlobal("localStorage", memoryStorage());
   const key = folderCopyStorageKey("env-a", "project-1");

@@ -126,7 +126,10 @@ async function replaceableTrees(
   files: ReadonlyArray<DestinationFile>,
   sourceEntries: ReadonlyArray<ManifestEntry>,
   key: (path: string) => string,
-  repositories: { readonly source: ReadonlyArray<SourceRepository>; readonly here: ReadonlyArray<SourceRepository> },
+  repositories: {
+    readonly source: ReadonlyArray<SourceRepository>;
+    readonly here: ReadonlyArray<SourceRepository>;
+  },
 ): Promise<string | null> {
   const replaced = new Set(
     sourceEntries.filter((entry) => entry.type !== "directory").map((entry) => key(entry.path)),

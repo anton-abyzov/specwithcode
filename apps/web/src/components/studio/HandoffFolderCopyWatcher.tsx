@@ -524,7 +524,8 @@ export function HandoffFolderCopyWatcher({
         now?.operationId === operationId &&
         Boolean(now.replaceAll) === Boolean(acted.replaceAll) &&
         choice(now) === choice(acted) &&
-        (stagedWith === null || JSON.stringify(settledSecrets(key, pendingSecrets(now))) === stagedWith)
+        (stagedWith === null ||
+          JSON.stringify(settledSecrets(key, pendingSecrets(now))) === stagedWith)
       );
     };
 

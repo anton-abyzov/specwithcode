@@ -50,7 +50,9 @@ const summary = {
   ],
   warnings: [],
 } as unknown as FolderCopySourceSummary;
-const machines = [{ id: "env-target", label: "Target", homeSecretFiles: false }] as never as ReadonlyArray<CopyMachine>;
+const machines = [
+  { id: "env-target", label: "Target", homeSecretFiles: false },
+] as never as ReadonlyArray<CopyMachine>;
 
 let roots: Array<Root> = [];
 
@@ -144,7 +146,10 @@ it("stages again when another window leaves a file out while the list is on its 
 it("names no secret file to the approval when the saved summary lists none", async () => {
   // A reopened dialog holds a summary from before a Refresh found .env; a list staged then
   // must never be pulled unnamed.
-  const a = await openWindow({ secretFiles: [], warnings: [] } as unknown as FolderCopySourceSummary);
+  const a = await openWindow({
+    secretFiles: [],
+    warnings: [],
+  } as unknown as FolderCopySourceSummary);
   await act(async () => a.current!.sendTicked("op-1"));
   expect(a.current!.sentFor("op-1")).toEqual([]);
 });
