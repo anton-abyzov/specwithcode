@@ -10,13 +10,16 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
+import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@specweave-studio/contracts";
 
@@ -158,6 +161,61 @@ describe("untraced requests", () => {
         }),
       ),
     );
+  });
+});
+
+describe("request log", () => {
+  it.effect("leaves signed URLs out of the request log and logs other requests", () => {
+    const loggedUrls: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const layerRoutes = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const router = yield* HttpRouter.HttpRouter;
+          yield* router.add("GET", `${ASSET_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
+          yield* router.add(
+            "POST",
+            `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
+            HttpServerResponse.empty(),
+          );
+          yield* router.add("POST", `${WEBHOOK_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
+          yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
+        }),
+      ).pipe(Layer.provide(ServerHttp.layerUnloggedSignedRequests));
+      const layerLogger = Logger.layer(
+        [
+          Logger.make(({ fiber }) => {
+            const url = fiber.getRef(References.CurrentLogAnnotations)["http.url"];
+            if (url !== undefined) loggedUrls.push(url);
+          }),
+        ],
+        { mergeWithExisting: false },
+      );
+      const services = yield* Layer.build(
+        withUntracedRequests(HttpRouter.serve(layerRoutes, { disableListenLog: true })).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provide(layerLogger),
+        ),
+      );
+      const client = Context.get(services, HttpClient.HttpClient);
+
+      // The path of each is a bearer credential.
+      for (const request of [
+        HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
+        HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
+        HttpClientRequest.post(`${WEBHOOK_ROUTE_PREFIX}/task-1/webhook-token`),
+      ]) {
+        expect((yield* client.execute(request)).status).toBe(204);
+      }
+      expect(loggedUrls).toEqual([]);
+
+      expect((yield* client.execute(HttpClientRequest.get("/api/environment"))).status).toBe(204);
+      expect(loggedUrls).toEqual(["/api/environment"]);
+      // Only the exact prefixes are left out.
+      expect(
+        (yield* client.execute(HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}-other/file`))).status,
+      ).toBe(404);
+      expect(loggedUrls).toEqual(["/api/environment", `${ASSET_ROUTE_PREFIX}-other/file`]);
+    }).pipe(Effect.scoped);
   });
 });
 
