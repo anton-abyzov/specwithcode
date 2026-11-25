@@ -11,11 +11,14 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
+import { RelayClientTracer, withRelayClientTracing } from "@specweave-studio/shared/relayTracing";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -167,6 +170,33 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       });
       assert.equal(delivery.body, new TextDecoder().decode(pullRequestBody));
       assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
+    }),
+  ),
+);
+
+it.effect("keeps the run a relay delivery starts off the relay's tracer", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const relaySpans: Array<string> = [];
+      const relayTracer = Tracer.make({
+        span: (options) => {
+          relaySpans.push(options.name);
+          return new Tracer.NativeSpan(options);
+        },
+      });
+      const { task } = yield* service.upsert(yield* webhookTaskInput());
+
+      // As the webhook route answers a relay delivery: the request joins the relay's trace.
+      const result = yield* service
+        .triggerWebhook(requestFor(task))
+        .pipe(withRelayClientTracing, Effect.provideService(RelayClientTracer, Option.some(relayTracer)));
+      assert.equal(result._tag, "accepted");
+      yield* Queue.take(launches);
+      // Let the delivery fiber finish its bookkeeping after the launch.
+      for (let index = 0; index < 20; index += 1) yield* Effect.yieldNow;
+
+      // The run works with the user's files and threads, so none of its spans go to the relay.
+      assert.notInclude(relaySpans, "ScheduledTaskService.runWebhookDelivery");
     }),
   ),
 );
