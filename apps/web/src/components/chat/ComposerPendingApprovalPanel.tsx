@@ -5,6 +5,16 @@ import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { OnActionMachine, type ActionMachine } from "../../studio/actionMachine";
+import { McpElicitationForm, type McpElicitationFormProps } from "./McpElicitationForm";
+
+/**
+ * An MCP server's form the person can still answer: drawn as the form, with
+ * its own Submit, Decline and Cancel instead of the approval actions (1481).
+ */
+export const isMcpElicitationFormApproval = (approval: PendingApproval) =>
+  approval.requestKind === "mcp-elicitation" &&
+  approval.elicitation?.mode === "form" &&
+  approval.responseCapability === "live";
 
 interface ComposerPendingApprovalPanelProps {
   approval: PendingApproval;
@@ -12,6 +22,10 @@ interface ComposerPendingApprovalPanelProps {
   className?: string;
   /** The thread's machine when it is not the window's own (1427 AC-07). */
   machine?: ActionMachine | null | undefined;
+  /** Answers an MCP server's form; without it the form shows as a plain approval. */
+  onRespond?: McpElicitationFormProps["onRespond"];
+  disabled?: boolean;
+  isResponding?: boolean;
 }
 
 export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprovalPanel({
@@ -19,8 +33,25 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   pendingCount,
   className,
   machine,
+  onRespond,
+  disabled = false,
+  isResponding = false,
 }: ComposerPendingApprovalPanelProps) {
   const tx = useTx();
+  if (onRespond !== undefined && approval.elicitation && isMcpElicitationFormApproval(approval)) {
+    return (
+      <McpElicitationForm
+        key={approval.requestId}
+        requestId={approval.requestId}
+        elicitation={approval.elicitation}
+        pendingCount={pendingCount}
+        disabled={disabled}
+        isResponding={isResponding}
+        machine={machine}
+        onRespond={onRespond}
+      />
+    );
+  }
   const Detail = approval.requestKind === "mcp-elicitation" ? "span" : "code";
   const fallbackLabel =
     approval.requestKind === "mcp-elicitation"

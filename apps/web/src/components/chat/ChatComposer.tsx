@@ -46,6 +46,7 @@ import type {
   PullRequestListInput,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
+  ProviderUserInputAnswers,
   ThreadContextRecord,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -315,7 +316,10 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { foldedMachineSend } from "./machineSendLabel";
 import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { useActionMachine } from "~/studio/actionMachine";
-import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
+import {
+  ComposerPendingApprovalPanel,
+  isMcpElicitationFormApproval,
+} from "./ComposerPendingApprovalPanel";
 import {
   ComposerPendingUserInputPanel,
   type QuestionTextRenderer,
@@ -1810,6 +1814,7 @@ export interface ChatComposerProps {
   onRespondToApproval: (
     requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
+    content?: ProviderUserInputAnswers,
   ) => Promise<unknown>;
   onSelectActivePendingUserInputOption: (questionId: string, optionValue: string) => void;
   onAdvanceActivePendingUserInput: () => void;
@@ -7329,9 +7334,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         approval={activePendingApproval}
                         pendingCount={pendingApprovals.length}
                         machine={actionMachine}
+                        onRespond={onRespondToApproval}
+                        disabled={!canOperateThread}
+                        isResponding={respondingRequestIds.includes(
+                          activePendingApproval.requestId,
+                        )}
                       />
                     </ComposerBanner.Content>
-                    <ComposerBanner.Actions>
+                    <ComposerBanner.Actions hidden={isMcpElicitationFormApproval(activePendingApproval)}>
                       <ComposerPendingApprovalActions
                         requestId={activePendingApproval.requestId}
                         disabled={!canOperateThread}

@@ -171,6 +171,7 @@ import {
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
@@ -14302,7 +14303,11 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const onRespondToApproval = useCallback(
-    async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
+    async (
+      requestId: RuntimeRequestId,
+      decision: ProviderApprovalDecision,
+      content?: ProviderUserInputAnswers,
+    ) => {
       if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
         return;
       if (
@@ -14324,6 +14329,7 @@ export default function ChatView(props: ChatViewProps) {
               threadId: activeThreadId,
               requestId,
               decision,
+              ...(content === undefined ? {} : { answers: content }),
             },
           }),
         {
