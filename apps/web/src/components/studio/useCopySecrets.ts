@@ -18,6 +18,7 @@ import {
   ALL_SECRETS,
   pendingSecrets,
   readPendingCopy,
+  clearExclusions,
   recordExclusions,
   settledSecrets,
   untickedSecrets,
@@ -104,19 +105,28 @@ export function useCopySecrets({
    * Saves the person's change. Only what differs from the choice they saw is recorded, so a
    * file another window left out after this one last drew stays out.
    */
-  const choose = (change: SecretsChoice, seen: SecretsChoice = choice) => {
-    recordExclusions(storageKey, seen, change);
-    // A copy the person asked to send every secret on keeps that through later changes.
-    const since = change.since ?? seen.since;
-    const next = since !== undefined ? { ...change, since } : change;
+  /** This window, for the exclusions it records; never stored beyond them. */
+  const windowId = useRef(`${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+  const destinationNow = () => latestPending.current?.environmentId ?? machine ?? "";
+  const by = () => `${windowId.current}|${destinationNow()}`;
+  const choose = (next: SecretsChoice, seen: SecretsChoice = choice) => {
+    recordExclusions(storageKey, seen, next, by());
     setChosen(next);
     keep(next);
   };
   /**
-   * The person asked for every secret on the next copy ("Sync again with secrets"): what any
-   * window left out before now does not apply to that copy, and stays recorded for others.
+   * The person asked for every secret on another copy to this machine ("Sync again with
+   * secrets"): takes back what this window left out for it, or before a machine was picked.
+   * What other windows, or this one for other machines, left out stays out.
    */
-  const includeAll = (): SecretsChoice => ({ ...ALL_SECRETS, since: Date.now() });
+  const includeAll = (): SecretsChoice => {
+    const here = destinationNow();
+    clearExclusions(
+      storageKey,
+      (recorded) => recorded === `${windowId.current}|${here}` || recorded === `${windowId.current}|`,
+    );
+    return ALL_SECRETS;
+  };
   // Another window recorded an exclusion: show it here too.
   const [, heard] = useState(0);
   useEffect(() => {

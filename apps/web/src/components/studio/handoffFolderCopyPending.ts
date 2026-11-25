@@ -292,11 +292,6 @@ export function reshowFinishedCopy(key: string, pointer: PendingCopy): PendingCo
 export interface SecretsChoice {
   readonly included: boolean;
   readonly out: ReadonlyArray<string>;
-  /**
-   * When the person asked for every secret on this copy ("Sync again with secrets"):
-   * exclusions any window recorded before then do not apply to it; later ones do.
-   */
-  readonly since?: number;
 }
 
 export interface CopyDraft {
@@ -330,7 +325,6 @@ export function untickedSecrets(
   return {
     included: base.included && current.included,
     out: [...new Set([...base.out, ...current.out, ...added])],
-    ...(current.since !== undefined ? { since: current.since } : {}),
   };
 }
 
@@ -342,30 +336,43 @@ export function untickedSecrets(
 const exclusionPrefix = (storageKey: string) =>
   `${storageKey.replace(/^specwithcode:folder-copy:/, "specwithcode:folder-copy-exclusion:")}:`;
 
-/** Notes what a person's change left out or took back in; adds never overwrite each other. */
+/**
+ * Notes what a person's change left out or took back in; adds never overwrite each other.
+ * Each note says who made it (`by`: the window and the machine the copy goes to).
+ */
 export function recordExclusions(
   storageKey: string,
   before: SecretsChoice,
   next: SecretsChoice,
+  by = "",
 ): void {
   const prefix = exclusionPrefix(storageKey);
-  const at = String(Date.now());
   try {
     for (const path of next.out)
-      if (!before.out.includes(path)) localStorage.setItem(`${prefix}file:${path}`, at);
+      if (!before.out.includes(path)) localStorage.setItem(`${prefix}file:${path}`, by);
     for (const path of before.out)
       if (!next.out.includes(path)) localStorage.removeItem(`${prefix}file:${path}`);
-    if (before.included && !next.included) localStorage.setItem(`${prefix}off`, at);
+    if (before.included && !next.included) localStorage.setItem(`${prefix}off`, by);
     else if (!before.included && next.included) localStorage.removeItem(`${prefix}off`);
   } catch {
     /* Without storage only this window's own choice applies. */
   }
 }
 
-/**
- * The choice with every exclusion any window recorded for this project's copies, except
- * those recorded before the person asked for every secret on this copy (`since`).
- */
+/** Takes back the exclusions `mine` says one window made; every other one stays. */
+export function clearExclusions(storageKey: string, mine: (by: string) => boolean): void {
+  const prefix = exclusionPrefix(storageKey);
+  try {
+    const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index));
+    for (const key of keys)
+      if (key?.startsWith(prefix) && mine(localStorage.getItem(key) ?? ""))
+        localStorage.removeItem(key);
+  } catch {
+    /* Without storage there is nothing recorded to take back. */
+  }
+}
+
+/** The choice with every exclusion any window recorded for this project's copies. */
 export function settledSecrets(storageKey: string, choice: SecretsChoice): SecretsChoice {
   const prefix = exclusionPrefix(storageKey);
   const out: Array<string> = [];
@@ -374,10 +381,6 @@ export function settledSecrets(storageKey: string, choice: SecretsChoice): Secre
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index);
       if (!key?.startsWith(prefix)) continue;
-      // An unreadable time counts as now: it is never overridden.
-      const at = Number(localStorage.getItem(key));
-      if (choice.since !== undefined && Number.isFinite(at) && at > 0 && at <= choice.since)
-        continue;
       const name = key.slice(prefix.length);
       if (name === "off") off = true;
       else if (name.startsWith("file:")) out.push(name.slice("file:".length));
@@ -387,7 +390,7 @@ export function settledSecrets(storageKey: string, choice: SecretsChoice): Secre
   }
   const added = out.filter((path) => !choice.out.includes(path)).sort();
   if (added.length === 0 && !(off && choice.included)) return choice;
-  return { ...choice, included: choice.included && !off, out: [...choice.out, ...added] };
+  return { included: choice.included && !off, out: [...choice.out, ...added] };
 }
 
 /**
@@ -402,12 +405,7 @@ export function readSecretsChoice(value: unknown): SecretsChoice | undefined {
   if (!value || typeof value !== "object") return undefined;
   const { included, out } = value as Partial<SecretsChoice>;
   if (typeof included !== "boolean" || !Array.isArray(out)) return undefined;
-  const since = (value as { since?: unknown }).since;
-  return {
-    included,
-    out: out.filter((path): path is string => typeof path === "string"),
-    ...(typeof since === "number" && Number.isFinite(since) ? { since } : {}),
-  };
+  return { included, out: out.filter((path): path is string => typeof path === "string") };
 }
 
 export const folderCopyDraftKey = (environmentId: string, projectId: string) =>
