@@ -86,14 +86,11 @@ export const layer = Access.toLayer(OfficeToolkit, {
         .writeSheet({
           projectId: caller.projectId,
           threadId: caller.id,
-          sheet: {
-            title: input.title,
-            designSystem: input.designSystem,
-            tabs: input.tabs,
-          },
+          sheet: { title: input.title, designSystem: input.designSystem, tabs: input.tabs },
           name: input.name,
           merge: input.merge,
           expectedRevision: input.expectedRevision,
+          label: caller.title,
         })
         .pipe(Effect.mapError(failure));
       const evaluation = evaluateSheet(saved.document);

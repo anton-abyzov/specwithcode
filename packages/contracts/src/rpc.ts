@@ -15,6 +15,7 @@ import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
 import { HANDOFF_BATCH_RPC_METHODS, handoffBatchRpcs } from "./handoffBatchRpc.ts";
 import { projectSyncRpcs } from "./projectSync.ts";
+import { documentSessionRpcs } from "./documentSession.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
@@ -2535,6 +2536,11 @@ export const WsProjectSyncRpcGroup = RpcGroup.make(...projectSyncRpcs).middlewar
   RpcScopeAuthorization,
 );
 
+/** Live document sessions (`documentSession.ts`); its own group for the same depth reason. */
+export const WsDocumentSessionRpcGroup = RpcGroup.make(...documentSessionRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Provisioning a fleet machine's packages and service; its own group for the same depth reason. */
 export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
   RpcScopeAuthorization,
@@ -2613,4 +2619,5 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsPersonalDataRpcGroup)
   .merge(WsAppVersionsRpcGroup)
   .merge(WsStorageCleanupRpcGroup)
-  .merge(WsCoordinatorMessagesRpcGroup);
+  .merge(WsCoordinatorMessagesRpcGroup)
+  .merge(WsDocumentSessionRpcGroup);

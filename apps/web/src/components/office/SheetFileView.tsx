@@ -17,6 +17,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
+import { DocumentHeader } from "../documents/DocumentHeader";
+import { useLiveSheet } from "../documents/useLiveSheet";
+import { Button } from "../ui/button";
 import { fileSaveErrorMessage } from "../files/filePreviewMode";
 import {
   clearProjectFileQueryData,
@@ -102,6 +105,10 @@ export function SheetFileView(props: {
   const themeSource = useOfficeThemeSource(props.environmentId, systemId, mode);
   const relativePath = sheetRelativePath(props.cwd, props.path);
   const { environmentId, cwd, path } = props;
+  // Live when the machine can hold a session on the file; otherwise saved by revision.
+  const live = useLiveSheet({ environmentId, cwd, relativePath });
+  /** How many times the sheet was opened again after its live session ended. */
+  const [opened, setOpened] = useState(0);
   const reload = useCallback(async (): Promise<void> => {
     clearProjectFileQueryData(environmentId, cwd, path);
     file.refresh();
@@ -164,14 +171,64 @@ export function SheetFileView(props: {
       </p>
     );
   }
+  const binding = live?.binding ?? null;
+  // A sheet whose session has ended goes back to revision saves; one still joining is read-only.
+  const joining = live !== null && live.state.status === "connecting";
+  // Ended for a reason (the file left, or another took its name): the sheet stays read-only
+  // until it is opened again, so an edit begun in the old session is not saved by revision
+  // into whatever is under the name now.
+  const ended = live !== null && live.state.status === "closed" && live.state.problem !== null;
+  const title =
+    binding?.document.title ??
+    path
+      .split(/[\\/]/)
+      .pop()
+      ?.replace(/\.sheet\.json$/i, "") ??
+    path;
   return (
-    <SheetView
-      text={file.data.contents}
-      mode={mode}
-      themeSource={themeSource}
-      onDesignSystem={setSystemId}
-      onReload={reload}
-      onSave={canWrite && relativePath !== null ? save : undefined}
-    />
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sheet-live={binding !== null}>
+      <DocumentHeader
+        kind="sheet"
+        title={title}
+        presence={binding === null ? [] : (live?.presence ?? [])}
+        activity={binding === null ? [] : (live?.state.activity ?? [])}
+        access={(binding === null ? canWrite : binding.editable) ? "edit" : "view"}
+      />
+      {ended ? (
+        // Why live editing ended, which may say where unsaved changes were kept.
+        <p className="office-sheet-note" role="alert" data-testid="sheet-live-ended">
+          {live.state.problem}{" "}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="sheet-live-reopen"
+            onClick={() => {
+              void reload();
+              setOpened((count) => count + 1);
+              live.reopen();
+            }}
+          >
+            {tx("Open it again")}
+          </Button>
+        </p>
+      ) : null}
+      <SheetView
+        // A new view when the session ends and when the sheet is opened again: text still in a
+        // cell editor belongs to the sheet that was open, and is not carried into another.
+        key={`${ended ? "ended" : "open"}-${opened}`}
+        text={file.data.contents}
+        mode={mode}
+        themeSource={themeSource}
+        onDesignSystem={setSystemId}
+        onReload={reload}
+        onSave={
+          binding === null && !joining && !ended && canWrite && relativePath !== null
+            ? save
+            : undefined
+        }
+        live={binding ?? undefined}
+      />
+    </div>
   );
 }

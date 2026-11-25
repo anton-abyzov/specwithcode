@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ClientGuardedRpcTag,
   ORCHESTRATION_V2_WS_METHODS,
+  DOCUMENT_SESSION_RPC_METHODS,
   PROVISION_RPC_METHODS,
   MACHINE_TOOLS_RPC_METHODS,
   WS_METHODS,
@@ -88,7 +89,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeProjectClones
   | typeof WS_METHODS.terminalAttach
   | typeof WS_METHODS.terminalObserve
-  | typeof WS_METHODS.designWatch;
+  | typeof WS_METHODS.designWatch
+  | typeof DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen;
 
 export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe

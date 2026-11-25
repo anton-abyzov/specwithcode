@@ -7,6 +7,7 @@ import {
   AuthSourceControlWriteScope,
 } from "./auth.ts";
 import { CLIENT_GUARDED_RPC_SCOPES, clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
+import { DOCUMENT_SESSION_RPC_METHODS } from "./documentSession.ts";
 import { HANDOFF_BATCH_RPC_METHODS, handoffBatchRpcs } from "./handoffBatchRpc.ts";
 import {
   planProjectSync,
@@ -147,5 +148,43 @@ describe("workbook edit scopes (1451)", () => {
   it("guards a workbook save behind file write and an import behind file read", () => {
     expect(CLIENT_GUARDED_RPC_SCOPES["design.saveWorkbook"]).toBe(AuthFilesystemWriteScope);
     expect(CLIENT_GUARDED_RPC_SCOPES["design.importWorkbook"]).toBe(AuthFilesystemReadScope);
+  });
+});
+
+describe("live document session scopes (1480)", () => {
+  const session = { cwd: "/p", relativePath: "a.sheet.json", sessionKey: "k1234567" };
+
+  it("lets a read-only window watch a document, and only a writer join to edit", () => {
+    expect(
+      clientRpcRequiredScopes(DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen, {
+        ...session,
+        access: "view",
+      }),
+    ).toEqual([AuthFilesystemReadScope]);
+    expect(
+      clientRpcRequiredScopes(DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen, {
+        ...session,
+        access: "edit",
+      }),
+    ).toEqual([AuthFilesystemReadScope, AuthFilesystemWriteScope]);
+    // A payload that does not say is held to the stricter rule.
+    expect(
+      clientRpcRequiredScopes(DOCUMENT_SESSION_RPC_METHODS.documentSessionOpen, session),
+    ).toEqual([AuthFilesystemReadScope, AuthFilesystemWriteScope]);
+  });
+
+  it("needs file write for every change, and file read to show where a window is", () => {
+    expect(
+      clientRpcRequiredScopes(DOCUMENT_SESSION_RPC_METHODS.documentSessionUpdate, {
+        ...session,
+        update: "AAA=",
+      }),
+    ).toEqual([AuthFilesystemReadScope, AuthFilesystemWriteScope]);
+    expect(CLIENT_GUARDED_RPC_SCOPES[DOCUMENT_SESSION_RPC_METHODS.documentSessionUpdate]).toBe(
+      AuthFilesystemWriteScope,
+    );
+    expect(CLIENT_GUARDED_RPC_SCOPES[DOCUMENT_SESSION_RPC_METHODS.documentSessionPresence]).toBe(
+      AuthFilesystemReadScope,
+    );
   });
 });

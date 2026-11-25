@@ -9,6 +9,7 @@ import {
   addChart,
   cellInputText,
   cellName,
+  parseCellRange,
   chartFromSelection,
   columnLetters,
   evaluateSheet,
@@ -19,6 +20,8 @@ import {
   rangeName,
   removeChart,
   resolveOfficeTheme,
+  serializeSheetDocument,
+  SHEET_ARTIFACT_SUFFIX,
   sheetColumnWidth,
 } from "@specweave-studio/shared/officeSheet";
 import { BarChart3Icon, Columns3Icon, CopyIcon, DownloadIcon } from "lucide-react";
@@ -31,6 +34,8 @@ import {
   useState,
 } from "react";
 
+import { randomUUID } from "~/lib/utils";
+
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import { Button } from "../ui/button";
@@ -38,7 +43,7 @@ import { SheetCellEditor } from "./SheetCellEditor";
 import { SheetContextMenu } from "./SheetContextMenu";
 import { SheetFormatBar } from "./SheetFormatBar";
 import { SheetFormulaBar } from "./SheetFormulaBar";
-import { SheetGrid } from "./SheetGrid";
+import { type SheetPresenceMark, SheetGrid } from "./SheetGrid";
 import { SheetShortcuts } from "./SheetShortcuts";
 import { SheetTabs } from "./SheetTabs";
 import { type SheetPlatform, detectSheetPlatform } from "./sheetKeyboard";
@@ -76,6 +81,63 @@ function slugFileName(title: string): string {
   return `${slug || "sheet"}.html`;
 }
 
+/** Save a sheet this window still holds as a sheet file of its own. */
+function downloadSheetDraft(draft: SheetDocument): void {
+  const blob = new Blob([serializeSheetDocument(draft)], { type: "application/json" });
+  downloadBlob(
+    blob,
+    slugFileName(draft.title).replace(/\.html$/, `-recovered${SHEET_ARTIFACT_SUFFIX}`),
+  );
+}
+
+/** Where a window is on a sheet, as it tells the others. */
+export interface SheetLivePlace {
+  readonly tab: string;
+  readonly cell: string;
+  readonly range?: string;
+}
+
+/**
+ * A sheet edited live. The document is the merge of every window's and
+ * agent's edits, so an edit is a change to merge and there is no revision to
+ * conflict on.
+ */
+export interface SheetLiveBinding {
+  readonly document: SheetDocument;
+  /** Each tab's id in the merge document, in tab order. */
+  readonly tabIds: ReadonlyArray<string>;
+  readonly editable: boolean;
+  /**
+   * Make an edit; false when it was not taken. `base` is the sheet the edit
+   * was worked out from: only the difference is merged, so a change someone
+   * else made since stays.
+   */
+  readonly commit: (next: SheetDocument, base?: SheetDocument) => boolean;
+  readonly undo: () => void;
+  readonly redo: () => void;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  /** Why the last edit was not taken. */
+  readonly problem: string | null;
+  readonly clearProblem: () => void;
+  /** The sheet as this window had it, when some of its edits could not be made again. */
+  readonly draft?: SheetDocument | null;
+  readonly dropDraft?: () => void;
+  readonly setPlace: (place: SheetLivePlace | null) => void;
+  /** Where everyone else is. */
+  readonly others: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly color: number;
+    readonly tab?: string | undefined;
+    readonly cell?: string | undefined;
+    readonly range?: string | undefined;
+  }>;
+}
+
+/** The most cells of one participant's selection that are tinted. */
+const PRESENCE_RANGE_CELLS = 2000;
+
 /**
  * A sheet artifact: tabs, a formula bar, a grid of computed and formatted
  * cells, and the charts bound to its ranges. The file is data; nothing in it
@@ -99,8 +161,22 @@ export function SheetView(props: {
   readonly onCopyMarkdown?: ((markdown: string) => void | Promise<void>) | undefined;
   /** Which command key the shortcuts use; detected from the browser when left out. */
   readonly platform?: SheetPlatform | undefined;
+  /** The live session the sheet is edited in; `text` and `onSave` are then not used. */
+  readonly live?: SheetLiveBinding | undefined;
 }): ReactNode {
   const tx = useTx();
+  const live = props.live ?? null;
+  const fileDraft = useSheetDraft({
+    text: props.text,
+    onSave: live ? undefined : props.onSave,
+    onReload: props.onReload,
+  });
+  // A view-only window's layout changes (a hidden column) show until the sheet next changes.
+  const [liveShown, setLiveShown] = useState<{
+    readonly base: SheetDocument;
+    readonly document: SheetDocument;
+  } | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
   const {
     isOwnRevision,
     parsed,
@@ -114,8 +190,43 @@ export function SheetView(props: {
     save,
     showOnly,
     discard,
-  } = useSheetDraft({ text: props.text, onSave: props.onSave, onReload: props.onReload });
+  } = live
+    ? {
+        isOwnRevision: () => true,
+        parsed: { ok: true } as typeof fileDraft.parsed,
+        document: liveShown?.base === live.document ? liveShown.document : live.document,
+        draft: null,
+        incomingRevision: "live",
+        hasExternalConflict: false,
+        saving: false,
+        saveError: liveError ?? live.problem,
+        setSaveError: (message: string | null) => {
+          setLiveError(message);
+          if (message === null) live.clearProblem();
+        },
+        save: async (next: SheetDocument) => {
+          setLiveError(null);
+          // This render's sheet is what `next` was built from, even when the edit ends later (a drag).
+          return live.commit(next, live.document);
+        },
+        showOnly: (next: SheetDocument) => setLiveShown({ base: live.document, document: next }),
+        discard: fileDraft.discard,
+      }
+    : fileDraft;
+  /** Edits can be kept: saved to the file, or merged into the live session. */
+  const canSave = live ? live.editable : props.onSave !== undefined;
   const [tabIndex, setTabIndex] = useState(0);
+  // Live, the open tab is followed by its id: a tab added or removed elsewhere does not move this window.
+  const liveTabIds = live?.tabIds ?? null;
+  const [heldTab, setHeldTab] = useState<string | null>(null);
+  if (liveTabIds !== null && liveTabIds.length > 0) {
+    const current = liveTabIds[Math.min(tabIndex, liveTabIds.length - 1)] ?? null;
+    if (heldTab === null || !liveTabIds.includes(heldTab)) {
+      if (current !== heldTab) setHeldTab(current);
+    } else if (current !== heldTab) {
+      setTabIndex(liveTabIds.indexOf(heldTab));
+    }
+  }
   const [selection, setSelection] = useState<Selection | null>(null);
   const [inserting, setInserting] = useState(false);
   const [organizingColumns, setOrganizingColumns] = useState(false);
@@ -161,12 +272,22 @@ export function SheetView(props: {
       columnSort,
       reach,
     });
-  }, [activeIndex, chartOverrides, collapsedGroups, columnSort, document, effectiveTab, evaluation, reach]);
+  }, [
+    activeIndex,
+    chartOverrides,
+    collapsedGroups,
+    columnSort,
+    document,
+    effectiveTab,
+    evaluation,
+    reach,
+  ]);
 
   const platform = useMemo(() => props.platform ?? detectSheetPlatform(), [props.platform]);
-  const editable = props.onSave !== undefined && !hasExternalConflict;
+  const editable = canSave && !hasExternalConflict;
   const selectTab = (index: number) => {
     setTabIndex(index);
+    setHeldTab(liveTabIds?.[index] ?? null);
     setSelection(null);
     setInserting(false);
     setColumnSort(null);
@@ -177,10 +298,12 @@ export function SheetView(props: {
     evaluation,
     tab,
     tabIndex: activeIndex,
+    tabKeys: liveTabIds,
+    removedTabReason: tx("The tab you were typing on was removed. That entry was not kept."),
     grid,
     editable,
     blockedReason:
-      props.onSave && hasExternalConflict
+      canSave && hasExternalConflict
         ? tx("Resolve the conflict before saving more changes.")
         : null,
     platform,
@@ -194,7 +317,52 @@ export function SheetView(props: {
     setSaveError,
     isOwnRevision,
     incomingRevision,
+    live: live
+      ? { undo: live.undo, redo: live.redo, canUndo: live.canUndo, canRedo: live.canRedo }
+      : null,
   });
+
+  // The others see where this window is: its tab, its focused cell and its selection.
+  const placeTab = liveTabIds?.[activeIndex] ?? null;
+  const placeCell = selection ? cellName(selection.focus) : null;
+  const placeRange = selection ? rangeName(normalize(selection.anchor, selection.focus)) : null;
+  const setPlace = live?.setPlace;
+  useEffect(() => {
+    if (!setPlace) return;
+    setPlace(
+      placeTab === null || placeCell === null
+        ? null
+        : {
+            tab: placeTab,
+            cell: placeCell,
+            ...(placeRange !== null && placeRange !== placeCell ? { range: placeRange } : {}),
+          },
+    );
+  }, [placeCell, placeRange, placeTab, setPlace]);
+
+  const others = live?.others;
+  const presence = useMemo(() => {
+    const marks = new Map<string, SheetPresenceMark>();
+    if (!others || placeTab === null) return marks;
+    for (const other of others) {
+      if (other.tab !== placeTab || other.cell === undefined) continue;
+      const area = other.range === undefined ? null : parseCellRange(other.range);
+      if (area !== null) {
+        let drawn = 0;
+        for (let row = area.start.row; row <= area.end.row; row += 1) {
+          for (let col = area.start.col; col <= area.end.col; col += 1) {
+            if ((drawn += 1) > PRESENCE_RANGE_CELLS) break;
+            const name = cellName({ col, row });
+            if (!marks.has(name))
+              marks.set(name, { name: other.name, color: other.color, focus: false });
+          }
+          if (drawn > PRESENCE_RANGE_CELLS) break;
+        }
+      }
+      marks.set(other.cell, { name: other.name, color: other.color, focus: true });
+    }
+    return marks;
+  }, [others, placeTab]);
 
   if (!parsed.ok) {
     return (
@@ -212,13 +380,15 @@ export function SheetView(props: {
 
   /** A layout change: saved when the sheet can be saved, otherwise only shown. */
   const saveOrShow = (next: SheetDocument) => {
-    if (props.onSave) void editor.commit(() => next);
+    if (canSave) void editor.commit(() => next);
     else showOnly(next);
   };
 
   const insertChart = async () => {
     if (!range) return;
-    const chart = chartFromSelection(tab, range, chartType, chartTitle);
+    const made = chartFromSelection(tab, range, chartType, chartTitle);
+    // Live, two windows may add a chart at once: each gets an id of its own, so both stay.
+    const chart = live ? { ...made, id: `${made.id}-${randomUUID().slice(0, 8)}` } : made;
     if (await (editor.commit((doc) => addChart(doc, activeIndex, chart)) ?? false)) {
       setInserting(false);
       setChartTitle("");
@@ -252,7 +422,7 @@ export function SheetView(props: {
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      if (props.onSave && latestWidth !== startWidth) {
+      if (canSave && latestWidth !== startWidth) {
         const nextDoc = updateTab(document, activeIndex, (current) => ({
           ...current,
           widths: { ...current.widths, [letter]: latestWidth },
@@ -339,12 +509,18 @@ export function SheetView(props: {
     setSaveError(null);
     let blob: Blob;
     try {
-      blob = kind === "xlsx" ? await sheetXlsxBlob(document, evaluation) : sheetCsvBlob(document, activeIndex, evaluation);
+      blob =
+        kind === "xlsx"
+          ? await sheetXlsxBlob(document, evaluation)
+          : sheetCsvBlob(document, activeIndex, evaluation);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : tx("Export failed."));
       return;
     }
-    const base = kind === "csv" && document.tabs.length > 1 ? `${document.title} ${document.tabs[activeIndex]?.name ?? ""}` : document.title;
+    const base =
+      kind === "csv" && document.tabs.length > 1
+        ? `${document.title} ${document.tabs[activeIndex]?.name ?? ""}`
+        : document.title;
     const filename = sheetFileName(base, kind);
     if (props.onExportFile) props.onExportFile(blob, filename);
     else downloadBlob(blob, filename);
@@ -447,7 +623,7 @@ export function SheetView(props: {
           <DownloadIcon aria-hidden />
           {tx("Export .csv")}
         </Button>
-        {props.onSave ? (
+        {canSave ? (
           <Button
             type="button"
             size="sm"
@@ -462,7 +638,7 @@ export function SheetView(props: {
           </Button>
         ) : null}
       </div>
-      {props.onSave ? (
+      {canSave ? (
         <SheetFormatBar
           style={selection ? grid.styleOf(selection.focus) : undefined}
           format={selection ? grid.formatOf(selection.focus) : undefined}
@@ -483,7 +659,7 @@ export function SheetView(props: {
       ) : null}
       {hasExternalConflict && draft ? (
         <SheetConflictBanner
-          canKeep={props.onSave !== undefined}
+          canKeep={canSave}
           refreshing={incomingRevision === draft.baseRevision}
           saving={saving}
           onReload={() => {
@@ -520,6 +696,29 @@ export function SheetView(props: {
           {saveError}
         </p>
       ) : null}
+      {live?.draft ? (
+        <p className="office-sheet-note" role="alert">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="sheet-draft-download"
+            onClick={() => downloadSheetDraft(live.draft!)}
+          >
+            {tx("Download your version")}
+          </Button>
+          {/* Kept until dismissed: a download that was cancelled can be tried again. */}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="sheet-draft-dismiss"
+            onClick={() => live.dropDraft?.()}
+          >
+            {tx("Dismiss")}
+          </Button>
+        </p>
+      ) : null}
       {grid.clipped ? (
         <p className="office-sheet-note" role="status">
           {renderRich(tx("Showing the first {rows} rows and {columns} columns."), {
@@ -535,11 +734,12 @@ export function SheetView(props: {
         evaluation={evaluation}
         range={range}
         focus={selection?.focus ?? null}
+        presence={presence}
         columnSort={columnSort}
         chartOverrides={chartOverrides}
         onChartOverrides={(key, next) => setChartOverrides((prev) => ({ ...prev, [key]: next }))}
         onRemoveChart={
-          props.onSave && !saving
+          canSave && !saving
             ? (chartId) => {
                 const key = chartOverrideKey(tab.name, chartId);
                 setChartOverrides((prev) => {

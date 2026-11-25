@@ -29,6 +29,13 @@ import { type ColumnSortState, type SheetGridModel, chartOverrideKey } from "./s
 
 const CHIP_COLORS = 8;
 
+/** Someone else on a cell: the cell they are on, or one inside their selection. */
+export interface SheetPresenceMark {
+  readonly name: string;
+  readonly color: number;
+  readonly focus: boolean;
+}
+
 /** The grid: column and row headers, computed and formatted cells, and the tab's charts. */
 export function SheetGrid(props: {
   readonly tab: SheetTab;
@@ -37,6 +44,8 @@ export function SheetGrid(props: {
   readonly evaluation: SheetEvaluation;
   readonly range: CellRange | null;
   readonly focus: CellAddress | null;
+  /** Where the others on a live sheet are, by cell name. */
+  readonly presence?: ReadonlyMap<string, SheetPresenceMark> | undefined;
   readonly columnSort: ColumnSortState | null;
   readonly chartOverrides: Readonly<Record<string, SheetChartOverrides>>;
   readonly onChartOverrides: (key: string, next: SheetChartOverrides) => void;
@@ -96,15 +105,24 @@ export function SheetGrid(props: {
                       key={col}
                       scope="col"
                       aria-sort={
-                        sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : undefined
+                        sorted === "asc"
+                          ? "ascending"
+                          : sorted === "desc"
+                            ? "descending"
+                            : undefined
                       }
                       data-col-header={letter}
-                      data-selected={range !== null && col >= range.start.col && col <= range.end.col}
+                      data-selected={
+                        range !== null && col >= range.start.col && col <= range.end.col
+                      }
                       onMouseDown={(event) => {
-                        if (event.button !== 0 || (event.target as Element).closest("button")) return;
+                        if (event.button !== 0 || (event.target as Element).closest("button"))
+                          return;
                         props.onHeader?.("col", col, event.shiftKey);
                       }}
-                      onContextMenu={(event) => props.onContextMenu?.("col", { col, row: 0 }, event)}
+                      onContextMenu={(event) =>
+                        props.onContextMenu?.("col", { col, row: 0 }, event)
+                      }
                     >
                       <span className="office-col-header-inner">
                         <span>{letter}</span>
@@ -113,9 +131,13 @@ export function SheetGrid(props: {
                           className="office-col-sort"
                           aria-label={
                             sorted === "asc"
-                              ? tx("Column {column}, sorted A to Z. Sort Z to A", { column: letter })
+                              ? tx("Column {column}, sorted A to Z. Sort Z to A", {
+                                  column: letter,
+                                })
                               : sorted === "desc"
-                                ? tx("Column {column}, sorted Z to A. Clear sort", { column: letter })
+                                ? tx("Column {column}, sorted Z to A. Clear sort", {
+                                    column: letter,
+                                  })
                                 : tx("Sort column {column}", { column: letter })
                           }
                           data-col-sort={letter}
@@ -152,12 +174,17 @@ export function SheetGrid(props: {
                     <th
                       scope="row"
                       data-row-header={row + 1}
-                      data-selected={range !== null && row >= range.start.row && row <= range.end.row}
+                      data-selected={
+                        range !== null && row >= range.start.row && row <= range.end.row
+                      }
                       onMouseDown={(event) => {
-                        if (event.button !== 0 || (event.target as Element).closest("button")) return;
+                        if (event.button !== 0 || (event.target as Element).closest("button"))
+                          return;
                         props.onHeader?.("row", row, event.shiftKey);
                       }}
-                      onContextMenu={(event) => props.onContextMenu?.("row", { col: 0, row }, event)}
+                      onContextMenu={(event) =>
+                        props.onContextMenu?.("row", { col: 0, row }, event)
+                      }
                     >
                       {group ? (
                         <button
@@ -186,9 +213,20 @@ export function SheetGrid(props: {
                       const focused = focus !== null && focus.col === col && focus.row === row;
                       const cellStyle = grid.styleOf(address);
                       const editingHere =
-                        props.editing != null && props.editing.col === col && props.editing.row === row;
+                        props.editing != null &&
+                        props.editing.col === col &&
+                        props.editing.row === row;
+                      const mark = props.presence?.get(cellName(address));
+                      const flag =
+                        mark?.focus === true ? (
+                          <span className="document-presence-flag" data-presence-flag={mark.name}>
+                            {mark.name}
+                          </span>
+                        ) : null;
                       const common = {
                         "data-cell": cellName(address),
+                        "data-presence": mark ? (mark.focus ? "focus" : "range") : undefined,
+                        "data-presence-color": mark ? mark.color % CHIP_COLORS : undefined,
                         "data-selected": selected,
                         "data-focused": focused,
                         "data-rule": cellStyle?.topBorder,
@@ -206,7 +244,8 @@ export function SheetGrid(props: {
                           }
                         },
                         onMouseEnter: (event: ReactMouseEvent) => {
-                          if (event.buttons === 1 && !editingHere) props.onPick(address, true, event);
+                          if (event.buttons === 1 && !editingHere)
+                            props.onPick(address, true, event);
                         },
                         onDoubleClick: () => props.onEdit?.(address),
                         onContextMenu: (event: ReactMouseEvent) =>
@@ -216,10 +255,17 @@ export function SheetGrid(props: {
                         return (
                           <td key={col} {...common}>
                             {props.editor}
+                            {flag}
                           </td>
                         );
                       }
-                      if (value === null) return <td key={col} {...common} />;
+                      if (value === null) {
+                        return (
+                          <td key={col} {...common}>
+                            {flag}
+                          </td>
+                        );
+                      }
                       const text = formatSheetValue(value, grid.formatOf(address));
                       const numeric = typeof value === "number";
                       const href = typeof value === "string" ? safeLinkHref(value) : null;
@@ -254,6 +300,7 @@ export function SheetGrid(props: {
                           ) : (
                             text
                           )}
+                          {flag}
                         </td>
                       );
                     })}
@@ -284,9 +331,7 @@ export function SheetGrid(props: {
                   tone={index}
                   overrides={props.chartOverrides[key]}
                   onOverridesChange={(next) => props.onChartOverrides(key, next)}
-                  onRemove={
-                    props.onRemoveChart ? () => props.onRemoveChart!(chart.id) : undefined
-                  }
+                  onRemove={props.onRemoveChart ? () => props.onRemoveChart!(chart.id) : undefined}
                 />
               </div>
             );
