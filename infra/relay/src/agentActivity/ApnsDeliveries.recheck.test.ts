@@ -125,8 +125,30 @@ const rowsOnOtherMachine = AgentActivityRows.AgentActivityRows.of({
     ]),
 });
 
+/**
+ * The machine kept its environment id but was relinked under a new key; its
+ * rows under the old key are no longer visible. The new key's row is.
+ */
+const rowsUnderReplacementKey = AgentActivityRows.AgentActivityRows.of({
+  ...failingRows,
+  listForUser: () =>
+    Effect.succeed([
+      {
+        environmentId: "env" as never,
+        threadId: "thread-new" as never,
+        projectTitle: "Project",
+        threadTitle: "Thread under the new key",
+        modelTitle: "gpt-5.4",
+        phase: "running",
+        headline: "Running",
+        updatedAt: "9999-01-01T00:00:00.000Z",
+        deepLink: "/",
+      },
+    ]),
+});
+
 const layerFor = (
-  calls: { apns: number },
+  calls: { apns: number; bodies?: Array<string> },
   rows: AgentActivityRows.AgentActivityRows["Service"] = failingRows,
 ) =>
   ApnsDeliveries.layer.pipe(
@@ -155,6 +177,9 @@ const layerFor = (
           HttpClient.make((request: HttpClientRequest.HttpClientRequest) =>
             Effect.sync(() => {
               calls.apns += 1;
+              if (request.body._tag === "Uint8Array") {
+                calls.bodies?.push(new TextDecoder().decode(request.body.body));
+              }
               return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
             }),
           ),
@@ -283,5 +308,35 @@ describe("ApnsDeliveries when the delivery-time recheck fails", () => {
       expect(result).toMatchObject({ kind: "live_activity_start", apnsStatus: null });
       expect(calls.apns).toBe(0);
     }).pipe(Effect.provide(layerFor(calls, rowsOnOtherMachine)));
+  });
+
+  it.effect("starts with the current key's content, never the queued content of an old key", () => {
+    const calls = { apns: 0, bodies: [] as Array<string> };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(
+        sign({
+          kind: "live_activity_start",
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: "start-token",
+          aggregate: {
+            ...completed,
+            activeCount: 1,
+            activities: completed.activities.map((activity) => ({
+              ...activity,
+              threadTitle: "Thread under the old key",
+              phase: "running",
+              status: "Working",
+            })),
+          },
+          createdAt: completedAt,
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: "job-start-replaced-key",
+        }),
+      );
+      expect(calls.bodies.join("\n")).not.toContain("Thread under the old key");
+      expect(calls.bodies.join("\n")).toContain("Thread under the new key");
+    }).pipe(Effect.provide(layerFor(calls, rowsUnderReplacementKey)));
   });
 });

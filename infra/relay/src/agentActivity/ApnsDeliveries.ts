@@ -37,6 +37,7 @@ import {
   type ApnsDeliveryJobVerificationError,
 } from "./apnsDeliveryJobs.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -562,8 +563,11 @@ export const make = Effect.gen(function* () {
   // confirm could birth an activity nothing ends, and the next publish while
   // work is live queues a new one. The user's rows come only from machines
   // they still have linked under the same key, so a start whose content names
-  // a machine that moved to another account is skipped too.
-  const startIsCurrent = Effect.fnUntraced(function* (
+  // a machine that moved to another account is skipped too. The start carries
+  // no keys, and a machine relinked under a new key keeps its environment id,
+  // so the start is sent with content built from those rows instead of the
+  // queued content: an old key's rows never reach the phone. Null skips it.
+  const currentStartAggregate = Effect.fnUntraced(function* (
     userId: string,
     aggregate: RelayAgentActivityAggregateState | null,
   ) {
@@ -571,17 +575,23 @@ export const make = Effect.gen(function* () {
     return yield* activityRows.listForUser({ userId }).pipe(
       Effect.map((states) => {
         const linked = new Set(states.map((state) => state.environmentId));
-        return (
+        const live =
           (aggregate?.activities ?? []).every((row) => linked.has(row.environmentId)) &&
           states.some(
             (state) =>
               !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
-          )
-        );
+          );
+        return live
+          ? makeAggregateState({
+              activeStates: states,
+              terminalState: null,
+              nowMs: now.epochMilliseconds,
+            })
+          : null;
       }),
       Effect.catchCause((cause) =>
         Effect.logWarning("live-work recheck failed; skipping queued start", { cause }).pipe(
-          Effect.as(false),
+          Effect.as(null),
         ),
       ),
     );
@@ -705,7 +715,7 @@ export const make = Effect.gen(function* () {
     });
     let deliveryTarget = input.target;
     const now = yield* DateTime.now;
-    const aggregate =
+    let aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
     let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -717,6 +727,10 @@ export const make = Effect.gen(function* () {
         },
         cause,
       );
+    // Before the alert is recomputed below, so the alert names current content too.
+    if (input.kind === "live_activity_start") {
+      aggregate = yield* currentStartAggregate(input.target.user_id, aggregate);
+    }
     if (input.sourceJobId) {
       const claim = yield* attempts.claimSourceJob({
         userId: input.target.user_id,
@@ -780,10 +794,7 @@ export const make = Effect.gen(function* () {
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
     }
-    if (
-      input.kind === "live_activity_start" &&
-      !(yield* startIsCurrent(input.target.user_id, aggregate))
-    ) {
+    if (input.kind === "live_activity_start" && aggregate === null) {
       yield* liveActivities.clearStartQueued({
         userId: input.target.user_id,
         deviceId: input.target.device_id,
