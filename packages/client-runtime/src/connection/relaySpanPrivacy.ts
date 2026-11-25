@@ -11,10 +11,13 @@ const REDACTED_MACHINE = "<machine>";
 const MAX_CAUSE_DEPTH = 8;
 
 function redactText(text: string, labels: ReadonlyArray<string>): string {
+  // Longest first: with "Mac" saved and "Mac Upstairs" reported, replacing "Mac" first
+  // would leave "<machine> Upstairs".
+  const ordered = [...new Set(labels)]
+    .filter((label) => label.length > 0)
+    .toSorted((left, right) => right.length - left.length);
   let redacted = text;
-  for (const label of labels) {
-    if (label.length > 0) redacted = redacted.split(label).join(REDACTED_MACHINE);
-  }
+  for (const label of ordered) redacted = redacted.split(label).join(REDACTED_MACHINE);
   return redacted;
 }
 

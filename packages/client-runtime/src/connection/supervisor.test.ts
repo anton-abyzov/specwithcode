@@ -598,6 +598,27 @@ describe("EnvironmentSupervisor", () => {
       machine: "Studio Attic Fixture",
       secrets: ["Studio Attic Fixture", "K7Q2PX9M"],
     },
+    {
+      label: "a refusal from a server whose name contains the saved label",
+      // Saved as "Mac", the server now reports "Mac Upstairs": no part of either may remain.
+      entry: {
+        target: new RelayConnectionTarget({ environmentId: TARGET.environmentId, label: "Mac" }),
+        profile: Option.none(),
+        enabled: true,
+      },
+      failure: () =>
+        orchestrationProtocolCompatibilityError({
+          environmentId: TARGET.environmentId,
+          label: "Mac Upstairs",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+          capabilities: { repositoryIdentity: true },
+        } as ExecutionEnvironmentDescriptor)!,
+      phase: "blocked" as const,
+      machine: "Mac Upstairs",
+      secrets: ["Mac", "Upstairs"],
+    },
   ] as ReadonlyArray<{
     readonly label: string;
     readonly failure: () => ConnectionAttemptError | Effect.Effect<never, ConnectionAttemptError>;
