@@ -342,14 +342,22 @@ describe("ClaudeMcpElicitation", () => {
   });
 
   it("never overwrites a recorded answer as cancelled", async () => {
-    // Stop while the answer is on its way.
+    // Stop while the answer is on its way: the answer still goes through.
     const stopped = harness();
     const controller = new AbortController();
     const first = stopped.ask({ requestedSchema: confirmSchema }, controller.signal);
     await stopped.until(() => stopped.card() !== undefined);
     handOffClaudeFormAnswers(stopped.requestId, { handOff: { name: "octo/repo" } });
     controller.abort();
-    expect(await first).toEqual({ action: "cancel" });
+    await new Promise((resolve) => setImmediate(resolve));
+    await Effect.runPromise(
+      stopped.elicitations.respond({
+        requestId: stopped.requestId,
+        decision: "accept",
+        answers: redactClaudeFormAnswers({ name: "octo/repo" }),
+      }),
+    );
+    expect(await first).toEqual({ action: "accept", content: { name: "octo/repo" } });
     // The timer and its grace both run out before the answer arrives.
     const lost = harness({ thread: "agent" });
     const second = lost.ask({ requestedSchema: confirmSchema });

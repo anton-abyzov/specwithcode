@@ -349,11 +349,12 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           ),
         );
         // The app may already have recorded the person's answer while its
-        // delivery is still on the way. The timer then waits a little for it,
-        // and neither side overwrites the recorded answer as cancelled.
+        // delivery is still on the way. Stop and the timer then wait a little
+        // for it and pass it on, so the server gets what the record says, and
+        // neither overwrites the recorded answer as cancelled.
         const committed = raced.by !== "person" && isClaudeFormAnswered(artifacts.request.id);
         const awaited =
-          committed && raced.by === "timeout"
+          committed
             ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
             : raced;
         // The first to settle the card wins; a person's answer that came in
@@ -375,9 +376,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         }
         remember(id);
         if (committed) {
-          // The record keeps the person's answer; the call itself ends here.
-          if (settled.by === "timeout")
-            yield* notice(
+          // The answer never arrived: the call ends, and the note says so.
+          yield* notice(
               context,
               `${nativeRequestId}:undelivered`,
               undeliveredAnswerNotice(request.serverName),
