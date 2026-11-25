@@ -1023,7 +1023,10 @@ describe("AssetAccess", () => {
         // Two kinds outside pictures, a page and a document, must not swap either.
         yield* fs.writeFileString(path.join(root, "real.pdf"), "%PDF-1.4");
         yield* fs.symlink(path.join(root, "real.pdf"), path.join(root, "doc.html"));
-        for (const linked of ["page.html", "pic.png", "doc.html"]) {
+        // A file named only ".png" has no extension at all, whatever its name looks like.
+        yield* fs.writeFileString(path.join(root, ".png"), "<p>page</p>");
+        yield* fs.symlink(path.join(root, ".png"), path.join(root, "dotted.png"));
+        for (const linked of ["page.html", "pic.png", "doc.html", "dotted.png"]) {
           const refused = yield* issueAssetUrl({
             resource: { _tag: "workspace-file", threadId, path: linked },
             workspaceRoot: root,
