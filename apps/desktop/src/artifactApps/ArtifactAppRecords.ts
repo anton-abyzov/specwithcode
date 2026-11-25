@@ -16,12 +16,11 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { newArtifactAppInstallId } from "./ArtifactAppUrl.ts";
+import { makeArtifactAppPrivateFileWriter } from "./ArtifactAppPrivateFile.ts";
 
 export const ARTIFACT_APPS_RECORD_FILE = "artifact-apps-installed.json";
 
 const RECORDS_VERSION = 1;
-const RECORDS_FILE_MODE = 0o600;
 
 export class ArtifactAppRecordsWriteError extends Schema.TaggedError<ArtifactAppRecordsWriteError>()(
   "ArtifactAppRecordsWriteError",
@@ -102,8 +101,6 @@ const make = Effect.fnUntraced(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const writeLock = yield* Semaphore.make(1);
-  // Writes are serialized in-process and the pid separates processes, so a counter names temp files.
-  let temporaryFileCounter = 0;
 
   const readRecords: Effect.Effect<RecordsRead, PlatformError.PlatformError> = fileSystem
     .readFileString(filePath)
@@ -175,6 +172,8 @@ const make = Effect.fnUntraced(function* (filePath: string) {
     }),
   );
 
+  const writePrivateFile = makeArtifactAppPrivateFileWriter({ fileSystem, path, filePath });
+
   const writeRecords = Effect.fnUntraced(function* (apps: ReadonlyArray<DesktopArtifactApp>) {
     const encoded = yield* encodeDocument({ version: RECORDS_VERSION, apps }).pipe(
       Effect.mapError(
@@ -182,63 +181,16 @@ const make = Effect.fnUntraced(function* (filePath: string) {
           new ArtifactAppRecordsWriteError({ operation: "encode-document", path: filePath, cause }),
       ),
     );
-    const directory = path.dirname(filePath);
-    yield* fileSystem.makeDirectory(directory, { recursive: true }).pipe(
+    yield* writePrivateFile(`${encoded}\n`).pipe(
       Effect.mapError(
-        (cause) =>
+        (error) =>
           new ArtifactAppRecordsWriteError({
-            operation: "create-directory",
-            path: directory,
-            cause,
+            operation:
+              error.operation === "replace-file" ? "replace-records-file" : error.operation,
+            path: error.path,
+            cause: error.cause,
           }),
       ),
-    );
-    temporaryFileCounter += 1;
-    // An unguessable name, created exclusively: a file or link already at that
-    // path makes the write fail instead of writing through it.
-    const temporaryPath = `${filePath}.${process.pid}.${temporaryFileCounter}.${newArtifactAppInstallId()}.tmp`;
-    let created = false;
-    const removeTemporary = Effect.suspend(() =>
-      created ? fileSystem.remove(temporaryPath, { force: true }) : Effect.void,
-    ).pipe(Effect.ignore);
-    yield* fileSystem
-      .writeFileString(temporaryPath, `${encoded}\n`, { mode: RECORDS_FILE_MODE, flag: "wx" })
-      .pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            created = true;
-          }),
-        ),
-        // Anything but "already there" means this write made the file and may have left it.
-        Effect.tapError((error) =>
-          Effect.sync(() => {
-            if (error.reason._tag !== "AlreadyExists") created = true;
-          }),
-        ),
-      )
-      .pipe(
-        // The mode on create is masked by the umask; set it explicitly before the file is visible.
-        Effect.andThen(fileSystem.chmod(temporaryPath, RECORDS_FILE_MODE)),
-        Effect.mapError(
-          (cause) =>
-            new ArtifactAppRecordsWriteError({
-              operation: "write-temporary-file",
-              path: temporaryPath,
-              cause,
-            }),
-        ),
-        Effect.tapError(() => removeTemporary),
-      );
-    yield* fileSystem.rename(temporaryPath, filePath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ArtifactAppRecordsWriteError({
-            operation: "replace-records-file",
-            path: filePath,
-            cause,
-          }),
-      ),
-      Effect.tapError(() => removeTemporary),
     );
   });
 
