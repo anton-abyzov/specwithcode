@@ -436,10 +436,14 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
           continue;
         }
         if ((hops += 1) > 40) return undefined;
-        const targetRoot = rootOf(target.value);
+        // Drives exist only on a drive path; a share or device path is not
+        // followed, so the record counts.
+        const onDrive = root !== "";
+        if (onDrive && /^[\\/]{2}/u.test(target.value)) return undefined;
+        const targetRoot = onDrive ? rootOf(target.value) : "";
         // An absolute target starts over; one without a drive stays on this one.
         if (targetRoot !== "") root = targetRoot;
-        const rooted = root === "" ? target.value.startsWith("/") : /^[\\/]/u.test(target.value);
+        const rooted = onDrive ? /^[\\/]/u.test(target.value) : target.value.startsWith("/");
         if (targetRoot !== "" || rooted) resolved = [];
         pending.unshift(...split(target.value.slice(targetRoot.length)));
       }
