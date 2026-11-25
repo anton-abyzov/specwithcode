@@ -1127,6 +1127,18 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+    // Nor is worktree metadata kept outside the repository's worktrees folder,
+    // even when it shares the repository and names this path back.
+    yield* fileSystem.remove(path.join(locked, ".git"));
+    const stray = path.join(root, "stray-admin");
+    yield* fileSystem.makeDirectory(stray);
+    yield* fileSystem.writeFileString(path.join(stray, "commondir"), `${repo}/.git\n`);
+    yield* fileSystem.writeFileString(path.join(stray, "HEAD"), "ref: refs/heads/main\n");
+    yield* fileSystem.writeFileString(path.join(stray, "gitdir"), `${locked}/.git\n`);
+    yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${stray}\n`);
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
     // The project's own checkout and its worktrees still launch.
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
     expect((yield* launchInto(other)).at(-1)?.result).toMatchObject({ projectId });
