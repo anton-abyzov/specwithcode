@@ -669,6 +669,12 @@ export function shellCandidateArgs(
   return [...(candidate.args ?? []), "-c", command];
 }
 
+/** A value only when it is a full drive path; a bare or relative one is read from the working folder. */
+function windowsDrivePath(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return /^[A-Za-z]:[\\/]/u.test(trimmed) ? trimmed : null;
+}
+
 function windowsCmdPath(env: NodeJS.ProcessEnv): string {
   return windowsSystem32Path("cmd.exe", env);
 }
@@ -708,7 +714,7 @@ function resolveShellCandidates(
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
-      shellCandidateFromCommand(env.ComSpec ?? null, platform),
+      shellCandidateFromCommand(windowsDrivePath(env.ComSpec), platform),
       shellCandidateFromCommand(windowsCmdPath(env), platform),
     ]);
   }
