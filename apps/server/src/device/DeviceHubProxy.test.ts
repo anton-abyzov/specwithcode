@@ -22,6 +22,7 @@ const fixture = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
+  hubToken?: string,
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -34,7 +35,11 @@ const fixture = (
         finalized++;
       });
       if (fail) return yield* Effect.die(new Error("upstream failed"));
-      return HttpClientResponse.fromWeb(request, new Response("frame"));
+      // A hub answering a token in its link sets a cookie that carries it.
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response("frame", { headers: { "set-cookie": "hub_access=hub-token; Path=/" } }),
+      );
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
@@ -56,7 +61,10 @@ const fixture = (
       Layer.provideMerge(
         Layer.succeed(DeviceService.DeviceService, {
           currentReadiness: () =>
-            Effect.succeed({ hostId: LOCAL_DEVICE_HOST_ID, hub: { origin: "http://hub.test" } }),
+            Effect.succeed({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              hub: { origin: "http://hub.test", token: hubToken },
+            }),
         } as DeviceService.DeviceService["Service"]),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
@@ -68,6 +76,25 @@ const fixture = (
 };
 
 describe("device hub proxy", () => {
+  it("sends the hub its token in place of the client's credentials, and keeps hub cookies", async () => {
+    const { handler, headers } = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      "hub-token",
+    );
+    const response = await handler(
+      new Request("http://studio.test/api/device-hub/api/devices", {
+        headers: { authorization: "Bearer client-session", cookie: "session=client" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    await response.text();
+    expect(headers[0]?.["authorization"]).toBe("Bearer hub-token");
+    expect(headers[0]?.["cookie"]).toBeUndefined();
+  });
+
   it("releases the upstream response after forwarding its body and strips tickets", async () => {
     const { handler, requests, finalized } = fixture([AuthOrchestrationReadScope]);
     const response = await handler(

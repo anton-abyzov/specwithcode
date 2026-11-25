@@ -34,6 +34,7 @@ import {
 import * as NetService from "@specweave-studio/shared/Net";
 import { isCommandAvailable } from "@specweave-studio/shared/shell";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -56,6 +57,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
+import { readHubToken, redactHubToken } from "./hubToken.ts";
 import {
   type IosSetupStatus,
   type IosSimulatorSetup,
@@ -120,6 +122,8 @@ interface HubProcess {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
   readonly scope: Scope.Closeable;
   readonly origin: string;
+  /** Printed by the hub at start and required on every request to it. */
+  readonly token: string;
   readonly startedAtMillis: number;
 }
 
@@ -676,6 +680,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               String(port),
               "--host",
               "127.0.0.1",
+              // Loopback is open to every local process and web page; only this
+              // server reads the token the hub prints.
+              "--require-token",
               "--hide-sidebar",
               "--hide-boot-device",
               ...hubPlatformArguments(hostPlatform),
@@ -702,8 +709,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ),
         );
       const startedAtMillis = yield* Clock.currentTimeMillis;
-      const hub: HubProcess = { child, scope, origin, startedAtMillis, nodePath };
-      yield* Effect.forkIn(observeHubOutput(hub), scope);
+      const announced = yield* Deferred.make<string>();
+      yield* Effect.forkIn(observeHubOutput(child, announced), scope);
       yield* waitForHttpReady({
         baseUrl: origin,
         path: "/readyz",
@@ -715,21 +722,47 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             cause: info.cause,
           }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      // The hub prints its link as it starts listening, so this rarely waits.
+      const token = yield* Deferred.await(announced).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(HUB_READY_TIMEOUT_MS),
+          orElse: () =>
+            Effect.fail(
+              new DeviceHost.DeviceHostError({
+                hostId,
+                step: "reading the device hub's session token",
+                cause: new Error("The device hub did not print its session token."),
+              }),
+            ),
+        }),
+      );
+      const hub: HubProcess = { child, scope, origin, token, startedAtMillis, nodePath };
       yield* recordHub(hub, hubTool);
       yield* Effect.logInfo("Device hub started", { pid: Number(child.pid), port });
       return hub;
     }).pipe(Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)));
   });
 
-  const observeHubOutput = (hub: HubProcess) =>
-    hub.child.all.pipe(
+  /** Logs the hub's output with its token blanked, and hands over the first token it prints. */
+  const observeHubOutput = (
+    child: ChildProcessSpawner.ChildProcessHandle,
+    announced: Deferred.Deferred<string>,
+  ) =>
+    child.all.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.map((line) => line.trim()),
       Stream.filter((line) => line.length > 0),
-      Stream.runForEach((line) =>
-        Effect.logDebug("Device hub output", { pid: Number(hub.child.pid), output: line }),
-      ),
+      Stream.runForEach((line) => {
+        const token = readHubToken(line);
+        return Effect.andThen(
+          token === undefined ? Effect.void : Deferred.succeed(announced, token),
+          Effect.logDebug("Device hub output", {
+            pid: Number(child.pid),
+            output: redactHubToken(line),
+          }),
+        );
+      }),
       Effect.ignoreCause,
     );
 
@@ -1123,10 +1156,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       );
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
-    hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    hub: {
+      origin: running.hub.origin,
+      token: running.hub.token,
+    } satisfies DeviceHost.DeviceHubEndpoint,
     devices: makeDeviceHubOperations({
       hostId,
       origin: running.hub.origin,
+      token: running.hub.token,
       http: httpClient,
       run,
       androidAvailable: platformAvailability("android").pipe(

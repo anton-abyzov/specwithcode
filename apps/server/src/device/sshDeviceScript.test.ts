@@ -76,9 +76,12 @@ describe("remote helper lifecycle", () => {
         await NodeFSP.writeFile(NodePath.join(agentDir, ".install-complete"), AGENT_DEVICE_VERSION);
         await NodeFSP.writeFile(
           hub,
-          `import http from 'node:http'; import fs from 'node:fs';
+          // Gates as the real hub does: with --require-token, a printed token on every route but /readyz.
+          `import http from 'node:http'; import fs from 'node:fs'; import crypto from 'node:crypto';
 if(fs.existsSync('fail-start-once')) {fs.unlinkSync('fail-start-once');process.exit(1);}
-const args=process.argv.slice(2); fs.writeFileSync('hub-args.json',JSON.stringify(args)); fs.writeFileSync('hub-camera-args',process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS || ''); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
+const args=process.argv.slice(2), port=Number(args[args.indexOf('--port')+1]); fs.writeFileSync('hub-args.json',JSON.stringify(args)); fs.writeFileSync('hub-camera-args',process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS || '');
+const token=args.includes('--require-token')?crypto.randomBytes(32).toString('base64url'):undefined;
+http.createServer((req,res)=>{if(token&&req.url!=='/readyz'&&req.headers.authorization!=='Bearer '+token){res.statusCode=401;res.end();return;}res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(port,'127.0.0.1',()=>console.log('Expo Device Hub ready\\n\\n  Local:   http://localhost:'+port+(token?'/?token='+token:'')));`,
         );
         await NodeFSP.writeFile(
           agent,
@@ -153,6 +156,17 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
             invoke("one", "start"),
           ]);
           expect(concurrent.hubPort).toBe(manual.hubPort);
+          // The hub requires its token; the start reports it and both starts share one hub.
+          expect(await hubArgs("one")).toContain("--require-token");
+          expect(manual.hubAuth.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+          expect(concurrent.hubAuth.token).toBe(manual.hubAuth.token);
+          const hubUrl = `http://127.0.0.1:${manual.hubPort}/api/devices`;
+          expect((await fetch(hubUrl)).status).toBe(401);
+          const authorized = { headers: { authorization: `Bearer ${manual.hubAuth.token}` } };
+          expect((await fetch(hubUrl, authorized)).status).toBe(200);
+          // Its log holds the token, so only the owner reads it.
+          const hubLog = await NodeFSP.stat(NodePath.join(root, "hosts/one/hub.log"));
+          expect(hubLog.mode & 0o777).toBe(0o600);
           expect(manual.daemonPort).toBeUndefined();
           expect((await hubArgs("one")).slice(-2)).toEqual(["--platform", "android"]);
           expect(
