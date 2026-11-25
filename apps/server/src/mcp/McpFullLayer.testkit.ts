@@ -50,6 +50,7 @@ const ToolsListPayload = Schema.fromJsonString(
     }),
   }),
 );
+const decodeToolsList = Schema.decodeUnknownEffect(ToolsListPayload);
 
 export type ListedTool = (typeof ToolsListPayload.Type)["result"]["tools"][number];
 
@@ -139,7 +140,7 @@ export const listToolsAsThread = Effect.gen(function* () {
     ),
   });
   const json = (yield* listResponse.text).match(/\{.*\}/s)![0];
-  return (yield* Schema.decodeUnknownEffect(ToolsListPayload)(json)).result.tools;
+  return (yield* decodeToolsList(json)).result.tools;
 });
 
 export const fullLayerTestServices = Layer.mergeAll(
