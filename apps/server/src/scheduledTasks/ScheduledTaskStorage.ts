@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { firstLineOf } from "./dispatchFailureReason.ts";
 import { nextScheduledRunAt } from "./Schedule.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -260,7 +261,8 @@ export const decodeRow = (
       nextRunAt: row.next_run_at,
       lastRunAt: row.last_run_at,
       lastRunStatus: row.last_run_status,
-      lastRunError: row.last_run_error,
+      // Whichever writer stored it, and rows from before the one-line rule, read as one line.
+      lastRunError: row.last_run_error === null ? null : firstLineOf(row.last_run_error),
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
       ...(policy.modelPinned === undefined ? {} : { modelPinned: policy.modelPinned }),
