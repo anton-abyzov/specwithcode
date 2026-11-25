@@ -3207,8 +3207,9 @@ export const make = Effect.gen(function* () {
         ...(commit === null ? {} : { commit }),
       } as PullRequestDiffInput);
       if (head === null) return read;
-      // The host's head is checked before and after the read, so what is kept under this pin
-      // was read while the change request stood at that commit. A failed check is not cached.
+      // The host's head is checked before and after the read. A push and its revert inside the
+      // read can still pass both checks with the other commit's patch, so a pinned read is
+      // never kept: the next one reads the host again, and the race lasts one read at most.
       const checkHead = requireProject(ref).pipe(
         Effect.flatMap((project) =>
           pinnedHead(head, "diff", currentHeadOf(project, ref.number, "diff")),
@@ -3223,7 +3224,8 @@ export const make = Effect.gen(function* () {
       capacity: DIFF_CACHE_CAPACITY,
       timeToLive: (exit, key) => {
         if (!Exit.isSuccess(exit)) return Duration.zero;
-        const commit = (JSON.parse(key) as ReadonlyArray<unknown>)[2];
+        const [, , commit, , head] = JSON.parse(key) as ReadonlyArray<unknown>;
+        if (head !== null) return Duration.zero;
         return commit === null ? DIFF_CACHE_TTL : COMMIT_DIFF_CACHE_TTL;
       },
     },
@@ -3236,9 +3238,10 @@ export const make = Effect.gen(function* () {
       input.commit === undefined
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
-      // A commit's own diff never changes; the whole change's diff is kept per pinned head.
+      // A commit's own diff never changes; the whole change's diff for a pinned head is not kept.
       input.commit === undefined ? (input.headSha ?? null) : null,
     ]);
+    const pinned = input.commit === undefined && input.headSha !== undefined;
     const read = Cache.get(diffCache, key).pipe(
       Effect.tap((value) =>
         canCacheDiff(value)
@@ -3253,7 +3256,7 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
-    return staleDiff(key, read);
+    return pinned ? read : staleDiff(key, read);
   };
 
   const filesViewedCache = yield* Cache.makeWith(
