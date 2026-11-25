@@ -14,6 +14,33 @@ import {
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
+  it("keys a one-segment URL remote by its repository, never its login", () => {
+    expect(normalizeGitRemoteUrl("https://deploy:s3cret@git.example.com/Repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://u:p@host.example/repo?x=1#frag")).toBe(
+      "https://host.example/repo",
+    );
+    expect(normalizeGitRemoteUrl("http://token@host.example/repo")).toBe(
+      "http://host.example/repo",
+    );
+    // Over SSH the user is the login name, part of the address; a password is not.
+    expect(normalizeGitRemoteUrl("ssh://git:pw@host.example/repo")).toBe(
+      "ssh://git@host.example/repo",
+    );
+  });
+
+  it("leaves credential-free remotes keyed exactly as before", () => {
+    expect(normalizeGitRemoteUrl("https://host.example/repo")).toBe("https://host.example/repo");
+    expect(normalizeGitRemoteUrl("ssh://git@host.example/repo")).toBe(
+      "ssh://git@host.example/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://user:tok@github.com/Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("/srv/git/repo.git")).toBe("/srv/git/repo");
+  });
+
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
     expect(normalizeGitRemoteUrl("git@github.com:StudioTools/Studio.git")).toBe(
       "github.com/studiotools/studio",

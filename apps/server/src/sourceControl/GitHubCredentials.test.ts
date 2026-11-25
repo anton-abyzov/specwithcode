@@ -20,12 +20,23 @@ function harness(
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
+  reply?: (input: VcsProcess.VcsProcessInput) => string | undefined,
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
   const process = Layer.mock(VcsProcess.VcsProcess)({
     run: (input) =>
       Effect.sync(() => {
         calls.push(input.args);
+        const replied = reply?.(input);
+        if (replied !== undefined) {
+          return {
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: `${replied}\n`,
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          };
+        }
         const user = input.args[input.args.indexOf("--user") + 1];
         if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
           return {
@@ -54,6 +65,16 @@ function harness(
   );
   return { layer, calls };
 }
+
+/**
+ * Answers like gh does for a host other than github.com: an enterprise token from the
+ * environment it was started with (the parent's, overlaid by the call's own env) wins over
+ * any stored login.
+ */
+const ghWithInheritedEnvironment = (input: VcsProcess.VcsProcessInput) => {
+  const env = { ...process.env, ...input.env };
+  return env.GH_ENTERPRISE_TOKEN || env.GITHUB_ENTERPRISE_TOKEN || undefined;
+};
 
 describe("GitHubCredentials", () => {
   beforeEach(() => {
@@ -182,5 +203,34 @@ describe("GitHubCredentials", () => {
       );
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("enterprise token", () => {
+    it.effect("is never handed by gh to a host GH_HOST does not name", () => {
+      vi.stubEnv("GH_HOST", "ghe.corp.example");
+      vi.stubEnv("GH_ENTERPRISE_TOKEN", "enterprise-secret");
+      vi.stubEnv("GITHUB_ENTERPRISE_TOKEN", "enterprise-secret-2");
+      const { layer, calls } = harness({}, [], {}, ghWithInheritedEnvironment);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("git.attacker.example");
+        expect(Redacted.value(credential.token)).toBe("active-token");
+        expect(credential.source).toBe("gh");
+        expect(calls).toEqual([["auth", "token", "--hostname", "git.attacker.example"]]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("still reaches the host GH_HOST names, from the environment", () => {
+      vi.stubEnv("GH_HOST", "ghe.corp.example");
+      vi.stubEnv("GH_ENTERPRISE_TOKEN", "enterprise-secret");
+      const { layer, calls } = harness({}, [], {}, ghWithInheritedEnvironment);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("ghe.corp.example");
+        expect(Redacted.value(credential.token)).toBe("enterprise-secret");
+        expect(credential.source).toBe("env");
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
   });
 });
