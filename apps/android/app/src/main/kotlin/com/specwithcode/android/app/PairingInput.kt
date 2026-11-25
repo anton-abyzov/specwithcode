@@ -75,21 +75,23 @@ object PairingInput {
     }
 
     /**
-     * The address pairing will send the code to, read the way pairing reads the link, so a
-     * hosted link's `?host=` counts and not the page it sits on. Null when pairing would
-     * refuse the link anyway.
+     * The address pairing will send the code to, read exactly the way Connect reads the link:
+     * the pairing screen unwraps it once ([unwrap], its `effectiveLink`) and the pairing parser
+     * unwraps and reads what is left, so a wrapper around a wrapper and a hosted link's
+     * `?host=` are judged by the machine at the bottom. Null when pairing would refuse the
+     * link, in which case no code is sent.
      */
     private fun target(link: String): String? = try {
-        PairingLink.parse(link).httpBase
+        PairingLink.parse(unwrap(link)).httpBase
     } catch (_: Exception) {
         null
     }
 
-    /** True when the link (after unwrapping) would send the sign-in over plain http. */
+    /** True when the link would send the sign-in over plain http. */
     fun isCleartext(link: String): Boolean =
         (target(link) ?: unwrap(link)).lowercase().startsWith("http://")
 
-    /** The host the link pairs with (after unwrapping), or null when it has none. */
+    /** The host the link pairs with, or null when it has none. */
     fun host(link: String): String? = try {
         URI(target(link) ?: unwrap(link)).host?.takeIf { it.isNotEmpty() }
     } catch (_: Exception) {
