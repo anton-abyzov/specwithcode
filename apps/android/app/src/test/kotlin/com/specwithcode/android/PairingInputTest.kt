@@ -61,6 +61,29 @@ class PairingInputTest {
         assertFalse(PairingInput.isPublicCleartext("http://10.0.0.2:3773/#token=$code"))
     }
 
+    @Test fun nestedWrappersAreJudgedByTheMachinePairingReaches() {
+        // Connect unwraps the screen's link once more before pairing reads it, so a wrapper
+        // around a wrapper must be judged by the machine at the bottom.
+        fun wrap(scheme: String, key: String, inner: String) =
+            "$scheme://pair?$key=" + java.net.URLEncoder.encode(inner, "UTF-8")
+
+        val direct = "http://203.0.113.5:3773/#token=$code"
+        val nested = wrap("specwithcode", "link", wrap("studio", "pairingUrl", direct))
+        assertEquals("203.0.113.5", PairingInput.host(nested))
+        assertTrue(PairingInput.isCleartext(nested))
+        assertTrue(PairingInput.isPublicCleartext(nested))
+
+        val hosted = "https://x.example/pair?host=http%3A%2F%2F203.0.113.5#token=$code"
+        val nestedHosted = wrap("studio", "pairingUrl", wrap("specwithcode", "link", hosted))
+        assertEquals("203.0.113.5", PairingInput.host(nestedHosted))
+        assertTrue(PairingInput.isPublicCleartext(nestedHosted))
+
+        // An https machine at the bottom stays fine.
+        val safe = wrap("specwithcode", "link", wrap("studio", "pairingUrl", "https://m4.example.ts.net/pair#token=$code"))
+        assertEquals("m4.example.ts.net", PairingInput.host(safe))
+        assertFalse(PairingInput.isCleartext(safe))
+    }
+
     @Test fun deepLinksOpenPairingOrAThread() {
         val real = "https://m4.example.ts.net/pair#token=$code"
         assertEquals(DeepLink.Pair(real), DeepLink.parse("studio://pair?pairingUrl=" + java.net.URLEncoder.encode(real, "UTF-8")))
