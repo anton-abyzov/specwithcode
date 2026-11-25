@@ -21,7 +21,6 @@ import {
   encodeSheetStateVector,
   onSheetUpdate,
   readSheetYDoc,
-  sheetSnapshotAfter,
   sheetUpdateFromBase64,
   sheetUpdateToBase64,
   sheetYDocFrom,
@@ -264,13 +263,36 @@ describe("sheet as a Yjs document", () => {
     });
     // Two saves from outside, one after the other, both under the old name.
     const first = withCell("first");
-    writeSheetChange(doc, saved, first, "file");
-    const afterFirst = sheetSnapshotAfter(doc, saved, first);
-    expect(afterFirst.tabIds).toEqual(saved.tabIds);
-    writeSheetChange(doc, afterFirst, withCell("second"), "file");
+    const ids = writeSheetChange(doc, saved, first, "file");
+    expect(ids).toEqual(saved.tabIds);
+    writeSheetChange(doc, { document: first, tabIds: ids }, withCell("second"), "file");
     const merged = readSheetYDoc(doc).document.tabs[0]!;
     expect(merged.name).toBe("Forecast");
     expect(merged.cells.Z9).toBe("second");
+
+    // The file gains a tab under the name the renamed one has here: two tabs, two ids.
+    const extra = {
+      ...withCell("second"),
+      tabs: [...withCell("second").tabs, { name: "Forecast", cells: { A1: "the file's own" } }],
+    };
+    const withExtra = writeSheetChange(
+      doc,
+      { document: withCell("second"), tabIds: ids },
+      extra,
+      "file",
+    );
+    expect(new Set(withExtra).size).toBe(withExtra.length);
+    // A later save to the file's tab lands in that tab, not in the renamed one.
+    const later = {
+      ...extra,
+      tabs: [...extra.tabs.slice(0, -1), { name: "Forecast", cells: { A1: "changed" } }],
+    };
+    writeSheetChange(doc, { document: extra, tabIds: withExtra }, later, "file");
+    const read = readSheetYDoc(doc);
+    expect(read.document.tabs[read.tabIds.indexOf(withExtra.at(-1)!)]!.cells).toEqual({
+      A1: "changed",
+    });
+    expect(read.document.tabs[0]!.cells.Z9).toBe("second");
   });
 
   it("leaves a chart someone else removed when an edit built on the earlier sheet ends", () => {

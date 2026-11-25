@@ -49,7 +49,6 @@ import {
   readSheetYDoc,
   sheetHasUnappliedUpdate,
   sheetUpdateFromBase64,
-  sheetSnapshotAfter,
   sheetUpdateToBase64,
   summarizeSheetChange,
   writeSheetChange,
@@ -323,6 +322,8 @@ const make = Effect.gen(function* () {
   const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const scope = yield* Effect.scope;
   const sessions = new Map<string, Session>();
+  /** Logs whose sheet was seen to leave, and which could not be put aside then. */
+  const departed = new Set<string>();
   const registryLock = yield* Semaphore.make(1);
   let epochs = 0;
 
@@ -435,13 +436,20 @@ const make = Effect.gen(function* () {
    * later is not the one these edits were made in, and never gets them.
    */
   const setAside = (session: Session) =>
-    Effect.promise(() => {
+    Effect.promise(async () => {
       session.counter += 1;
-      return moveSheetSidecar(
+      const moved = await moveSheetSidecar(
         session.sidecarPath,
         `${session.sidecarPath}.unmerged-${session.epoch}-${session.counter}`,
       );
-    }).pipe(Effect.as("kept" as const));
+      // Where it could not be moved, the log is remembered as one that goes with no file
+      // here: it is put aside, not read, when a sheet next opens under this name.
+      if (moved) departed.delete(session.sidecarPath);
+      else if ((await inspectSheetSidecar(session.sidecarPath)).kind !== "none") {
+        departed.add(session.sidecarPath);
+      }
+      return "kept" as const;
+    });
 
   const followRename = Effect.fn("DocumentSession.followRename")(function* (session: Session) {
     const inode = session.fileStat.split(":")[2];
@@ -511,6 +519,7 @@ const make = Effect.gen(function* () {
       if (!(yield* Effect.promise(() => moveSheetSidecar(session.sidecarPath, aside))))
         return false;
       session.unmerged = false;
+      departed.delete(session.sidecarPath);
     }
     if (whole || (over && session.base !== null)) {
       // The whole state: with the file current, one update and its mark; with the file
@@ -589,7 +598,11 @@ const make = Effect.gen(function* () {
         // state holds changes no file has: then it stays, or follows a rename. A session
         // that was only ever watched removes nothing.
         const unsaved = session.dirty && session.authorized ? yield* followRename(session) : null;
-        if (session.authorized && (unsaved === null || unsaved === "written")) {
+        if (session.unmerged) {
+          // The log beside the file is not this session's: it holds changes that were never
+          // taken in, and is put aside, never removed.
+          if (session.authorized) yield* setAside(session);
+        } else if (session.authorized && (unsaved === null || unsaved === "written")) {
           yield* Effect.promise(() =>
             removeSheetSidecar(session.sidecarPath).catch(() => undefined),
           );
@@ -599,7 +612,9 @@ const make = Effect.gen(function* () {
           unsaved === "moved"
             ? "The sheet was renamed. Open it under its new name: the last changes are saved then."
             : unsaved === "kept"
-              ? "The sheet was deleted or moved before the last changes were saved."
+              ? departed.has(session.sidecarPath)
+                ? "The sheet was deleted or moved before the last changes were saved, and they could not be put aside. They are still beside its old name."
+                : "The sheet was deleted or moved before the last changes were saved."
               : "The sheet was deleted or moved.",
         );
         return;
@@ -613,6 +628,25 @@ const make = Effect.gen(function* () {
       const read = yield* readFile(session);
       // A file that cannot be read as a sheet right now (half written, or broken by hand) is left alone.
       if (read === null || !read.ok) return;
+      const replaced =
+        fileOf(exists) !== undefined &&
+        fileOf(session.fileStat) !== undefined &&
+        fileOf(exists) !== fileOf(session.fileStat);
+      if (
+        replaced &&
+        read.file.revision === session.fileRevision &&
+        session.dirty &&
+        session.authorized
+      ) {
+        // Another file under the name, reading as this one last did: the sheet these edits
+        // were made in is not here any more. They are not written into what took its place.
+        yield* setAside(session);
+        yield* endSession(
+          session,
+          "The sheet was replaced by another file before the last changes were saved.",
+        );
+        return;
+      }
       session.fileStat = exists;
       if (read.file.revision === session.fileRevision) return;
       // Tried on a copy first. Where the file's change and what merged here do not fit in one
@@ -624,11 +658,16 @@ const make = Effect.gen(function* () {
       const before = session.current;
       const updates: Uint8Array[] = [];
       const stop = onSheetUpdate(session.doc, (update) => updates.push(update));
-      writeSheetChange(session.doc, session.saved, read.file.document, FILE_ORIGIN);
+      const fileTabIds = writeSheetChange(
+        session.doc,
+        session.saved,
+        read.file.document,
+        FILE_ORIGIN,
+      );
       stop();
       session.fileRevision = read.file.revision;
       // Paired as the change was: a tab renamed here and not saved yet is still the file's tab.
-      session.saved = sheetSnapshotAfter(session.doc, session.saved, read.file.document);
+      session.saved = { document: read.file.document, tabIds: fileTabIds };
       session.current = readCurrent(session);
       const mine = sheetFileText(session.current);
       // Dirty only when the sheets differ: a file laid out another way is left as it was written.
@@ -668,6 +707,12 @@ const make = Effect.gen(function* () {
         if (!(yield* bound(session))) {
           yield* endSession(session, REBOUND);
           return false;
+        }
+        // Still the file that was read: one put in its place since is looked at first.
+        const there = yield* Effect.promise(() => statSignature(session.absolutePath));
+        if (there !== null && fileOf(there) !== fileOf(session.fileStat)) {
+          yield* takeFile(session);
+          continue;
         }
         const written = yield* files
           .writeFile(
@@ -855,7 +900,9 @@ const make = Effect.gen(function* () {
       );
     }
     const found = yield* Effect.promise(() => inspectSheetSidecar(sidecarPath));
-    const sidecarText = found.kind === "text" ? found.text : null;
+    const left = departed.has(sidecarPath) && found.kind !== "none";
+    if (found.kind === "none") departed.delete(sidecarPath);
+    const sidecarText = found.kind === "text" && !left ? found.text : null;
     const fileStat = (yield* Effect.promise(() => statSignature(absolutePath))) ?? "";
     epochs += 1;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -897,7 +944,8 @@ const make = Effect.gen(function* () {
       // read, or not be made sense of, or whose changes do not go with this file.
       unmerged:
         !loaded.restored &&
-        (found.kind === "unreadable" ||
+        (left ||
+          found.kind === "unreadable" ||
           (found.kind === "text" &&
             (parseSheetSidecar(found.text) === null || sheetSidecarHoldsUnsaved(found.text)))),
       authorized: false,

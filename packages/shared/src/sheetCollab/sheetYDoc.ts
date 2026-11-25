@@ -227,14 +227,19 @@ function newTabId(doc: Y.Doc, tabs: Y.Map<Y.Map<unknown>>, used: Set<string>): s
  * transaction. `before` is what the writer started from: the document as it
  * read it, or the file as it was last saved. With no `before` the whole sheet
  * is written.
+ *
+ * Returns the id each tab of `after` has in the document, by its place: the
+ * tab of `before` it continues (even one renamed in the document meanwhile),
+ * or the one just added for it.
  */
 export function writeSheetChange(
   doc: SheetYDoc,
   before: SheetSnapshot | null,
   after: SheetDocument,
   origin: unknown,
-): void {
+): ReadonlyArray<string> {
   const { sheet, order, tabs } = roots(doc);
+  const afterIds: string[] = [];
   doc.transact(() => {
     if (before === null || before.document.title !== after.title) sheet.set("title", after.title);
     if (before === null || before.document.designSystem !== after.designSystem) {
@@ -253,7 +258,6 @@ export function writeSheetChange(
     }
 
     const used = new Set<string>();
-    const afterIds: string[] = [];
     const added = new Set<string>();
     after.tabs.forEach((tab, index) => {
       const match = matches[index] ?? null;
@@ -290,6 +294,7 @@ export function writeSheetChange(
       order.insert(previous === null ? 0 : at < 0 ? order.length : at + 1, [id]);
     });
   }, origin);
+  return afterIds;
 }
 
 // ------------------------------------------------------------------ reading
@@ -423,30 +428,6 @@ export function sheetSnapshotByName(doc: SheetYDoc, document: SheetDocument): Sh
     tabIds: document.tabs.map(
       (tab, index) => ids.get(tab.name.trim().toLowerCase()) ?? `gone-${index}`,
     ),
-  };
-}
-
-/**
- * A sheet that `before` was changed to (the file, read again) as a snapshot of
- * this document: each of its tabs keeps the id of the tab of `before` it
- * continues, as `writeSheetChange` pairs them, so a tab renamed in the
- * document meanwhile is still the file's tab. A tab `before` did not have is
- * paired by name.
- */
-export function sheetSnapshotAfter(
-  doc: SheetYDoc,
-  before: SheetSnapshot,
-  after: SheetDocument,
-): SheetSnapshot {
-  const byName = sheetSnapshotByName(doc, after).tabIds;
-  const matches = matchTabs(before, after);
-  return {
-    document: after,
-    tabIds: after.tabs.map((_, index) => {
-      const match = matches[index] ?? null;
-      const id = match === null ? undefined : before.tabIds[match];
-      return id === undefined || id.startsWith("gone-") ? byName[index]! : id;
-    }),
   };
 }
 

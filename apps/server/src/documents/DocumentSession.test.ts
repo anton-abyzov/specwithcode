@@ -659,6 +659,28 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
       }),
     );
 
+    it.effect("does not save into another file put under the name while the sheet was open", () =>
+      Effect.gen(function* () {
+        const { target, file, read } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "For the first sheet"));
+        // The sheet goes elsewhere and another one, from the same template, takes its name
+        // before the session looks.
+        const moved = NodePath.join(NodePath.dirname(NodePath.dirname(file)), "moved.json");
+        NodeFS.renameSync(file, moved);
+        NodeFS.writeFileSync(file, TEXT);
+        yield* sessions.settleAll;
+        expect((yield* window.nextOf("closed")).reason).toContain("replaced by another file");
+        expect(read()).toBe(TEXT);
+        const folder = NodePath.dirname(sheetSidecarPath(file));
+        expect(NodeFS.existsSync(sheetSidecarPath(file))).toBe(false);
+        expect(
+          NodeFS.readdirSync(folder).filter((name) => name.includes(".unmerged-")),
+        ).toHaveLength(1);
+      }),
+    );
+
     it.effect("does not put kept edits into another file that reads the same", () =>
       Effect.gen(function* () {
         const { target, file } = yield* project;

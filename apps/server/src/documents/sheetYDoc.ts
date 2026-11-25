@@ -40,7 +40,6 @@ import {
   onSheetUpdate,
   readSheetYDoc,
   sheetHasUnappliedUpdate,
-  sheetSnapshotAfter,
   sheetSnapshotByName,
   sheetStateVectorOf,
   sheetUpdateFromBase64,
@@ -318,7 +317,12 @@ function restoreSheet(
     return {
       doc,
       epoch: sidecar.epoch,
-      saved: sheetSnapshotAfter(doc, marked!.snapshot, file),
+      // The file reads as the marked state does: its tabs are that state's tabs, whatever
+      // the kept edits have named them since.
+      saved:
+        marked!.snapshot.tabIds.length === file.tabs.length
+          ? { document: file, tabIds: marked!.snapshot.tabIds }
+          : fileSnapshot(doc, file),
       restored: true,
       sidecarLines: sidecar.lines,
       marked: null,
@@ -331,7 +335,7 @@ function restoreSheet(
   const pending: Uint8Array[] = [];
   const stop = onSheetUpdate(doc, (update) => pending.push(update));
   const from = kept ? marked!.snapshot : held;
-  writeSheetChange(doc, from, file, FILE_ORIGIN);
+  const fileTabIds = writeSheetChange(doc, from, file, FILE_ORIGIN);
   stop();
   const merged = readSheetYDoc(doc);
   const checked = validateSheetDocument(merged.document);
@@ -341,7 +345,7 @@ function restoreSheet(
     doc,
     epoch: sidecar.epoch,
     // A tab renamed by kept edits is still the file's tab under its old name.
-    saved: sheetSnapshotAfter(doc, from, file),
+    saved: { document: file, tabIds: fileTabIds },
     restored: true,
     sidecarLines: sidecar.lines,
     marked:
