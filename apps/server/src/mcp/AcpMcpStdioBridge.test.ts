@@ -125,6 +125,39 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("passes each tool's _meta through unchanged, JSON or event stream (1483)", () =>
+    Effect.gen(function* () {
+      const tools = [
+        {
+          name: "ask_user",
+          inputSchema: { type: "object" },
+          _meta: { "anthropic/alwaysLoad": true },
+        },
+        { name: "chrome_click", inputSchema: { type: "object" }, _meta: { "x/hint": "chrome" } },
+      ];
+      const { input, written, requests, bridge } = makeHarness(() => {
+        const body = JSON.parse(String(requests.at(-1)?.body ?? "{}")) as { id?: number };
+        const message = JSON.stringify({ jsonrpc: "2.0", id: body.id ?? null, result: { tools } });
+        return body.id === 1
+          ? new Response(message, { status: 200, headers: { "content-type": "application/json" } })
+          : new Response(`event: message\ndata: ${message}\n\n`, {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            });
+      });
+      const fiber = yield* Effect.forkChild(bridge);
+      input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
+      input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+      input.end();
+      yield* Fiber.join(fiber);
+
+      expect(written).toHaveLength(2);
+      for (const line of written) {
+        expect((JSON.parse(line) as { result: { tools: unknown } }).result.tools).toEqual(tools);
+      }
+    }),
+  );
+
   it.effect("acknowledges notifications silently and synthesizes errors for failed requests", () =>
     Effect.gen(function* () {
       let call = 0;

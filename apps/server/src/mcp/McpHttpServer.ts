@@ -50,6 +50,10 @@ import { advertisedJsonSchema, compactJsonSchema } from "./advertisedJsonSchema.
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import { toolMeta } from "./McpToolMeta.ts";
+import * as McpToolVisibility from "./McpToolVisibility.ts";
+import { SpecweaveToolkit } from "./toolkits/specweave/tools.ts";
+import * as SpecweaveHandlers from "./toolkits/specweave/handlers.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -350,6 +354,7 @@ const looksLikeProviderToken = (token: string) => token.length > 0 && !token.inc
 const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
+  const filterToolList = yield* McpToolVisibility.makeToolListFilter;
   const authenticateRequest = Effect.fn("McpHttpServer.authenticateRequest")(function* (
     request: HttpServerRequest.HttpServerRequest,
   ) {
@@ -441,6 +446,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       // The device a client acts for; tools also read it off the invocation (1327).
       Effect.provideService(ConnectDeviceTrust.RequestDevice, admitted.client?.deviceKey ?? null),
       Effect.map(normalizeMcpHttpResponse),
+      // Per-caller tool lists (1483): the SpecWeave tools only where `.specweave/` is.
+      Effect.flatMap((response) => filterToolList(bounded, admitted, response)),
     );
   }) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
@@ -1198,6 +1205,24 @@ const withToolSpans = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
   });
 
+/** Each tool's `_meta` (`McpToolMeta`, 1483); a tool with none is added as it is. */
+const withToolMeta = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const metaServer = McpServer.McpServer.of({
+      ...server,
+      addTool: (options) => {
+        const meta = toolMeta(options.tool.name);
+        if (Object.keys(meta).length === 0) return server.addTool(options);
+        return server.addTool({
+          ...options,
+          tool: new McpSchema.Tool({ ...options.tool, _meta: { ...options.tool._meta, ...meta } }),
+        });
+      },
+    });
+    return yield* registration.pipe(Effect.provideService(McpServer.McpServer, metaServer));
+  });
+
 /**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
@@ -1209,8 +1234,12 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 ) =>
   Layer.effectDiscard(
     withToolSpans(
-      withAdvertisedSchemas(
-        McpServer.registerToolkit(inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit),
+      withToolMeta(
+        withAdvertisedSchemas(
+          McpServer.registerToolkit(
+            inputDecoding === "json" ? decodeAsAdvertised(toolkit) : toolkit,
+          ),
+        ),
       ),
     ),
   ).pipe(
@@ -1223,7 +1252,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolSpans(register)).pipe(
+  Layer.effectDiscard(withToolSpans(withToolMeta(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
@@ -1350,6 +1379,7 @@ export const layer = Layer.mergeAll(
   toolkitRegistration(ProjectPlanToolkit, ProjectPlanHandlers.layer),
   toolkitRegistration(ProjectConnectionsToolkit, ProjectConnectionsHandlers.layer),
   toolkitRegistration(GoogleToolkit, GoogleHandlers.layer),
+  toolkitRegistration(SpecweaveToolkit, SpecweaveHandlers.layer),
   layerEnvironmentRegistration,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
