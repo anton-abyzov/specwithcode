@@ -44,6 +44,11 @@ const newCalls = (): HostCalls => ({
   revealed: [],
 });
 
+const WINDOWS_HOST = HostProcessPlatform.defaultValue() === "win32";
+// The macOS and Linux code joins with "/" even on a Windows test host; the test
+// builds its expected paths with the host's separator.
+const hostPath = (path: string) => (WINDOWS_HOST ? path.replaceAll("/", "\\") : path);
+
 const hostLayer = (input: {
   readonly platform: NodeJS.Platform;
   readonly home: string;
@@ -94,11 +99,11 @@ const hostLayer = (input: {
         }),
       codesign: (bundlePath) =>
         Effect.sync(() => {
-          input.calls.codesigned.push(bundlePath);
+          input.calls.codesigned.push(hostPath(bundlePath));
         }),
       refreshLinuxApplications: (directory) =>
         Effect.sync(() => {
-          input.calls.refreshed.push(directory);
+          input.calls.refreshed.push(hostPath(directory));
         }),
       writeShortcutLink: (path, options) =>
         Effect.sync(() => {
@@ -119,7 +124,7 @@ const hostLayer = (input: {
         }),
       trashItem: (path) =>
         Effect.gen(function* () {
-          input.calls.trashed.push(path);
+          input.calls.trashed.push(hostPath(path));
           if (input.trashFails === true) return yield* Effect.die(new Error("Trash refused"));
           // The real Trash moves the bundle away; the test removes it.
           if (input.fileSystem !== undefined) {
@@ -128,7 +133,7 @@ const hostLayer = (input: {
         }),
       showItemInFolder: (path) =>
         Effect.sync(() => {
-          input.calls.revealed.push(path);
+          input.calls.revealed.push(hostPath(path));
         }),
     }),
   );
@@ -224,8 +229,11 @@ const withHome = <A, E>(
     return yield* body({ home, recordsPath, fileSystem, path });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-const mode = (fileSystem: FileSystem.FileSystem, path: string) =>
-  fileSystem.stat(path).pipe(Effect.map((info) => info.mode & 0o777));
+// Windows has no POSIX file modes, so a mode is only checked elsewhere.
+const assertMode = (fileSystem: FileSystem.FileSystem, path: string, expected: number) =>
+  WINDOWS_HOST
+    ? Effect.void
+    : fileSystem.stat(path).pipe(Effect.map((info) => assert.equal(info.mode & 0o777, expected)));
 
 describe("ArtifactAppInstaller on macOS", () => {
   it.effect("writes a bundle with the plist, an executable launcher and the app icon", () =>
@@ -250,7 +258,7 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.deepEqual((yield* fileSystem.readDirectory(folder)).sort(), [
           "Morning dashboard.app",
         ]);
-        assert.equal(yield* mode(fileSystem, folder), 0o755);
+        yield* assertMode(fileSystem, folder, 0o755);
         const plist = yield* fileSystem.readFileString(path.join(bundle, "Contents/Info.plist"));
         assert.include(plist, `com.specweave.studio.artifactapp.${app.installId}`);
         assert.include(plist, "<string>Morning dashboard</string>");
@@ -259,11 +267,11 @@ describe("ArtifactAppInstaller on macOS", () => {
           yield* fileSystem.readFileString(launcher),
           `exec /usr/bin/open 'studio://app/artifact-app/${app.installId}'`,
         );
-        assert.equal(yield* mode(fileSystem, launcher), 0o755);
-        assert.equal(yield* mode(fileSystem, path.join(bundle, "Contents/Info.plist")), 0o644);
+        yield* assertMode(fileSystem, launcher, 0o755);
+        yield* assertMode(fileSystem, path.join(bundle, "Contents/Info.plist"), 0o644);
         const icon = path.join(bundle, "Contents/Resources/AppIcon.icns");
         assert.equal(yield* fileSystem.readFileString(icon), "ICNS");
-        assert.equal(yield* mode(fileSystem, icon), 0o644);
+        yield* assertMode(fileSystem, icon, 0o644);
         assert.equal(
           yield* fileSystem.readFileString(path.join(bundle, "Contents/PkgInfo")),
           "APPL????",
@@ -745,7 +753,7 @@ describe("ArtifactAppInstaller on Linux", () => {
         assert.include(entry, "Name=Morning dashboard");
         assert.include(entry, `Exec=xdg-open "studio://app/artifact-app/${result.app.installId}"`);
         assert.include(entry, "Icon=/opt/SpecWithCode/icon.png");
-        assert.equal(yield* mode(fileSystem, entryPath), 0o644);
+        yield* assertMode(fileSystem, entryPath, 0o644);
         assert.deepEqual(h.calls.refreshed, [directory]);
         assert.deepEqual(h.calls.codesigned, []);
 
@@ -837,7 +845,10 @@ describe("ArtifactAppInstaller on Windows", () => {
     const existing = new Set<string>();
     // Paths that are links (a junction on Windows).
     const links = new Set<string>();
-    const recordsDirectory = recordsPath.slice(0, recordsPath.lastIndexOf("/"));
+    const recordsDirectory = recordsPath.slice(
+      0,
+      Math.max(recordsPath.lastIndexOf("/"), recordsPath.lastIndexOf("\\")),
+    );
     const isRecords = (path: string) => path.startsWith(recordsDirectory);
     const notFound = (path: string, method: string) =>
       PlatformError.systemError({
