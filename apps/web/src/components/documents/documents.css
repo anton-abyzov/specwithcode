@@ -1,0 +1,82 @@
+/*
+ * Shared parts of live documents: who else is on a document, in its header
+ * and on its surface. A participant's colour is one of the eight Office series
+ * roles, so it follows the document's design system; outside an Office surface
+ * the same hues are taken from the app's primary colour.
+ */
+[data-presence-color="0"] {
+  --presence: var(--office-s1, var(--primary));
+}
+[data-presence-color="1"] {
+  --presence: var(--office-s2, oklch(from var(--primary) l c calc(h + 150)));
+}
+[data-presence-color="2"] {
+  --presence: var(--office-s3, oklch(from var(--primary) l c calc(h + 75)));
+}
+[data-presence-color="3"] {
+  --presence: var(--office-s4, oklch(from var(--primary) l c calc(h + 225)));
+}
+[data-presence-color="4"] {
+  --presence: var(--office-s5, oklch(from var(--primary) l c calc(h + 300)));
+}
+[data-presence-color="5"] {
+  --presence: var(--office-s6, oklch(from var(--primary) calc(l + 0.16) c calc(h + 30)));
+}
+[data-presence-color="6"] {
+  --presence: var(--office-s7, oklch(from var(--primary) calc(l + 0.16) c calc(h + 180)));
+}
+[data-presence-color="7"] {
+  --presence: var(--office-s8, oklch(from var(--primary) calc(l + 0.16) c calc(h + 255)));
+}
+
+/* Someone else's selection on a sheet, and the cell they are on. */
+.office-grid td[data-presence] {
+  position: relative;
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--presence) 12%, transparent),
+    color-mix(in oklab, var(--presence) 12%, transparent)
+  );
+}
+
+.office-grid td[data-presence="focus"] {
+  box-shadow: inset 0 0 0 2px var(--presence);
+}
+
+.document-presence-flag {
+  position: absolute;
+  top: 0;
+  right: 0;
+  max-width: 70%;
+  overflow: hidden;
+  border-bottom-left-radius: var(--radius-sm, 0.25rem);
+  background: var(--presence);
+  padding: 0 0.25rem;
+  color: var(--background);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 0.875rem;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A participant in a document's header. */
+.document-presence-dot {
+  display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--background);
+  border-radius: 9999px;
+  background: var(--presence);
+  color: var(--background);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.document-presence-dot + .document-presence-dot {
+  margin-left: -0.375rem;
+}

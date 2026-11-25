@@ -53,7 +53,13 @@ import { numberFormatFor } from "./SheetFormatBar";
 import { copySheetRange, planSheetPaste, readSheetClipboard } from "./sheetClipboard";
 import { fillRange, todayText } from "./sheetCommands";
 import { createSheetEditStore } from "./sheetEditStore";
-import { SHEET_VIEW_COLUMNS, SHEET_VIEW_ROWS, type Selection, type SheetGridModel, normalize } from "./sheetGridModel";
+import {
+  SHEET_VIEW_COLUMNS,
+  SHEET_VIEW_ROWS,
+  type Selection,
+  type SheetGridModel,
+  normalize,
+} from "./sheetGridModel";
 import {
   type SheetDirection,
   type SheetEditorKeyAction,
@@ -98,6 +104,16 @@ export function useSheetEditor(input: {
   readonly setSaveError: (message: string | null) => void;
   readonly isOwnRevision: (revision: string) => boolean;
   readonly incomingRevision: string;
+  /** A live session keeps its own undo, of this window's edits only; `save` then merges. */
+  readonly live?:
+    | {
+        readonly undo: () => void;
+        readonly redo: () => void;
+        readonly canUndo: boolean;
+        readonly canRedo: boolean;
+      }
+    | null
+    | undefined;
 }) {
   const { document, evaluation, tab, tabIndex, grid, selection, setSelection } = input;
   const store = useMemo(() => createSheetEditStore(), []);
@@ -153,12 +169,15 @@ export function useSheetEditor(input: {
       throw error;
     }
     if (next === document) return null;
+    if (input.live) return input.save(next);
     const before = document;
     setHistory((current) => recordEdit(current, before));
     return input.save(next).then((ok) => {
       if (!ok) {
         setHistory((current) =>
-          current.past.at(-1) === before ? { ...current, past: current.past.slice(0, -1) } : current,
+          current.past.at(-1) === before
+            ? { ...current, past: current.past.slice(0, -1) }
+            : current,
         );
       }
       return ok;
@@ -166,6 +185,7 @@ export function useSheetEditor(input: {
   };
 
   const undo = () => {
+    if (input.live) return input.live.undo();
     if (!document) return;
     const step = undoEdit(history, document);
     if (!step) return;
@@ -173,6 +193,7 @@ export function useSheetEditor(input: {
     void input.save(step.document);
   };
   const redo = () => {
+    if (input.live) return input.live.redo();
     if (!document) return;
     const step = redoEdit(history, document);
     if (!step) return;
@@ -183,7 +204,9 @@ export function useSheetEditor(input: {
   // ------------------------------------------------------------ navigation
 
   const select = (focus: CellAddress, extend = false) => {
-    setSelection(extend && selection ? { anchor: selection.anchor, focus } : { anchor: focus, focus });
+    setSelection(
+      extend && selection ? { anchor: selection.anchor, focus } : { anchor: focus, focus },
+    );
   };
 
   const filled = (address: CellAddress): boolean => tab?.cells[cellName(address)] !== undefined;
@@ -200,7 +223,13 @@ export function useSheetEditor(input: {
       filled(vertical ? { col: from.col, row: index } : { col: index, row: from.row }),
     );
     // Past the drawn edge the grid grows, up to what it draws at most.
-    if (!edge && next === current && sign === 1 && order.at(-1) === current && current + 1 < limit) {
+    if (
+      !edge &&
+      next === current &&
+      sign === 1 &&
+      order.at(-1) === current &&
+      current + 1 < limit
+    ) {
       next = current + 1;
     }
     return vertical ? { col: from.col, row: next } : { col: next, row: from.row };
@@ -213,7 +242,12 @@ export function useSheetEditor(input: {
 
   // ------------------------------------------------------------ editing
 
-  const beginEdit = (address: CellAddress, text: string | null, typing: boolean, origin: "cell" | "bar" = "cell") => {
+  const beginEdit = (
+    address: CellAddress,
+    text: string | null,
+    typing: boolean,
+    origin: "cell" | "bar" = "cell",
+  ) => {
     if (!input.editable || !tab) return;
     const initial = text ?? cellInputText(tab.cells[cellName(address)]);
     store.set({ text: initial, caret: initial.length, pointed: null });
@@ -235,7 +269,12 @@ export function useSheetEditor(input: {
       commit((doc) => {
         let next = setCells(doc, current.tabIndex, [[current.address, parsed.input]]);
         if (parsed.format && !hasFormat) {
-          next = setFormat(next, current.tabIndex, { start: current.address, end: current.address }, parsed.format);
+          next = setFormat(
+            next,
+            current.tabIndex,
+            { start: current.address, end: current.address },
+            parsed.format,
+          );
         }
         return next;
       });
@@ -255,7 +294,11 @@ export function useSheetEditor(input: {
   };
 
   /** A click on a cell: select it, or while typing a formula, put its reference in. */
-  const pick = (address: CellAddress, extend: boolean, event?: { readonly preventDefault: () => void }) => {
+  const pick = (
+    address: CellAddress,
+    extend: boolean,
+    event?: { readonly preventDefault: () => void },
+  ) => {
     if (editing) {
       const state = store.get();
       const pointing = state.pointed !== null || acceptsReference(state.text, state.caret);
@@ -372,8 +415,10 @@ export function useSheetEditor(input: {
     if (editing) commitEdit(null);
     let current = range;
     // A header acts on the selected rows (columns) only when whole rows (columns) are selected.
-    const wholeRows = current !== null && current.start.col === 0 && current.end.col >= grid.columns - 1;
-    const wholeCols = current !== null && current.start.row === 0 && current.end.row >= grid.rows - 1;
+    const wholeRows =
+      current !== null && current.start.col === 0 && current.end.col >= grid.columns - 1;
+    const wholeCols =
+      current !== null && current.start.row === 0 && current.end.row >= grid.rows - 1;
     const inside =
       current !== null &&
       (kind === "row"
@@ -431,14 +476,24 @@ export function useSheetEditor(input: {
 
   const payload = () => {
     if (!range || !tab || !evaluation || !grid) return null;
-    return copySheetRange({ tab, tabIndex, evaluation, range, formatOf: grid.formatOf, styleOf: grid.styleOf });
+    return copySheetRange({
+      tab,
+      tabIndex,
+      evaluation,
+      range,
+      formatOf: grid.formatOf,
+      styleOf: grid.styleOf,
+    });
   };
 
   const pasteGrid = (data: { readonly html?: string; readonly text?: string }) => {
     if (!range) return;
     const parsed = readSheetClipboard(data);
     if (!parsed) return;
-    const plan = planSheetPaste(parsed, range, { rows: SHEET_LIMITS.rows, columns: SHEET_LIMITS.columns });
+    const plan = planSheetPaste(parsed, range, {
+      rows: SHEET_LIMITS.rows,
+      columns: SHEET_LIMITS.columns,
+    });
     if (!plan) {
       input.setSaveError("The paste does not fit on the sheet.");
       return;
@@ -480,7 +535,8 @@ export function useSheetEditor(input: {
       let text: string | undefined;
       for (const item of items) {
         if (item.types.includes("text/html")) html = await (await item.getType("text/html")).text();
-        if (item.types.includes("text/plain")) text = await (await item.getType("text/plain")).text();
+        if (item.types.includes("text/plain"))
+          text = await (await item.getType("text/plain")).text();
       }
       pasteGrid({ ...(html ? { html } : {}), ...(text ? { text } : {}) });
     } catch {
@@ -489,10 +545,27 @@ export function useSheetEditor(input: {
   };
 
   // Copy, cut and paste from the keyboard arrive as document events.
-  const latest = useRef({ payload, pasteGrid, range, editing, editable: input.editable, commit, tabIndex });
-  latest.current = { payload, pasteGrid, range, editing, editable: input.editable, commit, tabIndex };
+  const latest = useRef({
+    payload,
+    pasteGrid,
+    range,
+    editing,
+    editable: input.editable,
+    commit,
+    tabIndex,
+  });
+  latest.current = {
+    payload,
+    pasteGrid,
+    range,
+    editing,
+    editable: input.editable,
+    commit,
+    tabIndex,
+  };
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.document?.addEventListener !== "function") return;
+    if (typeof window === "undefined" || typeof window.document?.addEventListener !== "function")
+      return;
     const owns = () => {
       const active = window.document.activeElement;
       return scrollRef.current !== null && active !== null && scrollRef.current === active;
@@ -534,7 +607,10 @@ export function useSheetEditor(input: {
 
   const run = (action: SheetKeyAction): boolean => {
     if (!grid || !tab) return false;
-    const focus = selection?.focus ?? { col: grid.displayCols[0] ?? 0, row: grid.displayRows[0] ?? 0 };
+    const focus = selection?.focus ?? {
+      col: grid.displayCols[0] ?? 0,
+      row: grid.displayRows[0] ?? 0,
+    };
     const lastFilled = usedRange(tab);
     switch (action.type) {
       case "move":
@@ -542,13 +618,17 @@ export function useSheetEditor(input: {
         return true;
       case "page": {
         let next = focus;
-        for (let index = 0; index < pageRows(); index += 1) next = step(next, action.direction, false);
+        for (let index = 0; index < pageRows(); index += 1)
+          next = step(next, action.direction, false);
         select(next, action.extend);
         return true;
       }
       case "home": {
         const col = grid.displayCols[0] ?? 0;
-        select(action.sheet ? { col, row: grid.displayRows[0] ?? 0 } : { col, row: focus.row }, action.extend);
+        select(
+          action.sheet ? { col, row: grid.displayRows[0] ?? 0 } : { col, row: focus.row },
+          action.extend,
+        );
         return true;
       }
       case "end": {
@@ -575,10 +655,16 @@ export function useSheetEditor(input: {
         return true;
       }
       case "selectRow":
-        setSelection({ anchor: { col: 0, row: focus.row }, focus: { col: grid.columns - 1, row: focus.row } });
+        setSelection({
+          anchor: { col: 0, row: focus.row },
+          focus: { col: grid.columns - 1, row: focus.row },
+        });
         return true;
       case "selectColumn":
-        setSelection({ anchor: { col: focus.col, row: 0 }, focus: { col: focus.col, row: grid.rows - 1 } });
+        setSelection({
+          anchor: { col: focus.col, row: 0 },
+          focus: { col: focus.col, row: grid.rows - 1 },
+        });
         return true;
       case "escape":
         return false;
@@ -673,8 +759,8 @@ export function useSheetEditor(input: {
     store,
     editing,
     history,
-    canUndo: history.past.length > 0,
-    canRedo: history.future.length > 0,
+    canUndo: input.live ? input.live.canUndo : history.past.length > 0,
+    canRedo: input.live ? input.live.canRedo : history.future.length > 0,
     shortcutsOpen,
     setShortcutsOpen,
     menu,

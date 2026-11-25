@@ -17,6 +17,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { design } from "~/studio/design";
 
 import { useTx } from "../../i18n";
+import { DocumentHeader } from "../documents/DocumentHeader";
+import { useLiveSheet } from "../documents/useLiveSheet";
 import { fileSaveErrorMessage } from "../files/filePreviewMode";
 import {
   clearProjectFileQueryData,
@@ -102,6 +104,8 @@ export function SheetFileView(props: {
   const themeSource = useOfficeThemeSource(props.environmentId, systemId, mode);
   const relativePath = sheetRelativePath(props.cwd, props.path);
   const { environmentId, cwd, path } = props;
+  // Live when the machine can hold a session on the file; otherwise saved by revision.
+  const live = useLiveSheet({ environmentId, cwd, relativePath });
   const reload = useCallback(async (): Promise<void> => {
     clearProjectFileQueryData(environmentId, cwd, path);
     file.refresh();
@@ -164,14 +168,36 @@ export function SheetFileView(props: {
       </p>
     );
   }
+  const binding = live?.binding ?? null;
+  // A sheet whose session has ended goes back to revision saves; one still joining is read-only.
+  const joining = live !== null && live.state.status === "connecting";
+  const title =
+    binding?.document.title ??
+    path
+      .split(/[\\/]/)
+      .pop()
+      ?.replace(/\.sheet\.json$/i, "") ??
+    path;
   return (
-    <SheetView
-      text={file.data.contents}
-      mode={mode}
-      themeSource={themeSource}
-      onDesignSystem={setSystemId}
-      onReload={reload}
-      onSave={canWrite && relativePath !== null ? save : undefined}
-    />
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sheet-live={binding !== null}>
+      <DocumentHeader
+        kind="sheet"
+        title={title}
+        presence={binding === null ? [] : (live?.presence ?? [])}
+        activity={binding === null ? [] : (live?.state.activity ?? [])}
+        access={(binding === null ? canWrite : binding.editable) ? "edit" : "view"}
+      />
+      <SheetView
+        text={file.data.contents}
+        mode={mode}
+        themeSource={themeSource}
+        onDesignSystem={setSystemId}
+        onReload={reload}
+        onSave={
+          binding === null && !joining && canWrite && relativePath !== null ? save : undefined
+        }
+        live={binding ?? undefined}
+      />
+    </div>
   );
 }
