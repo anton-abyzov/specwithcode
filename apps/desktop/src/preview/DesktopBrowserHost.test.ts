@@ -174,7 +174,9 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses input wrapped in another command while the person annotates", () =>
+  // Wrapped commands could address another target, so the relay never sends them;
+  // the annotation guard also refuses wrapped input should one ever get through.
+  it.effect("never sends input wrapped in another command, annotating or not", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
@@ -229,16 +231,14 @@ describe("DesktopBrowserHost", () => {
       const replies = (yield* Fiber.join(reader))
         .slice(1)
         .map((event) => JSON.parse((event as { message: string }).message));
-      for (const id of [1, 2, 3]) {
+      for (const id of [1, 2, 3, 4, 6]) {
         expect(replies.find((reply) => reply.id === id)?.error?.message, `id ${id}`).toMatch(
-          /annotated/,
+          /annotated|Not supported/,
         );
       }
-      const wrapped = sent.filter((entry) => entry.method === "Target.sendMessageToTarget");
-      expect(wrapped.map((entry) => (entry.params as { message: string }).message)).toEqual([
-        encodeJson({ id: 3, method: "DOM.enable" }),
-        encodeJson(input),
-      ]);
+      expect(replies.find((reply) => reply.id === 5)).toHaveProperty("result");
+      expect(sent.filter((entry) => entry.method === "Target.sendMessageToTarget")).toEqual([]);
+      expect(sent.map((entry) => entry.method)).toContain("DOM.enable");
     }).pipe(Effect.scoped),
   );
 });

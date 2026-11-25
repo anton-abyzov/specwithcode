@@ -54,6 +54,8 @@ describe("CDP relay", () => {
     const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
       written.push(JSON.parse(raw)),
     );
+    // The tab's debugger announces its iframe before anything addresses it.
+    relay.event("Target.attachedToTarget", { sessionId: "iframe-session" }, "");
     relay.receive(
       JSON.stringify({ id: 5, method: "Page.captureScreenshot", sessionId: "studio-preview-page" }),
     );
@@ -91,6 +93,63 @@ describe("CDP relay", () => {
       { method: "Page.loadEventFired", params: { timestamp: 1 }, sessionId: "studio-preview-page" },
       { method: "Runtime.consoleAPICalled", params: {}, sessionId: "iframe-session" },
     ]);
+  });
+});
+
+describe("CDP relay target scope", () => {
+  it("reaches only the tab's own page and the frames it announced", async () => {
+    const send = vi.fn(async (method: string) => ({ method }));
+    const written: Array<Record<string, unknown>> = [];
+    const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
+      written.push(JSON.parse(raw)),
+    );
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    // The tab's own iframe, announced by its debugger.
+    relay.event(
+      "Target.attachedToTarget",
+      { sessionId: "iframe-1", targetInfo: { targetId: "IFRAME-1", type: "iframe" } },
+      "",
+    );
+    const page = (id: number, method: string, params: unknown = {}, sessionId?: string) =>
+      relay.receive(
+        JSON.stringify({ id, method, params, sessionId: sessionId ?? "studio-preview-page" }),
+      );
+    // Another tab's target, or a session the tab never announced, is out of reach.
+    page(2, "Target.attachToTarget", { targetId: "OTHER-TAB", flatten: true });
+    page(3, "Target.sendMessageToTarget", { targetId: "OTHER-TAB", message: "{}" });
+    page(4, "Target.attachToBrowserTarget");
+    page(5, "Input.dispatchMouseEvent", { type: "mousePressed" }, "other-tab-session");
+    page(6, "Target.detachFromTarget", { sessionId: "other-tab-session" });
+    // The page and its own frames keep working.
+    page(7, "Target.setAutoAttach", { autoAttach: true, flatten: true });
+    page(8, "DOM.enable", {}, "iframe-1");
+    page(9, "Target.detachFromTarget", { sessionId: "iframe-1" });
+    page(10, "Runtime.evaluate", { expression: "1" });
+    await settle();
+    for (const id of [2, 3, 4, 5, 6]) {
+      expect(
+        written.find((m) => m["id"] === id),
+        `id ${id}`,
+      ).toHaveProperty("error");
+    }
+    for (const id of [7, 8, 9, 10]) {
+      expect(
+        written.find((m) => m["id"] === id),
+        `id ${id}`,
+      ).toHaveProperty("result");
+    }
+    expect(send.mock.calls.map((call) => call[0]).toSorted()).toEqual([
+      "DOM.enable",
+      "Runtime.evaluate",
+      "Target.detachFromTarget",
+      "Target.setAutoAttach",
+    ]);
+    // Once the frame detaches, its session is gone too.
+    relay.event("Target.detachedFromTarget", { sessionId: "iframe-1" }, "");
+    page(11, "DOM.enable", {}, "iframe-1");
+    await settle();
+    expect(written.find((m) => m["id"] === 11)).toHaveProperty("error");
   });
 });
 

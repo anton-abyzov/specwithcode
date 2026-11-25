@@ -75,6 +75,12 @@ export function createCdpRelayConnection(
    * page's events; other ids are the page's own child sessions, such as iframes.
    */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
+  /**
+   * The tab's own child sessions (iframes, workers), keyed by session id, as
+   * its debugger announced them. Any other session belongs to something else,
+   * such as another tab, and stays out of reach.
+   */
+  const children = new Map<string, string | undefined>();
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `studio-preview-${kind}-${++sessionSequence}`;
@@ -157,11 +163,44 @@ export function createCdpRelayConnection(
     }
   };
 
-  const pageCommand = (command: CdpCommand): Promise<unknown> => {
+  /**
+   * Target commands on a page session may only manage the tab's own frames.
+   * Attaching to or messaging any other target would let a session reach
+   * another tab, past that tab's own guards (such as input while annotating).
+   */
+  const ownTargetCommand = async (command: CdpCommand): Promise<boolean> => {
+    const params = command.params ?? {};
+    switch (command.method) {
+      case "Target.setAutoAttach":
+        return true;
+      case "Target.detachFromTarget":
+        return typeof params["sessionId"] === "string" && children.has(params["sessionId"]);
+      case "Target.getTargetInfo": {
+        const targetId = params["targetId"];
+        return (
+          targetId === undefined ||
+          targetId === (await target.targetId()) ||
+          [...children.values()].includes(targetId as string)
+        );
+      }
+      default:
+        return false;
+    }
+  };
+
+  const pageCommand = async (command: CdpCommand): Promise<unknown> => {
     // The page is already running; nothing waits for a debugger.
-    if (command.method === "Runtime.runIfWaitingForDebugger") return Promise.resolve({});
-    const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
-    return target.send(command.method, command.params ?? {}, child);
+    if (command.method === "Runtime.runIfWaitingForDebugger") return {};
+    const ownPage = sessions.get(command.sessionId!) === "page";
+    if (!ownPage && !children.has(command.sessionId!))
+      throw new Error("Only this preview tab's page and its frames can be reached.");
+    if (command.method.startsWith("Target.") && !(await ownTargetCommand(command)))
+      throw new Error(`Not supported for a desktop preview tab: ${command.method}`);
+    return target.send(
+      command.method,
+      command.params ?? {},
+      ownPage ? undefined : command.sessionId,
+    );
   };
 
   return {
@@ -201,6 +240,13 @@ export function createCdpRelayConnection(
       );
     },
     event: (method, params, sessionId) => {
+      const announced = (params as { sessionId?: unknown } | undefined)?.sessionId;
+      if (method === "Target.attachedToTarget" && typeof announced === "string") {
+        const targetId = (params as { targetInfo?: { targetId?: unknown } }).targetInfo?.targetId;
+        children.set(announced, typeof targetId === "string" ? targetId : undefined);
+      } else if (method === "Target.detachedFromTarget" && typeof announced === "string") {
+        children.delete(announced);
+      }
       if (!attached) return;
       // Download events are the browser's; Playwright listens on its root session.
       if (method.startsWith("Browser.download")) {
