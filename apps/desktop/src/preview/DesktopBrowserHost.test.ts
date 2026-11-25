@@ -120,4 +120,57 @@ describe("DesktopBrowserHost", () => {
       expect(paths).toEqual([NodePath.join("/srv/downloads", "guid-1")]);
     }),
   );
+
+  it.effect("refuses relayed input while the person annotates the tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const sent: Array<string> = [];
+      const sendCommand = debuggee.tab.debugger.sendCommand.bind(debuggee.tab.debugger);
+      (debuggee.tab.debugger as unknown as { sendCommand: unknown }).sendCommand = (
+        method: string,
+        ...rest: Array<unknown>
+      ) => {
+        sent.push(method);
+        return (sendCommand as (...args: Array<unknown>) => Promise<unknown>)(method, ...rest);
+      };
+      let annotating = true;
+      host.attach(key, {
+        ...debuggee.tab,
+        annotating: () => annotating,
+      } as DesktopBrowserHost.DesktopBrowserTabDebugger);
+      const reader = yield* takeEvents(host, 5).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const command = (id: number, method: string) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id,
+              method,
+              params: { type: "mousePressed", x: 1, y: 1 },
+              sessionId: "studio-preview-page",
+            }),
+          }),
+        );
+      yield* command(1, "Input.dispatchMouseEvent");
+      yield* command(2, "Input.insertText");
+      yield* command(3, "DOM.enable");
+      // The annotation ends; the agent's input reaches the page again.
+      annotating = false;
+      yield* command(4, "Input.dispatchMouseEvent");
+      debuggee.release();
+      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      const replies = (yield* Fiber.join(reader))
+        .slice(1)
+        .map((event) => JSON.parse((event as { message: string }).message));
+      expect(sent.filter((method) => method.startsWith("Input."))).toEqual([
+        "Input.dispatchMouseEvent",
+      ]);
+      expect(replies.find((reply) => reply.id === 1)?.error?.message).toMatch(/annotated/);
+      expect(replies.find((reply) => reply.id === 2)?.error?.message).toMatch(/annotated/);
+      expect(sent).toContain("DOM.enable");
+    }).pipe(Effect.scoped),
+  );
 });

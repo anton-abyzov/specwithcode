@@ -28,6 +28,8 @@ import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
 const lineEncoder = new TextEncoder();
+const ANNOTATING_MESSAGE =
+  "This page is being annotated in the desktop app. Input resumes when the annotation ends.";
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -38,6 +40,8 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  /** True while the person at this window annotates the page; the overlay takes only their input. */
+  readonly annotating?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -101,10 +105,16 @@ export const make = Effect.gen(function* () {
     const { webContents, debugger: debuggee } = tab.debuggee;
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
-        send: (method, params, sessionId) =>
-          sessionId === undefined
+        send: (method, params, sessionId) => {
+          // Checked at dispatch, so input that arrives before an annotation
+          // starts and is sent after it is refused too.
+          if (method.startsWith("Input.") && tab.debuggee.annotating?.() === true) {
+            return Promise.reject(new Error(ANNOTATING_MESSAGE));
+          }
+          return sessionId === undefined
             ? debuggee.sendCommand(method, params)
-            : debuggee.sendCommand(method, params, sessionId),
+            : debuggee.sendCommand(method, params, sessionId);
+        },
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
