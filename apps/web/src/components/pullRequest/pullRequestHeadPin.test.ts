@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { mergeHeadPin, seenPullRequestHead } from "./pullRequestHeadPin";
 
 describe("seenPullRequestHead", () => {
-  it("keeps the first settled head when a refresh brings a newer one", () => {
+  it("keeps the first painted head, cached or fresh, when a read brings a newer one", () => {
     const first = seenPullRequestHead(null, "env:1", "a".repeat(40));
     expect(seenPullRequestHead(first, "env:1", "b".repeat(40))).toBe(first);
   });
@@ -16,7 +16,7 @@ describe("seenPullRequestHead", () => {
     });
   });
 
-  it("takes the head once a pending read settles", () => {
+  it("takes the first head that is painted at all", () => {
     const pending = seenPullRequestHead(null, "env:1", undefined);
     expect(seenPullRequestHead(pending, "env:1", "a".repeat(40)).sha).toBe("a".repeat(40));
   });

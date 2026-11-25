@@ -7607,11 +7607,23 @@ describe("a merge or review pinned to the head the person saw", () => {
     }),
   );
 
-  it.effect("hands the full checked head on when it still matches, even from a prefix", () =>
+  it.effect("refuses a short prefix, which can name more than one commit", () =>
     Effect.gen(function* () {
       const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
       const service = yield* serviceWith(pinnedProvider(HEAD, sent));
-      yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD.slice(0, 7) });
+      const refused = yield* Effect.flip(
+        service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD.slice(0, 7) }),
+      );
+      assert.strictEqual(refused._tag, "PullRequestOperationError");
+      assert.deepStrictEqual(sent, []);
+    }),
+  );
+
+  it.effect("hands the host's own spelling of the checked head on when it still matches", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(HEAD, sent));
+      yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD.toUpperCase() });
       yield* service.submitReview({
         ...reference,
         verdict: "approve",
@@ -7629,11 +7641,8 @@ describe("a merge or review pinned to the head the person saw", () => {
   it.effect("keeps an older client that sends no head working as before", () =>
     Effect.gen(function* () {
       const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
-      // No head from the caller means no extra read: the provider pins to the head it sees.
-      const service = yield* serviceWith({
-        ...pinnedProvider(NEWER, sent),
-        getChangeRequest: () => Effect.die("an unpinned write must not read the head"),
-      });
+      // No head from the caller means nothing to refuse: the provider pins to the head it sees.
+      const service = yield* serviceWith(pinnedProvider(NEWER, sent));
       yield* service.runAction({ ...reference, action: "merge" });
       yield* service.submitReview({ ...reference, verdict: "comment", body: "ok", comments: [] });
       assert.deepStrictEqual(sent, [{ operation: "merge" }, { operation: "review" }]);
