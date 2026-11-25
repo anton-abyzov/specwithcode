@@ -3413,13 +3413,14 @@ export const make = Effect.gen(function* () {
     activity: credentialCached(activity),
     preview: credentialCached(preview),
     threadComments,
-    // A named commit must be one the change request lists before a host is asked for it.
+    // A named commit must be one the change request lists before a host is asked for it. The
+    // list is read fresh: a cached one would still name a commit a force-push just removed.
     diff: (input) =>
-      withListedCommit("diff", input, credentialCached(activity)).pipe(
+      withListedCommit("diff", input, credentialCached(activityUncached)).pipe(
         Effect.flatMap(credentialCached(diff)),
       ),
     diffFileContents: (input) =>
-      withListedCommit("diffFileContents", input, credentialCached(activity)).pipe(
+      withListedCommit("diffFileContents", input, credentialCached(activityUncached)).pipe(
         Effect.flatMap(diffFileContents),
       ),
     checkFailureLog,
