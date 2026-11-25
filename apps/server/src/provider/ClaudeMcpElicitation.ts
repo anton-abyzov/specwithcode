@@ -61,6 +61,7 @@ import * as Effect from "effect/Effect";
 
 import {
   dropClaudeFormAnswers,
+  REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
 import type * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
@@ -117,6 +118,8 @@ type Answer =
       readonly by: "person";
       readonly decision: ProviderApprovalDecision;
       readonly answers?: ProviderUserInputAnswers;
+      /** Only the redacted summary arrived; the answer itself is gone. */
+      readonly lost?: true;
     }
   | { readonly by: "stop" }
   | { readonly by: "timeout" };
@@ -340,11 +343,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         const won = raced.by === "person" ? true : yield* Deferred.succeed(answer, raced);
         const settled = won ? raced : yield* Deferred.await(answer);
         if (settled.by === "person") {
-          const result = elicitationResultForDecision(
-            form.fields,
-            settled.decision,
-            settled.answers,
-          );
+          const result =
+            settled.lost === true && settled.decision !== "decline" && settled.decision !== "cancel"
+              ? null
+              : elicitationResultForDecision(form.fields, settled.decision, settled.answers);
           if (result !== null) return result;
           yield* notice(
             context,
@@ -389,8 +391,14 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
   const respond: ClaudeMcpElicitations["respond"] = (input) =>
     Effect.gen(function* () {
       const id = String(input.requestId as RuntimeRequestId);
-      // The person's raw answers; the effect itself carries only a redacted summary.
-      const answers = takeClaudeFormAnswers(input.requestId) ?? input.answers;
+      // The person's raw answers; the effect itself carries only a redacted
+      // summary. Without the hand-off, a redacted summary is never sent on as
+      // if it were the answer: the content check then cancels the card.
+      const handedOff = takeClaudeFormAnswers(input.requestId);
+      const answers = handedOff ?? input.answers;
+      const lost =
+        handedOff === undefined &&
+        Object.values(input.answers ?? {}).includes(REDACTED_FORM_ANSWER);
       const card = pending.get(id);
       if (card === undefined) return closed.has(id);
       const decision: ProviderApprovalDecision =
@@ -399,6 +407,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         by: "person",
         decision,
         ...(answers === undefined ? {} : { answers }),
+        ...(lost ? { lost } : {}),
       });
       return true;
     });

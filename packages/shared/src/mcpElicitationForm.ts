@@ -367,14 +367,63 @@ export function validateMcpElicitationContent(
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, content };
 }
 
-// Words that name a credential in a field's key or title. MCP forbids a server
+// Words that name a credential in a text field's key or title, matched as
+// whole words after splitting camelCase, snake_case and kebab-case, so
+// `businessName` or `max_tokens` are not read as secrets. MCP forbids a server
 // from asking for secrets in form mode; a form that does is never shown.
-const SECRET_FIELD =
-  /pass(word|wd|code|phrase)|secret|token|api[\s_-]?key|private[\s_-]?key|access[\s_-]?key|credential|\bpin\b|\botp\b|one[\s_-]?time[\s_-]?(code|password)|2fa|mfa|cvv|cvc|card[\s_-]?number|ssn|social[\s_-]?security/i;
+const SECRET_WORDS = new Set([
+  "password",
+  "passwords",
+  "passwd",
+  "passcode",
+  "passphrase",
+  "secret",
+  "secrets",
+  "credential",
+  "credentials",
+  "token",
+  "apikey",
+  "pin",
+  "otp",
+  "mfa",
+  "2fa",
+  "cvv",
+  "cvc",
+  "ssn",
+]);
+const SECRET_PAIRS = new Set([
+  "api key",
+  "private key",
+  "access key",
+  "secret key",
+  "one time",
+  "card number",
+  "security code",
+  "recovery code",
+  "social security",
+]);
+// A page or cursor token is a position in a list, not a credential.
+const LIST_POSITION_WORDS = new Set(["page", "next", "cursor", "continuation"]);
 
-/** The first field that asks for a password, token or other secret, if any. */
+function namesSecret(text: string): boolean {
+  const words = text
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
+  const listPosition = words.some((word) => LIST_POSITION_WORDS.has(word));
+  return words.some(
+    (word, index) =>
+      (SECRET_WORDS.has(word) && !(word === "token" && listPosition)) ||
+      SECRET_PAIRS.has(`${word} ${words[index + 1] ?? ""}`),
+  );
+}
+
+/** The first text field that asks for a password, token or other secret, if any. */
 export function findMcpElicitationSecretField(
   fields: ReadonlyArray<McpElicitationField>,
 ): McpElicitationField | undefined {
-  return fields.find((field) => SECRET_FIELD.test(field.key) || SECRET_FIELD.test(field.title));
+  return fields.find(
+    (field) => field.kind === "text" && (namesSecret(field.key) || namesSecret(field.title)),
+  );
 }

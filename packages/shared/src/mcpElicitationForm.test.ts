@@ -228,7 +228,9 @@ describe("findMcpElicitationSecretField", () => {
       ["code", "One-time code"],
       ["pin", "PIN"],
       ["field1", "Your passphrase"],
-    ])
+      ["userPassword", "Account"],
+      ["aws_access_key", "Key"],
+    ] as const)
       expect(
         findMcpElicitationSecretField(
           fieldsOf({ type: "object", properties: { [key]: { type: "string", title } } }),
@@ -246,6 +248,13 @@ describe("findMcpElicitationSecretField", () => {
             confirm: { type: "string", title: "Type octo/repo to confirm" },
             spinner: { type: "boolean", title: "Show a spinner" },
             topic: { type: "string", title: "Topics" },
+            businessName: { type: "string", title: "Business" },
+            className: { type: "string", title: "Class" },
+            addressNumber: { type: "string", title: "House number" },
+            max_tokens: { type: "integer", title: "Max tokens" },
+            page_token: { type: "string", title: "Page token" },
+            useTokenAuth: { type: "boolean", title: "Use token auth" },
+            secretary: { type: "string", title: "Secretary" },
           },
         }),
       ),

@@ -206,6 +206,25 @@ describe("ClaudeMcpElicitation", () => {
     expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
   });
 
+  it("never passes a redacted summary on as the answer, even for a form without fields", async () => {
+    for (const requestedSchema of [confirmSchema, { type: "object", properties: {} }]) {
+      const h = harness();
+      const result = h.ask({ requestedSchema });
+      await h.until(() => h.card() !== undefined);
+      await Effect.runPromise(
+        h.elicitations.respond({
+          requestId: h.requestId,
+          decision: "accept",
+          answers: redactClaudeFormAnswers({ name: "octo/repo" }),
+        }),
+      );
+      expect(await result).toEqual({ action: "cancel" });
+      expect(h.notices()).toEqual([
+        "The answer to github's question didn't fit its form; it was cancelled.",
+      ]);
+    }
+  });
+
   it("forgets a hand-off nothing took once the card closes", async () => {
     const h = harness();
     const controller = new AbortController();
