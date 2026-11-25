@@ -9,6 +9,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as HttpClient from "effect/http/HttpClient";
 
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -18,13 +20,23 @@ import {
   BearerConnectionProfile,
   type ConnectionRoute,
 } from "./catalog.ts";
+import { ConnectionCredentialStore } from "./credentialStore.ts";
 import { BearerConnectionTarget, ConnectionBlockedError } from "./model.ts";
 import {
+  make as makeOnboarding,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
 } from "./onboarding.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import {
+  BEARER_CREDENTIAL,
+  BEARER_PROFILE,
+  BEARER_TARGET,
+  SSH_TARGET,
+  makeHarness,
+  routesOf,
+} from "./registry.testHarness.ts";
 
 const layerClientPresentation = Layer.succeed(
   ClientCapabilities.ClientPresentation,
@@ -499,5 +511,106 @@ describe("connection onboarding", () => {
         },
       });
     }),
+  );
+});
+
+describe("SSH onboarding and saved environments", () => {
+  /** An SSH host that answers with `environmentId`, as a real host reports its own. */
+  const sshGateway = (environmentId: EnvironmentId) =>
+    ClientCapabilities.SshEnvironmentGateway.of({
+      provision: () =>
+        Effect.succeed({
+          environmentId,
+          label: "SSH host",
+          bootstrap: {
+            target: SSH_TARGET,
+            httpBaseUrl: "http://127.0.0.1:3201",
+            wsBaseUrl: "ws://127.0.0.1:3201",
+            pairingToken: "pairing-token",
+          },
+          bearerToken: "bearer-token",
+        }),
+      prepare: () => Effect.die("unused"),
+      disconnect: () => Effect.die("unused"),
+    });
+
+  const withOnboarding = <A, E>(
+    environmentId: EnvironmentId,
+    run: (
+      onboarding: Effect.Success<typeof makeOnboarding>,
+      storedRoutes: Effect.Effect<ReadonlyArray<unknown>>,
+    ) => Effect.Effect<A, E, EnvironmentRegistry.EnvironmentRegistry>,
+  ) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      return yield* Effect.gen(function* () {
+        const onboarding = yield* makeOnboarding.pipe(
+          Effect.provideService(
+            ClientCapabilities.SshEnvironmentGateway,
+            sshGateway(environmentId),
+          ),
+          Effect.provideService(
+            ClientCapabilities.ClientPresentation,
+            ClientCapabilities.ClientPresentation.of({ metadata: { surface: "desktop" } }),
+          ),
+          Effect.provideService(ConnectionCredentialStore, {} as never),
+          Effect.provideService(HttpClient.HttpClient, {} as never),
+        );
+        return yield* run(
+          onboarding,
+          Ref.get(harness.storedTargets).pipe(
+            Effect.map((targets) => routesOf(targets, environmentId)),
+          ),
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    });
+
+  it.effect("refuses an SSH host that claims a saved environment it was not added to", () =>
+    withOnboarding(BEARER_TARGET.environmentId, (onboarding, storedRoutes) =>
+      Effect.gen(function* () {
+        const before = yield* storedRoutes;
+        const outcome = yield* onboarding.registerSsh({ target: SSH_TARGET }).pipe(
+          Effect.match({
+            onFailure: (error) => ({ refused: error }),
+            onSuccess: (added) => ({ added }),
+          }),
+        );
+
+        expect(yield* storedRoutes).toEqual(before);
+        expect(outcome).toMatchObject({
+          refused: { _tag: "ConnectionBlockedError", reason: "configuration" },
+        });
+        expect("refused" in outcome && outcome.refused.message).toContain(BEARER_TARGET.label);
+      }),
+    ),
+  );
+
+  it.effect("adds an SSH route to a saved environment when the add targets it", () =>
+    withOnboarding(BEARER_TARGET.environmentId, (onboarding, storedRoutes) =>
+      Effect.gen(function* () {
+        yield* onboarding.registerSsh({
+          target: SSH_TARGET,
+          expectedEnvironmentId: BEARER_TARGET.environmentId,
+        });
+
+        expect((yield* storedRoutes).map((route) => (route as { _tag: string })._tag)).toEqual([
+          "BearerConnectionTarget",
+          "SshConnectionTarget",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("saves a new SSH host without a target", () =>
+    withOnboarding(EnvironmentId.make("environment-new-ssh"), (onboarding, storedRoutes) =>
+      Effect.gen(function* () {
+        yield* onboarding.registerSsh({ target: SSH_TARGET });
+        expect(yield* storedRoutes).toHaveLength(1);
+      }),
+    ),
   );
 });

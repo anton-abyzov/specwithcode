@@ -1,6 +1,8 @@
 package com.specwithcode.android.app
 
+import com.specwithcode.transport.PairingLink
 import com.specwithcode.transport.RouteKind
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URI
 import java.net.URLDecoder
 
@@ -73,24 +75,47 @@ object PairingInput {
         return "$origin/pair#token=${normalizeCode(code)}"
     }
 
-    /** True when the link (after unwrapping) would send the sign-in over plain http. */
-    fun isCleartext(link: String): Boolean = unwrap(link).lowercase().startsWith("http://")
-
-    /** The host the link pairs with (after unwrapping), or null when it has none. */
-    fun host(link: String): String? = try {
-        URI(unwrap(link)).host?.takeIf { it.isNotEmpty() }
+    /**
+     * The address pairing will send the code to, read exactly the way Connect reads the link:
+     * the pairing screen unwraps it once ([unwrap], its `effectiveLink`) and the pairing parser
+     * unwraps and reads what is left, so a wrapper around a wrapper and a hosted link's
+     * `?host=` are judged by the machine at the bottom. Null when pairing would refuse the
+     * link, in which case no code is sent.
+     */
+    private fun target(link: String): String? = try {
+        PairingLink.parse(unwrap(link)).httpBase
     } catch (_: Exception) {
         null
     }
 
+    /** True when the link would send the sign-in over plain http. */
+    fun isCleartext(link: String): Boolean =
+        (target(link) ?: unwrap(link)).lowercase().startsWith("http://")
+
     /**
-     * True when the link would send the sign-in over plain http to a host outside this
-     * device, the local network and the tailnet. Links opened from other apps must not do that.
+     * The host the link pairs with, read by the same URL parser pairing uses (OkHttp), or
+     * null when it has none. `java.net.URI` reads no host for some names OkHttp accepts,
+     * such as a label with a leading underscore.
+     */
+    fun host(link: String): String? =
+        (target(link) ?: unwrap(link)).toHttpUrlOrNull()?.host?.takeIf { it.isNotEmpty() }
+
+    /**
+     * True when a link from another app must not be used: it would send the sign-in over
+     * plain http to a host outside this device, the local network and the tailnet, or to a
+     * name without a dot, or no machine address can be read from it at all.
+     *
+     * A name without a dot is finished by the phone's DNS search domain, so the network the
+     * phone is on, not the link, picks the machine that gets the code.
      */
     fun isPublicCleartext(link: String): Boolean {
-        if (!isCleartext(link)) return false
         val host = host(link) ?: return true
-        return RouteKind.classify(host) == RouteKind.PUBLIC
+        if (!isCleartext(link)) return false
+        return when (RouteKind.classify(host)) {
+            RouteKind.PUBLIC -> true
+            RouteKind.LAN -> host.trimEnd('.').let { '.' !in it && ':' !in it }
+            else -> false
+        }
     }
 }
 

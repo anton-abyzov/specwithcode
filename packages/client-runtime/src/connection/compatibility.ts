@@ -18,10 +18,12 @@ export function orchestrationProtocolCompatibilityError(
     ? new ConnectionBlockedError({
         reason: "unsupported",
         detail: `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`,
+        machineLabel: descriptor.label,
       })
     : new ConnectionBlockedError({
         reason: "unsupported",
         detail: `This client requires a newer server. Update SpecWithCode on ${descriptor.label} to connect.`,
+        machineLabel: descriptor.label,
         ...(canSelfUpdate(descriptor) ? { serverUpdateRequired: true } : {}),
       });
 }

@@ -229,9 +229,8 @@ export function renderGhosttySnapshot(options: {
         rowIndex <= hoveredLinkRange.end.y &&
         (rowIndex > hoveredLinkRange.start.y || column >= hoveredLinkRange.start.x) &&
         (rowIndex < hoveredLinkRange.end.y || column <= hoveredLinkRange.end.x);
-      if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)) {
-        continue;
-      }
+      if (!cell || cell.invisible) continue;
+      if (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink) continue;
       context.fillStyle = cssColor(cell.foreground);
       const left = padding + column * metrics.width;
       if (cell.underline || hoveredLink) {
@@ -262,7 +261,8 @@ export function renderGhosttySnapshot(options: {
     } else {
       context.fillRect(left, top, metrics.width, metrics.height);
       const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
-      if (cell?.text) {
+      // Concealed (SGR 8) text, such as a hidden password echo, stays hidden under the cursor.
+      if (cell?.text && !cell.invisible) {
         context.font = fontForCell(cell, fontSize, fontFamily);
         context.fillStyle = cssColor(snapshot.background);
         context.fillText(cell.text, left, top + metrics.baseline, metrics.width);

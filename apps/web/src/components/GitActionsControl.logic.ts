@@ -313,7 +313,8 @@ export function resolveQuickAction(
         label: "Push",
         disabled: false,
         kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
+        // Never commit here: files changed while the confirm dialog is open would ride along.
+        action: "push",
       };
     }
     return {
@@ -347,7 +348,8 @@ export function resolveQuickAction(
         label: "Push",
         disabled: false,
         kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
+        // Never commit here: files changed while the confirm dialog is open would ride along.
+        action: "push",
       };
     }
     return {

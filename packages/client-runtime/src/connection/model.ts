@@ -94,6 +94,16 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     retryAfterMs: Schema.optionalKey(Schema.Number),
     /** The machine waits for its owner to type this code (1327); `detail` says where. */
     deviceApprovalCode: Schema.optionalKey(Schema.String),
+    /**
+     * The machine name `detail` mentions, when it is not the target's own label (a server
+     * can report another name). Relay spans strip it; `detail` stays as the person reads it.
+     */
+    machineLabel: Schema.optionalKey(Schema.String),
+    /**
+     * Text the host wrote about itself that `detail` repeats (its own wording of a refusal,
+     * which can carry its current name and an approval code). Relay spans strip it.
+     */
+    hostText: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 ) {
   override get message(): string {
@@ -107,6 +117,16 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     reason: ConnectionBlockedReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    /**
+     * The machine name `detail` mentions, when it is not the target's own label (a server
+     * can report another name). Relay spans strip it; `detail` stays as the person reads it.
+     */
+    machineLabel: Schema.optionalKey(Schema.String),
+    /**
+     * Text the host wrote about itself that `detail` repeats (its own wording of a refusal,
+     * which can carry its current name and an approval code). Relay spans strip it.
+     */
+    hostText: Schema.optionalKey(Schema.Array(Schema.String)),
     /** The host speaks an older orchestration protocol; updating it restores the connection. */
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
     /** The host no longer accepts this device's approval; pairing again restores the connection. */

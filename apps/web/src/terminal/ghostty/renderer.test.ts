@@ -176,6 +176,71 @@ describe("renderGhosttySnapshot", () => {
     ]);
   });
 
+  it("keeps concealed text hidden under the block cursor and undecorated", () => {
+    const fillTextCalls: unknown[][] = [];
+    const decorationRects: number[][] = [];
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: (...args: number[]) => {
+        if (args[3] === 1) decorationRects.push(args);
+      },
+      fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+      strokeRect: () => {},
+      set strokeStyle(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    // A program echoing a typed secret with SGR 8 (conceal), cursor on its first cell.
+    const concealed = (text: string): GhosttyCell => ({
+      ...cell(text),
+      invisible: true,
+      underline: true,
+      strikethrough: true,
+    });
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: 0,
+      cursorY: 0,
+      cursorVisible: true,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [concealed("p"), concealed("w"), cell("")],
+          text: "pw",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 7.2, height: 16, baseline: 11 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: true,
+    });
+
+    expect(fillTextCalls).toEqual([]);
+    expect(decorationRects).toEqual([]);
+  });
+
   it("repaints the cell without an overlay during the blink off phase", () => {
     const fillTextCalls: unknown[][] = [];
     const context = {

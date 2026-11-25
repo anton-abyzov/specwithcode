@@ -39,6 +39,81 @@ class PairingInputTest {
         assertFalse(PairingInput.isCleartext(real))
     }
 
+    @Test fun hostedLinksShowAndCheckTheMachineTheyPairWith() {
+        // Pairing sends the code to the `?host=` machine, so the banner and the guards read that one.
+        val other = "https://my-mac.local/pair?host=https%3A%2F%2Fother.example&label=Mac#token=$code"
+        assertEquals("other.example", PairingInput.host(other))
+        assertFalse(PairingInput.isCleartext(other))
+
+        val cleartext = "https://x.example/pair?host=http%3A%2F%2F203.0.113.5%3A3773#token=$code"
+        assertEquals("203.0.113.5", PairingInput.host(cleartext))
+        assertTrue(PairingInput.isCleartext(cleartext))
+        assertTrue(PairingInput.isPublicCleartext(cleartext))
+
+        val wrapped = "specwithcode://pair?link=" + java.net.URLEncoder.encode(cleartext, "UTF-8")
+        assertEquals("203.0.113.5", PairingInput.host(wrapped))
+        assertTrue(PairingInput.isPublicCleartext(wrapped))
+
+        // A plain link keeps today's answers.
+        assertEquals("m4.example.ts.net", PairingInput.host("https://m4.example.ts.net/pair#token=$code"))
+        assertEquals("10.0.0.2", PairingInput.host("http://10.0.0.2:3773/#token=$code"))
+        assertTrue(PairingInput.isCleartext("http://10.0.0.2:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://10.0.0.2:3773/#token=$code"))
+    }
+
+    @Test fun nestedWrappersAreJudgedByTheMachinePairingReaches() {
+        // Connect unwraps the screen's link once more before pairing reads it, so a wrapper
+        // around a wrapper must be judged by the machine at the bottom.
+        fun wrap(scheme: String, key: String, inner: String) =
+            "$scheme://pair?$key=" + java.net.URLEncoder.encode(inner, "UTF-8")
+
+        val direct = "http://203.0.113.5:3773/#token=$code"
+        val nested = wrap("specwithcode", "link", wrap("studio", "pairingUrl", direct))
+        assertEquals("203.0.113.5", PairingInput.host(nested))
+        assertTrue(PairingInput.isCleartext(nested))
+        assertTrue(PairingInput.isPublicCleartext(nested))
+
+        val hosted = "https://x.example/pair?host=http%3A%2F%2F203.0.113.5#token=$code"
+        val nestedHosted = wrap("studio", "pairingUrl", wrap("specwithcode", "link", hosted))
+        assertEquals("203.0.113.5", PairingInput.host(nestedHosted))
+        assertTrue(PairingInput.isPublicCleartext(nestedHosted))
+
+        // An https machine at the bottom stays fine.
+        val safe = wrap("specwithcode", "link", wrap("studio", "pairingUrl", "https://m4.example.ts.net/pair#token=$code"))
+        assertEquals("m4.example.ts.net", PairingInput.host(safe))
+        assertFalse(PairingInput.isCleartext(safe))
+    }
+
+    @Test fun theBannerReadsHostsTheWayPairingDoes() {
+        // A DNS label with a leading underscore pairs (OkHttp accepts it) but java.net.URI
+        // reads no host, which left the banner empty and Connect enabled.
+        val underscore = "https://_svc.example.com/pair#token=$code"
+        assertEquals("_svc.example.com", PairingInput.host(underscore))
+        assertFalse(PairingInput.isPublicCleartext(underscore))
+        val hosted = "https://x.example/pair?host=https%3A%2F%2F_svc.example.com#token=$code"
+        assertEquals("_svc.example.com", PairingInput.host(hosted))
+
+        // When no machine address can be read at all, an external link is not used.
+        assertNull(PairingInput.host("not a pairing link"))
+        assertTrue(PairingInput.isPublicCleartext("not a pairing link"))
+    }
+
+    @Test fun aBareNameFromAnotherAppIsNotTrustedOverHttp() {
+        // A name without a dot is finished by the phone's DNS search domain, so the network
+        // the phone is on, not the link, decides which machine gets the code over plain http.
+        val bare = "http://build:3773/#token=$code"
+        assertTrue(PairingInput.isPublicCleartext(bare))
+        assertTrue(PairingInput.isPublicCleartext("specwithcode://pair?link=" + java.net.URLEncoder.encode(bare, "UTF-8")))
+        assertTrue(PairingInput.isPublicCleartext("https://x.example/pair?host=http%3A%2F%2Fbuild%3A3773#token=$code"))
+
+        // https still protects the code, and loopback, mDNS and private addresses stay local.
+        assertFalse(PairingInput.isPublicCleartext("https://build:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://localhost:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://my-mac.local:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://192.168.1.20:3773/#token=$code"))
+        assertFalse(PairingInput.isPublicCleartext("http://[fe80::1]:3773/#token=$code"))
+    }
+
     @Test fun deepLinksOpenPairingOrAThread() {
         val real = "https://m4.example.ts.net/pair#token=$code"
         assertEquals(DeepLink.Pair(real), DeepLink.parse("studio://pair?pairingUrl=" + java.net.URLEncoder.encode(real, "UTF-8")))

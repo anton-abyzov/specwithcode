@@ -608,7 +608,9 @@ describe("when: on default ref without open PR", () => {
     });
   });
 
-  it("resolveQuickAction returns push when ref is ahead", () => {
+  it("resolveQuickAction only pushes when a clean ref is ahead", () => {
+    // Push asks for confirmation on the default branch. A commit step here would
+    // also commit files written while that dialog is open.
     const quick = resolveQuickAction(
       status({ refName: "main", aheadCount: 2, pr: null }),
       false,
@@ -616,7 +618,7 @@ describe("when: on default ref without open PR", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push",
+      action: "push",
       label: "Push",
       disabled: false,
     });
@@ -914,7 +916,7 @@ describe("when: ref has no upstream configured", () => {
     );
     assert.deepInclude(quick, {
       kind: "run_action",
-      action: "commit_push",
+      action: "push",
       label: "Push",
       disabled: false,
     });

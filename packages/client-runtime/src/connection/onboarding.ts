@@ -323,7 +323,12 @@ const registerSshConnection = Effect.fn(
   ) {
     return yield* differentMachineError(registration.target.label);
   }
-  yield* registry.register(registration, account);
+  // As with pairing: a host reports its own environment id, so an add that does
+  // not target a saved environment must not become a route to one.
+  yield* registry.register(registration, {
+    ...account,
+    knownAddressOnly: input.expectedEnvironmentId === undefined,
+  });
   return registration.target.environmentId;
 });
 
