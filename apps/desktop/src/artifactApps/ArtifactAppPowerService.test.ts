@@ -1019,41 +1019,38 @@ describe("ArtifactAppPowerService permissions", () => {
     [
       "its window closed",
       // Only the listener says so: the session ends with the close, whatever else is known.
-      (fixture: Fixture) => {
-        for (const listener of fixture.closedListeners) listener(ID);
-      },
+      (fixture: Fixture) =>
+        Effect.sync(() => {
+          for (const listener of fixture.closedListeners) listener(ID);
+        }),
     ],
     [
       // Nothing has told the service: only asking the windows again shows it.
       "its window was replaced",
-      (fixture: Fixture) => {
-        fixture.liveWindows.set(ID, windowOf(ID));
-      },
+      (fixture: Fixture) =>
+        Effect.sync(() => {
+          fixture.liveWindows.set(ID, windowOf(ID));
+        }),
     ],
     [
       "its view took the page away",
-      (fixture: Fixture) => {
-        // The view's "close" waits for the request in flight; the version ends before it.
-        void Effect.runFork(fixture.powers.permissions(WC, { action: "close" }));
-      },
+      // The view's "close" waits for the request in flight; the version ends before it.
+      (fixture: Fixture) => fixture.powers.permissions(WC, { action: "close" }),
     ],
-    [
-      "its view moved to another version",
-      (fixture: Fixture) => {
-        void Effect.runFork(open(fixture, V2));
-      },
-    ],
+    ["its view moved to another version", (fixture: Fixture) => open(fixture, V2)],
     [
       "its install was removed",
-      (fixture: Fixture) => {
-        fixture.apps.delete(ID);
-      },
+      (fixture: Fixture) =>
+        Effect.sync(() => {
+          fixture.apps.delete(ID);
+        }),
     ],
     [
       "its frame left the version",
-      (fixture: Fixture) => {
-        fixture.onVersion.set(ID, false);
-      },
+      (fixture: Fixture) =>
+        Effect.sync(() => {
+          fixture.onVersion.set(ID, false);
+        }),
     ],
   ] as const)("refuses a request in flight when %s before it could act", ([, change]) =>
     withFixture((fixture) =>
@@ -1064,7 +1061,9 @@ describe("ArtifactAppPowerService permissions", () => {
         // The request has passed its first checks and is reading the page's file.
         const request = yield* Effect.forkChild(notify(fixture));
         yield* settle;
-        change(fixture);
+        // Some of these wait for the request in flight, so none is waited for here.
+        yield* Effect.forkChild(change(fixture));
+        yield* settle;
         yield* Deferred.succeed(gate, undefined);
         assert.deepEqual(yield* Fiber.join(request), REFUSED);
         yield* settle;
