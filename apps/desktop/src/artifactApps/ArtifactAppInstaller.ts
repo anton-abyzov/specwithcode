@@ -389,16 +389,23 @@ const make = Effect.gen(function* () {
     if (!(yield* exists(path))) return false;
     switch (location.kind) {
       case "mac-bundle": {
-        // Every file this install wrote that names its id must still name it:
-        // the launcher script that runs, not only the Info.plist beside it.
-        const marked = location.files.filter(
-          (file) => file.kind === "text" && file.contents.includes(installId),
-        );
-        if (marked.length === 0) return false;
-        for (const file of marked) {
-          const target = rules.join(path, file.relativePath);
-          if (yield* isSymbolicLink(target)) return false;
-          if (!(yield* fileMentions(target, installId))) return false;
+        // The bundle is this install's only while every text file it wrote
+        // (the Info.plist naming the executable, the launcher script) is still
+        // exactly what was written, and nothing inside it is a link. A bundle
+        // pointed at another program or through a linked folder is left alone.
+        const texts = location.files.filter((file) => file.kind === "text");
+        if (!texts.some((file) => file.contents.includes(installId))) return false;
+        for (const file of texts) {
+          const parts = file.relativePath.split("/");
+          let current = path;
+          for (const part of parts) {
+            current = rules.join(current, part);
+            if (yield* isSymbolicLink(current)) return false;
+          }
+          const onDisk = yield* fileSystem
+            .readFileString(current)
+            .pipe(Effect.orElseSucceed(() => null));
+          if (onDisk !== file.contents) return false;
         }
         return true;
       }

@@ -464,6 +464,48 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
     ),
   );
 
+  it.effect("keeps a bundle pointed at another program or through a linked folder", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const bundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Morning dashboard.app",
+        );
+        const plist = path.join(bundle, "Contents", "Info.plist");
+        const original = yield* fileSystem.readFileString(plist);
+
+        // The plist now runs another program; the launcher script is untouched.
+        yield* fileSystem.writeFileString(
+          plist,
+          original.replace("<string>launcher</string>", "<string>other</string>"),
+        );
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(h.calls.trashed, []);
+
+        // A bundle whose Contents is a link to an exact copy is not removed either.
+        const h2 = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const second = yield* h2.installer.install({ ...input, title: "Evening dashboard" });
+        if (second.status !== "installed") return assert.fail("not installed");
+        const secondBundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Evening dashboard.app",
+        );
+        const copy = path.join(home, "Contents copy");
+        yield* fileSystem.rename(path.join(secondBundle, "Contents"), copy);
+        yield* fileSystem.symlink(copy, path.join(secondBundle, "Contents"));
+        assert.isTrue(yield* h2.installer.uninstall(second.app.installId));
+        assert.deepEqual(h2.calls.trashed, []);
+      }),
+    ),
+  );
+
   it.effect("never removes through an apps folder that became a link", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
