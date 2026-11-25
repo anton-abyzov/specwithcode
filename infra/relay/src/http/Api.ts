@@ -370,26 +370,26 @@ export const layerClientAuth = Layer.effect(
           "relay.auth.mode": verified.mode,
           "relay.auth.subject": verified.sub,
         });
-        if ("sid" in verified && verified.sid) {
-          // A removed phone's Clerk session is refused even before Clerk ends it.
-          const session = yield* PhoneRemovalApi.clerkSessionStatus({
-            userId: verified.sub,
-            clerkSessionId: verified.sid,
-          }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
-          if (session === "removed") return yield* relayAuthInvalidError("device_removed");
-          if (session === "unavailable") {
-            // The middleware's typed error is auth-only; answer with the
-            // encoded internal error every client endpoint declares.
-            return HttpServerResponse.jsonUnsafe(
-              {
-                _tag: "RelayInternalError",
-                code: "internal_error",
-                reason: "persistence_failed",
-                traceId: yield* currentTraceId,
-              },
-              { status: 500 },
-            );
-          }
+        // A removed phone's Clerk session is refused even before Clerk ends it,
+        // and a deleted account's token as long as it is valid.
+        const session = yield* PhoneRemovalApi.clerkSessionStatus({
+          userId: verified.sub,
+          clerkSessionId: "sid" in verified ? verified.sid : undefined,
+        }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
+        if (session === "removed") return yield* relayAuthInvalidError("device_removed");
+        if (session === "deleted") return yield* relayAuthInvalidError("invalid_bearer");
+        if (session === "unavailable") {
+          // The middleware's typed error is auth-only; answer with the
+          // encoded internal error every client endpoint declares.
+          return HttpServerResponse.jsonUnsafe(
+            {
+              _tag: "RelayInternalError",
+              code: "internal_error",
+              reason: "persistence_failed",
+              traceId: yield* currentTraceId,
+            },
+            { status: 500 },
+          );
         }
 
         return yield* httpEffect.pipe(
@@ -905,15 +905,15 @@ export const layerTokenApi = HttpApiBuilder.group(
             Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
           );
           const clerkSessionId = clerkSessionIdClaim(verified).sid;
-          const admitted = yield* PhoneRemovalApi.admitTokenExchange({
+          const refused = yield* PhoneRemovalApi.admitTokenExchange({
             userId: verified.sub,
             clientId: args.payload.client_id,
             deviceId: args.payload.device_id,
             proofKeyThumbprint,
             clerkSessionId,
           });
-          if (!admitted) {
-            return yield* relayAuthInvalidError("device_removed");
+          if (refused) {
+            return yield* relayAuthInvalidError(refused);
           }
           const now = yield* DateTime.now;
           const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
@@ -1486,7 +1486,7 @@ const requireDpopPrincipalScope = Effect.fn("relay.api.require_dpop_principal_sc
     clerkSessionId: principal.clerkSessionId,
   });
   if (removed) {
-    return yield* relayAuthInvalidError("device_removed");
+    return yield* relayAuthInvalidError(removed);
   }
   return principal.proofKeyThumbprint;
 });

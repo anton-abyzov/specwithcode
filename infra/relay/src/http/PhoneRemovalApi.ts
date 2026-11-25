@@ -1,5 +1,7 @@
 import type { RelayPublicClientId } from "@specweave-studio/contracts/relay";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as PhoneRemovals from "../agentActivity/PhoneRemovals.ts";
 import * as ClerkSessions from "../auth/ClerkSessions.ts";
@@ -131,30 +133,55 @@ const settleBlockedPhone = Effect.fnUntraced(function* (
   return true;
 });
 
+/** The in-app deletion stays reachable for a deleting account, so a client can retry it. */
+const isAccountDeletionRequest = Effect.serviceOption(HttpServerRequest.HttpServerRequest).pipe(
+  Effect.map(
+    (request) =>
+      Option.isSome(request) &&
+      request.value.method === "DELETE" &&
+      request.value.url.split("?")[0] === "/v1/client/account",
+  ),
+);
+
 /**
- * Whether the phone presenting this device id, DPoP key or Clerk session was
- * removed from the account and has not signed in again since; completes the
- * removal with what it presented.
+ * Why a DPoP call is refused, or false: the account was deleted (its token
+ * outlived it), or the phone presenting this device id, DPoP key or Clerk
+ * session was removed and has not signed in again since. A removal is
+ * completed with what the phone presented.
  */
 export const isRemovedPhone = Effect.fn("relay.phone_removal.is_removed")(function* (
   input: PhoneRemovals.PhoneRequestSelector,
 ) {
   const removals = yield* PhoneRemovals.PhoneRemovals;
+  if (yield* removals.isAccountDeleted({ userId: input.userId })) return "invalid_bearer" as const;
   const blocking = yield* removals.findBlocking(input);
   if (!blocking) return false;
   yield* Effect.annotateCurrentSpan({ "relay.phone_removal.blocked": true });
-  return !(yield* settleBlockedPhone(blocking, input));
+  return (yield* settleBlockedPhone(blocking, input)) ? false : ("device_removed" as const);
 });
 
 /**
- * Whether a Clerk session belongs to a removed phone; "unavailable" when the
- * relay could not tell.
+ * Whether a Clerk bearer is refused: "deleted" for a deleted account (except
+ * to retry its deletion), "removed" for a removed phone's session,
+ * "unavailable" when the relay could not tell.
  */
 export const clerkSessionStatus = Effect.fn("relay.phone_removal.clerk_session_status")(
-  function* (input: { readonly userId: string; readonly clerkSessionId: string }) {
+  function* (input: { readonly userId: string; readonly clerkSessionId?: string | undefined }) {
     const removals = yield* PhoneRemovals.PhoneRemovals;
-    return yield* removals.findBlocking(input).pipe(
-      Effect.map((blocking) => (blocking ? ("removed" as const) : ("allowed" as const))),
+    return yield* Effect.gen(function* () {
+      if (
+        (yield* removals.isAccountDeleted({ userId: input.userId })) &&
+        !(yield* isAccountDeletionRequest)
+      ) {
+        return "deleted" as const;
+      }
+      if (!input.clerkSessionId) return "allowed" as const;
+      const blocking = yield* removals.findBlocking({
+        ...input,
+        clerkSessionId: input.clerkSessionId,
+      });
+      return blocking ? ("removed" as const) : ("allowed" as const);
+    }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Phone removal check failed", { stage: error.stage }).pipe(
           Effect.as("unavailable" as const),
@@ -178,8 +205,8 @@ export const removalStatus = Effect.fn("relay.phone_removal.removal_status")(fun
  * removal: a fresh interactive sign-in, since the removal ended the session
  * it had. A refreshed token from the same session, or any doubt (no session
  * id, a failed Clerk lookup), keeps it refused (see settleBlockedPhone). An
- * admitted exchange records which client, device and session the key is
- * for.
+ * admitted exchange (null) records which client, device and session the key
+ * is for; a refused one returns the reason.
  */
 export const admitTokenExchange = Effect.fn("relay.phone_removal.admit_token_exchange")(
   function* (input: {
@@ -190,10 +217,13 @@ export const admitTokenExchange = Effect.fn("relay.phone_removal.admit_token_exc
     readonly clerkSessionId?: string | undefined;
   }) {
     const removals = yield* PhoneRemovals.PhoneRemovals;
+    // A deleted account gets no new token and no client key row.
+    if (yield* removals.isAccountDeleted({ userId: input.userId }))
+      return "invalid_bearer" as const;
     const blocking = yield* removals.findBlocking(input);
     if (blocking) {
       yield* Effect.annotateCurrentSpan({ "relay.phone_removal.blocked": true });
-      if (!(yield* settleBlockedPhone(blocking, input))) return false;
+      if (!(yield* settleBlockedPhone(blocking, input))) return "device_removed" as const;
     }
     yield* removals.recordClientKey({
       userId: input.userId,
@@ -202,7 +232,7 @@ export const admitTokenExchange = Effect.fn("relay.phone_removal.admit_token_exc
       deviceId: input.deviceId,
       clerkSessionId: input.clerkSessionId,
     });
-    return true;
+    return null;
   },
 );
 

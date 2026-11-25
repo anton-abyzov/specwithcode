@@ -139,6 +139,7 @@ const withAdmin = <A, E>(
         ...world.tunnels,
       }),
       Layer.mock(PhoneRemovals.PhoneRemovals, {
+        isAccountDeleted: () => Effect.succeed(false),
         findBlocking: (input) =>
           world.removalCheck === "fails"
             ? Effect.fail(

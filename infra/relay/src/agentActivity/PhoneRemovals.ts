@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as RelayDb from "../db.ts";
 import {
+  relayAccountDeletions,
   relayClientKeys,
   relayLiveActivities,
   relayMobileDeviceRemovals,
@@ -35,6 +36,7 @@ export class PhoneRemovalPersistenceError extends Schema.TaggedError<PhoneRemova
       "list-phones",
       "backfill",
       "key-status",
+      "account-status",
     ]),
     cause: Schema.Defect(),
   },
@@ -84,6 +86,13 @@ export class PhoneRemovals extends Context.Service<
     readonly findBlocking: (
       input: PhoneRequestSelector,
     ) => Effect.Effect<PhoneRemovalRecord | null, PhoneRemovalPersistenceError>;
+    /**
+     * Whether the account is being or was deleted, in the app or through
+     * Clerk. Its tokens can outlive the deletion, so they are checked here.
+     */
+    readonly isAccountDeleted: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<boolean, PhoneRemovalPersistenceError>;
     /** Whether any account removed the phone holding this DPoP key. */
     readonly isKeyRemoved: (input: {
       readonly proofKeyThumbprint: string;
@@ -254,6 +263,15 @@ export const make = Effect.gen(function* () {
         .limit(1)
         .pipe(Effect.mapError(fail(input.userId, "find-blocking")));
       return rows[0] ?? null;
+    }),
+    isAccountDeleted: Effect.fn("relay.phone_removals.is_account_deleted")(function* (input) {
+      const rows = yield* db
+        .select({ userId: relayAccountDeletions.userId })
+        .from(relayAccountDeletions)
+        .where(eq(relayAccountDeletions.userId, input.userId))
+        .limit(1)
+        .pipe(Effect.mapError(fail(input.userId, "account-status")));
+      return rows.length > 0;
     }),
     isKeyRemoved: Effect.fn("relay.phone_removals.is_key_removed")(function* (input) {
       const rows = yield* db

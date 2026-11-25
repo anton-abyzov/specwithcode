@@ -42,6 +42,12 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
+import * as RelayDb from "../db.ts";
+import {
+  relayAccountDeletions,
+  relayClientKeys,
+  relayMobileDevices,
+} from "../persistence/schema.ts";
 import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
 import * as RelayHttpApi from "./Api.ts";
 
@@ -410,8 +416,28 @@ const makeRelay = Effect.gen(function* () {
       yield* devices.register({ userId: USER, registration: registration(deviceId) });
     }).pipe(Effect.provide(context));
 
+  /** What a Clerk-webhook deletion leaves: the marker, then the rows gone. */
+  const markDeleted = Effect.gen(function* () {
+    const db = yield* RelayDb.RelayDb;
+    yield* db
+      .insert(relayAccountDeletions)
+      .values({ userId: USER, startedAt: "2026-11-24T00:00:00.000Z" });
+    yield* db.delete(relayMobileDevices);
+    yield* db.delete(relayClientKeys);
+  }).pipe(Effect.provide(context));
+
+  const userRows = Effect.gen(function* () {
+    const db = yield* RelayDb.RelayDb;
+    return {
+      devices: (yield* db.select().from(relayMobileDevices)).length,
+      clientKeys: (yield* db.select().from(relayClientKeys)).length,
+    };
+  }).pipe(Effect.provide(context));
+
   return {
     faults,
+    markDeleted,
+    userRows,
     removalStatus,
     seedLegacyDevice,
     sessionCreatedAt,
@@ -867,6 +893,35 @@ describe("phone removal over HTTP", () => {
             reason: "persistence_failed",
           },
         });
+      }),
+    ),
+  );
+
+  // Clerk deleted the user and the webhook deleted the relay's rows, but the
+  // phone still holds an unexpired relay token.
+  it.live("refuses a deleted account's writes with a token issued before the deletion", () =>
+    withClerk(
+      Effect.gen(function* () {
+        const relay = yield* makeRelay;
+        const phone = { sid: "sess_phone", key: "key-phone", deviceId: "phone-1" };
+        const token = yield* relay.accessToken(phone);
+        yield* relay.markDeleted;
+
+        expect(yield* relay.register({ ...phone, token })).toMatchObject({
+          status: 401,
+          body: { _tag: "RelayAuthInvalidError", reason: "invalid_bearer" },
+        });
+        expect((yield* relay.connect({ ...phone, token })).status).toBe(401);
+        expect((yield* relay.exchange(phone)).status).toBe(401);
+        expect((yield* relay.clientRequest("GET", "/v1/client/phones", "sess_web")).status).toBe(
+          401,
+        );
+        expect(yield* relay.userRows).toEqual({ devices: 0, clientKeys: 0 });
+        expect(relay.connects).toEqual([]);
+        // The deletion itself stays reachable, so a client can retry it.
+        expect(
+          (yield* relay.clientRequest("DELETE", "/v1/client/account", "sess_web")).status,
+        ).not.toBe(401);
       }),
     ),
   );
