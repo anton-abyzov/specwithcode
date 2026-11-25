@@ -313,6 +313,116 @@ export const pendingSecrets = (saved: PendingCopy): SecretsChoice =>
   saved.secrets ?? { included: false, out: [] };
 
 /**
+ * The choice after a refresh leaves out `added`: merged onto the saved choice another window
+ * may have changed since this one read it, never dropping an exclusion either side holds.
+ */
+export function untickedSecrets(
+  saved: SecretsChoice | null,
+  current: SecretsChoice,
+  added: ReadonlyArray<string>,
+): SecretsChoice {
+  const base = saved ?? current;
+  return {
+    included: base.included && current.included,
+    out: [...new Set([...base.out, ...current.out, ...added])],
+  };
+}
+
+/**
+ * Where the person's secret exclusions for one project's copies are kept: one key per owner
+ * and file, apart from the pointer every window writes whole, so no window's save can drop
+ * another's, and no owner's note can replace another's. Outside the pointers' prefix, so
+ * nothing reads them as a copy left running.
+ */
+const exclusionPrefix = (storageKey: string) =>
+  `${storageKey.replace(/^specwithcode:folder-copy:/, "specwithcode:folder-copy-exclusion:")}:`;
+
+/** One recorded key: who made it (`by`, its own segment) and what it leaves out. */
+type Recorded = { readonly key: string; readonly by: string; readonly what: string };
+
+const safeDecode = (text: string) => {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+};
+
+function recordedKeys(storageKey: string): Array<Recorded> {
+  const prefix = exclusionPrefix(storageKey);
+  const found: Array<Recorded> = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    const rest = key.slice(prefix.length);
+    // Notes saved before owners were recorded have none: they keep applying, and no
+    // owner's Sync again with secrets takes them back. An owner is encoded, so never "file".
+    if (rest === "off" || rest.startsWith("file:")) {
+      found.push({ key, by: "", what: rest });
+      continue;
+    }
+    const split = rest.indexOf(":");
+    if (split < 0) continue;
+    found.push({ key, by: safeDecode(rest.slice(0, split)), what: rest.slice(split + 1) });
+  }
+  return found;
+}
+
+/**
+ * Notes what a person's change left out, under who made it (`by`: the window and the machine
+ * the copy goes to). Taking a file back in, or turning secrets on, is the person's decision on
+ * what they saw, so it takes back every owner's note for it.
+ */
+export function recordExclusions(
+  storageKey: string,
+  before: SecretsChoice,
+  next: SecretsChoice,
+  by = "",
+): void {
+  const owner = `${exclusionPrefix(storageKey)}${encodeURIComponent(by)}:`;
+  try {
+    for (const path of next.out)
+      if (!before.out.includes(path)) localStorage.setItem(`${owner}file:${path}`, "1");
+    if (before.included && !next.included) localStorage.setItem(`${owner}off`, "1");
+    const back = new Set(
+      before.out.filter((path) => !next.out.includes(path)).map((path) => `file:${path}`),
+    );
+    if (!before.included && next.included) back.add("off");
+    if (back.size > 0)
+      for (const { key, what } of recordedKeys(storageKey))
+        if (back.has(what)) localStorage.removeItem(key);
+  } catch {
+    /* Without storage only this window's own choice applies. */
+  }
+}
+
+/** Takes back the notes the owners `mine` accepts made; every other owner's stay. */
+export function clearExclusions(storageKey: string, mine: (by: string) => boolean): void {
+  try {
+    for (const { key, by } of recordedKeys(storageKey)) if (mine(by)) localStorage.removeItem(key);
+  } catch {
+    /* Without storage there is nothing recorded to take back. */
+  }
+}
+
+/** The choice with every exclusion any window recorded for this project's copies. */
+export function settledSecrets(storageKey: string, choice: SecretsChoice): SecretsChoice {
+  const out = new Set<string>();
+  let off = false;
+  try {
+    for (const { what } of recordedKeys(storageKey)) {
+      if (what === "off") off = true;
+      else if (what.startsWith("file:")) out.add(what.slice("file:".length));
+    }
+  } catch {
+    return choice;
+  }
+  const added = [...out].filter((path) => !choice.out.includes(path)).sort();
+  if (added.length === 0 && !(off && choice.included)) return choice;
+  return { included: choice.included && !off, out: [...choice.out, ...added] };
+}
+
+/**
  * True when approving this copy without secrets would be unseen: its choice includes them
  * and the form never said this window cannot send them.
  */

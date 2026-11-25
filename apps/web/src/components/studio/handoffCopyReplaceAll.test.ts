@@ -117,3 +117,19 @@ it("does not let a Replace all click approve a conflict choice another window ma
   // Another window turned a.txt to Take theirs meanwhile.
   expect(replaceAllReady(ready({ rows: [row("take-theirs", "take-theirs")] }), basis)).toBe(false);
 });
+
+it("does not let a Replace all click approve destination contents it never saw", () => {
+  const clicked = ready({ rows: [row("keep-mine", null)], destinationRevision: "seen" });
+  const { replaceAllBasis: basis } = replaceAllPointer(
+    { operationId: clicked.operationId, environmentId: "m3" } as never,
+    clicked,
+  );
+  const answered = [row("keep-mine", "take-theirs")];
+  expect(replaceAllReady(ready({ rows: answered, destinationRevision: "seen" }), basis)).toBe(true);
+  // A conflicting file there was edited before the new comparison read it.
+  expect(replaceAllReady(ready({ rows: answered, destinationRevision: "edited" }), basis)).toBe(
+    false,
+  );
+  // So was one whose comparison names no contents at all.
+  expect(replaceAllReady(ready({ rows: answered }), basis)).toBe(false);
+});

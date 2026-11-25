@@ -147,3 +147,80 @@ it("never puts a shortage measured for an older preview on a newer one", async (
   expect(after?.mirror).toBe(!status.mirror);
   expect(after?.disk).toBeNull();
 }, 120_000);
+
+it("names the destination contents a preview saw, and a new name once they change", async () => {
+  const { copies, operationId, status } = await previewed("contents");
+  const seen = status.destinationRevision;
+  // Nothing is there yet: the destination is named as absent.
+  expect(seen).toBe("absent");
+  // Choices alone leave the destination's name as it was.
+  await copies.decide(operationId, { mirror: !status.mirror });
+  const chosen = await settle(copies, operationId, "previewed");
+  expect(copyStatus(chosen!, await copies.readPlan(operationId)).destinationRevision).toBe(seen);
+  // Something written there before the next comparison gives it a new one.
+  const target = NodePath.join(base, "targets", "contents");
+  NodeFS.mkdirSync(target, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(target, "README.md"), "edited here");
+  await copies.decide(operationId, { mirror: status.mirror });
+  const edited = await settle(copies, operationId, "previewed");
+  const now = copyStatus(edited!, await copies.readPlan(operationId)).destinationRevision;
+  expect(now).toMatch(/^[a-f0-9]{64}$/);
+  expect(now).not.toBe(seen);
+}, 120_000);
+
+it("names again a folder a source file would replace when a hidden part of it changes", async () => {
+  // Here README.md is a folder holding dependencies, which the comparison does not open.
+  const target = NodePath.join(base, "targets", "replaced-tree");
+  const hidden = NodePath.join(target, "README.md", "node_modules", "pkg");
+  NodeFS.mkdirSync(hidden, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 1;\n");
+  const { copies, operationId, status } = await previewed("replaced-tree");
+  const seen = status.destinationRevision;
+  expect(seen).toBeTruthy();
+  // Its contents change before the next comparison; replacing the folder would move them.
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 'edited here';\n");
+  await copies.decide(operationId, {});
+  const after = await settle(copies, operationId, "previewed");
+  expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(seen);
+}, 120_000);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "never names twice alike a folder a source file would replace when part of it cannot be read",
+  async () => {
+    const target = NodePath.join(base, "targets", "unlistable-tree");
+    const hidden = NodePath.join(target, "README.md", "node_modules", "pkg");
+    NodeFS.mkdirSync(hidden, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 1;\n");
+    // The app may pass through this folder but not list it, so an edit inside is unseen.
+    NodeFS.chmodSync(hidden, 0o300);
+    try {
+      const { copies, operationId, status } = await previewed("unlistable-tree");
+      const seen = status.destinationRevision;
+      expect(seen).toBeTruthy();
+      NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 'edited';\n");
+      await copies.decide(operationId, {});
+      const after = await settle(copies, operationId, "previewed");
+      expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(
+        seen,
+      );
+    } finally {
+      NodeFS.chmodSync(hidden, 0o755);
+    }
+  },
+  120_000,
+);
+
+it("names again a folder a source repository would replace when a hidden part of it changes", async () => {
+  // A plain folder sits where the source has the svc-a repository; replacing it moves it whole.
+  const target = NodePath.join(base, "targets", "replaced-repository");
+  const hidden = NodePath.join(target, "repositories", "svc-a", "node_modules", "pkg");
+  NodeFS.mkdirSync(hidden, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 1;\n");
+  const { copies, operationId, status } = await previewed("replaced-repository");
+  const seen = status.destinationRevision;
+  expect(seen).toBeTruthy();
+  NodeFS.writeFileSync(NodePath.join(hidden, "index.js"), "module.exports = 'edited here';\n");
+  await copies.decide(operationId, {});
+  const after = await settle(copies, operationId, "previewed");
+  expect(copyStatus(after!, await copies.readPlan(operationId)).destinationRevision).not.toBe(seen);
+}, 120_000);

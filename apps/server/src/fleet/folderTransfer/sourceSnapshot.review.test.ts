@@ -268,6 +268,56 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+// AC-03: a folder below the pinned root that became a link must not lead the lookup out.
+it.skipIf(process.platform === "win32")(
+  "never packs bytes a link inside the pinned root leads to after the root was replaced",
+  async () => {
+    await FSP.mkdir(Path.join(source, "sub"));
+    await FSP.writeFile(Path.join(source, "sub", "inner.txt"), "reviewed contents");
+    const { entries } = await scanned();
+    const inner = entries.filter((entry) => entry.path === "sub/inner.txt");
+    expect(inner).toHaveLength(1);
+    const parked = `${source}-parked`;
+    let swapped = false;
+    const refused = await run({
+      entries: inner,
+      raceHooks: {
+        afterAncestors: async (absolute) => {
+          if (swapped || !absolute.endsWith("inner.txt")) return;
+          swapped = true;
+          // The pinned root moves away; a new tree takes its path, and the parked
+          // original's folder becomes a link into that new tree.
+          await FSP.rename(source, parked);
+          await FSP.mkdir(Path.join(source, "sub"), { recursive: true });
+          await FSP.writeFile(Path.join(source, "sub", "inner.txt"), "outside bytes!!!!");
+          await FSP.rm(Path.join(parked, "sub"), { recursive: true });
+          await FSP.symlink(Path.join(source, "sub"), Path.join(parked, "sub"));
+        },
+      },
+    }).catch((cause: unknown) => cause);
+    expect(swapped).toBe(true);
+    expect(refused).toBeInstanceOf(Error);
+    expect(await packed().catch(() => "")).not.toContain("outside bytes");
+  },
+);
+
+it("does not trust the stamp of a streamed file, however long writing it to the pack took", async () => {
+  await FSP.writeFile(Path.join(source, "big.bin"), Buffer.alloc(9 * 1024 * 1024, 0x61));
+  const { entries } = await scanned();
+  const big = entries.filter((entry) => entry.path === "big.bin");
+  expect(big).toHaveLength(1);
+  const stamp = Date.now();
+  const at = new Date(stamp - 1_000);
+  await FSP.utimes(Path.join(source, "big.bin"), at, at);
+  const pack = Path.join(root, "files.pack");
+  // The clock reads the read's own moment until the pack holds bytes, then ten seconds
+  // later, as after a slow write of the streamed file into the pack.
+  const now = () =>
+    NodeFS.existsSync(pack) && NodeFS.statSync(pack).size > 0 ? stamp + 10_000 : stamp;
+  const result = await run({ entries: big, now });
+  expect(result.stats["big.bin"]).toBeUndefined();
+});
+
 it("does not trust the stamp of a file read within a tick, however long the pack lane took", async () => {
   const { entries } = await scanned();
   const stamp = Date.now();

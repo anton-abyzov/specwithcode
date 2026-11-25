@@ -275,6 +275,7 @@ export function HandoffFolderCopy({
       else draft.keepDraft({ secrets: choice });
     },
     readSummary: (saved) => readSummary(saved),
+    storageKey,
   });
   const { busy, closeLocked } = useCopyReporting({
     environmentId: project.environmentId,
@@ -762,7 +763,7 @@ export function HandoffFolderCopy({
       projectRelativePath,
       projectId,
       selection,
-      secrets: choices.secrets ?? secrets.chosen,
+      secrets: secrets.settled(choices.secrets),
       ...(secrets.gate.blocked ? { secretsStay: true as const } : {}),
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
@@ -908,14 +909,14 @@ export function HandoffFolderCopy({
       withoutReplaceAll(saved);
       throw new Error(secrets.gate.note ?? secretsSourceOnlyText(sourceLabel));
     }
-    if (!secretsSent || secretsBlockedNow(project.environmentId, environmentId))
-      await secrets.sendTicked(operationId);
+    // Staged again unless the list sent still matches every window's choice (and a reopen).
+    await secrets.sendCurrent(operationId, secretsSent && !secretsBlockedNow(project.environmentId, environmentId));
     setStage("copying");
     try {
       const input = approveInput(
         operationId,
         project.environmentId,
-        pendingSecrets(saved).included,
+        secrets.settled(pendingSecrets(saved)).included,
         secrets.sentFor(operationId),
         environmentId,
         revision,
@@ -1388,7 +1389,7 @@ export function HandoffFolderCopy({
             secretsNote={secrets.leftNote}
             onSendSecrets={
               secrets.canSendLeft && pending && !transferRecovery
-                ? () => void copyAgainNow(false, ALL_SECRETS)
+                ? () => void copyAgainNow(false, secrets.includeAll())
                 : null
             }
             secretsLocked={secrets.gate.note}

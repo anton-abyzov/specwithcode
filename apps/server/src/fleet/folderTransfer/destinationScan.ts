@@ -15,6 +15,12 @@ import {
 import { foldedPathKey } from "./paths.ts";
 import type { DestinationFile, DestinationRepository, Relation } from "./reconcile.ts";
 
+/** A repository's place and who it is, enough to tell whether it is the same one. */
+interface SourceRepository {
+  readonly path: string;
+  readonly identity: string | null;
+}
+
 export interface DestinationState {
   readonly exists: boolean;
   readonly files: Array<DestinationFile>;
@@ -109,6 +115,79 @@ export async function caseInsensitiveAt(directory: string): Promise<boolean> {
 }
 
 /**
+ * One digest of every destination folder replacing could move to the backup whole: one at a
+ * path where the source sends something other than a folder, and one where a source
+ * repository lands on a folder that is not that same repository here. Every such folder
+ * counts, whatever the decision on it, so the digest moves only when the destination does.
+ * Null when there is none.
+ */
+async function replaceableTrees(
+  root: string,
+  files: ReadonlyArray<DestinationFile>,
+  sourceEntries: ReadonlyArray<ManifestEntry>,
+  key: (path: string) => string,
+  repositories: { readonly source: ReadonlyArray<SourceRepository>; readonly here: ReadonlyArray<SourceRepository> },
+): Promise<string | null> {
+  const replaced = new Set(
+    sourceEntries.filter((entry) => entry.type !== "directory").map((entry) => key(entry.path)),
+  );
+  const folderHere = new Set(
+    files.filter((file) => file.type === "directory").map((file) => key(file.path)),
+  );
+  const hereAt = new Map(repositories.here.map((repo) => [key(repo.path), repo]));
+  const repositoryFolders = repositories.source
+    .filter((repo) => {
+      const there = hereAt.get(key(repo.path));
+      return (
+        there === undefined ||
+        (repo.identity !== null && there.identity !== null && repo.identity !== there.identity)
+      );
+    })
+    .map((repo) => repo.path)
+    .filter((path) => path === "." || folderHere.has(key(path)));
+  const folders = [
+    ...new Set([
+      ...files
+        .filter((file) => file.type === "directory" && replaced.has(key(file.path)))
+        .map((file) => file.path),
+      ...repositoryFolders,
+    ]),
+  ].sort();
+  if (folders.length === 0) return null;
+  const hash = NodeCrypto.createHash("sha256");
+  // A part this scan cannot read could change unseen, so its name never matches another.
+  const unseen = (path: string) => hash.update(`\0unseen\0${path}\0${NodeCrypto.randomUUID()}`);
+  const walk = async (absolute: string, relative: string): Promise<void> => {
+    const names = await NodeFSP.readdir(absolute).catch(() => null);
+    if (!names) {
+      unseen(relative);
+      return;
+    }
+    for (const name of names.sort()) {
+      const location = NodePath.join(absolute, name);
+      const path = `${relative}/${name}`;
+      const stat = await NodeFSP.lstat(location, { bigint: true }).catch(() => null);
+      if (!stat) {
+        unseen(path);
+        continue;
+      }
+      const kind = stat.isDirectory() ? "d" : stat.isSymbolicLink() ? "l" : "f";
+      hash.update(
+        `\0${path}\0${kind}\0${stat.size}\0${stat.mtimeNs}\0${stat.ctimeNs}\0${stat.ino}`,
+      );
+      if (kind === "l") {
+        const target = await NodeFSP.readlink(location).catch(() => null);
+        if (target === null) unseen(path);
+        else hash.update(target);
+      }
+      if (kind === "d") await walk(location, path);
+    }
+  };
+  for (const folder of folders) await walk(NodePath.join(root, folder), folder);
+  return hash.digest("hex");
+}
+
+/**
  * Lists the target folder and hashes only what the plan can use: files at a path
  * the source also sends with the same size, and files whose size matches a file
  * the source sends (so its bytes can be reused instead of moved).
@@ -116,6 +195,7 @@ export async function caseInsensitiveAt(directory: string): Promise<boolean> {
 export async function scanDestination(
   target: string,
   sourceEntries: ReadonlyArray<ManifestEntry>,
+  sourceRepositories: ReadonlyArray<SourceRepository> = [],
 ): Promise<DestinationState> {
   const caseInsensitive = await caseInsensitiveAt(target);
   const stat = await lstatOrNull(target);
@@ -159,9 +239,16 @@ export async function scanDestination(
       // Unreadable here: compared as different, never reused.
     }
   });
+  // Folders a source entry of another kind would replace, walked whole below, so a change in
+  // a part the scan does not open (dependencies, build output) still names them anew.
+  const replaceable = await replaceableTrees(scan.root, files, sourceEntries, key, {
+    source: sourceRepositories,
+    here: scan.repositories,
+  });
   const fingerprint = NodeCrypto.createHash("sha256")
     .update(
       JSON.stringify({
+        ...(replaceable !== null ? { replaceable } : {}),
         entries: scan.entries
           .filter((entry) => entry.class !== "repository")
           .map(({ path, type, mode, size, mtimeMs, target }) => ({
