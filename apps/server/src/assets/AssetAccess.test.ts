@@ -969,6 +969,118 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "issues and serves a linked workspace file only while its target is previewable",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-asset-linked-entry-" });
+        const threadId = ThreadId.make("thread-1");
+        yield* fs.writeFileString(path.join(root, "archive.zip"), "not a picture");
+        yield* fs.writeFileString(path.join(root, "real.png"), "png");
+
+        // A picture name over a file of another type is refused when the URL is asked for.
+        yield* fs.symlink(path.join(root, "archive.zip"), path.join(root, "disguised.png"));
+        const refused = yield* issueAssetUrl({
+          resource: { _tag: "workspace-file", threadId, path: "disguised.png" },
+          workspaceRoot: root,
+        }).pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(AssetPreviewTypeValidationError);
+
+        // A link to a picture still works, and stops working if it is repointed afterwards.
+        const linkPath = path.join(root, "shot.png");
+        yield* fs.symlink(path.join(root, "real.png"), linkPath);
+        const issued = yield* issueAssetUrl({
+          resource: { _tag: "workspace-file", threadId, path: "shot.png" },
+          workspaceRoot: root,
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "shot.png")).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(path.join(root, "real.png")),
+        });
+        yield* fs.remove(linkPath);
+        yield* fs.symlink(path.join(root, "archive.zip"), linkPath);
+        expect(yield* resolveAsset(token, "shot.png")).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "serves an HTML preview's linked dependency only when its target is a preview asset",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-asset-linked-dep-" });
+        yield* fs.writeFileString(path.join(root, "report.html"), '<img src="logo.png">');
+        yield* fs.makeDirectory(path.join(root, "src"));
+        yield* fs.writeFileString(path.join(root, "src", "server.ts"), "export const key = 1;");
+        yield* fs.makeDirectory(path.join(root, "assets"));
+        yield* fs.writeFileString(path.join(root, "assets", "pic.png"), "png");
+        yield* fs.makeDirectory(path.join(root, ".cache"));
+        yield* fs.writeFileString(path.join(root, ".cache", "style.css"), "body {}");
+        yield* fs.writeFileString(path.join(root, "plain.css"), "body {}");
+        yield* fs.symlink(path.join(root, "src", "server.ts"), path.join(root, "logo.png"));
+        yield* fs.symlink(path.join(root, "assets", "pic.png"), path.join(root, "pic.png"));
+        yield* fs.symlink(path.join(root, ".cache", "style.css"), path.join(root, "style.css"));
+
+        const issued = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: "report.html",
+          },
+          workspaceRoot: root,
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+
+        // A picture name over source code is not served as a dependency.
+        expect(yield* resolveAsset(token, "logo.png")).toBeNull();
+        // Nor is a target inside a dot directory, by the rule requested names already follow.
+        expect(yield* resolveAsset(token, "style.css")).toBeNull();
+        // Plain dependencies and links to other preview assets in the workspace still serve.
+        expect(yield* resolveAsset(token, "plain.css")).toEqual({
+          kind: "file",
+          path: yield* fs.realPath(path.join(root, "plain.css")),
+        });
+        expect(yield* resolveAsset(token, "pic.png")).toEqual({
+          kind: "file",
+          path: yield* fs.realPath(path.join(root, "assets", "pic.png")),
+        });
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves the dependencies of a page that lives in a dot folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-asset-dot-folder-" });
+      const reports = path.join(root, ".specweave", "increments", "0001-x", "reports");
+      yield* fs.makeDirectory(path.join(reports, "img"), { recursive: true });
+      yield* fs.writeFileString(path.join(reports, "report.html"), '<img src="img/chart.png">');
+      yield* fs.writeFileString(path.join(reports, "img", "chart.png"), "png");
+
+      const issued = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: ".specweave/increments/0001-x/reports/report.html",
+        },
+        workspaceRoot: root,
+      });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "img/chart.png")).toEqual({
+        kind: "file",
+        path: yield* fs.realPath(path.join(reports, "img", "chart.png")),
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves absolute draft media files exactly, wherever they live", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
