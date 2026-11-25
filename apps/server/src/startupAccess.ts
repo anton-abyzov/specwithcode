@@ -119,12 +119,27 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
   return rows.join("\n");
 };
 
+/** Plain HTTP to another machine: the token and every session cookie cross the network readable. */
+const isPlainHttpOffMachine = (connectionString: string): boolean => {
+  if (!URL.canParse(connectionString)) return false;
+  const url = new URL(connectionString);
+  return url.protocol === "http:" && !isLoopbackHost(url.hostname);
+};
+
 export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
   [
     "SpecWithCode server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
+    ...(isPlainHttpOffMachine(accessInfo.connectionString)
+      ? [
+          "",
+          "Warning: this address is plain HTTP. Anyone who can see this network's traffic can",
+          "read the token and take control of this machine. Reach it through a VPN or tailnet",
+          "you trust, or put HTTPS in front of it.",
+        ]
+      : []),
     "",
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",

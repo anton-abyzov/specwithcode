@@ -77,3 +77,23 @@ it("formats headless serve output with the connection string, token, pairing url
   expect(output).toContain("Pairing URL: http://192.168.1.42:8319/pair#token=PAIRCODE");
   assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
 });
+
+it("warns about plain HTTP only when the address leaves this machine", () => {
+  const output = (connectionString: string) =>
+    formatHeadlessServeOutput({
+      connectionString,
+      token: "PAIRCODE",
+      pairingUrl: `${connectionString}/pair#token=PAIRCODE`,
+    });
+  for (const remote of ["http://192.168.1.42:8319", "http://box.example.ts.net:8319"]) {
+    expect(output(remote)).toContain("Warning: this address is plain HTTP.");
+  }
+  for (const local of [
+    "http://127.0.0.1:8319",
+    "http://localhost:8319",
+    "http://[::1]:8319",
+    "https://box.example.ts.net",
+  ]) {
+    expect(output(local)).not.toContain("Warning");
+  }
+});
