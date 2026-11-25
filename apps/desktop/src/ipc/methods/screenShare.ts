@@ -17,7 +17,7 @@ import {
   ScreenShareLocalState,
   type ScreenShareHostLink,
 } from "@specweave-studio/contracts";
-import { currentDesktopBootstrapToken } from "@specweave-studio/shared/desktopBootstrapToken";
+import { currentScreenShareHostProof } from "@specweave-studio/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -200,10 +200,12 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
 
   /**
    * Where this machine's server is and what proves this app to it: the owner
-   * proof for the installed service, or the current token of the launch
-   * secret for a backend this app started. Never sent off this machine.
+   * proof for the installed service, or the host proof of the launch secret
+   * for a backend this app started. The launch secret stays in this process:
+   * the app's window holds the bootstrap token, which is another value and
+   * proves nothing on this socket. Never sent off this machine.
    */
-  const target = Effect.gen(function* () {
+  const place = Effect.gen(function* () {
     const attached = yield* localService.attached;
     let httpBaseUrl: URL;
     let proof: string;
@@ -222,9 +224,18 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
       const secret = Option.getOrUndefined(config)?.bootstrap.desktopBootstrapSecret;
       if (Option.isNone(config) || secret === undefined) return null;
       httpBaseUrl = config.value.httpBaseUrl;
-      proof = currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+      proof = currentScreenShareHostProof(secret, yield* Clock.currentTimeMillis);
     }
-    if (!isThisMachineServiceUrl(httpBaseUrl)) return null;
+    return isThisMachineServiceUrl(httpBaseUrl) ? { httpBaseUrl, proof } : null;
+  });
+  const proof = place.pipe(
+    Effect.map((found) => found?.proof ?? null),
+    Effect.orElseSucceed(() => null),
+  );
+  const target = Effect.gen(function* () {
+    const found = yield* place;
+    if (found === null) return null;
+    const { httpBaseUrl } = found;
     const bearer = yield* localAuth.getBearerToken;
     const ticket = yield* Effect.tryPromise(async () => {
       const response = await fetch(new URL("/api/auth/websocket-ticket", httpBaseUrl), {
@@ -240,7 +251,7 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
     const url = new URL(SCREEN_SHARE_HOST_PATH, httpBaseUrl);
     url.protocol = httpBaseUrl.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("wsTicket", ticket);
-    return { url: url.href, proof };
+    return { url: url.href, proof: found.proof };
   }).pipe(Effect.orElseSucceed(() => null));
 
   const capture = makeScreenCapture();
@@ -292,6 +303,7 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
   };
   const host: ScreenShareHost = new ScreenShareHost({
     target: () => runPromise(target),
+    proof: () => runPromise(proof),
     open: openSocket,
     after,
     sessions,

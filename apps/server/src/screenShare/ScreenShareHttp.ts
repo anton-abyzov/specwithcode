@@ -4,10 +4,14 @@
  * - `GET /api/screen-share/host`: this machine's own app, straight from this
  *   machine (`isOwnApp`), and only once its first message carried the app's
  *   proof (`ownAppProofKind`). The session class alone is not enough: a
- *   command line on this machine can obtain the same class.
- * - `GET /api/screen-share/view`: a person's approved device (`personDeviceOf`).
- *   Agents, worker grants, management keys, pairing codes and the local
- *   command line are refused here, before the app hears of them.
+ *   command line on this machine can obtain the same class, and so can the
+ *   app's own window, which is why the proof is nothing the window holds. The
+ *   app sends the proof again every few minutes and the latest one is checked
+ *   again when a viewer opens.
+ * - `GET /api/screen-share/view`: a person's approved device (`personDeviceOf`)
+ *   on a session that has an end. Agents, worker grants, management keys,
+ *   pairing codes and the local command line are refused here, before the app
+ *   hears of them.
  *
  * Neither socket has a scope of its own on purpose: a scope says what a
  * session may do, never who it is. The decision is read from the whole session.
@@ -71,6 +75,26 @@ export const hostHelloProof = (message: string | Uint8Array): string | null => {
   return hello.t === "hello" && typeof hello.proof === "string" ? hello.proof : null;
 };
 
+/**
+ * Which of the two sockets a request is for; null for everything else under
+ * the prefix, which is answered 404 before anything is authenticated.
+ */
+export const screenShareSocketOf = (
+  pathname: string,
+  upgrade: string | undefined,
+): "host" | "view" | null =>
+  upgrade?.toLowerCase() !== "websocket"
+    ? null
+    : pathname === SCREEN_SHARE_HOST_PATH
+      ? "host"
+      : pathname === SCREEN_SHARE_VIEW_PATH
+        ? "view"
+        : null;
+
+/** When a viewer's session ends, in epoch milliseconds; null when it never would. */
+export const viewerSessionEnd = (expiresAt: DateTime.DateTime | undefined): number | null =>
+  expiresAt === undefined ? null : DateTime.toEpochMillis(expiresAt);
+
 interface Services {
   readonly relay: ScreenShareRelay;
   readonly trust: ConnectDeviceTrust.ConnectDeviceTrustShape;
@@ -98,19 +122,27 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url) || request.headers.upgrade?.toLowerCase() !== "websocket")
-      return notFound;
-    const path = url.value.pathname;
-    if (path !== SCREEN_SHARE_HOST_PATH && path !== SCREEN_SHARE_VIEW_PATH) return notFound;
+    const which = Option.isNone(url)
+      ? null
+      : screenShareSocketOf(url.value.pathname, request.headers.upgrade);
+    if (which === null) return notFound;
     const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
 
-    const asHost = path === SCREEN_SHARE_HOST_PATH;
+    const asHost = which === "host";
     const device = asHost ? null : yield* personDeviceOf(session, approvedNameFrom(trust));
-    if (asHost ? !isOwnApp(session, request) : device === null || "refusal" in device) {
+    // A viewer's session must end by itself: one with no expiry is not let in.
+    const expiresAtMs = viewerSessionEnd(session.expiresAt);
+    const noEnd = !asHost && expiresAtMs === null;
+    if (asHost ? !isOwnApp(session, request) : device === null || "refusal" in device || noEnd) {
       yield* Effect.logInfo("Refused a screen sharing socket.", {
         socket: asHost ? "host" : "view",
         subject: session.subject,
-        reason: device !== null && "refusal" in device ? device.refusal : "not_this_machines_app",
+        reason:
+          device !== null && "refusal" in device
+            ? device.refusal
+            : noEnd
+              ? "session_without_expiry"
+              : "not_this_machines_app",
       });
       return forbidden;
     }
@@ -162,22 +194,23 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
             Effect.sync(() => peer.close(SCREEN_SHARE_CLOSE_REFUSED, reason));
           onChunk = (chunk) =>
             Effect.gen(function* () {
-              if (host !== null) {
-                if (typeof chunk === "string") host.text(chunk);
-                else host.binary(chunk);
-                return;
-              }
-              // Nothing is heard from this socket until it has proved it is the app.
+              if (host !== null && typeof chunk !== "string") return host.binary(chunk);
               const proof = hostHelloProof(chunk);
+              if (host !== null && proof === null) return host.text(chunk as string);
+              // Nothing is heard from this socket until it has proved it is the app,
+              // and a later proof that does not hold ends it.
               const kind = proof === null ? null : yield* proofKind(proof);
               if (proof === null || kind === null) {
                 yield* Effect.logWarning(
                   "Refused a screen sharing host that did not prove it is this machine's app.",
                 );
+                if (host !== null) return relay.dropHost("proof_stale");
                 return yield* refuse("not_this_machines_app");
               }
-              // Only the owner proof is kept: its verifier file can change, so it is checked again.
-              host = relay.attachHost(peer, kind === "owner" ? proof : undefined);
+              if (host !== null) return host.reprove(proof);
+              // The proof is kept and checked again when a viewer opens: a launch
+              // proof runs out in minutes, an owner proof when its file is rewritten.
+              host = relay.attachHost(peer, proof);
               onClosed = host.closed;
               yield* Effect.logInfo("This machine's app attached for screen sharing.", { kind });
             });
@@ -187,10 +220,11 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
             ),
             Effect.andThen(Effect.never),
           );
-        } else if ("device" in device) {
-          // The app that attached may no longer be the app: its verifier was rewritten since.
+        } else if ("device" in device && expiresAtMs !== null) {
+          // The app that attached may no longer be the app: its latest proof ran out, or
+          // the file it is checked against was rewritten since.
           const credential = relay.hostCredential();
-          if (credential !== undefined && (yield* proofKind(credential)) !== "owner") {
+          if (credential !== undefined && (yield* proofKind(credential)) === null) {
             yield* Effect.logWarning("Dropped a screen sharing host whose proof no longer holds.");
             relay.dropHost("proof_stale");
           }
@@ -213,15 +247,12 @@ const makeHandler = ({ relay, trust, environment, secrets, launchSecret }: Servi
           }
           onChunk = (chunk) =>
             Effect.sync(() => {
-              if (typeof chunk !== "string") opened.binary(chunk);
+              if (typeof chunk === "string") opened.text();
+              else opened.binary(chunk);
             });
           onClosed = opened.closed;
           // These sessions' expiry is not watched elsewhere, so the screen stops at it here.
-          if (session.expiresAt !== undefined) {
-            const left =
-              DateTime.toEpochMillis(session.expiresAt) - (yield* Clock.currentTimeMillis);
-            untilOver = Effect.sleep(Math.max(0, left));
-          }
+          untilOver = Effect.sleep(Math.max(0, expiresAtMs - (yield* Clock.currentTimeMillis)));
           yield* Effect.logInfo("A device asked to view this machine's screen.", {
             device: device.device.shortId,
             kind: device.device.kind,

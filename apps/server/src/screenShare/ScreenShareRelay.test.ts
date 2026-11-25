@@ -2,7 +2,10 @@ import {
   encodeScreenShareHostFrame,
   SCREEN_SHARE_CLOSE_ENDED,
   SCREEN_SHARE_CLOSE_REFUSED,
+  SCREEN_SHARE_COOLDOWN_WINDOW_MS,
   SCREEN_SHARE_MAX_CONTROL_BYTES,
+  SCREEN_SHARE_MAX_VIEWER_RECORD_BYTES,
+  SCREEN_SHARE_RELAY_OPENS,
   SCREEN_SHARE_WIRE,
   type ScreenShareViewerDevice,
 } from "@specweave-studio/contracts";
@@ -12,7 +15,13 @@ import { readFileSync } from "node:fs";
 import { makeScreenShareSealer } from "@specweave-studio/shared/screenShareChannel";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ScreenShareRelay, type ScreenSharePeer } from "./ScreenShareRelay.ts";
+import {
+  RELAY_FIRST_WORD_MS,
+  RELAY_HANDSHAKE_MS,
+  RELAY_SESSION_MS,
+  ScreenShareRelay,
+  type ScreenSharePeer,
+} from "./ScreenShareRelay.ts";
 
 const SID = "0f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9";
 const SID2 = "1f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9";
@@ -43,6 +52,30 @@ function peer() {
     setBuffered: (bytes: number) => {
       buffered = bytes;
     },
+  };
+}
+
+/** A clock and timers the test moves by hand. */
+function clock() {
+  let now = 1_000_000;
+  let timers: Array<{ at: number; run: () => void }> = [];
+  return {
+    now: () => now,
+    after: (ms: number, run: () => void) => {
+      const timer = { at: now + ms, run };
+      timers.push(timer);
+      return () => {
+        timers = timers.filter((other) => other !== timer);
+      };
+    },
+    advance: (ms: number) => {
+      now += ms;
+      for (const timer of timers.filter((candidate) => candidate.at <= now)) {
+        timers = timers.filter((other) => other !== timer);
+        timer.run();
+      }
+    },
+    pending: () => timers.length,
   };
 }
 
@@ -83,7 +116,7 @@ describe("ScreenShareRelay", () => {
   it("refuses a viewer until the app says sharing is on", () => {
     const relay = new ScreenShareRelay();
     const host = peer();
-    const hostIn = relay.attachHost(host.end);
+    const hostIn = relay.attachHost(host.end, "proof-1");
     // An app that has said nothing counts as unsupported and off.
     expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "unsupported" });
     hostIn.text(status({ enabled: false, supported: true, busy: false }));
@@ -330,7 +363,7 @@ describe("ScreenShareRelay", () => {
     const viewer = peer();
     relay.openViewer(viewer.end, DEVICE, "env");
     const next = peer();
-    const nextIn = relay.attachHost(next.end);
+    const nextIn = relay.attachHost(next.end, "proof-2");
     expect(host.closes).toEqual([{ code: 1012, reason: "replaced" }]);
     expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_REFUSED, reason: "no_host" }]);
     hostIn.text(status(on));
@@ -339,5 +372,96 @@ describe("ScreenShareRelay", () => {
     expect(relay.status().host).toBe(true);
     nextIn.text(status(on));
     expect(relay.status().enabled).toBe(true);
+  });
+
+  it("ends a handshake that does not finish in time, whatever the app does", () => {
+    const time = clock();
+    const { relay, host } = ready({ after: time.after, now: time.now });
+    const viewer = peer();
+    const opened = relay.openViewer(viewer.end, DEVICE, "env");
+    if ("refused" in opened) throw new Error("refused");
+    opened.binary(bytes(SCREEN_SHARE_WIRE.hello, 1));
+    // The app never answers with a challenge.
+    time.advance(RELAY_HANDSHAKE_MS - 1);
+    expect(viewer.closes).toEqual([]);
+    time.advance(1);
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_ENDED, reason: "handshake_failed" }]);
+    expect(host.json().at(-1)).toEqual({ t: "closed", sid: SID });
+    expect(relay.status().busy).toBe(false);
+    expect(time.pending()).toBe(0);
+  });
+
+  it("ends a session whose app says nothing sealed after the proof", () => {
+    const time = clock();
+    const { viewer, relay } = handshaken({ after: time.after, now: time.now });
+    time.advance(RELAY_FIRST_WORD_MS);
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_ENDED, reason: "handshake_failed" }]);
+    expect(relay.status().busy).toBe(false);
+  });
+
+  it("ends a session at its longest life even when the app never ends it", () => {
+    const time = clock();
+    const { viewer, hostIn } = handshaken({ after: time.after, now: time.now });
+    hostIn.binary(encodeScreenShareHostFrame(SID, bytes(SCREEN_SHARE_WIRE.sealed, 9)));
+    time.advance(RELAY_SESSION_MS - RELAY_HANDSHAKE_MS);
+    expect(viewer.closes).toEqual([]);
+    time.advance(RELAY_HANDSHAKE_MS);
+    expect(viewer.closes).toEqual([{ code: SCREEN_SHARE_CLOSE_ENDED, reason: "time_limit" }]);
+    expect(time.pending()).toBe(0);
+  });
+
+  it("refuses a device that opened too many sessions lately, and lets it back after the window", () => {
+    const time = clock();
+    let made = 0;
+    const { relay } = ready({
+      after: time.after,
+      now: time.now,
+      newSessionId: () => `${String((made += 1)).padStart(8, "0")}-4b5a-4978-8695-a4b3c2d1e0f9`,
+    });
+    for (let index = 0; index < SCREEN_SHARE_RELAY_OPENS; index += 1) {
+      const opened = relay.openViewer(peer().end, DEVICE, "env");
+      if ("refused" in opened) throw new Error(`refused at ${index}`);
+      opened.closed();
+    }
+    expect(relay.openViewer(peer().end, DEVICE, "env")).toEqual({ refused: "cooldown" });
+    // Another device is not held back by this one.
+    const other = relay.openViewer(peer().end, { ...DEVICE, thumbprint: "other" }, "env");
+    if ("refused" in other) throw new Error("refused");
+    other.closed();
+    time.advance(SCREEN_SHARE_COOLDOWN_WINDOW_MS);
+    expect("sid" in relay.openViewer(peer().end, DEVICE, "env")).toBe(true);
+  });
+
+  it("passes only small sealed records from a viewer, and ends on any text from one", () => {
+    const first = handshaken();
+    first.hostIn.binary(encodeScreenShareHostFrame(SID, bytes(SCREEN_SHARE_WIRE.sealed, 9)));
+    const big = new Uint8Array(SCREEN_SHARE_MAX_VIEWER_RECORD_BYTES + 1);
+    big[0] = SCREEN_SHARE_WIRE.sealed;
+    first.opened.binary(big.subarray(0, SCREEN_SHARE_MAX_VIEWER_RECORD_BYTES));
+    expect(first.host.binaries).toHaveLength(1);
+    first.opened.binary(big);
+    expect(first.host.binaries).toHaveLength(1);
+    expect(first.viewer.closes).toEqual([
+      { code: SCREEN_SHARE_CLOSE_ENDED, reason: "protocol_error" },
+    ]);
+
+    const second = handshaken();
+    second.opened.text();
+    expect(second.viewer.closes).toEqual([
+      { code: SCREEN_SHARE_CLOSE_ENDED, reason: "protocol_error" },
+    ]);
+    expect(second.host.json().at(-1)).toEqual({ t: "closed", sid: SID });
+  });
+
+  it("keeps the app's latest proof for the routes to check again", () => {
+    const { relay, hostIn } = ready();
+    expect(relay.hostCredential()).toBe("proof-1");
+    hostIn.reprove("proof-2");
+    expect(relay.hostCredential()).toBe("proof-2");
+    const next = peer();
+    relay.attachHost(next.end, "proof-3");
+    // The replaced socket can no longer change what is checked.
+    hostIn.reprove("proof-4");
+    expect(relay.hostCredential()).toBe("proof-3");
   });
 });

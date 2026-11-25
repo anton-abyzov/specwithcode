@@ -194,10 +194,16 @@ type Device = Awaited<ReturnType<typeof makeDevice>>;
 async function connect(
   r: Rig,
   device: Device,
-  options?: { readonly knowsMachine?: boolean; readonly sid?: string },
+  options?: {
+    readonly knowsMachine?: boolean;
+    readonly sid?: string;
+    /** Whether the machine has this device on record as having typed its code. Default: as `knowsMachine`. */
+    readonly onRecord?: boolean;
+  },
 ) {
   const sid = options?.sid ?? SID;
   const knowsMachine = options?.knowsMachine ?? true;
+  if (options?.onRecord ?? knowsMachine) r.store.rememberDevice(device.device.thumbprint);
   const from = r.sent.length;
   r.sessions.opened(sid, ENV, device.device);
   const start = startScreenShareViewer({ mode: "view", deviceJwk: device.jwk, knowsMachine });
@@ -384,7 +390,9 @@ describe("the prompt", () => {
     const r = rig();
     const device = await makeDevice();
     const viewer = await live(r, device);
-    expect(r.authReasons).toEqual(["allow Work laptop to view this Mac's screen"]);
+    expect(r.authReasons).toEqual([
+      `allow "Work laptop" (7F3A) to view this Mac's screen this once`,
+    ]);
     expect(viewer.states.at(-1)).toMatchObject({ phase: "live", displayId: "1" });
     expect(r.store.grants).toEqual([]);
     expect(r.state.promptVisible).toBe(false);
@@ -508,6 +516,46 @@ describe("first use", () => {
     // "Always allow" was pressed, but nothing was granted.
     expect(r.store.grants).toEqual([]);
     expect(r.store.audit.at(-1)).toMatchObject({ outcome: "refused", reason: "wrong_code" });
+  });
+
+  it("is decided by this machine's record, not by what the viewer says about itself", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    r.store.addGrant(device.device);
+    // The viewer says it knows this machine. The machine has no record of it.
+    const viewer = (await connect(r, device, { knowsMachine: true, onRecord: false }))!;
+    expect(r.prompts).toHaveLength(1);
+    expect(r.prompts[0]).toMatchObject({ stage: "ask", code: viewer.code });
+    expect(r.banners).toEqual([]);
+    await r.sessions.answerPrompt(SID, "once");
+    await viewer.drain();
+    expect(viewer.states.at(-1)).toEqual({ phase: "needs_code", triesLeft: 3 });
+    expect(r.banners).toEqual([]);
+    expect(r.store.knowsDevice(device.device.thumbprint)).toBe(false);
+
+    await viewer.tell(SCREEN_SHARE_RECORD.confirmCode, { code: viewer.code });
+    expect(viewer.states.at(-1)).toMatchObject({ phase: "live" });
+    expect(r.store.knowsDevice(device.device.thumbprint)).toBe(true);
+    r.sessions.stop();
+    await settle(r);
+
+    // Now it is on record: the grant lets it in with no prompt.
+    const again = (await connect(r, device, { sid: SID2, onRecord: false }))!;
+    expect(r.prompts).toHaveLength(2);
+    expect(again.states.at(-1)).toMatchObject({ phase: "live" });
+    expect(r.store.audit.at(-1)).toMatchObject({ outcome: "allowed_by_grant" });
+  });
+
+  it("starts over for a device that was removed", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    r.store.rememberDevice(device.device.thumbprint);
+    r.store.addGrant(device.device);
+    r.sessions.removeGrant(device.device.thumbprint);
+    expect(r.store.knowsDevice(device.device.thumbprint)).toBe(false);
+    const viewer = (await connect(r, device, { onRecord: false }))!;
+    expect(r.prompts).toHaveLength(1);
+    expect(r.prompts[0]).toMatchObject({ stage: "ask", code: viewer.code });
   });
 
   it("the code cannot be sent before a person allowed, and runs out after a minute", async () => {
@@ -759,6 +807,119 @@ describe("a live session", () => {
       },
     ]);
     expect(JSON.stringify(r.store.audit)).not.toContain("jpeg");
+  });
+});
+
+describe("the system's authentication", () => {
+  /** An authentication the test answers when it chooses. */
+  const held = (r: Rig) => {
+    const answers: Array<(present: boolean) => void> = [];
+    r.state.auth = () => new Promise<boolean>((resolve) => void answers.push(resolve));
+    return answers;
+  };
+
+  it("names the exact choice and the device in the system's dialog", async () => {
+    const once = rig();
+    const device = await makeDevice();
+    await connect(once, device);
+    await once.sessions.answerPrompt(SID, "once");
+    const always = rig();
+    await connect(always, device);
+    await always.sessions.answerPrompt(SID, "always");
+    const { label, shortId } = device.device;
+    expect(once.authReasons).toEqual([
+      `allow "${label}" (${shortId}) to view this Mac's screen this once`,
+    ]);
+    expect(always.authReasons).toEqual([
+      `always allow "${label}" (${shortId}) to view this Mac's screen without asking again`,
+    ]);
+    expect(once.store.grants).toEqual([]);
+    expect(always.store.grants).toHaveLength(1);
+  });
+
+  it("counts only for the choice it was asked for: a second press while it is up does nothing", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    const answers = held(r);
+    await connect(r, device);
+    const first = r.sessions.answerPrompt(SID, "once");
+    // "Always allow" pressed while the dialog for "Allow once" is up.
+    await r.sessions.answerPrompt(SID, "always");
+    expect(r.authReasons).toHaveLength(1);
+    answers[0]!(true);
+    await first;
+    await settle(r);
+    expect(r.banners).toHaveLength(1);
+    expect(r.store.grants).toEqual([]);
+    expect(r.store.audit.at(-1)).toMatchObject({ outcome: "allowed_once" });
+  });
+
+  it("is dropped when the session it was for ended while the dialog was up", async () => {
+    const timedOut = rig();
+    const device = await makeDevice();
+    let answers = held(timedOut);
+    await connect(timedOut, device);
+    let asked = timedOut.sessions.answerPrompt(SID, "always");
+    await timedOut.advance(SCREEN_SHARE_PROMPT_MS + 1);
+    expect(timedOut.closes).toEqual([{ sid: SID, reason: "prompt_timeout" }]);
+    answers[0]!(true);
+    await asked;
+    await settle(timedOut);
+    expect(timedOut.banners).toEqual([]);
+    expect(timedOut.store.grants).toEqual([]);
+
+    // Deny wins over an authentication under way.
+    const denied = rig();
+    answers = held(denied);
+    await connect(denied, device);
+    asked = denied.sessions.answerPrompt(SID, "once");
+    await denied.sessions.answerPrompt(SID, "deny");
+    await settle(denied);
+    expect(denied.closes).toEqual([{ sid: SID, reason: "denied" }]);
+    answers[0]!(true);
+    await asked;
+    await settle(denied);
+    expect(denied.banners).toEqual([]);
+
+    // An answer for one session never allows the next one.
+    const next = rig();
+    answers = held(next);
+    await connect(next, device);
+    asked = next.sessions.answerPrompt(SID, "once");
+    next.sessions.closed(SID);
+    await settle(next);
+    await connect(next, device, { sid: SID2 });
+    answers[0]!(true);
+    await asked;
+    await settle(next);
+    expect(next.banners).toEqual([]);
+    expect(next.prompts.at(-1)).toMatchObject({ sid: SID2, stage: "ask" });
+  });
+
+  it("puts one dialog up at a time: the switch and a prompt do not overlap", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    const answers = held(r);
+    await connect(r, device);
+    const asked = r.sessions.answerPrompt(SID, "once");
+    // The switch is already on here; turn it off and try to turn it on under the dialog.
+    await r.sessions.setEnabled(false);
+    expect(await r.sessions.setEnabled(true)).toBe(false);
+    expect(r.authReasons).toHaveLength(1);
+    answers[0]!(true);
+    await asked;
+    expect(r.store.enabled).toBe(false);
+    expect(r.banners).toEqual([]);
+  });
+
+  it("does not turn sharing on with an answer given before it was turned off again", async () => {
+    const r = rig({ enabled: false });
+    const answers = held(r);
+    const turningOn = r.sessions.setEnabled(true);
+    await r.sessions.setEnabled(false);
+    answers[0]!(true);
+    expect(await turningOn).toBe(false);
+    expect(r.store.enabled).toBe(false);
   });
 });
 

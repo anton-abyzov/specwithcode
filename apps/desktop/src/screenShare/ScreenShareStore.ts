@@ -44,6 +44,12 @@ interface Stored {
   readonly audit: ReadonlyArray<ScreenShareAuditEntry>;
   /** Per device thumbprint: when it was refused lately, and until when it is not asked about. */
   readonly strikes: Readonly<Record<string, Strikes>>;
+  /**
+   * Thumbprints of devices whose person typed this machine's first-use code
+   * here. This machine's own record of "not the first time": what a viewer
+   * says about itself is not asked.
+   */
+  readonly known: ReadonlyArray<string>;
 }
 
 interface Strikes {
@@ -53,6 +59,7 @@ interface Strikes {
 
 const MAX_GRANTS = 50;
 const MAX_STRIKE_DEVICES = 200;
+const MAX_KNOWN_DEVICES = 200;
 
 const parseStrikes = (value: unknown): Record<string, Strikes> => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
@@ -119,6 +126,7 @@ const parseStored = (text: string): Stored | null => {
       (entry) => typeof entry === "object" && entry !== null && isString(entry.id),
     ),
     strikes: parseStrikes(stored.strikes),
+    known: Array.isArray(stored.known) ? stored.known.filter(isString) : [],
   };
 };
 
@@ -142,6 +150,7 @@ export class ScreenShareStore {
       grants: [],
       audit: [],
       strikes: {},
+      known: [],
     };
   }
 
@@ -237,10 +246,26 @@ export class ScreenShareStore {
     });
   }
 
+  /** Removing a device also forgets that it was here before: it is asked, and types the code, again. */
   removeGrant(thumbprint: string): boolean {
     return this.save({
       ...this.state,
       grants: this.state.grants.filter((grant) => grant.thumbprint !== thumbprint),
+      known: this.state.known.filter((known) => known !== thumbprint),
+    });
+  }
+
+  /** Whether this device's person already typed this machine's code here. */
+  knowsDevice(thumbprint: string): boolean {
+    return this.state.known.includes(thumbprint);
+  }
+
+  /** The device's person typed the code this machine showed. False when it could not be kept. */
+  rememberDevice(thumbprint: string): boolean {
+    if (this.state.known.includes(thumbprint)) return true;
+    return this.save({
+      ...this.state,
+      known: [...this.state.known, thumbprint].slice(-MAX_KNOWN_DEVICES),
     });
   }
 

@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
   currentDesktopBootstrapToken,
+  currentScreenShareHostProof,
+  isValidScreenShareHostProof,
+  SCREEN_SHARE_HOST_PROOF_WINDOW_MS,
   isValidDesktopBootstrapToken,
 } from "./desktopBootstrapToken.ts";
 
@@ -46,5 +49,37 @@ describe("desktop bootstrap token", () => {
 
     expect(isValidDesktopBootstrapToken(SECRET, token, WINDOW)).toBe(false);
     expect(isValidDesktopBootstrapToken(SECRET, "short", WINDOW)).toBe(false);
+  });
+});
+
+describe("screen sharing host proof", () => {
+  const SECRET = "launch-secret";
+  const STEP = SCREEN_SHARE_HOST_PROOF_WINDOW_MS;
+  const NOW = 1000 * STEP + 5;
+
+  it("holds for its own window and the ones next to it, then runs out", () => {
+    const proof = currentScreenShareHostProof(SECRET, NOW);
+    expect(isValidScreenShareHostProof(SECRET, proof, NOW)).toBe(true);
+    expect(isValidScreenShareHostProof(SECRET, proof, NOW + STEP)).toBe(true);
+    expect(isValidScreenShareHostProof(SECRET, proof, NOW - STEP)).toBe(true);
+    expect(isValidScreenShareHostProof(SECRET, proof, NOW + 2 * STEP)).toBe(false);
+    expect(isValidScreenShareHostProof("another-secret", proof, NOW)).toBe(false);
+    expect(isValidScreenShareHostProof(SECRET, "", NOW)).toBe(false);
+  });
+
+  it("is nothing the bootstrap token gives away, in either direction", () => {
+    // The app's window holds the bootstrap token. It must not pass as the host proof,
+    // and the host proof must not pass as a bootstrap token.
+    for (const at of [NOW, NOW - STEP, NOW + STEP]) {
+      expect(
+        isValidScreenShareHostProof(SECRET, currentDesktopBootstrapToken(SECRET, at), NOW),
+      ).toBe(false);
+      expect(
+        isValidDesktopBootstrapToken(SECRET, currentScreenShareHostProof(SECRET, at), NOW),
+      ).toBe(false);
+    }
+    expect(currentScreenShareHostProof(SECRET, NOW)).not.toBe(
+      currentDesktopBootstrapToken(SECRET, NOW),
+    );
   });
 });

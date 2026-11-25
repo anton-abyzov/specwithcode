@@ -1,6 +1,7 @@
 import {
   encodeScreenShareHostFrame,
   SCREEN_SHARE_CLOSE_REFUSED,
+  SCREEN_SHARE_HOST_PROOF_RENEW_MS,
   type ScreenShareViewerDevice,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -29,9 +30,14 @@ function rig(
   const timers: Array<{ ms: number; run: () => void; live: boolean }> = [];
   const calls: Array<string> = [];
   const links: Array<string> = [];
-  const state = { target, status: { enabled: true, supported: true, busy: false } };
+  const state = {
+    target,
+    nextProof: "p2" as string | null,
+    status: { enabled: true, supported: true, busy: false },
+  };
   const host = new ScreenShareHost({
     target: () => Promise.resolve(state.target),
+    proof: () => Promise.resolve(state.nextProof),
     open: (url) => {
       const socket = {
         url,
@@ -211,5 +217,34 @@ describe("ScreenShareHost", () => {
     socket.onClose?.(1000, "");
     expect(r.calls).toEqual([]);
     expect(r.timers.filter((timer) => timer.live)).toEqual([]);
+  });
+
+  it("sends a new proof over the open link every few minutes, and stops when the link goes", async () => {
+    const r = rig();
+    await r.attached();
+    expect(await r.fire()).toBe(SCREEN_SHARE_HOST_PROOF_RENEW_MS);
+    expect(r.texts().at(-1)).toEqual({ t: "hello", proof: "p2" });
+    r.state.nextProof = "p3";
+    expect(await r.fire()).toBe(SCREEN_SHARE_HOST_PROOF_RENEW_MS);
+    expect(r.texts().at(-1)).toEqual({ t: "hello", proof: "p3" });
+    // No proof to be had right now: nothing is sent, and it is tried again later.
+    r.state.nextProof = null;
+    const sent = r.sockets[0]!.sent.length;
+    await r.fire();
+    expect(r.sockets[0]!.sent).toHaveLength(sent);
+    r.host.stop();
+    expect(r.timers.filter((timer) => timer.live)).toEqual([]);
+  });
+
+  it("when its proof ran out: comes straight back with a new one, and is not shown as refused", async () => {
+    const r = rig();
+    await r.attached();
+    r.state.target = { url: "ws://h/host?wsTicket=u", proof: "p9" };
+    r.sockets[0]!.onClose?.(SCREEN_SHARE_CLOSE_REFUSED, "proof_stale");
+    expect(r.calls).toEqual(["disconnected"]);
+    expect(r.links).toEqual(["attached", "connecting"]);
+    expect(await r.fire()).toBe(HOST_RETRY_MS[0]);
+    r.sockets[1]!.onOpen?.();
+    expect(r.texts(1)).toEqual([{ t: "hello", proof: "p9" }]);
   });
 });

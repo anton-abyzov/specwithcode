@@ -245,4 +245,27 @@ describe("ScreenShareStore", () => {
     }
     expect(store.inCooldown("t1")).toBe(false);
   });
+
+  it("keeps its own record of devices that typed the code, and forgets one that is removed", () => {
+    const { io } = disk();
+    const first = new ScreenShareStore(io);
+    expect(first.knowsDevice("t1")).toBe(false);
+    expect(first.rememberDevice("t1")).toBe(true);
+    first.addGrant(DEVICE);
+    const second = new ScreenShareStore(io);
+    expect(second.knowsDevice("t1")).toBe(true);
+    expect(second.knowsDevice("t2")).toBe(false);
+    second.removeGrant("t1");
+    expect(new ScreenShareStore(io).knowsDevice("t1")).toBe(false);
+    // A file from before this record existed reads as: no device has been here.
+    const old = disk();
+    const store = new ScreenShareStore(old.io);
+    store.setEnabled(true);
+    const text = new TextDecoder().decode(old.file.bytes!).slice(3);
+    const { known: _known, ...rest } = JSON.parse(text) as Record<string, unknown>;
+    old.file.bytes = new TextEncoder().encode(`m1:${JSON.stringify(rest)}`);
+    const reread = new ScreenShareStore(old.io);
+    expect(reread.enabled).toBe(true);
+    expect(reread.knowsDevice("t1")).toBe(false);
+  });
 });

@@ -6,7 +6,11 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous hash for the fixture verifier.
 import { createHash } from "node:crypto";
 
-import { currentDesktopBootstrapToken } from "@specweave-studio/shared/desktopBootstrapToken";
+import {
+  currentDesktopBootstrapToken,
+  currentScreenShareHostProof,
+  SCREEN_SHARE_HOST_PROOF_WINDOW_MS,
+} from "@specweave-studio/shared/desktopBootstrapToken";
 
 import {
   approvedNameFrom,
@@ -80,6 +84,12 @@ describe("personDeviceOf", () => {
       ).toBeNull();
       expect(yield* fromList(Effect.fail("unreadable"))(KEY)).toBeNull();
       expect(yield* fromList(Effect.succeed({ health: "ok", devices: [] }))(KEY)).toBeNull();
+      // A blank name is nothing a person could recognise at the prompt.
+      expect(
+        yield* fromList(Effect.succeed({ health: "ok", devices: [{ ...listed, label: "  " }] }))(
+          KEY,
+        ),
+      ).toBeNull();
     }),
   );
 
@@ -219,11 +229,11 @@ describe("ownAppProofKind", () => {
     ).toBe("owner");
   });
 
-  it("accepts the current token of the secret this backend was launched with", () => {
+  it("accepts the host proof of the secret this backend was launched with", () => {
     const secret = "launch-secret";
     expect(
       ownAppProofKind({
-        proof: currentDesktopBootstrapToken(secret, NOW),
+        proof: currentScreenShareHostProof(secret, NOW),
         launchSecret: secret,
         verifier: null,
         nowMs: NOW,
@@ -245,22 +255,29 @@ describe("ownAppProofKind", () => {
       // A proof for a verifier that was since rewritten, or with no verifier.
       { proof: OWNER_PROOF, launchSecret: undefined, verifier: verifierOf("another"), nowMs: NOW },
       { proof: OWNER_PROOF, launchSecret: undefined, verifier: null, nowMs: NOW },
-      // A token of another secret, a stale token, and a token with no secret configured.
+      // A proof of another secret, a stale proof, and a proof with no secret configured.
       {
-        proof: currentDesktopBootstrapToken("other-secret", NOW),
+        proof: currentScreenShareHostProof("other-secret", NOW),
         launchSecret: secret,
         verifier: null,
         nowMs: NOW,
       },
       {
-        proof: currentDesktopBootstrapToken(secret, NOW - 24 * 60 * 60_000),
+        proof: currentScreenShareHostProof(secret, NOW - 2 * SCREEN_SHARE_HOST_PROOF_WINDOW_MS),
         launchSecret: secret,
         verifier: null,
         nowMs: NOW,
       },
+      {
+        proof: currentScreenShareHostProof(secret, NOW),
+        launchSecret: undefined,
+        verifier: null,
+        nowMs: NOW,
+      },
+      // The bootstrap token: the app's window holds it, so it must prove nothing here.
       {
         proof: currentDesktopBootstrapToken(secret, NOW),
-        launchSecret: undefined,
+        launchSecret: secret,
         verifier: null,
         nowMs: NOW,
       },

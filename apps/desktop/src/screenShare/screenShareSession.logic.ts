@@ -10,12 +10,20 @@
  *
  * - Nothing starts while sharing is off, unsupported, without the Screen
  *   Recording grant, busy, or while the device is in its quiet time.
- * - A grant skips the prompt only for a viewer that already holds this
- *   machine's key. A first-time viewer is always asked.
+ * - Whether this is a device's first time is read from this machine's own
+ *   record of devices that typed its code. What the viewer says about itself
+ *   can only add a first time, never take one away.
+ * - A grant skips the prompt only when it is not a first time. A first-time
+ *   viewer is always asked, so its first view needs a person at this machine.
  * - "Allow" is a click plus the system's own authentication. A click alone
- *   never allows: a click can be synthetic.
+ *   never allows: a click can be synthetic. The system's dialog names the
+ *   exact thing being allowed, one dialog is up at a time, and its answer
+ *   counts only for the session and the choice it was asked for.
  * - On first use no frame leaves before the viewer sent back the code that
- *   only this machine's screen shows.
+ *   only this machine's screen shows. The code is for the person at the
+ *   viewing device: it tells them the machine is theirs and not a stand-in.
+ *   It is not what protects this machine; the prompt and the system's
+ *   authentication are.
  * - The banner comes before the first frame. No banner, no session.
  * - From the viewer only four records are read; anything else ends the session.
  */
@@ -185,6 +193,10 @@ const STRIKES: ReadonlySet<ScreenShareEndReason> = new Set([
 export class ScreenShareSessions {
   private session: Session | null = null;
   private pending: Promise<unknown> = Promise.resolve();
+  /** The system's dialog is up. A second one is never put over it. */
+  private asking = false;
+  /** Counts every use of the switch, so an old answer cannot undo a newer choice. */
+  private switchUses = 0;
   private readonly deps: ScreenShareSessionDeps;
 
   constructor(deps: ScreenShareSessionDeps) {
@@ -309,21 +321,44 @@ export class ScreenShareSessions {
   // -------------------------------------------------------------------------
   // From this machine's own windows.
 
+  /**
+   * Asks the system whether a person is here, for one named thing. False when
+   * they are not, when it cannot be asked, or when another such dialog is up:
+   * two dialogs at once would let one be answered in place of the other.
+   */
+  private async personPresent(reason: string): Promise<boolean> {
+    if (this.asking) return false;
+    this.asking = true;
+    try {
+      return (await this.deps.authenticate(reason)) === true;
+    } catch {
+      return false;
+    } finally {
+      this.asking = false;
+    }
+  }
+
   /** A button in the prompt window. Only the window's own frame may call this. */
   async answerPrompt(sid: string, answer: "deny" | "once" | "always"): Promise<void> {
     const session = this.session;
-    if (session === null || session.sid !== sid || session.phase !== "prompt") return;
-    if (answer === "deny") return this.end(session, "denied");
-    session.phase = "authenticating";
-    let present = false;
-    try {
-      present = await this.deps.authenticate(
-        `allow ${session.device.label} to view this Mac's screen`,
-      );
-    } catch {
-      present = false;
+    if (session === null || session.sid !== sid) return;
+    // Deny needs nothing and wins at any point before the screen is shown.
+    if (answer === "deny") {
+      if (session.phase !== "live") this.end(session, "denied");
+      return;
     }
-    // The session may have timed out or ended while the system's dialog was up.
+    if (session.phase !== "prompt" || this.asking) return;
+    session.phase = "authenticating";
+    const { label, shortId } = session.device;
+    // The dialog says which of the two was pressed, so a press that was not the
+    // person's own reads wrong to them before they authenticate.
+    const present = await this.personPresent(
+      answer === "always"
+        ? `always allow "${label}" (${shortId}) to view this Mac's screen without asking again`
+        : `allow "${label}" (${shortId}) to view this Mac's screen this once`,
+    );
+    // The session may have timed out, been denied or ended while the dialog was up:
+    // then the answer is for nothing, and is dropped.
     if (this.session !== session || session.phase !== "authenticating") return;
     if (!present) {
       // Not allowed, not denied: the prompt stays until someone answers or its time runs out.
@@ -359,6 +394,7 @@ export class ScreenShareSessions {
    */
   async setEnabled(enabled: boolean): Promise<boolean> {
     const { store } = this.deps;
+    this.switchUses += 1;
     if (!enabled) {
       const saved = store.setEnabled(false);
       if (this.session !== null) this.end(this.session, "turned_off");
@@ -367,13 +403,10 @@ export class ScreenShareSessions {
     }
     if (!this.deps.platformSupported || !store.supported) return false;
     if (store.enabled) return true;
-    let present = false;
-    try {
-      present = await this.deps.authenticate("turn on screen sharing for this Mac");
-    } catch {
-      present = false;
-    }
-    const saved = present && store.setEnabled(true);
+    const use = this.switchUses;
+    const present = await this.personPresent("turn on screen sharing for this Mac");
+    // Turned off, or asked again, while the dialog was up: this answer is stale.
+    const saved = present && use === this.switchUses && store.setEnabled(true);
     this.deps.changed();
     return saved;
   }
@@ -418,7 +451,11 @@ export class ScreenShareSessions {
     } catch {
       return this.end(session, "handshake_failed");
     }
-    session.firstUse = !session.start.hello.knowsMachine;
+    // This machine's record decides. A viewer that says it does not know this
+    // machine is believed (it has no key to check against); one that says it
+    // does is not, unless its person typed this machine's code here before.
+    session.firstUse =
+      !session.start.hello.knowsMachine || !this.deps.store.knowsDevice(session.device.thumbprint);
     session.phase = "proof";
     this.deps.send(
       session.sid,
@@ -442,7 +479,7 @@ export class ScreenShareSessions {
       return this.end(session, "handshake_failed");
     }
     session.cancelStage?.();
-    // A grant counts only for a viewer that can already tell this machine from a stand-in.
+    // A grant counts only for a device this machine has seen through a first use.
     if (!session.firstUse && this.deps.store.hasGrant(session.device.thumbprint)) {
       session.outcome = "allowed_by_grant";
       return this.goLive(session);
@@ -476,7 +513,11 @@ export class ScreenShareSessions {
     if (type === SCREEN_SHARE_RECORD.confirmCode && session.phase === "code") {
       if (typeof body.code !== "string" || body.code.length > 32)
         return this.end(session, "protocol_error");
-      if (screenShareCodeMatches(body.code, session.code!)) return this.goLive(session);
+      if (screenShareCodeMatches(body.code, session.code!)) {
+        // Not kept: the next time is a first time again. Never a reason to refuse this one.
+        this.deps.store.rememberDevice(session.device.thumbprint);
+        return this.goLive(session);
+      }
       session.codeTriesLeft -= 1;
       if (session.codeTriesLeft <= 0) return this.end(session, "wrong_code");
       return this.sendState(session, { phase: "needs_code", triesLeft: session.codeTriesLeft });

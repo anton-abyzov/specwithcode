@@ -18,7 +18,7 @@ import { AuthAccessWriteScope } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
-import { isValidDesktopBootstrapToken } from "@specweave-studio/shared/desktopBootstrapToken";
+import { isValidScreenShareHostProof } from "@specweave-studio/shared/desktopBootstrapToken";
 
 import * as ConnectDeviceTrust from "../fleet/ConnectDeviceTrust.ts";
 import {
@@ -107,6 +107,12 @@ export const personDeviceOf = (
     };
   });
 
+/** A name a person can read at the prompt. A blank one is no name: the device is refused. */
+const approvedLabel = (label: string | undefined): string | null => {
+  const name = label?.trim() ?? "";
+  return name.length > 0 ? name : null;
+};
+
 /** `approvedName` from the approved list: a damaged or unreadable list approves no one. */
 export const approvedNameFrom =
   (trust: Pick<ConnectDeviceTrust.ConnectDeviceTrustShape, "snapshot">) =>
@@ -114,7 +120,7 @@ export const approvedNameFrom =
     trust.snapshot.pipe(
       Effect.map((snapshot) =>
         snapshot.health === "ok"
-          ? (snapshot.devices.find((device) => device.key === key)?.label ?? null)
+          ? approvedLabel(snapshot.devices.find((device) => device.key === key)?.label)
           : null,
       ),
       Effect.orElseSucceed(() => null),
@@ -159,11 +165,16 @@ const MAX_OWN_APP_PROOF_LENGTH = 512;
  * Which secret a proof from the app matches, checked on every connection that
  * must be the app and not merely hold its kind of session:
  *
- * - `launch`: the current token of the secret this backend was started with.
- *   Only the app that started it holds that secret, and it does not change
- *   while this process lives.
+ * - `launch`: the screen sharing host proof of the secret this backend was
+ *   started with. Only the app's main process holds that secret. It is not the
+ *   bootstrap token, which the app's window holds: a different label derives
+ *   it, so the window's token says nothing about it. It lasts minutes, and
+ *   the app sends a new one over its open link.
  * - `owner`: the desktop owner proof, against the verifier file. The file can
- *   change later, so the caller checks this kind again when it matters.
+ *   change later.
+ *
+ * The caller keeps the proof and checks it again when a viewer opens, whichever
+ * kind it was.
  *
  * Null for anything else. A process that rewrites this user's files can make
  * its own proof match the verifier; that is the limit `deviceApprover.ts` names.
@@ -178,7 +189,7 @@ export const ownAppProofKind = (input: {
   if (input.proof.length === 0 || input.proof.length > MAX_OWN_APP_PROOF_LENGTH) return null;
   if (
     input.launchSecret !== undefined &&
-    isValidDesktopBootstrapToken(input.launchSecret, input.proof, input.nowMs)
+    isValidScreenShareHostProof(input.launchSecret, input.proof, input.nowMs)
   )
     return "launch";
   return input.verifier !== null && desktopOwnerProofMatches(input.proof, input.verifier)

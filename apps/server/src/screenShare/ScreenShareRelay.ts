@@ -5,19 +5,28 @@
  * reached (`ScreenShareHttp.ts`); whether a session may start is decided by
  * the app, which holds the switch, the grants and the keys.
  *
- * The relay keeps four promises of its own: a viewer's bytes only reach the
- * host and the other way round; a handshake is one hello, one challenge and
- * one proof, each small, in that order; a slow reader costs a bounded amount
- * of memory; and when either end goes the other hears of it at once.
+ * The relay keeps its own promises, whatever the app on the other socket does:
+ * a viewer's bytes only reach the host and the other way round; a handshake is
+ * one hello, one challenge and one proof, each small, in that order and inside
+ * a deadline; a viewer sends small records only; a session has a longest life;
+ * one device opens a bounded number of sessions; a slow reader costs a bounded
+ * amount of memory; and when either end goes the other hears of it at once.
  */
 import {
   decodeScreenShareHostFrame,
   encodeScreenShareHostFrame,
   SCREEN_SHARE_CLOSE_ENDED,
   SCREEN_SHARE_CLOSE_REFUSED,
+  SCREEN_SHARE_COOLDOWN_WINDOW_MS,
+  SCREEN_SHARE_HANDSHAKE_MS,
   SCREEN_SHARE_MAX_BUFFER_BYTES,
   SCREEN_SHARE_MAX_CONTROL_BYTES,
   SCREEN_SHARE_MAX_MESSAGE_BYTES,
+  SCREEN_SHARE_MAX_VIEWER_RECORD_BYTES,
+  SCREEN_SHARE_PROMPT_MS,
+  SCREEN_SHARE_RELAY_OPENS,
+  SCREEN_SHARE_RELAY_SLACK_MS,
+  SCREEN_SHARE_SESSION_MAX_MS,
   SCREEN_SHARE_WIRE,
   type ScreenShareEndReason,
   type ScreenShareHostInbound,
@@ -28,6 +37,17 @@ import {
 } from "@specweave-studio/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a synchronous random id; the relay is a plain class.
 import * as NodeCrypto from "node:crypto";
+
+/** The hello, the challenge and the proof must all have gone by inside this. */
+export const RELAY_HANDSHAKE_MS = SCREEN_SHARE_HANDSHAKE_MS + SCREEN_SHARE_RELAY_SLACK_MS;
+/** After the proof, the app must say something sealed (asking, or live) inside this. */
+export const RELAY_FIRST_WORD_MS = SCREEN_SHARE_RELAY_SLACK_MS;
+/** The longest a session lives here: the asking, the code, the session's own limit. */
+export const RELAY_SESSION_MS =
+  RELAY_HANDSHAKE_MS +
+  2 * SCREEN_SHARE_PROMPT_MS +
+  SCREEN_SHARE_SESSION_MAX_MS +
+  SCREEN_SHARE_RELAY_SLACK_MS;
 
 /** One end of a socket, as the relay uses it. */
 export interface ScreenSharePeer {
@@ -77,18 +97,26 @@ interface Session {
   /** How many of `VIEWER_ORDER` the viewer has sent. */
   viewerStep: number;
   challenged: boolean;
+  /** The app sent a sealed record since the proof. */
+  hostSpoke: boolean;
+  /** Cancels the deadline of the stage the session is in, and its longest life. */
+  cancelStage: () => void;
+  cancelLife: () => void;
 }
 
 interface Host {
   readonly peer: ScreenSharePeer;
-  /** What the app proved itself with when it attached; the routes check it again later. */
-  readonly credential: string | undefined;
+  /** The latest proof the app sent; the routes check it again when a viewer opens. */
+  credential: string;
   status: ScreenShareHostStatus;
 }
 
 export interface ScreenShareRelayOptions {
   readonly newSessionId?: () => string;
   readonly maxBufferBytes?: number;
+  /** Runs `run` once after `ms`; the result cancels it. */
+  readonly after?: (ms: number, run: () => void) => () => void;
+  readonly now?: () => number;
 }
 
 export class ScreenShareRelay {
@@ -96,10 +124,25 @@ export class ScreenShareRelay {
   private readonly sessions = new Map<string, Session>();
   private readonly newSessionId: () => string;
   private readonly maxBufferBytes: number;
+  private readonly after: (ms: number, run: () => void) => () => void;
+  private readonly now: () => number;
+  /** Per device thumbprint: when it opened sessions lately. */
+  private readonly opens = new Map<string, Array<number>>();
 
   constructor(options: ScreenShareRelayOptions = {}) {
     this.newSessionId = options.newSessionId ?? (() => NodeCrypto.randomUUID());
     this.maxBufferBytes = options.maxBufferBytes ?? SCREEN_SHARE_MAX_BUFFER_BYTES;
+    this.after =
+      options.after ??
+      ((ms, run) => {
+        // @effect-diagnostics-next-line globalTimers:off - a plain class; the timer is cancelled when the session ends.
+        const timer = setTimeout(run, ms);
+        // A waiting deadline is no reason to keep the server from stopping.
+        timer.unref();
+        return () => clearTimeout(timer);
+      });
+    // @effect-diagnostics-next-line globalDate:off - a plain class outside any Effect fiber.
+    this.now = options.now ?? (() => Date.now());
   }
 
   status(): ScreenShareStatus {
@@ -112,7 +155,7 @@ export class ScreenShareRelay {
     };
   }
 
-  /** What the attached app proved itself with, for the routes to check again. */
+  /** The attached app's latest proof, for the routes to check again. */
   hostCredential(): string | undefined {
     return this.host?.credential;
   }
@@ -133,8 +176,10 @@ export class ScreenShareRelay {
    */
   attachHost(
     peer: ScreenSharePeer,
-    credential?: string,
+    credential: string,
   ): {
+    /** A newer proof from the same app, already checked by the routes. */
+    readonly reprove: (credential: string) => void;
     readonly text: (message: string) => void;
     readonly binary: (message: Uint8Array) => void;
     readonly closed: () => void;
@@ -150,6 +195,9 @@ export class ScreenShareRelay {
     peer.sendText(JSON.stringify(attached));
     const current = () => this.host === host;
     return {
+      reprove: (next) => {
+        if (current()) host.credential = next;
+      },
       text: (message) => {
         if (!current()) return;
         let parsed: unknown;
@@ -187,6 +235,10 @@ export class ScreenShareRelay {
           this.end(frame.sid, "protocol_error", true);
           return;
         }
+        if (frame.payload[0] === SCREEN_SHARE_WIRE.sealed && !session.hostSpoke) {
+          session.hostSpoke = true;
+          session.cancelStage();
+        }
         if (!this.forward(session.viewer, frame.payload))
           this.end(frame.sid, "viewer_silent", true);
       },
@@ -211,6 +263,8 @@ export class ScreenShareRelay {
     | {
         readonly sid: string;
         readonly binary: (message: Uint8Array) => void;
+        /** A viewer has nothing to say in text: any text ends its session. */
+        readonly text: () => void;
         readonly closed: () => void;
       } {
     const host = this.host;
@@ -218,8 +272,17 @@ export class ScreenShareRelay {
     if (!host.status.supported) return { refused: "unsupported" };
     if (!host.status.enabled) return { refused: "off" };
     if (host.status.busy || this.sessions.size > 0) return { refused: "busy" };
+    if (!this.mayOpen(device.thumbprint)) return { refused: "cooldown" };
     const sid = this.newSessionId();
-    const session: Session = { sid, viewer: peer, viewerStep: 0, challenged: false };
+    const session: Session = {
+      sid,
+      viewer: peer,
+      viewerStep: 0,
+      challenged: false,
+      hostSpoke: false,
+      cancelStage: this.after(RELAY_HANDSHAKE_MS, () => this.end(sid, "handshake_failed", true)),
+      cancelLife: this.after(RELAY_SESSION_MS, () => this.end(sid, "time_limit", true)),
+    };
     this.sessions.set(sid, session);
     const opened: ScreenShareViewerOpened = { t: "open", sid, environmentId };
     peer.sendText(JSON.stringify(opened));
@@ -230,18 +293,50 @@ export class ScreenShareRelay {
       binary: (message) => {
         const live = this.host;
         if (live === null || this.sessions.get(sid) !== session) return;
+        const step = session.viewerStep;
         if (!this.fromViewer(session, message)) {
           this.end(sid, "protocol_error", true);
           return;
         }
+        if (step < VIEWER_ORDER.length && session.viewerStep === VIEWER_ORDER.length) {
+          // The proof went by: the app now has a moment to say it is asking, or live.
+          session.cancelStage();
+          session.cancelStage = this.after(RELAY_FIRST_WORD_MS, () =>
+            this.end(sid, "handshake_failed", true),
+          );
+        }
         if (!this.forward(live.peer, encodeScreenShareHostFrame(sid, message)))
           this.end(sid, "protocol_error", true);
       },
+      text: () => {
+        if (this.sessions.get(sid) === session) this.end(sid, "protocol_error", true);
+      },
       closed: () => {
-        if (!this.sessions.delete(sid)) return;
+        if (this.sessions.get(sid) !== session) return;
+        this.forget(session);
         this.tellHostClosed(sid);
       },
     };
+  }
+
+  /** Counts an open for this device; false once it opened too many lately. */
+  private mayOpen(thumbprint: string): boolean {
+    const now = this.now();
+    for (const [key, times] of this.opens) {
+      const recent = times.filter((at) => now - at < SCREEN_SHARE_COOLDOWN_WINDOW_MS);
+      if (recent.length === 0) this.opens.delete(key);
+      else this.opens.set(key, recent);
+    }
+    const mine = this.opens.get(thumbprint) ?? [];
+    if (mine.length >= SCREEN_SHARE_RELAY_OPENS) return false;
+    this.opens.set(thumbprint, [...mine, now]);
+    return true;
+  }
+
+  private forget(session: Session): void {
+    session.cancelStage();
+    session.cancelLife();
+    this.sessions.delete(session.sid);
   }
 
   private fromViewer(session: Session, message: Uint8Array): boolean {
@@ -254,10 +349,11 @@ export class ScreenShareRelay {
       session.viewerStep += 1;
       return true;
     }
+    // Sealed records from a viewer are words (seen this frame, show that display): small.
     return (
       type === SCREEN_SHARE_WIRE.sealed &&
       message.length > 1 &&
-      message.length <= SCREEN_SHARE_MAX_MESSAGE_BYTES
+      message.length <= SCREEN_SHARE_MAX_VIEWER_RECORD_BYTES
     );
   }
 
@@ -293,7 +389,7 @@ export class ScreenShareRelay {
   private end(sid: string, reason: ScreenShareEndReason, tellHost: boolean): void {
     const session = this.sessions.get(sid);
     if (session === undefined) return;
-    this.sessions.delete(sid);
+    this.forget(session);
     session.viewer.close(
       REFUSALS.has(reason) ? SCREEN_SHARE_CLOSE_REFUSED : SCREEN_SHARE_CLOSE_ENDED,
       reason,

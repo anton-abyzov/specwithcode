@@ -48,6 +48,15 @@ export const SCREEN_SHARE_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 export const SCREEN_SHARE_MAX_MESSAGE_BYTES = 4 * 1024 * 1024 + 64;
 /** The largest hello, challenge or proof the server passes. */
 export const SCREEN_SHARE_MAX_CONTROL_BYTES = 64 * 1024;
+/** The largest sealed record the server passes from a viewer: a viewer sends words, never pictures. */
+export const SCREEN_SHARE_MAX_VIEWER_RECORD_BYTES = 64 * 1024;
+/**
+ * The server's own bounds, a little wider than the app's so the app's reason
+ * is the one a viewer reads. They hold even when the app enforces nothing.
+ */
+export const SCREEN_SHARE_RELAY_SLACK_MS = 5_000;
+/** Sessions one device may open within `SCREEN_SHARE_COOLDOWN_WINDOW_MS` before the server refuses. */
+export const SCREEN_SHARE_RELAY_OPENS = 12;
 /** Wrong first-use codes a viewer may send before the session ends. */
 export const SCREEN_SHARE_CODE_TRIES = 3;
 /** With no frame for this long while live, the viewer says the display may be asleep. */
@@ -145,11 +154,15 @@ export type ScreenShareHostStatus = typeof ScreenShareHostStatus.Type;
 export const SCREEN_SHARE_MAX_HOST_PROOF_LENGTH = 512;
 /** How long a new host socket has to send its hello. */
 export const SCREEN_SHARE_HOST_HELLO_MS = 5_000;
+/** How often the app sends its proof again over an open link. */
+export const SCREEN_SHARE_HOST_PROOF_RENEW_MS = 4 * 60_000;
 
 /**
  * Host to server. `hello` comes first on every connection and carries the
  * app's proof that it is this machine's app: the desktop owner proof, or the
- * current token of the secret a backend was launched with.
+ * host proof of the secret a backend was launched with. The app sends it
+ * again every few minutes; the server checks the latest one when a viewer
+ * opens, and drops a host whose proof no longer holds.
  */
 export const ScreenShareHostOutbound = Schema.Union([
   Schema.Struct({ t: Schema.Literal("hello"), proof: Schema.String }),
