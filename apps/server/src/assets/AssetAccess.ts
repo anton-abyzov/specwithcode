@@ -1199,8 +1199,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
         unlessProtected(path.resolve(claims.workspaceRoot, claims.relativePath), file),
       ),
     );
-    // Checked again: a link can be repointed after its URL was issued.
-    return exactWorkspaceFile && isWorkspacePreviewEntryPath(exactWorkspaceFile)
+    // Checked again: a link can be repointed after its URL was issued, to a file that is not a
+    // preview or to the other kind of preview (a picture's URL must never serve a page).
+    return exactWorkspaceFile &&
+      isWorkspacePreviewEntryPath(exactWorkspaceFile) &&
+      isWorkspaceImagePreviewPath(exactWorkspaceFile) ===
+        isWorkspaceImagePreviewPath(claims.relativePath)
       ? ({
           kind: "file",
           path: exactWorkspaceFile,
