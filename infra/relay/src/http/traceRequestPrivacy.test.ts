@@ -28,8 +28,9 @@ const exported = (span: Tracer.NativeSpan) =>
   JSON.stringify([...span.attributes.entries(), ...span.events.map((event) => event[2] ?? null)]);
 
 describe("relay request spans", () => {
-  for (const path of ["/v1/mobile/devices", "/v1/hooks/hook-token-secret"]) {
-    it.effect(`never record the caller's address or user agent (${path})`, () => {
+  it.effect.each(["/v1/mobile/devices", "/v1/hooks/hook-token-secret"])(
+    "never record the caller's address or user agent (%s)",
+    (path) => {
       const { spans, layer } = recordedSpans();
       const seen: Array<{ readonly address: string | undefined; readonly agent: unknown }> = [];
       const request = HttpServerRequest.fromWeb(
@@ -64,6 +65,6 @@ describe("relay request spans", () => {
         // The route itself still gets the caller's real request.
         expect(seen).toEqual([{ address: CALLER_ADDRESS, agent: CALLER_AGENT }]);
       });
-    });
-  }
+    },
+  );
 });
