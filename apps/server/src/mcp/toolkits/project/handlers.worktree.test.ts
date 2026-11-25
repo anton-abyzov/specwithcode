@@ -190,11 +190,26 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     // A path two slots name is not one registration, as Git looks it up in
     // the first: the spare slot is restored and a copy of it names it too.
     yield* fileSystem.writeFileString(path.join(locked, ".git"), `gitdir: ${spareSlot}\n`);
+    // The locked path's own slot is pointed elsewhere first, so the spare
+    // slot is the one registration and the launch binds.
+    yield* fileSystem.writeFileString(
+      path.join(repo, ".git", "worktrees", "locked", "gitdir"),
+      `${root}/gone/.git\n`,
+    );
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({ projectId });
     const twin = path.join(repo, ".git", "worktrees", "spare-twin");
     yield* fileSystem.copy(spareSlot, twin);
     expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+    // Git trims a record's line ending and resolves its path before the
+    // lookup, so a twin spelled with CRLF or through a link counts too.
+    for (const spelling of [`${locked}/.git\r\n`, `${root}/hop/../../locked/.git\n`]) {
+      yield* fileSystem.writeFileString(path.join(twin, "gitdir"), spelling);
+      expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+      });
+    }
     yield* fileSystem.remove(twin, { recursive: true });
     // A slot Git would not read (no HEAD) stays refused even when this
     // server's own environment names the repository for git.
