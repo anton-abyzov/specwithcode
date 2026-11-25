@@ -1,6 +1,7 @@
 import { createClerkClient } from "@clerk/backend";
 import { isClerkAPIResponseError } from "@clerk/backend/errors";
 import { and, eq, notExists, sql } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/sqlite-core";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -142,8 +143,10 @@ export const layerAccountRecords = Layer.effect(
       }),
       deleteUserRows: Effect.fn("relay.account.deleteUserRows")(function* (input) {
         const userId = input.userId;
+        // A plain query builder: the Worker's `db` is a chain proxy, and a
+        // subquery built from it renders as nothing inside `notExists`.
         const noAllocation = notExists(
-          db
+          new QueryBuilder()
             .select({ userId: relayManagedEndpointAllocations.userId })
             .from(relayManagedEndpointAllocations)
             .where(eq(relayManagedEndpointAllocations.userId, userId)),

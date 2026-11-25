@@ -17,7 +17,15 @@ import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 it.effect("preserves binary input and admission frames through the real socket proxy", () =>
   Effect.gen(function* () {
     const hub = yield* Effect.acquireRelease(
-      Effect.sync(() => new NodeWS.WebSocketServer({ port: 0 })),
+      // Like the hub, it refuses an upgrade without its token.
+      Effect.sync(
+        () =>
+          new NodeWS.WebSocketServer({
+            port: 0,
+            verifyClient: ({ req }: { req: { headers: { authorization?: string | undefined } } }) =>
+              req.headers.authorization === "Bearer hub-token",
+          }),
+      ),
       (server) =>
         Effect.promise(
           () =>
@@ -55,7 +63,7 @@ it.effect("preserves binary input and admission frames through the real socket p
             currentReadiness: () =>
               Effect.succeed({
                 hostId: LOCAL_DEVICE_HOST_ID,
-                hub: { origin: `http://127.0.0.1:${address.port}` },
+                hub: { origin: `http://127.0.0.1:${address.port}`, token: "hub-token" },
               }),
           } as DeviceService.DeviceService["Service"]),
         ),

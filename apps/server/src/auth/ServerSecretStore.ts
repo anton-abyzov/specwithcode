@@ -9,6 +9,7 @@ import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 
@@ -116,7 +117,22 @@ export class SecretStoreEncodeError extends Schema.TaggedError<SecretStoreEncode
   }
 }
 
+/** A name that is not a single file name inside the secrets folder. */
+export class SecretStoreNameError extends Schema.TaggedError<SecretStoreNameError>()(
+  "SecretStoreNameError",
+  { resource: Schema.String },
+) {
+  override get message(): string {
+    return `${this.resource} is not a valid secret name.`;
+  }
+}
+
+/** One file name: never empty, `.` or `..`, and no separator or NUL that could leave the folder. */
+export const isValidSecretName = (name: string): boolean =>
+  name.length > 0 && name !== "." && name !== ".." && !/[/\\\u0000]/u.test(name);
+
 export const SecretStoreError = Schema.Union([
+  SecretStoreNameError,
   SecretStoreSecureError,
   SecretStoreReadError,
   SecretStoreTemporaryPathError,
@@ -194,7 +210,10 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
+  const resolveSecretPath = (name: string) => {
+    if (!isValidSecretName(name)) throw new SecretStoreNameError({ resource: "secret name" });
+    return path.join(serverConfig.secretsDir, `${name}.bin`);
+  };
 
   // Random secrets (signing keys, salts) are generated once and only replaced
   // through this store, so their bytes are kept after the first read. Asset URLs
@@ -202,6 +221,7 @@ export const make = Effect.gen(function* () {
   // queued behind other pool work and took 0.4-2.4 s under load. Writes through
   // `set`, `create` and `remove` drop the entry, and bump a generation so a read
   // that raced the write cannot put the old bytes back.
+  const emptySecretLock = yield* Semaphore.make(1);
   const randomSecrets = new Map<string, Uint8Array>();
   const generations = new Map<string, number>();
   const generationOf = (name: string) => generations.get(name) ?? 0;
@@ -213,23 +233,28 @@ export const make = Effect.gen(function* () {
       storeGeneration += 1;
     });
 
+  const refuseName = () => Effect.fail(new SecretStoreNameError({ resource: "secret name" }));
+
   const get: ServerSecretStore["Service"]["get"] = (name) =>
-    fileSystem.readFile(resolveSecretPath(name)).pipe(
-      Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeedNone
-          : Effect.fail(
-              new SecretStoreReadError({
-                resource: `secret ${name}`,
-                cause,
-              }),
-            ),
-      ),
-      Effect.withSpan("ServerSecretStore.get"),
-    );
+    !isValidSecretName(name)
+      ? refuseName()
+      : fileSystem.readFile(resolveSecretPath(name)).pipe(
+          Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeedNone
+              : Effect.fail(
+                  new SecretStoreReadError({
+                    resource: `secret ${name}`,
+                    cause,
+                  }),
+                ),
+          ),
+          Effect.withSpan("ServerSecretStore.get"),
+        );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
+    if (!isValidSecretName(name)) return refuseName();
     const secretPath = resolveSecretPath(name);
     return crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -274,7 +299,11 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const createUncached = (name: string, value: Uint8Array) => {
+  const createUncached = (
+    name: string,
+    value: Uint8Array,
+  ): Effect.Effect<void, SecretStorePersistError | SecretStoreNameError> => {
+    if (!isValidSecretName(name)) return refuseName();
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
@@ -300,11 +329,38 @@ export const make = Effect.gen(function* () {
   const create: ServerSecretStore["Service"]["create"] = (name, value) =>
     createUncached(name, value).pipe(Effect.ensuring(forget(name)));
 
-  const getOrCreateRandomUncached = (name: string, bytes: number) =>
+  // An empty file is a write that never finished, never a key: it is replaced, once,
+  // under one lock so concurrent readers end with the same new secret.
+  const replaceEmptyRandom = (
+    name: string,
+    bytes: number,
+  ): Effect.Effect<Uint8Array, SecretStoreError> =>
+    emptySecretLock.withPermits(1)(
+      get(name).pipe(
+        Effect.flatMap((current) =>
+          Option.isSome(current) && current.value.byteLength > 0
+            ? Effect.succeed(current.value)
+            : Effect.uninterruptible(
+                remove(name).pipe(
+                  Effect.andThen(
+                    Effect.logWarning("Replacing an empty persisted secret.", { name }),
+                  ),
+                  Effect.andThen(getOrCreateRandomUncached(name, bytes)),
+                ),
+              ),
+        ),
+      ),
+    );
+
+  const getOrCreateRandomUncached = (
+    name: string,
+    bytes: number,
+  ): Effect.Effect<Uint8Array, SecretStoreError> =>
     get(name).pipe(
       Effect.flatMap(
         Option.match({
-          onSome: Effect.succeed,
+          onSome: (value) =>
+            value.byteLength === 0 ? replaceEmptyRandom(name, bytes) : Effect.succeed(value),
           onNone: () =>
             crypto.randomBytes(bytes).pipe(
               Effect.mapError(
@@ -357,20 +413,22 @@ export const make = Effect.gen(function* () {
     });
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    fileSystem.remove(resolveSecretPath(name)).pipe(
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.void
-          : Effect.fail(
-              new SecretStoreRemoveError({
-                resource: `secret ${name}`,
-                cause,
-              }),
-            ),
-      ),
-      Effect.ensuring(forget(name)),
-      Effect.withSpan("ServerSecretStore.remove"),
-    );
+    !isValidSecretName(name)
+      ? refuseName()
+      : fileSystem.remove(resolveSecretPath(name)).pipe(
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.void
+              : Effect.fail(
+                  new SecretStoreRemoveError({
+                    resource: `secret ${name}`,
+                    cause,
+                  }),
+                ),
+          ),
+          Effect.ensuring(forget(name)),
+          Effect.withSpan("ServerSecretStore.remove"),
+        );
 
   return ServerSecretStore.of({
     directory: serverConfig.secretsDir,

@@ -253,3 +253,32 @@ describe("Clerk user.deleted webhook", () => {
     });
   });
 });
+
+describe("Clerk deletion failure detail", () => {
+  it("names the failed step and the cause without the user id", () => {
+    const detail = ClerkWebhook.deletionFailureDetail(
+      {
+        _tag: "AccountRecordsPersistenceError",
+        stage: "delete-rows",
+        cause: new Error("D1_ERROR: too many terms for user_abc", {
+          cause: new Error("SQLITE_ERROR"),
+        }),
+      },
+      "user_abc",
+    );
+    expect(detail).toEqual({
+      errorTag: "AccountRecordsPersistenceError",
+      stage: "delete-rows",
+      cause: "Error: D1_ERROR: too many terms for <user> <- Error: SQLITE_ERROR",
+    });
+  });
+
+  it("caps the cause text", () => {
+    const detail = ClerkWebhook.deletionFailureDetail(
+      { _tag: "ClerkUserDeletionFailed", cause: "x".repeat(1_000) },
+      "user_abc",
+    );
+    expect(detail.cause).toHaveLength(300);
+    expect(detail.stage).toBeUndefined();
+  });
+});

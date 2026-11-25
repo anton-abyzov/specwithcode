@@ -1244,6 +1244,8 @@ export const UPDATE_REVIEW_COMMENT_GRAPHQL_MUTATION = `mutation($commentId: ID!,
 
 /** The body of `POST /repos/{owner}/{repo}/pulls/{number}/reviews`, which sends a review whole. */
 const ReviewSubmissionSchema = Schema.Struct({
+  /** Without it GitHub attaches the review to whatever the head is when the request lands. */
+  commit_id: Schema.optional(Schema.String),
   event: Schema.Literals(["COMMENT", "APPROVE", "REQUEST_CHANGES"]),
   body: Schema.String,
   comments: Schema.Array(
@@ -1298,8 +1300,10 @@ export function buildReviewSubmission(input: {
   readonly verdict: PullRequestReviewVerdict;
   readonly body: string;
   readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+  readonly expectedHeadSha?: string;
 }): typeof ReviewSubmissionSchema.Type {
   return {
+    ...(input.expectedHeadSha === undefined ? {} : { commit_id: input.expectedHeadSha }),
     event: REVIEW_EVENTS[input.verdict],
     body: input.body,
     comments: input.comments.map((comment) => ({

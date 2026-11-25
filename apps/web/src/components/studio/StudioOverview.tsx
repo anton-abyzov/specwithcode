@@ -673,7 +673,12 @@ export function StudioOverview() {
               >
                 <SearchIcon aria-hidden="true" /> {tx("Search")}
               </button>
-              <button type="button" className="studio-primary" onClick={() => openDraftChooser()}>
+              <button
+                type="button"
+                className="studio-primary"
+                data-guided-tour="new-chat"
+                onClick={() => openDraftChooser()}
+              >
                 <PlusIcon aria-hidden="true" /> {tx("New chat")}
                 <kbd aria-hidden="true">N</kbd>
               </button>

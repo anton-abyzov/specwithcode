@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * The review half of the floating composer: the summary and the verdict that sends it, together
@@ -19,6 +20,8 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { readableFailure } from "./pullRequestDetail.logic";
+import { commentsFromOtherHeads } from "./pullRequestHeadPin";
 import {
   pullRequestReviewKey,
   usePendingReviewComments,
@@ -60,6 +63,8 @@ export function PullRequestReviewForm({
   pending,
   onPendingChange,
   onSubmitted,
+  headSha,
+  onRefused,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -69,6 +74,10 @@ export function PullRequestReviewForm({
   pending: boolean;
   onPendingChange: (pending: boolean) => void;
   onSubmitted: () => void;
+  /** The head on screen, which the review is pinned to. */
+  headSha?: string | undefined;
+  /** Called when the host refused the review, so the panel can show what it has now. */
+  onRefused?: () => void;
 }) {
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const comments = usePendingReviewComments(reference);
@@ -84,13 +93,16 @@ export function PullRequestReviewForm({
     reportFailure: false,
   });
 
+  const staleComments = commentsFromOtherHeads(comments, headSha);
   const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
   const selectedVerdict =
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number]) => {
     if (pending) return;
+    if (staleComments.length > 0) return;
     const submittedBody = body;
+    // Only what the host takes: the local id and drawn-on head stay here.
     const submittedComments = comments;
     onPendingChange(true);
     const result = await submitReview({
@@ -99,13 +111,22 @@ export function PullRequestReviewForm({
         ...reference,
         verdict: verdict.value,
         body: submittedBody,
-        comments: submittedComments,
+        comments: submittedComments.map(({ id: _id, headSha: _head, ...comment }) => comment),
+        ...(headSha === undefined ? {} : { expectedHeadSha: headSha }),
       },
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
       // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      toastManager.add({
+        type: "error",
+        title: "The review could not be submitted",
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          "The host refused the review.",
+        ),
+      });
+      onRefused?.();
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,
@@ -139,6 +160,29 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
+      {staleComments.length > 0 ? (
+        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {staleComments.length === 1
+              ? "1 line comment was written on older commits."
+              : `${staleComments.length} line comments were written on older commits.`}{" "}
+            Remove {staleComments.length === 1 ? "it" : "them"} to submit this review.
+          </span>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              removeComments(
+                reviewKey,
+                staleComments.map((comment) => comment.id),
+              )
+            }
+          >
+            Remove
+          </Button>
+        </div>
+      ) : null}
       <div className="mt-2 flex justify-between gap-2">
         <Select
           value={selectedVerdict?.value ?? null}
@@ -166,7 +210,12 @@ export function PullRequestReviewForm({
         </Select>
         <Button
           size="xs"
-          disabled={pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value)}
+          disabled={
+            pending ||
+            staleComments.length > 0 ||
+            selectedVerdict === undefined ||
+            !canSubmit(selectedVerdict.value)
+          }
           onClick={() => {
             if (selectedVerdict !== undefined) void submit(selectedVerdict);
           }}

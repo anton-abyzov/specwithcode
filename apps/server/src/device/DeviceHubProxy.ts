@@ -26,11 +26,12 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { authenticateMediaRequest, serveSocketUntilSessionEnds } from "../auth/http.ts";
+import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
+import { hubAuthorization, hubWebSocketConstructor } from "./hubToken.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
@@ -89,16 +90,29 @@ const DROPPED_REQUEST_HEADERS = new Set([
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers.upgrade?.toLowerCase() === "websocket";
 
-const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
+const forwardHeaders = (
+  request: HttpServerRequest.HttpServerRequest,
+  hub: DeviceHost.DeviceHubEndpoint,
+) => {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(request.headers)) {
     if (DROPPED_REQUEST_HEADERS.has(name) || value === undefined) continue;
     headers[name] = value;
   }
   // serve-emu refuses mutations whose Origin differs from the request origin.
-  if (request.headers.origin !== undefined) headers.origin = origin;
-  return headers;
+  if (request.headers.origin !== undefined) headers.origin = hub.origin;
+  // The client's own credential was dropped above; the hub gets its token instead.
+  return { ...headers, ...hubAuthorization(hub.token) };
 };
+
+/** Response headers that stay between the proxy and the hub. */
+const DROPPED_RESPONSE_HEADERS = new Set([
+  "content-encoding",
+  "transfer-encoding",
+  "connection",
+  // A hub cookie would carry its token to the client.
+  "set-cookie",
+]);
 
 /**
  * Pipe a client WebSocket to the hub's with no framing changes. Frames are
@@ -107,12 +121,13 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  hub: DeviceHost.DeviceHubEndpoint,
   session: EnvironmentAuth.AuthenticatedSession,
 ) {
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
     openTimeout: "10 seconds",
-  }).pipe(Effect.provide(NodeSocket.layerWebSocketConstructor));
+  }).pipe(Effect.provide(hubWebSocketConstructor(hub.token)));
   yield* Effect.scoped(
     Effect.gen(function* () {
       const writeToClient = yield* client.writer;
@@ -140,7 +155,7 @@ const pumpFrames = (source: Socket.Socket, sink: Socket.Writer) =>
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
-  hubOrigin: string,
+  hub: DeviceHost.DeviceHubEndpoint,
   /** Set for a long-lived stream, which must end with the session that opened it. */
   streamSession: EnvironmentAuth.AuthenticatedSession | undefined,
 ) {
@@ -151,7 +166,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const method = request.method;
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
-    HttpClientRequest.setHeaders(forwardHeaders(request, hubOrigin)),
+    HttpClientRequest.setHeaders(forwardHeaders(request, hub)),
     method === "GET" || method === "HEAD"
       ? (self) => self
       : // A bare stream body is sent as octet-stream; serve-sim refuses WebRTC
@@ -163,10 +178,8 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   const response = yield* httpClient.execute(upstreamRequest);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
-    if (name === "content-encoding" || name === "transfer-encoding" || name === "connection") {
-      continue;
-    }
-    if (value !== undefined) headers[name] = value;
+    if (DROPPED_RESPONSE_HEADERS.has(name) || value === undefined) continue;
+    headers[name] = value;
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
@@ -228,13 +241,14 @@ const handler = Effect.gen(function* () {
     return yield* proxyWebSocket(
       request,
       `${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`,
+      ready.hub,
       session,
     );
   }
   return yield* proxyHttp(
     request,
     `${ready.hub.origin}${upstreamPath}`,
-    ready.hub.origin,
+    ready.hub,
     STREAMING_PATHS.some((pattern) => pattern.test(hubPath)) ? session : undefined,
   );
 });

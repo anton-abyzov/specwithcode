@@ -20,6 +20,8 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, type HttpClient } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { removeClientKeyAtRelay } from "../cloud/ConnectPhoneRevocation.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 import {
   formatIssuedPairingCredential,
@@ -54,9 +56,13 @@ import {
  * database is not opened (cli/liveService.ts). Otherwise `offline` opens the
  * store directly, which itself refuses if a service has started meanwhile.
  */
+type OfflineServices = Layer.Success<typeof EnvironmentAuth.layerRuntime>;
+
 const runWithEnvironmentAuth = <A, E, A2, E2>(
   flags: CliAuthLocationFlags,
-  offline: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  offline: (
+    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+  ) => Effect.Effect<A, E, OfflineServices>,
   live: (access: LiveServiceAccess) => Effect.Effect<A2, E2, HttpClient.HttpClient>,
   options?: {
     readonly quietLogs?: boolean;
@@ -358,6 +364,9 @@ const sessionListCommand = Command.make("list", {
   ),
 );
 
+/** Never a real session id: the offline CLI revokes as no session. */
+const OFFLINE_CLI_CALLER = AuthSessionId.make("offline-cli");
+
 const sessionRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
   sessionId: Argument.String("session-id").pipe(
@@ -371,10 +380,26 @@ const sessionRevokeCommand = Command.make("revoke", {
       flags,
       (environmentAuth) =>
         Effect.gen(function* () {
-          const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+          // As the running service does: a Connect device's other sessions on its key
+          // end too, and the phone leaves the account, or it would sign itself back in.
+          // There is no caller session here, so none is kept.
+          const { revoked, connectProofKeyThumbprint } = yield* environmentAuth.revokeClientSession(
+            OFFLINE_CLI_CALLER,
+            flags.sessionId,
+          );
+          const removedAtRelay =
+            connectProofKeyThumbprint === null
+              ? false
+              : yield* ServerEnvironment.ServerEnvironmentIdentity.pipe(
+                  Effect.flatMap((identity) => identity.getEnvironmentId),
+                  Effect.flatMap((environmentId) =>
+                    removeClientKeyAtRelay(connectProofKeyThumbprint, environmentId),
+                  ),
+                  Effect.provide(FetchHttpClient.layer),
+                );
           yield* Console.log(
             revoked
-              ? `Revoked session ${flags.sessionId}.\n`
+              ? `Revoked session ${flags.sessionId}.${removedAtRelay ? " The phone was also removed from your SpecWithCode Connect account." : ""}\n`
               : `No active session found for ${flags.sessionId}.\n`,
           );
         }),

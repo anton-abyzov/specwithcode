@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi } from "@specweave-studio/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthSessionId,
+  AuthStandardClientScopes,
+  EnvironmentHttpApi,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,6 +34,8 @@ const postSignedRelayRequest = async (input: {
   readonly cloudLink?: Partial<CloudLink.CloudLink["Service"]>;
   readonly phoneRevocation?: Partial<ConnectPhoneRevocation.ConnectPhoneRevocation["Service"]>;
   readonly hold?: ServiceUpdateHold.ServiceUpdateHold["Service"];
+  readonly environmentAuth?: Partial<EnvironmentAuth.EnvironmentAuth["Service"]>;
+  readonly body?: unknown;
 }) => {
   const layerRoutes = HttpApiBuilder.layer(ConnectTestApi).pipe(
     Layer.provide(ConnectHttp.layer),
@@ -41,7 +48,7 @@ const postSignedRelayRequest = async (input: {
     ),
     // The session-gated routes are declared too; this request never reaches them.
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
-    Layer.provide(Layer.mock(EnvironmentAuth.EnvironmentAuth)({})),
+    Layer.provide(Layer.mock(EnvironmentAuth.EnvironmentAuth)(input.environmentAuth ?? {})),
     Layer.provideMerge(
       HttpPlatform.layer.pipe(
         Layer.provideMerge(NodeServices.layer),
@@ -57,13 +64,13 @@ const postSignedRelayRequest = async (input: {
       new Request(`http://127.0.0.1${input.path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ proof: "proof" }),
+        body: JSON.stringify(input.body ?? { proof: "proof" }),
       }),
     );
     return {
       status: response.status,
       cacheControl: response.headers.get("cache-control"),
-      body: (await response.json()) as unknown,
+      body: await response.text().then((text) => (text ? (JSON.parse(text) as unknown) : null)),
     };
   } finally {
     await dispose();
@@ -176,5 +183,87 @@ describe("connect routes", () => {
       status: 401,
       body: { _tag: "EnvironmentHttpUnauthorizedError", message: "Invalid cloud revoke request." },
     });
+  });
+
+  // Relay configuration names where this machine trusts sign-ins from and where it
+  // sends the account token: only an administrative client (the desktop, the CLI,
+  // the startup pairing) holds relay:write. A paired phone or browser does not.
+  it.each([
+    {
+      path: "/api/connect/relay-config",
+      body: {
+        relayUrl: "https://relay.attacker.example",
+        cloudUserId: "user-1",
+        environmentCredential: "credential",
+        cloudMintPublicKey: "key",
+        endpointRuntime: null,
+      },
+    },
+    {
+      path: "/api/connect/link-proof",
+      body: {
+        challenge: "challenge",
+        relayIssuer: "https://relay.attacker.example",
+        endpoint: {
+          httpBaseUrl: "https://a.example/",
+          wsBaseUrl: "wss://a.example/ws",
+          providerKind: "manual",
+        },
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      },
+    },
+  ])("refuses a standard paired client on $path", async ({ path, body }) => {
+    let configured = 0;
+    const response = await postSignedRelayRequest({
+      path,
+      body,
+      environmentAuth: {
+        authenticateHttpRequest: () =>
+          Effect.succeed({
+            sessionId: AuthSessionId.make("phone-session"),
+            subject: "one-time-token",
+            method: "bearer-access-token",
+            scopes: [...AuthStandardClientScopes],
+          }),
+      },
+      cloudLink: {
+        applyRelayConfig: () => Effect.sync(() => (configured += 1)).pipe(Effect.as({} as never)),
+        linkProof: () => Effect.sync(() => (configured += 1)).pipe(Effect.as({} as never)),
+      },
+    });
+    expect(response.status).toBe(403);
+    expect(configured).toBe(0);
+  });
+
+  it("still lets an administrative client configure the relay", async () => {
+    let configured = 0;
+    const response = await postSignedRelayRequest({
+      path: "/api/connect/relay-config",
+      body: {
+        relayUrl: "https://relay.example.test",
+        cloudUserId: "user-1",
+        environmentCredential: "credential",
+        cloudMintPublicKey: "key",
+        endpointRuntime: null,
+      },
+      environmentAuth: {
+        authenticateHttpRequest: () =>
+          Effect.succeed({
+            sessionId: AuthSessionId.make("desktop-session"),
+            subject: "desktop-bootstrap",
+            method: "bearer-access-token",
+            scopes: [...AuthAdministrativeScopes],
+          }),
+      },
+      cloudLink: {
+        applyRelayConfig: () =>
+          Effect.sync(() => (configured += 1)).pipe(
+            Effect.as({ linked: true, relayUrl: "https://relay.example.test" } as never),
+          ),
+      },
+      phoneRevocation: { requestSync: () => Effect.void },
+    });
+    expect(configured).toBe(1);
+    expect(response.status).not.toBe(403);
   });
 });

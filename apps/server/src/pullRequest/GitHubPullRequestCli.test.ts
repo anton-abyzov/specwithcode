@@ -2186,6 +2186,27 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("names the head the person checked, not the one it read", () =>
+    Effect.gen(function* () {
+      route(["query PullRequestActionState", actionState()]);
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        expectedHeadSha: "def456",
+      });
+
+      expect(variablesOf("mergePullRequest(")).toEqual([
+        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH", expectedHeadOid: "def456" } },
+      ]);
+    }),
+  );
+
   it.effect.each(["merge", "enable-auto-merge"] as const)(
     "removes agent credits from the proposed message for %s",
     (action) =>

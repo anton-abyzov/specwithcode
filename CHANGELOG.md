@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A **guided tour** now points at the real controls in 14 short steps: where projects and their chats live, which settings change one project (**Project**) and which change the app or one machine (**App** and the groups below it), how to find, install and turn on skills and share them with **Also add on**, what the **Daily**, **Complex** and **Review** model tracks do, how to change one chat's model, and how **Machines**, **Move thread…** and **Move running threads…** use another machine. With one machine it says what to do once you join another. Each step dims the page and rings its control, with **Back**, **Next** and **Skip tour**; arrow keys and Esc work, and looking around changes nothing. Start it from **Take the tour** in **Quick guides** on Overview or in Settings > General > **Guided tour**; it never starts on its own. Translated in every app language.
+
 - A subscription change now respects Stop on an idle thread whose last report named a usage limit.
 
 - **Quick guides** on Overview shows how to use the SpecWeave Board, open and edit artifacts, and join, sync and hand off work across machines. Open the illustrated cards any time after setup.

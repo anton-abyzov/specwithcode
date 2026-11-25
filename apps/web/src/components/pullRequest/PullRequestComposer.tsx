@@ -35,6 +35,7 @@ export function PullRequestComposer({
   onCommentAction,
   onCommented,
   onReviewSubmitted,
+  headSha,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -46,6 +47,8 @@ export function PullRequestComposer({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onReviewSubmitted: () => void;
+  /** The head on screen; a review is attached to it and refused once the branch moved on. */
+  headSha?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
@@ -166,6 +169,8 @@ export function PullRequestComposer({
               textareaRef={reviewRef}
               pending={reviewPending}
               onPendingChange={setReviewPending}
+              headSha={headSha}
+              onRefused={onReviewSubmitted}
               onSubmitted={() => {
                 setOpen(false);
                 onReviewSubmitted();

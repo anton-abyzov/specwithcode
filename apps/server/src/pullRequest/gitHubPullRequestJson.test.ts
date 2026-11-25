@@ -1508,6 +1508,17 @@ describe("review submission payload", () => {
     });
   });
 
+  it("attaches the review to the head it was written against", () => {
+    expect(
+      buildReviewSubmission({
+        verdict: "approve",
+        body: "",
+        comments: [],
+        expectedHeadSha: "a".repeat(40),
+      }),
+    ).toEqual({ commit_id: "a".repeat(40), event: "APPROVE", body: "", comments: [] });
+  });
+
   it("sends an approval with no words and no comments", () => {
     expect(buildReviewSubmission({ verdict: "approve", body: "", comments: [] })).toEqual({
       event: "APPROVE",

@@ -44,6 +44,11 @@ import {
   agentDeviceStateDir,
 } from "./DeviceToolchain.ts";
 
+/** What a hub started with `--require-token` prints once it listens: its link, with the token. */
+const HUB_STARTUP_OUTPUT =
+  "Expo Device Hub ready\n\n  Local:   http://localhost:3400/?token=test-hub-token\n";
+const hubStartupOutput = () => Stream.make(new TextEncoder().encode(HUB_STARTUP_OUTPUT));
+
 /** Tests never spawn Xcode tools: the kept iOS check has no answer yet, so the host uses its quick test. */
 const iosCheckNotYetAnswered: KeptCheck<IosSimulatorSetup> = {
   current: () => undefined,
@@ -95,7 +100,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
             pid: ChildProcessSpawner.ProcessId(123),
             stdout: Stream.empty,
             stderr: Stream.empty,
-            all: Stream.empty,
+            all: hubStartupOutput(),
             exitCode: Effect.never,
             isRunning: Effect.succeed(true),
             kill: () => Effect.void,
@@ -594,7 +599,7 @@ it.live("limits hub discovery to Android unless the host is a Mac", () =>
         entryPath,
         `import http from 'node:http'; import fs from 'node:fs';
 const args=process.argv.slice(2); fs.writeFileSync(${JSON.stringify(argumentsPath)},JSON.stringify(args));
-http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
+http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1',()=>console.log(${JSON.stringify(HUB_STARTUP_OUTPUT)}));`,
       );
       const host = yield* LocalDeviceHost.make().pipe(
         Effect.provideService(IosSimulatorSetupSupport, iosCheckNotYetAnswered),
@@ -816,7 +821,7 @@ const makeLifecycleFixture = (hold: ServiceUpdateHold.ServiceUpdateHoldShape) =>
               stdin: Sink.drain,
               stdout: Stream.empty,
               stderr: Stream.empty,
-              all: Stream.empty,
+              all: hubStartupOutput(),
               getInputFd: () => Sink.drain,
               getOutputFd: () => Stream.empty,
             });

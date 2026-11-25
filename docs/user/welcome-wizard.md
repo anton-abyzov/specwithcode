@@ -171,3 +171,14 @@ After setup, open **Quick guides** on **Overview** for three illustrated cards:
 plan and verify an increment with SpecWeave, open and edit project artifacts, or
 join a machine, sync project files and hand off unfinished work. You can reopen
 the cards at any time.
+
+## Guided tour
+
+**Take the tour** in **Quick guides**, or in Settings > General > **Guided tour**,
+walks through 14 stops on the real screens: projects and their chats, the
+**Project** and **App** settings groups, skills (find, install, turn on per agent,
+**Also add on**), the **Daily**, **Complex** and **Review** model tracks, one
+chat's model, **Machines**, and moving work to another machine. Each stop has
+**Back**, **Next** and **Skip tour**; the arrow keys move between stops and Esc
+ends the tour. It changes nothing and never starts on its own. With one machine,
+the machine stops explain what to do once you join another.

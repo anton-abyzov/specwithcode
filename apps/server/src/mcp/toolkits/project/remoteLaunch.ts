@@ -26,6 +26,7 @@ import {
   mayReturnToOrigin,
   outgoingDelegation,
 } from "../../../fleet/workGrantPolicy.ts";
+import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRules.ts";
 import type { Caller } from "../../threadAccess.ts";
@@ -277,6 +278,21 @@ const pickedModels = new WeakMap<
 >();
 
 /**
+ * The title of the project a calling thread works in, sent with its launches as
+ * display text. None for a chat (the "No project" folder) or an unreadable project.
+ */
+const projectLabelOf = (caller: { readonly projectId: ProjectId }) =>
+  Effect.gen(function* () {
+    const folders = yield* Effect.serviceOption(ManagedProjectFolders.ManagedProjectFolders);
+    if (Option.isSome(folders) && (yield* folders.value.isScratch(caller.projectId)))
+      return undefined;
+    const projects = yield* ProjectService.ProjectService;
+    const found = Option.getOrUndefined(yield* projects.getById(caller.projectId));
+    const title = found?.title.replace(/\s+/g, " ").trim();
+    return title === undefined || title.length === 0 ? undefined : title.slice(0, 200);
+  }).pipe(Effect.orElseSucceed(() => undefined));
+
+/**
  * Starts the thread on another machine. A thread caller's worker is followed
  * and reports back to it; an outside MCP client's is not (it reads and waits
  * on the thread instead), and runs within the lower of the client's approved
@@ -385,6 +401,8 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
             grantAccounts: (yield* workGrantOf(context))?.grant.accounts,
           });
   pickedModels.set(params, { selection: pickedModelSelection });
+  // A helper on a machine without this project still names it there.
+  const callerProjectLabel = caller === undefined ? undefined : yield* projectLabelOf(caller);
   const launch = (localProject: Project | undefined = project) =>
     remote.launch({
       machine: input.machine.machine,
@@ -422,7 +440,10 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
       originHint:
         principal.kind === "client"
           ? { clientLabel: principal.client.label }
-          : { parentThreadId: principal.caller.id },
+          : {
+              parentThreadId: principal.caller.id,
+              ...(callerProjectLabel === undefined ? {} : { projectLabel: callerProjectLabel }),
+            },
     });
   if (project === undefined) return yield* launch();
   const machine = input.machine.machine;

@@ -824,6 +824,7 @@ import { NotOnBoardNote, SpecweaveOffer } from "./chat/SpecweaveOffer";
 import { useUnplannedNoticeShown } from "../studio/unplannedNotice";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
+import { HelperChatBlockers } from "./chat/HelperChatBlockers";
 import { ThreadHeaderLine, ThreadProgressDock } from "./chat/ThreadProgressDock";
 import {
   LinkIncrementDialogHost,
@@ -15981,6 +15982,7 @@ export default function ChatView(props: ChatViewProps) {
                   ) : null}
                 </ThreadProgressDock>
               ) : null}
+              <HelperChatBlockers thread={activeThreadShell ?? null} />
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">

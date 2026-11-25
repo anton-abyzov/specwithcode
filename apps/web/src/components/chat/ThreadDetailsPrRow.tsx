@@ -168,9 +168,13 @@ export function ThreadDetailsPrRow({
     checks: detail?.checks ?? [],
   });
 
+  const supportsHeadPin =
+    serverConfigs.get(environmentId)?.environment.capabilities.pullRequestHeadPin === true;
+  const shownHeadSha = supportsHeadPin ? (detail?.headSha ?? undefined) : undefined;
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId,
     reference,
+    headSha: shownHeadSha,
     onSuccess: () => {
       detailQuery.refresh();
       checksQuery.refresh();
@@ -179,6 +183,8 @@ export function ThreadDetailsPrRow({
   });
   const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
   const [confirmingMerge, setConfirmingMerge] = useState(false);
+  // The head on screen when the confirmation opened; a refresh while it is open must not move it.
+  const [confirmingHead, setConfirmingHead] = useState<string | undefined>(undefined);
   const [resolvingInThread, setResolvingInThread] = useState(false);
   const resolvesInThread =
     onResolveInThread !== undefined &&
@@ -383,7 +389,10 @@ export function ThreadDetailsPrRow({
                 destructive: false,
                 suffix: null,
                 tooltip: `Merge this pull request (${selectedMergeMethod})`,
-                onClick: () => setConfirmingMerge(true),
+                onClick: () => {
+                  setConfirmingHead(shownHeadSha);
+                  setConfirmingMerge(true);
+                },
               }
             : null;
 
@@ -548,7 +557,7 @@ export function ThreadDetailsPrRow({
                 disabled={actionPending}
                 onClick={() => {
                   setConfirmingMerge(false);
-                  void perform("merge", selectedMergeMethod);
+                  void perform("merge", selectedMergeMethod, confirmingHead);
                 }}
               >
                 {tx("Merge")}

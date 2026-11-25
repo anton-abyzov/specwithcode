@@ -95,6 +95,12 @@ const setup = (
     readonly m1CopyThreads?: ReadonlyArray<Record<string, unknown>>;
     /** The shared project still lists an M1 member that M1 no longer has (unlinked there). */
     readonly staleM1Member?: boolean;
+    /** What M1 reports about this project when probed. */
+    readonly m1ProjectMatch?: "none" | "identity";
+    /** Which projects M1's grant lets this machine see. */
+    readonly m1ProjectScope?: "all" | "linked";
+    /** M1 holds a linked copy of this project. */
+    readonly m1Member?: boolean;
     /** What each machine reports about itself; a machine left out has not said. */
     readonly platforms?: Partial<Record<"local" | "m1" | "m3", OrchestratorMcpMachinePlatform>>;
     /** The caller is a worker of the project, not its coordinator. */
@@ -118,6 +124,7 @@ const setup = (
     deletedAt: null,
   } as OrchestrationV2ThreadShell;
   const remoteLaunches: RemoteWorkers.RemoteLaunchInput[] = [];
+  const machineListings: Array<{ readonly only?: string; readonly fresh?: boolean }> = [];
   const providerReads = { count: 0 };
   const proxied: string[] = [];
   const linkSteps: string[] = [];
@@ -140,16 +147,17 @@ const setup = (
     id: "logical:widgets",
     title: "Widgets",
     coordinatorId: "coordinator:logical:widgets",
-    members: options.staleM1Member
-      ? [
-          kept,
-          {
-            environmentId: M1.environmentId,
-            projectId: ProjectId.make("m1-widgets"),
-            coordinatorThreadId: ThreadId.make("project-coordinator:m1-widgets"),
-          },
-        ]
-      : [kept],
+    members:
+      options.staleM1Member || options.m1Member
+        ? [
+            kept,
+            {
+              environmentId: M1.environmentId,
+              projectId: ProjectId.make("m1-widgets"),
+              coordinatorThreadId: ThreadId.make("project-coordinator:m1-widgets"),
+            },
+          ]
+        : [kept],
   };
   const localLaunches: ThreadLaunch.ThreadLaunchInput[] = [];
   const project = projectFixture(projectId, {
@@ -173,7 +181,7 @@ const setup = (
           }
         : {}),
       ...(options.workerMachines ? { workerMachines: options.workerMachines.map(listEntry) } : {}),
-      ...(options.sharedWithCopiesOnM1 ? { logicalProject } : {}),
+      ...(options.sharedWithCopiesOnM1 || options.m1Member ? { logicalProject } : {}),
     },
     ...(options.sharedWithCopiesOnM1
       ? { workspaceRoot: "/Users/example/widgets", repositoryIdentity: sharedIdentity as never }
@@ -182,8 +190,12 @@ const setup = (
   const remote: RemoteWorkers.RemoteWorkersShape = {
     ...RemoteWorkers.RemoteWorkers.defaultValue(),
     enabled: true,
-    listMachines: () =>
-      Effect.succeed({
+    listMachines: (input) => {
+      machineListings.push({
+        ...(input.only === undefined ? {} : { only: input.only }),
+        ...(input.fresh === undefined ? {} : { fresh: input.fresh }),
+      });
+      return Effect.succeed({
         local: { id: "local", label: "M4", environmentId: EnvironmentId.make("env-m4") },
         machines: [M1, M3].map((machine) => {
           const platform = options.platforms?.[machine.id as "m1" | "m3"];
@@ -194,10 +206,17 @@ const setup = (
             grantExpiresAt: null,
             reachable: true,
             ...(platform === undefined ? {} : { platform }),
+            ...(options.m1ProjectMatch !== undefined && machine === M1
+              ? { project: { match: options.m1ProjectMatch } }
+              : {}),
+            ...(options.m1ProjectScope !== undefined && machine === M1
+              ? { projectScope: options.m1ProjectScope }
+              : {}),
           };
         }),
         projectWorkerMachine: null,
-      }),
+      });
+    },
     resolveMachine: (target) =>
       target === undefined || target === "local"
         ? Effect.succeed({ kind: "local" })
@@ -471,6 +490,7 @@ const setup = (
     launch,
     launchEncoded,
     remoteLaunches,
+    machineListings,
     localLaunches,
     proxied,
     linkSteps,
@@ -699,6 +719,21 @@ it.effect("lets an outside client start work on another machine, without reporti
   });
 });
 
+it.effect("accepts an origin hint carrying a key this build does not know", () => {
+  // What an older machine receives from a newer one: the unknown key is dropped.
+  const outside = setup({ outsideClient: true, clientAccess: "auto" });
+  return Effect.gen(function* () {
+    const result = yield* outside.launch({
+      title: "Fix CI",
+      message: "Fix it",
+      projectId: "project",
+      machine: "m1",
+      originHint: { parentThreadId: "m5-worker", someFutureKey: "x" },
+    });
+    expect(result).toMatchObject({ threadId: "b-thread" });
+  });
+});
+
 it.effect("refuses an outside client work above its access or any as read-only", () => {
   const capped = setup({ outsideClient: true, clientAccess: "approval-required" });
   const readOnly = setup({ outsideClient: true, clientAccess: "read-only" });
@@ -908,7 +943,8 @@ it.effect("refuses a project not on this machine instead of a scratch launch the
 });
 
 it.effect("keeps a project thread's scratch work elsewhere to projectless, as here", () => {
-  const inside = setup();
+  // M1 has a copy of this project, so the work belongs in it.
+  const inside = setup({ m1Member: true });
   const scratchChat = setup({ callerInScratch: true });
   const outside = setup({ outsideClient: true });
   return Effect.gen(function* () {
@@ -916,6 +952,7 @@ it.effect("keeps a project thread's scratch work elsewhere to projectless, as he
     const refused = yield* inside.launch(params);
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect(String(refused.message)).toContain("projectless:true");
+    expect(String(refused.message)).toContain("no copy of this project");
     expect(inside.remoteLaunches).toEqual([]);
     yield* inside.launch({ ...params, projectless: true });
     expect(inside.remoteLaunches).toHaveLength(1);
@@ -926,6 +963,61 @@ it.effect("keeps a project thread's scratch work elsewhere to projectless, as he
     expect(outside.remoteLaunches).toHaveLength(1);
   });
 });
+
+it.effect(
+  "starts a project's scratch helper on a machine without the project, named for it",
+  () => {
+    const helper = setup({ m1ProjectMatch: "none", m1ProjectScope: "all" });
+    const unnamed = setup({
+      workerMachines: ["m1"],
+      m1ProjectMatch: "none",
+      m1ProjectScope: "all",
+    });
+    // An older M1 does not say what its grant shows, so its list may be filtered.
+    const silent = setup({ m1ProjectMatch: "none" });
+    // M1 has this repository by identity although nothing links it: the work goes there.
+    const legacy = setup({ m1ProjectMatch: "identity" });
+    // M1 said nothing about the project: the old rule stands.
+    const unknown = setup();
+    // M1 shows this machine only its linked projects, so "none" there proves nothing.
+    const scoped = setup({ m1ProjectMatch: "none", m1ProjectScope: "linked" });
+    return Effect.gen(function* () {
+      // Without a named machine, a saved worker machine is no reason to leave the project.
+      expect(
+        yield* unnamed.launch({ title: "Git push check", message: "go", scratch: true }),
+      ).toMatchObject({ code: "invalid_request" });
+      expect(unnamed.remoteLaunches).toEqual([]);
+      for (const world of [legacy, unknown, scoped, silent]) {
+        expect(
+          yield* world.launch({
+            title: "Git push check",
+            message: "go",
+            machine: "m1",
+            scratch: true,
+          }),
+        ).toMatchObject({ code: "invalid_request" });
+        expect(world.remoteLaunches).toEqual([]);
+      }
+      // M1 has no copy of this project: a check there needs no projectless.
+      yield* helper.launch({
+        title: "Git push check",
+        message: "go",
+        machine: "m1",
+        scratch: true,
+      });
+      expect(helper.remoteLaunches).toHaveLength(1);
+      // Only M1 was asked, and not from the cache.
+      expect(helper.machineListings).toContainEqual({ only: "m1", fresh: true });
+      expect(helper.remoteLaunches[0]).toMatchObject({
+        callerThreadId: callerId,
+        localProject: undefined,
+        listedUnder: projectId,
+        reportBack: true,
+        originHint: { parentThreadId: callerId, projectLabel: "Fixture" },
+      });
+    });
+  },
+);
 
 it.effect("tries the project's worker machines in order and skips one that cannot take it", () => {
   const routed = setup({ workerMachines: ["m3", "m1", "local"], failingMachines: ["m3"] });

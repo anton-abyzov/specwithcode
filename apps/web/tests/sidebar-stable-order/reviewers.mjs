@@ -88,12 +88,14 @@ try {
               ? (plan.querySelector("[aria-hidden]:not(svg)")?.textContent ?? "")
               : null,
           dot: row.querySelector(".sws-dot") !== null,
-          gap: machine && label
-            ? Math.round(
-                (machine.querySelector(".sws-row-machine-name") ?? machine).getBoundingClientRect()
-                  .left - label.getBoundingClientRect().right,
-              )
-            : null,
+          gap:
+            machine && label
+              ? Math.round(
+                  (
+                    machine.querySelector(".sws-row-machine-name") ?? machine
+                  ).getBoundingClientRect().left - label.getBoundingClientRect().right,
+                )
+              : null,
           tip: row.querySelector("button")?.getAttribute("aria-label") ?? null,
         };
       }),
@@ -103,14 +105,28 @@ try {
       assert.deepEqual(errors, []);
       for (const row of rows.filter((r) => r.title.startsWith("Review:"))) {
         // One status per row: a failed run shows its dot alone, never a plan count beside it.
-        if (row.tone === "failed") assert.equal(row.plan, null, `${row.title}: plan beside failure`);
+        if (row.tone === "failed")
+          assert.equal(row.plan, null, `${row.title}: plan beside failure`);
         // A finished checklist says nothing on the row; an open one is a bare count.
         if (row.plan !== null) assert.match(row.plan, /^\d+\/\d+$/u, row.title);
         // The name keeps most of the row.
-        assert.ok(row.labelWidth >= sidebar * 0.4, `${row.title}: name squeezed to ${row.labelWidth}px`);
+        assert.ok(
+          row.labelWidth >= sidebar * 0.4,
+          `${row.title}: name squeezed to ${row.labelWidth}px`,
+        );
       }
       // A reviewer a project's worker asked for on another machine groups with that project.
       assert.ok(!rows.some((r) => r.title.includes("PR 341")), "requested reviewer left in Chats");
+      // So does a helper a project's subagent worker asked for (November 25, 2026).
+      assert.ok(
+        !rows.some((r) => r.title.includes("Git push credentials")),
+        "helper left in Chats",
+      );
+      // A helper whose requester is not loaded stays reachable in Chats.
+      assert.ok(
+        rows.some((r) => r.title.includes("Disk check for specweave")),
+        "orphan helper lost",
+      );
       const done = rows.find((r) => r.title.includes("PR 343"));
       assert.equal(done.plan, null, "a finished checklist is hidden");
       // A bare row's name runs up to its machine: no room kept for a longer name elsewhere.

@@ -251,11 +251,15 @@ export interface RemoteWorkersShape {
    * The configured machines and this server's grant on each. Only `probe`
    * asks each machine for its providers and matching project and says
    * whether it answered (`reachable`); without it a row has the grant
-   * status alone.
+   * status alone. `only` keeps one machine (the others are not asked), and
+   * `fresh` skips the minute-long cache and leaves out a "none" match taken
+   * from a project list that was cut short.
    */
   readonly listMachines: (input: {
     readonly projectId: ProjectId | undefined;
     readonly probe: boolean;
+    readonly only?: string | undefined;
+    readonly fresh?: boolean | undefined;
   }) => Effect.Effect<OrchestratorMcpMachineListResult, OrchestratorMcpFailure>;
   readonly launch: (
     input: RemoteLaunchInput,
@@ -401,6 +405,10 @@ interface Probe extends MachineProbeFacts {
   readonly at: number;
   readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
   readonly projects: ReadonlyArray<Project>;
+  /** Whether the project list ended within the page cap. */
+  readonly complete: boolean;
+  /** That machine's "No project" folders, as it named them; older machines name none. */
+  readonly scratchProjectIds: ReadonlySet<string>;
 }
 
 const make = Effect.gen(function* () {
@@ -586,21 +594,30 @@ const make = Effect.gen(function* () {
       });
       const listed: Project[] = [];
       let cursor: number | null = 0;
+      // A page without a project array is not an empty list: the list is then incomplete.
+      let readable = true;
+      const scratchProjectIds = new Set<string>();
       for (let page = 0; page < MAX_REMOTE_PROJECT_PAGES && cursor !== null; page++) {
         const result: unknown = yield* client.call({
           machineId: machine.id,
           tool: "studio_project_list",
           arguments: { cursor, limit: 100 },
         });
-        const rows = isRecord(result) && Array.isArray(result.projects) ? result.projects : [];
-        listed.push(...(rows.filter(isRecord) as unknown as Project[]));
-        cursor =
-          isRecord(result) && typeof result.nextCursor === "number" ? result.nextCursor : null;
+        if (!isRecord(result) || !Array.isArray(result.projects)) {
+          readable = false;
+          break;
+        }
+        listed.push(...(result.projects.filter(isRecord) as unknown as Project[]));
+        if (typeof result.scratchProjectId === "string")
+          scratchProjectIds.add(result.scratchProjectId);
+        cursor = typeof result.nextCursor === "number" ? result.nextCursor : null;
       }
       const next: Probe = {
         at: now,
         providers: readProviders(capabilities),
         projects: listed,
+        complete: readable && cursor === null,
+        scratchProjectIds,
         ...readMachineProbeFacts(capabilities),
       };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
@@ -633,13 +650,18 @@ const make = Effect.gen(function* () {
       : matchRemoteProject({ local: project, remote: remoteProjects, projectId });
   };
 
-  const listMachines: RemoteWorkersShape["listMachines"] = ({ projectId, probe: probing }) =>
+  const listMachines: RemoteWorkersShape["listMachines"] = ({
+    projectId,
+    probe: probing,
+    only,
+    fresh = false,
+  }) =>
     Effect.gen(function* () {
       const descriptor = yield* environment.getDescriptor;
       const project = projectId === undefined ? undefined : yield* localProject(projectId);
       const configured = yield* machines;
       const rows = yield* Effect.forEach(
-        configured,
+        only === undefined ? configured : configured.filter((target) => target.id === only),
         (target) =>
           Effect.gen(function* () {
             const machine = refOf(target);
@@ -654,7 +676,7 @@ const make = Effect.gen(function* () {
               grantExpiresAt: workers.expiresAt,
             };
             if (!probing || (status !== "ready" && status !== "grant_expiring")) return row;
-            const probed = yield* probe(machine).pipe(Effect.result);
+            let probed = yield* probe(machine, fresh).pipe(Effect.result);
             if (probed._tag === "Failure") {
               const error = probed.failure;
               if (error.remoteCode === RemoteStudioMcpClient.TEAM_RULES_REMOTE_CODE) {
@@ -685,18 +707,43 @@ const make = Effect.gen(function* () {
             if (said._tag === "Success" && said.success?.reviewLock === true)
               row.handoffReviewLock = true;
             if (probed.success.platform !== undefined) row.platform = probed.success.platform;
-            const scope = probed.success.projectScope;
-            if (scope !== undefined) row.projectScope = scope;
+            let scope = probed.success.projectScope;
             if (project !== undefined) {
-              const match = machineRowProjectMatch(
-                matchFor(machine, project, probed.success.projects, undefined),
-              );
-              row.project = match;
+              let listed = probed.success;
+              let found = matchFor(machine, project, listed.projects, undefined);
+              // That machine's own "No project" folder is not a repository and never
+              // will be, so it is no sign of repositories still being read.
+              const unread = () =>
+                listed.projects.some(
+                  (candidate) =>
+                    !candidate.repositoryIdentity && !listed.scratchProjectIds.has(candidate.id),
+                );
+              // A machine that just started may not have read its repositories yet: ask
+              // again, as a launch does, before a fresh read says nothing matches.
+              for (
+                let attempt = 0;
+                fresh && attempt < COLD_IDENTITY_RETRIES && found.match === "none" && unread();
+                attempt++
+              ) {
+                if (attempt > 0) yield* Effect.sleep(COLD_IDENTITY_DELAY);
+                probed = yield* probe(machine, true).pipe(Effect.result);
+                if (probed._tag === "Failure") break;
+                listed = probed.success;
+                found = matchFor(machine, project, listed.projects, undefined);
+              }
+              // The scope and the match come from the same, last read.
+              scope = listed.projectScope;
+              const match = machineRowProjectMatch(found);
+              // A list cut short, or one with repositories still unread, cannot show
+              // that no checkout matches.
+              if (!(fresh && match.match === "none" && (!listed.complete || unread())))
+                row.project = match;
               // That machine lists only projects its grant covers, so no match there means
               // the grant leaves this one out: work for it cannot start there yet.
               if (scope !== undefined && scope !== "all" && match.match === "none")
                 row.status = "project_not_in_grant";
             }
+            if (scope !== undefined) row.projectScope = scope;
             return row;
           }),
         { concurrency: 4 },

@@ -108,6 +108,23 @@ const serverEnvironment = Layer.mock(ServerEnvironment.ServerEnvironment)({
   getDescriptor: Effect.succeed({ environmentId: WORKER, label: "Worker" } as never),
 });
 
+/** Runs right after the redeem route spends a line, before it issues the session. */
+let afterFleetSpend:
+  | ((auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<void>)
+  | undefined;
+const layerSpendHook = Layer.effect(
+  EnvironmentAuth.EnvironmentAuth,
+  Effect.map(EnvironmentAuth.EnvironmentAuth, (auth) => ({
+    ...auth,
+    consumeFleetRedemption: (credential: string) =>
+      auth
+        .consumeFleetRedemption(credential)
+        .pipe(
+          Effect.tap(() => (afterFleetSpend === undefined ? Effect.void : afterFleetSpend(auth))),
+        ),
+  })),
+);
+
 const makeLayerRoutes = (
   capture: (
     auth: EnvironmentAuth.EnvironmentAuth["Service"],
@@ -126,6 +143,7 @@ const makeLayerRoutes = (
       Layer.provide(AuthHttp.layer),
       Layer.provide(
         FleetHttp.layer.pipe(
+          Layer.provide(layerSpendHook),
           Layer.provide(serverEnvironment),
           Layer.provide(noTailscale),
           Layer.provide(FetchHttpClient.layer.pipe(Layer.provide(fetchLayer))),
@@ -301,6 +319,30 @@ it.live("redeems a v2 line once, for a token bound to the redeeming key", () =>
       const again = yield* redeem(handler, key, credential);
       expect(again.status).toBe(401);
       expect((yield* auth.listSessions()).length).toBe(before + 1);
+    }),
+  ),
+);
+
+it.live("refuses the session when every other client is signed out after the line is spent", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const key = makeTestDpopKey();
+      const owner = yield* auth.issueSession();
+      const credential = yield* redeemCredential(auth);
+      afterFleetSpend = (routeAuth) =>
+        routeAuth.revokeOtherClientSessions(owner.sessionId).pipe(Effect.asVoid, Effect.orDie);
+      const response = yield* redeem(handler, key, credential).pipe(
+        Effect.ensuring(Effect.sync(() => (afterFleetSpend = undefined))),
+      );
+      expect(response.status).not.toBe(200);
+      // Only the owner's session is left; the line bought nothing.
+      expect((yield* auth.listSessions()).map((entry) => entry.sessionId)).toEqual([
+        owner.sessionId,
+      ]);
+
+      // A line made after the revoke still redeems.
+      const fresh = yield* redeem(handler, key, yield* redeemCredential(auth));
+      expect(fresh.status).toBe(200);
     }),
   ),
 );
