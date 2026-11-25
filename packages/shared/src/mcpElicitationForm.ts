@@ -225,7 +225,8 @@ export function parseMcpElicitationSchema(schema: unknown): McpElicitationFormPa
   } catch {
     return { ok: false, reason: "The form cannot be read." };
   }
-  if (size > MCP_ELICITATION_SCHEMA_MAX_BYTES) return { ok: false, reason: "The form is too large." };
+  if (size > MCP_ELICITATION_SCHEMA_MAX_BYTES)
+    return { ok: false, reason: "The form is too large." };
   if (schema.type !== undefined && schema.type !== "object")
     return { ok: false, reason: "The form is not an object." };
   const properties = schema.properties ?? {};

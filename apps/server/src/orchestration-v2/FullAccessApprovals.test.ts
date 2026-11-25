@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as FullAccessApprovals from "./FullAccessApprovals.ts";
+import { elicitationCardOptions } from "../provider/ClaudeMcpElicitation.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
@@ -341,6 +342,32 @@ describe("FullAccessApprovals", () => {
       });
       yield* use((reactor) => reactor.sweep());
       assert.deepEqual(accepted(), [[workerId, "runtime-request:mcp-confirm"]]);
+    }),
+  );
+
+  it.effect("leaves a Claude form with fields to the person and accepts a confirm-only one", () =>
+    Effect.gen(function* () {
+      const fields = request("runtime-request:claude-form", "mcp-elicitation");
+      const confirm = request("runtime-request:claude-confirm", "mcp-elicitation");
+      // The shapes the Claude adapter gives its form cards (1481).
+      const claudeCard = (requestId: string, fieldCount: number) =>
+        ({
+          type: "approval_request",
+          requestId,
+          requestKind: "mcp-elicitation",
+          appName: "github",
+          options: elicitationCardOptions(fieldCount),
+          elicitation: { serverName: "github", mode: "form", message: "Delete octo/repo?" },
+        }) as unknown as OrchestrationV2TurnItem;
+      const { accepted, use } = harness({
+        [workerId]: {
+          thread: thread("full-access"),
+          runtimeRequests: [fields, confirm],
+          turnItems: [claudeCard(fields.id, 1), claudeCard(confirm.id, 0)],
+        },
+      });
+      yield* use((reactor) => reactor.sweep());
+      assert.deepEqual(accepted(), [[workerId, "runtime-request:claude-confirm"]]);
     }),
   );
 

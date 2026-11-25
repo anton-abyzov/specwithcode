@@ -80,7 +80,9 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
     readonly requestKind: "mcp-elicitation";
     readonly prompt?: string;
   }) => Effect.Effect<ApprovalArtifacts, E>;
-  readonly emitProviderEvent: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>;
+  readonly emitProviderEvent: (
+    event: ProviderAdapter.ProviderAdapterV2Event,
+  ) => Effect.Effect<void>;
   readonly releaseHeldRootFrames: (context: C) => Effect.Effect<void>;
   readonly resolveItemOrdinal: (context: C, nativeItemId: string) => Effect.Effect<number>;
   readonly idAllocator: Pick<IdAllocator.IdAllocatorV2Shape, "derive">;
@@ -98,7 +100,11 @@ export interface ClaudeMcpElicitations {
 }
 
 type Answer =
-  | { readonly by: "person"; readonly decision: ProviderApprovalDecision; readonly answers?: ProviderUserInputAnswers }
+  | {
+      readonly by: "person";
+      readonly decision: ProviderApprovalDecision;
+      readonly answers?: ProviderUserInputAnswers;
+    }
   | { readonly by: "stop" }
   | { readonly by: "timeout" };
 
@@ -117,6 +123,10 @@ const CONFIRM_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "accept", label: "Submit" },
   ...FIELD_FORM_OPTIONS,
 ];
+
+/** A card's choices: Submit only when the form has no fields, so Full access may press it. */
+export const elicitationCardOptions = (fieldCount: number): ReadonlyArray<ProviderApprovalOption> =>
+  fieldCount === 0 ? CONFIRM_OPTIONS : FIELD_FORM_OPTIONS;
 
 /** The person cannot be expected to answer: the thread is a worker's or a routine's. */
 export function isUnattendedClaudeTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput): boolean {
@@ -207,7 +217,12 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       yield* deps.emitProviderEvent({
         type: "runtime_request.updated",
         driver: DRIVER,
-        runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now, decision: "cancel" },
+        runtimeRequest: {
+          ...artifacts.request,
+          status: "cancelled",
+          resolvedAt: now,
+          decision: "cancel",
+        },
       });
       yield* deps.emitProviderEvent({
         type: "node.updated",
@@ -241,7 +256,11 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           serverName: request.serverName,
           reason: form.reason,
         });
-        yield* notice(context, `${nativeRequestId}:notice`, unreadableFormNotice(request.serverName));
+        yield* notice(
+          context,
+          `${nativeRequestId}:notice`,
+          unreadableFormNotice(request.serverName),
+        );
         return CANCEL;
       }
       // The CLI waits on this answer, so output held for the prompt echo goes
@@ -259,7 +278,9 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         serverName: request.serverName,
         mode: "form",
         message: request.message,
-        ...(request.requestedSchema === undefined ? {} : { requestedSchema: request.requestedSchema }),
+        ...(request.requestedSchema === undefined
+          ? {}
+          : { requestedSchema: request.requestedSchema }),
       };
       // The request belongs to no tool node the app knows, so it hangs off the turn's root.
       const node = { ...built.node, parentNodeId: context.input.rootNodeId };
@@ -268,7 +289,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           ? {
               ...built.turnItem,
               appName: request.serverName,
-              options: [...(form.fields.length === 0 ? CONFIRM_OPTIONS : FIELD_FORM_OPTIONS)],
+              options: [...elicitationCardOptions(form.fields.length)],
               elicitation,
             }
           : built.turnItem;
@@ -299,9 +320,17 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         const won = raced.by === "person" ? true : yield* Deferred.succeed(answer, raced);
         const settled = won ? raced : yield* Deferred.await(answer);
         if (settled.by === "person") {
-          const result = elicitationResultForDecision(form.fields, settled.decision, settled.answers);
+          const result = elicitationResultForDecision(
+            form.fields,
+            settled.decision,
+            settled.answers,
+          );
           if (result !== null) return result;
-          yield* notice(context, `${nativeRequestId}:invalid`, invalidAnswerNotice(request.serverName));
+          yield* notice(
+            context,
+            `${nativeRequestId}:invalid`,
+            invalidAnswerNotice(request.serverName),
+          );
           return CANCEL;
         }
         remember(id);

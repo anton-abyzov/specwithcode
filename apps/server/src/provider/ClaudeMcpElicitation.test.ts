@@ -69,7 +69,9 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     releaseHeldRootFrames: () => Effect.sync(() => void (released += 1)),
     resolveItemOrdinal: () => Effect.succeed(7),
     idAllocator: {
-      derive: { turnItemFromProviderItem: ({ nativeItemId }: { nativeItemId: string }) => nativeItemId },
+      derive: {
+        turnItemFromProviderItem: ({ nativeItemId }: { nativeItemId: string }) => nativeItemId,
+      },
     } as never,
     runPromise: Effect.runPromise,
     unattendedTimer: Deferred.await(timer),
@@ -128,9 +130,9 @@ describe("ClaudeMcpElicitation", () => {
     // A form with fields offers no Approve, so Full access never answers it.
     expect(card.options?.map((option) => option.decision)).toEqual(["decline", "cancel"]);
     const runtimeRequest = h.events.find((event) => event.type === "runtime_request.updated");
-    expect(runtimeRequest?.type === "runtime_request.updated" && runtimeRequest.runtimeRequest.kind).toBe(
-      "mcp-elicitation",
-    );
+    expect(
+      runtimeRequest?.type === "runtime_request.updated" && runtimeRequest.runtimeRequest.kind,
+    ).toBe("mcp-elicitation");
     const node = h.events.find((event) => event.type === "node.updated");
     expect(node?.type === "node.updated" && node.node.parentNodeId).toBe("node-root");
 
@@ -219,7 +221,9 @@ describe("ClaudeMcpElicitation", () => {
     expect(closed).toHaveLength(3);
     // A late answer to the closed card is taken and ignored.
     expect(
-      await Effect.runPromise(h.elicitations.respond({ requestId: h.requestId, decision: "accept" })),
+      await Effect.runPromise(
+        h.elicitations.respond({ requestId: h.requestId, decision: "accept" }),
+      ),
     ).toBe(true);
   });
 
