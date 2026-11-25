@@ -313,6 +313,24 @@ export function buildInitialPiProviderSnapshot(
   });
 }
 
+/** The check result when Pi has no private folder to run in, so it is not started. */
+export const piStatusFolderUnavailable = (piSettings: PiSettings, detail: string) =>
+  Effect.gen(function* () {
+    return buildServerProvider({
+      presentation: PI_PRESENTATION,
+      enabled: piSettings.enabled,
+      checkedAt: DateTime.formatIso(yield* DateTime.now),
+      models: piModelsFromSettings(piSettings.customModels),
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `Pi was not checked: SpecWithCode could not make a private folder for the check (${detail}).`,
+      },
+    });
+  });
+
 export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,

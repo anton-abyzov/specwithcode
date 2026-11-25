@@ -39,7 +39,15 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "studio-code-git-text", version: "0.0.0" },
+        // The user's Grok config may always approve. Launch asking, so every
+        // tool approval comes here, and grant none: a title or commit message
+        // needs no tools.
+        runtimeMode: "approval-required",
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+
+      yield* runtime.handleRequestPermission(() =>
+        Effect.succeed({ outcome: { outcome: "cancelled" as const } }),
+      );
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;

@@ -1079,6 +1079,85 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  itOnLinuxHost("installs an archive whose command name starts with two dots", () => {
+    const downloadUrl = "https://registry.test/agent.tar.gz";
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./..agent" } },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-dotted-name-",
+      });
+      const source = `${cacheDir}/source`;
+      yield* fileSystem.makeDirectory(source);
+      yield* fileSystem.writeFileString(`${source}/..agent`, "#!/bin/sh\necho managed\n");
+      const archivePath = `${cacheDir}/agent.tar.gz`;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const tar = yield* spawner.spawn(
+        ChildProcess.make("tar", ["-czf", archivePath, "-C", source, "..agent"]),
+      );
+      expect(yield* tar.exitCode).toBe(0);
+      const archive = yield* fileSystem.readFile(archivePath);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                request.url === registryUrl
+                  ? new Response(makeRegistry(agent))
+                  : new Response(archive),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* resolver.prepare({ agentId: agent.id });
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
+      expect(resolved.spawn.command).toBe(
+        yield* fileSystem.realPath(`${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/..agent`),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest())),
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcessArchitecture, "x64"),
+    );
+  });
+
+  it("gives a Windows npm install exactly one prefix, the managed one", () => {
+    const inherited = {
+      NPM_CONFIG_PREFIX: "C:\\Users\\a\\npm",
+      Npm_Config_Prefix: "C:\\other",
+      PATH: "C:\\bin",
+    };
+    const windows = AcpRegistrySupport.managedNpmInstallEnvironment(
+      inherited,
+      "C:\\managed\\npm",
+      "win32",
+    );
+    expect(
+      Object.entries(windows).filter(([name]) => name.toLowerCase() === "npm_config_prefix"),
+    ).toEqual([["npm_config_prefix", "C:\\managed\\npm"]]);
+    expect(windows.PATH).toBe("C:\\bin");
+    // POSIX names are case-sensitive, and npm reads only the lower-case one there.
+    const linux = AcpRegistrySupport.managedNpmInstallEnvironment(
+      { NPM_CONFIG_PREFIX: "/home/a/.npm-global" },
+      "/managed/npm",
+      "linux",
+    );
+    expect(linux).toEqual({
+      NPM_CONFIG_PREFIX: "/home/a/.npm-global",
+      npm_config_prefix: "/managed/npm",
+    });
+  });
+
   itOnLinuxHost("installs a tar archive containing a root directory entry", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({

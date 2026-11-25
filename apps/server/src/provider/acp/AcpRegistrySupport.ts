@@ -201,6 +201,38 @@ const encodePackageInstallReceipt = Schema.encodeSync(
 );
 
 /**
+ * Whether a `path.relative` result leaves its base folder. Only `..` itself
+ * or a leading `../` climbs out; a name such as `..agent` stays inside.
+ */
+const leavesFolder = (path: Path.Path, relative: string): boolean =>
+  relative === ".." ||
+  relative.startsWith(`..${path.sep}`) ||
+  relative.startsWith("../") ||
+  path.isAbsolute(relative);
+
+/**
+ * The environment npm installs a managed package with. On Windows names are
+ * case-insensitive, so an inherited `NPM_CONFIG_PREFIX` in any spelling would
+ * win over ours and install outside the managed folder; drop every spelling.
+ */
+export function managedNpmInstallEnvironment(
+  environment: NodeJS.ProcessEnv,
+  packageRoot: string,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv =
+    platform === "win32"
+      ? Object.fromEntries(
+          Object.entries(environment).filter(
+            ([name]) => name.toLowerCase() !== "npm_config_prefix",
+          ),
+        )
+      : { ...environment };
+  next.npm_config_prefix = packageRoot;
+  return next;
+}
+
+/**
  * Receipts store absolute paths. When the data folder is renamed, or replaced
  * by a symlink to a new name (~/.specweave-studio to ~/.specwithcode), the
  * stored paths no longer equal the current tools folder although the install
@@ -225,7 +257,7 @@ const rebasePackageReceiptPaths = (input: {
     const suffix = path.relative(path.dirname(input.toolsDir), binDirectory);
     const sameLayout =
       suffix !== "" &&
-      !suffix.startsWith("..") &&
+      !leavesFolder(path, suffix) &&
       receipt.binDirectory.endsWith(`${path.sep}${suffix}`);
     if (!sameLayout) {
       const [stored, current] = yield* Effect.all([
@@ -239,9 +271,7 @@ const rebasePackageReceiptPaths = (input: {
     const oldRoot = path.resolve(receipt.binDirectory, path.relative(binDirectory, installRoot));
     const rebase = (stored: string) => {
       const relative = path.relative(oldRoot, stored);
-      return relative.startsWith("..") || path.isAbsolute(relative)
-        ? stored
-        : path.join(installRoot, relative);
+      return leavesFolder(path, relative) ? stored : path.join(installRoot, relative);
     };
     const executablePath = rebase(receipt.executablePath);
     if (path.dirname(executablePath) !== binDirectory) return receipt;
@@ -1573,7 +1603,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     );
     const packageEnvironment =
       distribution === "npx"
-        ? { ...environment, npm_config_prefix: packageRoot }
+        ? managedNpmInstallEnvironment(environment, packageRoot, platform)
         : {
             ...environment,
             UV_TOOL_DIR: packageRoot,
@@ -1711,7 +1741,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const rootRealPath = yield* fileSystem.realPath(root);
     const executableRealPath = yield* fileSystem.realPath(executablePath);
     const relative = path.relative(rootRealPath, executableRealPath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (leavesFolder(path, relative)) {
       return yield* new AcpRegistryError({
         reason: "archive_invalid",
         detail: "ACP Registry archive command resolves outside its installation directory.",

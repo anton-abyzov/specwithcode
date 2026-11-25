@@ -5,7 +5,9 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import * as PlatformError from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { CodexSettings, type ServerProviderModel } from "@specweave-studio/contracts";
 import * as CodexErrors from "@specweave-studio/effect-codex-app-server/errors";
 import type * as CodexSchema from "@specweave-studio/effect-codex-app-server/schema";
@@ -21,6 +23,7 @@ import {
   withAccountBilling,
   type CodexAppServerProviderSnapshot,
   codexProbeFailureMessage,
+  withCodexAppServerClient,
 } from "./CodexProvider.ts";
 
 describe("fresh Codex account status with optional discovery", () => {
@@ -838,4 +841,53 @@ describe("codexProbeFailureMessage", () => {
       codexProbeFailureMessage(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
     ).toBe("Codex app-server provider probe failed: Codex App Server process exited with code 1.");
   });
+});
+
+describe("Codex app-server probe environment", () => {
+  // The probe starts `codex app-server`, which loads MCP servers and plugins;
+  // it must not get another thread's credentials or the AppImage runtime.
+  it.effect("starts with a complete environment that drops what agents must not inherit", () =>
+    Effect.gen(function* () {
+      const spawned: Array<{ env: unknown; extendEnv: unknown }> = [];
+      const recordingSpawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) {
+          spawned.push({ env: command.options.env, extendEnv: command.options.extendEnv });
+        }
+        return Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+          }),
+        );
+      });
+      yield* Effect.scoped(
+        withCodexAppServerClient({
+          binaryPath: "codex",
+          cwd: "/workspace",
+          environment: { OWN: "1", STUDIO_ACP_MCP_AUTHORIZATION: "Bearer own" },
+        }),
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
+        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessEnvironment, {
+          PATH: "/tmp/.mount_Spec1/usr/bin:/usr/bin",
+          HOME: "/home/a",
+          APPIMAGE: "/home/a/SpecWithCode.AppImage",
+          APPDIR: "/tmp/.mount_Spec1",
+          STUDIO_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
+          SPECWEAVE_STUDIO_THREAD_ID: "thread-other",
+        }),
+        Effect.ignore,
+      );
+      expect(spawned).toHaveLength(1);
+      expect(spawned[0]?.extendEnv).toBe(false);
+      expect(spawned[0]?.env).toEqual({
+        PATH: "/usr/bin",
+        HOME: "/home/a",
+        OWN: "1",
+        STUDIO_ACP_MCP_AUTHORIZATION: "Bearer own",
+      });
+    }),
+  );
 });

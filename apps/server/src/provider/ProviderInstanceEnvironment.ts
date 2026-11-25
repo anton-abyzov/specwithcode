@@ -96,7 +96,7 @@ export function followEnvironmentPath(
   source: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  followBasePath(next, source, pathNameTest(platform));
+  followBasePath(next, source, pathNameTest(platform), platform);
   return next;
 }
 
@@ -104,12 +104,19 @@ function followBasePath(
   next: NodeJS.ProcessEnv,
   baseEnv: NodeJS.ProcessEnv,
   isPath: (name: string) => boolean,
+  platform: NodeJS.Platform,
 ): void {
   const key = Object.keys(baseEnv).find(isPath) ?? "PATH";
   Object.defineProperty(next, key, {
     enumerable: true,
     configurable: true,
-    get: () => baseEnv[Object.keys(baseEnv).find(isPath) ?? key],
+    get: () => {
+      const value = baseEnv[Object.keys(baseEnv).find(isPath) ?? key];
+      const mount = appImageMountDir(baseEnv, platform);
+      return mount === undefined || value === undefined
+        ? value
+        : withoutMountEntries(value, /:/, mount);
+    },
     set: (value: string | undefined) => {
       Object.defineProperty(next, key, {
         enumerable: true,
@@ -121,15 +128,100 @@ function followBasePath(
   });
 }
 
+/**
+ * The Linux AppImage build runs the server from a temporary mount and sets
+ * APPIMAGE, APPDIR and friends, with mount folders first on PATH and the
+ * library and data search paths. An agent that inherits them runs the user's
+ * tools against the app's bundled libraries. Agent environments drop the
+ * launcher variables and every mount entry; the user's own entries stay.
+ */
+const APPIMAGE_LAUNCHER_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
+// The dynamic loader also splits LD_LIBRARY_PATH on semicolons.
+const APPIMAGE_SEARCH_PATH_SEPARATORS: Record<string, RegExp> = {
+  PATH: /:/,
+  LD_LIBRARY_PATH: /[:;]/,
+  XDG_DATA_DIRS: /:/,
+  GSETTINGS_SCHEMA_DIR: /:/,
+};
+
+// APPDIR alone is a common variable of other tools; only the Linux AppImage
+// runtime sets APPIMAGE, so that is the signal.
+const isAppImageEnvironment = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean =>
+  platform === "linux" && Boolean(env.APPIMAGE);
+
+function appImageMountDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
+  if (!isAppImageEnvironment(env, platform)) return undefined;
+  const mount = env.APPDIR?.replace(/\/+$/, "");
+  return mount ? mount : undefined;
+}
+
+/** `value` without entries inside `mount`; undefined when nothing else was in it. */
+function withoutMountEntries(value: string, separator: RegExp, mount: string): string | undefined {
+  const entries = value.split(separator);
+  const kept = entries.filter((entry) => entry !== mount && !entry.startsWith(`${mount}/`));
+  if (kept.length === entries.length) return value;
+  if (kept.length === 0) return undefined;
+  // An empty entry means the current folder; alone it must stay ":", since "" means none.
+  return kept.length === 1 && kept[0] === "" ? ":" : kept.join(":");
+}
+
+/** A copy of `env` without the AppImage launcher variables and mount entries. */
+export function withoutAppImageRuntimeEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (!isAppImageEnvironment(env, platform)) return env;
+  const next: NodeJS.ProcessEnv = { ...env };
+  for (const key of APPIMAGE_LAUNCHER_KEYS) delete next[key];
+  const mount = appImageMountDir(env, platform);
+  if (mount === undefined) return next;
+  for (const [key, separator] of Object.entries(APPIMAGE_SEARCH_PATH_SEPARATORS)) {
+    const value = next[key];
+    if (value === undefined) continue;
+    const kept = withoutMountEntries(value, separator, mount);
+    if (kept === undefined) delete next[key];
+    else next[key] = kept;
+  }
+  return next;
+}
+
+/**
+ * A thread's MCP credentials and identity belong to the session that set
+ * them. The server's own environment can carry another thread's (a server
+ * started from an agent shell), so an inherited layer drops them in any case.
+ */
+export const isThreadScopedVariable = (name: string): boolean => {
+  const upper = name.toUpperCase();
+  return upper.startsWith("STUDIO_ACP_MCP_") || upper === "SPECWEAVE_STUDIO_THREAD_ID";
+};
+
+/**
+ * The server's environment as an agent may inherit it: no AppImage runtime
+ * and no thread-scoped credentials. The same object when nothing is dropped.
+ */
+export function inheritableAgentEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const scrubbed = withoutAppImageRuntimeEnvironment(env, platform);
+  const threadScoped = Object.keys(scrubbed).filter(isThreadScopedVariable);
+  if (threadScoped.length === 0) return scrubbed;
+  const next: NodeJS.ProcessEnv = { ...scrubbed };
+  for (const key of threadScoped) delete next[key];
+  return next;
+}
+
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  if (!environment || environment.length === 0) return baseEnv;
-  const next: NodeJS.ProcessEnv = { ...baseEnv };
+  const inheritable = inheritableAgentEnvironment(baseEnv, platform);
+  if ((!environment || environment.length === 0) && inheritable === baseEnv) return baseEnv;
+  const next: NodeJS.ProcessEnv = inheritable === baseEnv ? { ...baseEnv } : inheritable;
   const isPath = pathNameTest(platform);
-  if (!environment.some((variable) => isPath(variable.name))) followBasePath(next, baseEnv, isPath);
+  if (!environment?.some((variable) => isPath(variable.name)))
+    followBasePath(next, baseEnv, isPath, platform);
   for (const variable of environment ?? []) {
     if (platform === "win32" && variable.name.toUpperCase() === "PATH") {
       setWindowsPath(next, variable.value);
@@ -156,7 +248,7 @@ export function mergeNativeSubscriptionEnvironment(
   // This second copy would freeze PATH as the first would have (see `followBasePath`).
   const isPath = pathNameTest(platform);
   if (!environment?.some((variable) => isPath(variable.name)))
-    followBasePath(next, baseEnv, isPath);
+    followBasePath(next, baseEnv, isPath, platform);
   for (const key of NATIVE_AUTH_ENVIRONMENT_KEYS) next[key] = "";
   return next;
 }

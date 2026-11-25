@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -18,6 +19,23 @@ describe("AcpSessionRuntime environment", () => {
   // starts through this runtime, so this is where the policy is applied.
   it.effect("starts the agent with the headless browser environment", () =>
     Effect.gen(function* () {
+      // An agent shell running this test exports its own thread's variables,
+      // which the runtime drops by copying the environment; set them aside.
+      const threadScoped = Object.keys(process.env).filter(
+        (key) =>
+          key.toUpperCase().startsWith("STUDIO_ACP_MCP_") ||
+          key.toUpperCase() === "SPECWEAVE_STUDIO_THREAD_ID",
+      );
+      const saved = threadScoped.map((key) => [key, process.env[key]] as const);
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          for (const key of threadScoped) delete process.env[key];
+        }),
+        () =>
+          Effect.sync(() => {
+            for (const [key, value] of saved) process.env[key] = value;
+          }),
+      );
       const nodeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const spawned: Array<{
         readonly env: Record<string, string | undefined> | undefined;
@@ -53,6 +71,138 @@ describe("AcpSessionRuntime environment", () => {
         { env: { PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" }, extendEnv: true },
         { env: { KEEP: "1", PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" }, extendEnv: true },
       ]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("an agent on the Linux AppImage build gets none of its runtime environment", () =>
+    Effect.gen(function* () {
+      const nodeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const appImage = {
+        APPIMAGE: "/home/a/SpecWithCode.AppImage",
+        APPDIR: "/tmp/.mount_Spec1",
+        ARGV0: "SpecWithCode",
+        OWD: "/home/a",
+        LD_LIBRARY_PATH: "/tmp/.mount_Spec1/usr/lib",
+        XDG_DATA_DIRS: "/tmp/.mount_Spec1/usr/share:/usr/share",
+      };
+      const saved = Object.fromEntries(Object.keys(appImage).map((key) => [key, process.env[key]]));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => Object.assign(process.env, appImage)),
+        () =>
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(saved)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+      );
+      // What the agent process really gets: Node adds the server's own
+      // environment under `env` when `extendEnv` is on.
+      const effective: Array<Record<string, string | undefined>> = [];
+      const recordingSpawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) {
+          const { env, extendEnv } = command.options;
+          effective.push(extendEnv === false ? { ...env } : { ...process.env, ...env });
+        }
+        return nodeSpawner.spawn(command);
+      });
+
+      // No env, a partial env, a complete copy of the server's env, and a
+      // complete env that replaces the server's.
+      const spawns: ReadonlyArray<Pick<AcpSessionRuntime.AcpSpawnInput, "env" | "extendEnv">> = [
+        {},
+        { env: { GROK_OAUTH2_REFERRER: "studio" } },
+        { env: { ...process.env, KEEP: "1" } },
+        { env: { ...process.env, KEEP: "1" }, extendEnv: false },
+      ];
+      for (const spawn of spawns) {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* AcpSessionRuntime.make({
+              spawn: { command: "node", args: [mockAgentPath], ...spawn },
+              cwd: process.cwd(),
+              clientInfo: { name: "studio-test", version: "0.0.0" },
+              authMethodId: "test",
+            });
+            yield* runtime.start();
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner));
+      }
+
+      expect(effective).toHaveLength(4);
+      for (const env of effective) {
+        expect(env.APPIMAGE).toBeUndefined();
+        expect(env.APPDIR).toBeUndefined();
+        expect(env.ARGV0).toBeUndefined();
+        expect(env.OWD).toBeUndefined();
+        expect(env.LD_LIBRARY_PATH).toBeUndefined();
+        expect(env.XDG_DATA_DIRS).toBe("/usr/share");
+        expect(env.PATH).toBe(process.env.PATH);
+        expect(env.PWDEBUG).toBe("0");
+      }
+      expect(effective[1]?.GROK_OAUTH2_REFERRER).toBe("studio");
+      expect(effective[2]?.KEEP).toBe("1");
+      expect(effective[3]?.KEEP).toBe("1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("an agent never inherits a thread's MCP credentials from the server environment", () =>
+    Effect.gen(function* () {
+      const nodeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const leaked = {
+        STUDIO_ACP_MCP_AUTHORIZATION: "Bearer other-thread",
+        STUDIO_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
+        SPECWEAVE_STUDIO_THREAD_ID: "thread-other",
+      };
+      const saved = Object.fromEntries(Object.keys(leaked).map((key) => [key, process.env[key]]));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => Object.assign(process.env, leaked)),
+        () =>
+          Effect.sync(() => {
+            for (const [key, value] of Object.entries(saved)) {
+              if (value === undefined) delete process.env[key];
+              else process.env[key] = value;
+            }
+          }),
+      );
+      const effective: Array<Record<string, string | undefined>> = [];
+      const recordingSpawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) {
+          const { env, extendEnv } = command.options;
+          effective.push(extendEnv === false ? { ...env } : { ...process.env, ...env });
+        }
+        return nodeSpawner.spawn(command);
+      });
+      // Inherited only, then a launch that sets its own credential.
+      const spawns: ReadonlyArray<Pick<AcpSessionRuntime.AcpSpawnInput, "env" | "extendEnv">> = [
+        {},
+        { env: { STUDIO_ACP_MCP_AUTHORIZATION: "Bearer own" } },
+      ];
+      for (const spawn of spawns) {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const runtime = yield* AcpSessionRuntime.make({
+              spawn: { command: "node", args: [mockAgentPath], ...spawn },
+              cwd: process.cwd(),
+              clientInfo: { name: "studio-test", version: "0.0.0" },
+              authMethodId: "test",
+            });
+            yield* runtime.start();
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner));
+      }
+      expect(effective).toHaveLength(2);
+      for (const env of effective) {
+        expect(env.STUDIO_ACP_MCP_ENDPOINT).toBeUndefined();
+        expect(env.SPECWEAVE_STUDIO_THREAD_ID).toBeUndefined();
+        expect(env.PATH).toBe(process.env.PATH);
+      }
+      expect(effective[0]?.STUDIO_ACP_MCP_AUTHORIZATION).toBeUndefined();
+      expect(effective[1]?.STUDIO_ACP_MCP_AUTHORIZATION).toBe("Bearer own");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
