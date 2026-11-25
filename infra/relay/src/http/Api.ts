@@ -267,41 +267,37 @@ export const traceRelayHttpRequest = <E, R>(
 ) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const traced = appendRelayTraceContextResponseHeader.pipe(
-      Effect.andThen(relayRequestDeadline(httpEffect, relayRequestDeadlineMs(request))),
-    );
-    if (!isRelayHookPath(request.url)) {
-      return yield* HttpMiddleware.tracer(traced).pipe(
-        // The worker turns its own request span off; this one is ours.
-        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
-        // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-        Effect.ensuring(Effect.yieldNow),
-      );
-    }
-    // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-    // request, while the route itself still receives the original. A webhook
-    // sender's trace context is dropped, so it cannot pick the trace our relay
-    // and environment spans land in.
-    const redacted = request.modify({
-      url: redactRelayHookUrl(request.url),
+    const isHook = isRelayHookPath(request.url);
+    // The span and the deadline log see a copy of the request without the
+    // caller's address or user agent, which would build a per-user IP history
+    // in the trace store. Hook URLs carry a secret token, so their copy is
+    // redacted too, and a webhook sender's trace context is dropped so it
+    // cannot pick the trace our spans land in. The route gets the original.
+    const spanRequest = request.modify({
+      remoteAddress: Option.none(),
       headers: Headers.removeMany(
         request.headers,
-        Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+        Object.keys(request.headers).filter(
+          (name) =>
+            name.toLowerCase() === "user-agent" || (isHook && SENDER_TRACE_HEADER.test(name)),
+        ),
       ),
+      ...(isHook ? { url: redactRelayHookUrl(request.url) } : {}),
     });
     return yield* HttpMiddleware.tracer(
       appendRelayTraceContextResponseHeader.pipe(
         Effect.andThen(
           relayRequestDeadline(
             httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-            RELAY_HOOK_REQUEST_DEADLINE_MS,
+            isHook ? RELAY_HOOK_REQUEST_DEADLINE_MS : relayRequestDeadlineMs(request),
           ),
         ),
       ),
     ).pipe(
-      Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, spanRequest),
       // The worker turns its own request span off; this one is ours.
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
       Effect.ensuring(Effect.yieldNow),
     );
   });
