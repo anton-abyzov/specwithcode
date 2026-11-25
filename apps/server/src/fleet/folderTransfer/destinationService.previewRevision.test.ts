@@ -151,7 +151,8 @@ it("never puts a shortage measured for an older preview on a newer one", async (
 it("names the destination contents a preview saw, and a new name once they change", async () => {
   const { copies, operationId, status } = await previewed("contents");
   const seen = status.destinationRevision;
-  expect(seen).toMatch(/^[a-f0-9]{64}$/);
+  // Nothing is there yet: the destination is named as absent.
+  expect(seen).toBe("absent");
   // Choices alone leave the destination's name as it was.
   await copies.decide(operationId, { mirror: !status.mirror });
   const chosen = await settle(copies, operationId, "previewed");
