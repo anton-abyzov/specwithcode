@@ -329,19 +329,51 @@ export function untickedSecrets(
 }
 
 /**
- * The saved choice with this window's own exclusions put back, or null when none was dropped.
- * Two windows' saves can cross (each reads the shared copy a moment before the other writes),
- * so the window whose exclusion was lost writes it again when it hears of the other's save.
+ * Where the person's secret exclusions for one project's copies are kept: one key per file,
+ * apart from the pointer every window writes whole, so no window's save can drop another's.
+ * Outside the pointers' prefix, so nothing reads them as a copy left running.
  */
-export function healedSecrets(
-  stored: SecretsChoice,
-  own: ReadonlySet<string>,
-  ownOff: boolean,
-): SecretsChoice | null {
-  const dropped = [...own].filter((path) => !stored.out.includes(path));
-  const off = ownOff && stored.included;
-  if (dropped.length === 0 && !off) return null;
-  return { included: stored.included && !ownOff, out: [...stored.out, ...dropped] };
+const exclusionPrefix = (storageKey: string) =>
+  `${storageKey.replace(/^specwithcode:folder-copy:/, "specwithcode:folder-copy-exclusion:")}:`;
+
+/** Notes what a person's change left out or took back in; adds never overwrite each other. */
+export function recordExclusions(
+  storageKey: string,
+  before: SecretsChoice,
+  next: SecretsChoice,
+): void {
+  const prefix = exclusionPrefix(storageKey);
+  try {
+    for (const path of next.out)
+      if (!before.out.includes(path)) localStorage.setItem(`${prefix}file:${path}`, "1");
+    for (const path of before.out)
+      if (!next.out.includes(path)) localStorage.removeItem(`${prefix}file:${path}`);
+    if (!next.included) localStorage.setItem(`${prefix}off`, "1");
+    else if (!before.included) localStorage.removeItem(`${prefix}off`);
+  } catch {
+    /* Without storage only this window's own choice applies. */
+  }
+}
+
+/** The choice with every exclusion any window recorded for this project's copies. */
+export function settledSecrets(storageKey: string, choice: SecretsChoice): SecretsChoice {
+  const prefix = exclusionPrefix(storageKey);
+  const out: Array<string> = [];
+  let off = false;
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      const name = key.slice(prefix.length);
+      if (name === "off") off = true;
+      else if (name.startsWith("file:")) out.push(name.slice("file:".length));
+    }
+  } catch {
+    return choice;
+  }
+  const added = out.filter((path) => !choice.out.includes(path)).sort();
+  if (added.length === 0 && !(off && choice.included)) return choice;
+  return { included: choice.included && !off, out: [...choice.out, ...added] };
 }
 
 /**

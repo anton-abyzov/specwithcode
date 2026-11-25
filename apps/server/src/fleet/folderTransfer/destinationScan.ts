@@ -129,10 +129,12 @@ async function replaceableTrees(
     .sort();
   if (folders.length === 0) return null;
   const hash = NodeCrypto.createHash("sha256");
+  // A part this scan cannot read could change unseen, so its name never matches another.
+  const unseen = (path: string) => hash.update(`\0unseen\0${path}\0${NodeCrypto.randomUUID()}`);
   const walk = async (absolute: string, relative: string): Promise<void> => {
     const names = await NodeFSP.readdir(absolute).catch(() => null);
     if (!names) {
-      hash.update(`\0unreadable\0${relative}`);
+      unseen(relative);
       return;
     }
     for (const name of names.sort()) {
@@ -140,14 +142,18 @@ async function replaceableTrees(
       const path = `${relative}/${name}`;
       const stat = await NodeFSP.lstat(location, { bigint: true }).catch(() => null);
       if (!stat) {
-        hash.update(`\0gone\0${path}`);
+        unseen(path);
         continue;
       }
       const kind = stat.isDirectory() ? "d" : stat.isSymbolicLink() ? "l" : "f";
       hash.update(
         `\0${path}\0${kind}\0${stat.size}\0${stat.mtimeNs}\0${stat.ctimeNs}\0${stat.ino}`,
       );
-      if (kind === "l") hash.update(await NodeFSP.readlink(location).catch(() => "?"));
+      if (kind === "l") {
+        const target = await NodeFSP.readlink(location).catch(() => null);
+        if (target === null) unseen(path);
+        else hash.update(target);
+      }
       if (kind === "d") await walk(location, path);
     }
   };

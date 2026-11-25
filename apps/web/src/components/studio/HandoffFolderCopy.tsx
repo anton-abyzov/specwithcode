@@ -763,7 +763,7 @@ export function HandoffFolderCopy({
       projectRelativePath,
       projectId,
       selection,
-      secrets: choices.secrets ?? secrets.chosen,
+      secrets: secrets.settled(choices.secrets),
       ...(secrets.gate.blocked ? { secretsStay: true as const } : {}),
       method: choices.method,
       ...(choices.auto ? { auto: true } : {}),
@@ -916,7 +916,7 @@ export function HandoffFolderCopy({
       const input = approveInput(
         operationId,
         project.environmentId,
-        pendingSecrets(saved).included,
+        secrets.settled(pendingSecrets(saved)).included,
         secrets.sentFor(operationId),
         environmentId,
         revision,

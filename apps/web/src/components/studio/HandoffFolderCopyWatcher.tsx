@@ -32,6 +32,7 @@ import {
   readPendingCopy,
   pendingSecrets,
   secretsPromised,
+  settledSecrets,
   type PendingCopy,
 } from "./handoffFolderCopyPending";
 import { stageForStatus } from "./handoffCopySteps";
@@ -430,7 +431,9 @@ export function HandoffFolderCopyWatcher({
       const saved = readPendingCopy(key);
       if (stopped || !summary || saved?.operationId !== operationId) return false;
       const blocked = secretsBlockedNow(environmentId, saved.environmentId);
-      const choice = blocked ? withoutSecrets(pendingSecrets(saved)) : pendingSecrets(saved);
+      // Every window's exclusions count, whichever saved the pointer last.
+      const wanted = settledSecrets(key, pendingSecrets(saved));
+      const choice = blocked ? withoutSecrets(wanted) : wanted;
       // Never leave `~/` files out on a guess: the person decides at the review.
       if (
         choice.included &&
@@ -581,7 +584,7 @@ export function HandoffFolderCopyWatcher({
       const input = approveInput(
         operationId,
         environmentId,
-        pendingSecrets(saved).included,
+        settledSecrets(key, pendingSecrets(saved)).included,
         staged,
         saved.environmentId,
         previewed.previewRevision,

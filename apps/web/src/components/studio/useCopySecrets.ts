@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type {
   EnvironmentId,
   FolderCopySourceSummary,
@@ -16,9 +16,10 @@ import {
 } from "./handoffCopySecrets";
 import {
   ALL_SECRETS,
-  healedSecrets,
   pendingSecrets,
   readPendingCopy,
+  recordExclusions,
+  settledSecrets,
   untickedSecrets,
   type PendingCopy,
   type SecretsChoice,
@@ -87,7 +88,7 @@ export function useCopySecrets({
   // files stay out through a new measure or a reopen.
   const [chosen, setChosen, chosenNow] = useLiveState<SecretsChoice>(ALL_SECRETS);
   const gate = useSecretsGate(source, sourceLabel, machine, targetLabel);
-  const choice = gate.clamp(chosen);
+  const choice = gate.clamp(settledSecrets(storageKey, chosen));
   const homeSupported = machines.find((entry) => entry.id === machine)?.homeSecretFiles === true;
   const skip = copy ? (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip : [];
   const { candidates, paths } = travellingSecrets({ summary, copy, skip, homeSupported, choice });
@@ -96,43 +97,23 @@ export function useCopySecrets({
   /** The list last sent for a copy, which its approval then names to the destination. */
   const sent = useRef<{ operationId: string; paths: ReadonlyArray<string> } | null>(null);
 
-  /** Exclusions this window made for the running copy; another window's save never drops them. */
-  const own = useRef<{ operationId: string | null; out: Set<string>; off: boolean }>({
-    operationId: null,
-    out: new Set(),
-    off: false,
-  });
-  const ownFor = () => {
-    const operationId = latestPending.current?.operationId ?? null;
-    if (own.current.operationId !== operationId)
-      own.current = { operationId, out: new Set(), off: false };
-    return own.current;
-  };
+  /** The choice with every exclusion a window recorded: what may leave this one. */
+  const settled = (choice?: SecretsChoice | null) =>
+    settledSecrets(storageKey, choice ?? chosenNow.current);
   const choose = (next: SecretsChoice) => {
-    const mine = ownFor();
-    const before = chosenNow.current;
-    for (const path of next.out) if (!before.out.includes(path)) mine.out.add(path);
-    for (const path of before.out) if (!next.out.includes(path)) mine.out.delete(path);
-    mine.off = !next.included;
+    recordExclusions(storageKey, settled(), next);
     setChosen(next);
     keep(next);
   };
-  // Another window saved this copy: put back any exclusion of this window its save dropped.
+  // Another window recorded an exclusion: show it here too.
+  const [, heard] = useState(0);
   useEffect(() => {
-    const heard = (event: StorageEvent) => {
-      if (event.key !== storageKey) return;
-      const mine = latestPending.current;
-      const stored = readPendingCopy(storageKey);
-      if (!mine || !stored || stored.operationId !== mine.operationId) return;
-      const { out, off } = ownFor();
-      const healed = healedSecrets(pendingSecrets(stored), out, off);
-      if (!healed) return;
-      setChosen(healed);
-      keep(healed);
+    const listen = (event: StorageEvent) => {
+      if (event.key === null || event.key.includes("folder-copy-exclusion:")) heard((n) => n + 1);
     };
-    window.addEventListener("storage", heard);
-    return () => window.removeEventListener("storage", heard);
-  });
+    window.addEventListener("storage", listen);
+    return () => window.removeEventListener("storage", listen);
+  }, []);
   /** Leaves out secret files a refresh found that the person never reviewed. */
   const untick = (paths: ReadonlyArray<string>) => {
     const mine = latestPending.current;
@@ -157,7 +138,7 @@ export function useCopySecrets({
     // access, nor on an older answer about the sealed way to that machine.
     await refreshSealedRoute(source, destination, askRoute);
     const blocked = secretsBlockedNow(source, destination);
-    const wanted = saved ? pendingSecrets(saved) : chosenNow.current;
+    const wanted = settled(saved ? pendingSecrets(saved) : null);
     const sending = blocked ? withoutSecrets(wanted) : wanted;
     if (!summaryNow.current && sending.included && saved) await readSummary(saved);
     if (!summaryNow.current && sending.included) throw new Error(secretsUnreadText(sourceLabel));
@@ -207,6 +188,7 @@ export function useCopySecrets({
     paths,
     choose,
     untick,
+    settled,
     sendTicked,
     /** The secret files this dialog sent for that copy, or null when it sent none. */
     sentFor: (operationId: string): ReadonlyArray<string> | null =>
