@@ -7304,11 +7304,7 @@
     {
       "op": "add",
       "parent": ["importers:", "apps/server:", "dependencies:"],
-      "lines": [
-        "jszip:",
-        "  specifier: 3.10.1",
-        "  version: 3.10.1"
-      ],
+      "lines": ["jszip:", "  specifier: 3.10.1", "  version: 3.10.1"],
       "commit": "b2826e2c405f499bdda2302683be0ba9e914b2c8",
       "pr": null,
       "reason": "1451 Word editor: the .docx writer builds the package with jszip, exact pin; jszip 3.10.1 was already in the lock."
@@ -10209,6 +10205,80 @@
       "commit": "c40c7ab984fd3bfc6c942977997bf0dc1b536f4b",
       "pr": 848,
       "reason": "Adds @excalidraw/excalidraw 0.18.1 and its dependencies to apps/web for the whiteboard editor (increment 1451)."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "packages/shared:", "dependencies:"],
+      "lines": ["yjs:", "  specifier: 13.6.33", "  version: 13.6.33"],
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "lines": [
+        "isomorphic.js@0.2.5:",
+        "  resolution: {integrity: sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw==}"
+      ],
+      "package": "isomorphic.js@0.2.5",
+      "integrity": "sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw==",
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "lines": [
+        "lib0@0.2.120:",
+        "  resolution: {integrity: sha512-/a2eRImR8sZbmMVKe2we1/KukDQkuPyPf8yol6epvCu2PH6hurjcRI3mdGFFAi0uGoRJGyns99JquZgxwW1tQg==}",
+        "  engines: {node: '>=16'}",
+        "  hasBin: true"
+      ],
+      "package": "lib0@0.2.120",
+      "integrity": "sha512-/a2eRImR8sZbmMVKe2we1/KukDQkuPyPf8yol6epvCu2PH6hurjcRI3mdGFFAi0uGoRJGyns99JquZgxwW1tQg==",
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "lines": [
+        "yjs@13.6.33:",
+        "  resolution: {integrity: sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==}",
+        "  engines: {node: '>=16.0.0', npm: '>=8.0.0'}"
+      ],
+      "package": "yjs@13.6.33",
+      "integrity": "sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==",
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": ["isomorphic.js@0.2.5: {}"],
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": ["lib0@0.2.120:", "  dependencies:", "    isomorphic.js: 0.2.5"],
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": ["yjs@13.6.33:", "  dependencies:", "    lib0: 0.2.120"],
+      "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
+      "pr": 942,
+      "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
     }
   ]
 }
