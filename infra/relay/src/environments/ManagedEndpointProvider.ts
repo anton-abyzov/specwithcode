@@ -21,6 +21,7 @@ import {
   managedEndpointHostname,
   managedEndpointTunnelName,
 } from "../deploymentConfig.ts";
+import type { EnvironmentLinkLookupPersistenceError } from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
@@ -64,6 +65,7 @@ const ManagedEndpointProvisioningFailureReason = Schema.Literals([
   "claim-lost",
   "endpoint-mismatch",
   "invalid-tunnel-response",
+  "key-conflict",
 ]);
 
 export class ManagedEndpointProvisioningFailed extends Schema.TaggedError<ManagedEndpointProvisioningFailed>()(
@@ -149,6 +151,11 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
       readonly origin: RelayManagedEndpointOrigin;
+      /**
+       * Read right before the tunnel's ingress is written. False refuses with
+       * `key-conflict`, so a request whose key lost a race never repoints it.
+       */
+      readonly ownsOrigin?: Effect.Effect<boolean, EnvironmentLinkLookupPersistenceError>;
     }) => Effect.Effect<ManagedEndpointProvisioningResult, ManagedEndpointProviderError>;
     readonly reconcileOrigin: (input: {
       readonly userId: string;
@@ -1209,6 +1216,31 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      const owned = yield* (input.ownsOrigin ?? Effect.succeed(true)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ManagedEndpointProvisioningFailed({
+              userId: input.userId,
+              environmentId: input.environmentId,
+              stage: "configure-tunnel",
+              hostname,
+              tunnelName,
+              tunnelId: tunnel.id,
+              cause,
+            }),
+        ),
+      );
+      if (!owned) {
+        return yield* new ManagedEndpointProvisioningFailed({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          stage: "configure-tunnel",
+          reason: "key-conflict",
+          hostname,
+          tunnelName,
+          tunnelId: tunnel.id,
+        });
+      }
       const configured = yield* allocations
         .withClaimedTunnel(
           {

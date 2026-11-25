@@ -539,6 +539,67 @@ describe("EnvironmentLinker", () => {
       );
     });
 
+    it.effect(
+      "refuses when a racing link committed another key before the tunnel is configured",
+      () => {
+        let reads = 0;
+        const calls: Array<string> = [];
+        return Effect.gen(function* () {
+          const { request } = yield* makeRequest;
+          const linker = yield* EnvironmentLinker.EnvironmentLinker;
+          const error = yield* linker
+            .link({ userId: "user_123", request: { ...request, managedTunnelsEnabled: true } })
+            .pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "EnvironmentLinkProofInvalid",
+            reason: "descriptor_mismatch",
+            stage: "validate_existing_link",
+          });
+          expect(calls).toEqual([]);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              // The linker's first read sees no link; the racing key lands after.
+              getForUser: () =>
+                Effect.succeed(
+                  (reads += 1) === 1 ? null : activeLink("-----BEGIN PUBLIC KEY-----\nother"),
+                ),
+              provision: (provisionInput) =>
+                (provisionInput.ownsOrigin ?? Effect.succeed(true)).pipe(
+                  Effect.orDie,
+                  Effect.flatMap((owned) =>
+                    owned
+                      ? Effect.sync(() => {
+                          calls.push("configure");
+                          return {
+                            endpoint: {
+                              httpBaseUrl: "https://managed.example.test/",
+                              wsBaseUrl: "wss://managed.example.test/ws",
+                              providerKind: "cloudflare_tunnel" as const,
+                            },
+                            runtime: {
+                              providerKind: "cloudflare_tunnel" as const,
+                              connectorToken: "token",
+                            },
+                          };
+                        })
+                      : Effect.fail(
+                          new ManagedEndpointProvider.ManagedEndpointProvisioningFailed({
+                            userId: provisionInput.userId,
+                            environmentId: provisionInput.environmentId,
+                            stage: "configure-tunnel",
+                            reason: "key-conflict",
+                          }),
+                        ),
+                  ),
+                ),
+              upsert: () => Effect.sync(() => void calls.push("upsert")),
+            }),
+          ),
+        );
+      },
+    );
+
     it.effect("relinks an active link proven by the same key", () =>
       Effect.gen(function* () {
         const { request, payload } = yield* makeRequest;

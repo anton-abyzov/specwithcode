@@ -308,17 +308,21 @@ const make = Effect.gen(function* () {
         userId: input.userId,
         environmentId: verified.environmentId,
       });
+      const refuseOtherKey = Effect.logWarning(
+        "refused to relink an active environment under another key",
+        { environmentId: verified.environmentId, reason: "environment_key_mismatch" },
+      ).pipe(
+        Effect.andThen(
+          new EnvironmentLinkProofInvalid({
+            userId: input.userId,
+            environmentId: verified.environmentId,
+            reason: "descriptor_mismatch",
+            stage: "validate_existing_link",
+          }),
+        ),
+      );
       if (existing !== null && existing.environmentPublicKey !== verified.environmentPublicKey) {
-        yield* Effect.logWarning("refused to relink an active environment under another key", {
-          environmentId: verified.environmentId,
-          reason: "environment_key_mismatch",
-        });
-        return yield* new EnvironmentLinkProofInvalid({
-          userId: input.userId,
-          environmentId: verified.environmentId,
-          reason: "descriptor_mismatch",
-          stage: "validate_existing_link",
-        });
+        return yield* refuseOtherKey;
       }
       // A machine that lost its local state (reinstall, reset, wiped home)
       // comes back with a new environment id. Its signed hardware identity
@@ -407,12 +411,32 @@ const make = Effect.gen(function* () {
             Effect.ignore,
           );
       }
+      // Another key's link can commit after the read above. The provider reads
+      // again right before it writes the tunnel's ingress, so a request that
+      // lost that race never points the winner's tunnel at its own local port.
       const provisioned = input.request.managedTunnelsEnabled
-        ? yield* managedEndpointProvider.provision({
-            userId: input.userId,
-            environmentId: verified.environmentId,
-            origin: verified.origin,
-          })
+        ? yield* managedEndpointProvider
+            .provision({
+              userId: input.userId,
+              environmentId: verified.environmentId,
+              origin: verified.origin,
+              ownsOrigin: links
+                .getForUser({ userId: input.userId, environmentId: verified.environmentId })
+                .pipe(
+                  Effect.map(
+                    (link) =>
+                      link === null || link.environmentPublicKey === verified.environmentPublicKey,
+                  ),
+                ),
+            })
+            .pipe(
+              Effect.catchIf(
+                (error) =>
+                  error._tag === "ManagedEndpointProvisioningFailed" &&
+                  error.reason === "key-conflict",
+                () => refuseOtherKey,
+              ),
+            )
         : null;
       const endpoint = provisioned?.endpoint ?? verified.endpoint;
       // The secure-endpoint requirement only matters when the relay advertises
@@ -449,22 +473,7 @@ const make = Effect.gen(function* () {
         })
         .pipe(
           // A link under another key landed after the read above: same refusal.
-          Effect.catchTags({
-            EnvironmentLinkKeyConflict: () =>
-              Effect.logWarning("refused to relink an active environment under another key", {
-                environmentId: verified.environmentId,
-                reason: "environment_key_mismatch",
-              }).pipe(
-                Effect.andThen(
-                  new EnvironmentLinkProofInvalid({
-                    userId: input.userId,
-                    environmentId: verified.environmentId,
-                    reason: "descriptor_mismatch",
-                    stage: "validate_existing_link",
-                  }),
-                ),
-              ),
-          }),
+          Effect.catchTags({ EnvironmentLinkKeyConflict: () => refuseOtherKey }),
         );
       for (const previous of previousAccounts) {
         // Best effort, as for a replaced machine link: a tunnel left behind is
