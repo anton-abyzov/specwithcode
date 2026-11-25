@@ -139,6 +139,18 @@ describe("credit parsing on hostile text", () => {
     expect(isAgentCreditLine(line)).toBe(false);
   });
 
+  it("scans a line of unclosed agent links in linear time", () => {
+    const body = `Body\n${"[a](https://claude.ai/".repeat(10_000)}`;
+    let cleaned = "";
+    expect(within(100, () => (cleaned = removeAgentCredits(body)))).toBe(true);
+    expect(cleaned).toBe(body);
+  });
+
+  it("reads a long fence marker followed by a line separator in linear time", () => {
+    const body = `Body\n${"`".repeat(40_000)}\u2028tail\nCo-authored-by: Claude <noreply@anthropic.com>`;
+    expect(within(100, () => removeAgentCredits(body))).toBe(true);
+  });
+
   it("still recognizes credits with unusual spacing and case", () => {
     expect(isAgentCreditLine("Co-Authored-By:\tGitHub Copilot   <NOREPLY@GITHUB.COM>")).toBe(true);
     expect(isAgentCreditLine("co-authored-by: Claude<noreply@anthropic.com>")).toBe(true);
