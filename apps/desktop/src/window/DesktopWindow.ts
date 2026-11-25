@@ -960,7 +960,7 @@ export const make = Effect.gen(function* () {
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+      if (Option.isSome(ElectronShell.parseWebExternalUrl(url))) {
         void runPromise(openLinkExternally(url));
       }
       return { action: "deny" };

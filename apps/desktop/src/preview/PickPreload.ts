@@ -269,8 +269,14 @@ function unionRects(
   };
 }
 
+// The overlay's hosts, held here: a page can copy the marker attribute, never this reference.
+const overlayHosts = new WeakSet<Node>();
 function isAnnotationNode(element: Element): boolean {
-  return element instanceof Element && element.closest(`[${OVERLAY_ATTRIBUTE}]`) !== null;
+  for (let node: Node | null = element; node;) {
+    if (overlayHosts.has(node)) return true;
+    node = node instanceof ShadowRoot ? node.host : node.parentNode;
+  }
+  return false;
 }
 
 function pickFromPoint(clientX: number, clientY: number): Element | null {
@@ -521,6 +527,7 @@ function startAnnotation(sendEnabled: boolean): void {
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
   host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
+  overlayHosts.add(host);
   const shadowRoot = host.attachShadow({ mode: "closed" });
   const themeStyle = document.createElement("style");
   themeStyle.textContent = previewAnnotationStyles;
@@ -1185,7 +1192,10 @@ function startAnnotation(sendEnabled: boolean): void {
     hoverOutline.style.display = "none";
   };
 
+  // Selection, marquee and drawing follow only the person's own pointer (agent CDP input is
+  // trusted too, and refused while annotating), never a page script's synthetic events.
   const onPointerMove = (event: PointerEvent): void => {
+    if (!event.isTrusted) return;
     if (isAnnotationNode(event.target as Element)) {
       clearHoverOutline();
       return;
@@ -1218,7 +1228,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || isAnnotationNode(event.target as Element)) return;
+    if (!event.isTrusted || event.button !== 0 || isAnnotationNode(event.target as Element)) return;
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
@@ -1253,7 +1263,7 @@ function startAnnotation(sendEnabled: boolean): void {
   };
 
   const onPointerUp = (event: PointerEvent): void => {
-    if (!dragStart) return;
+    if (!event.isTrusted || !dragStart) return;
     event.preventDefault();
     event.stopPropagation();
     if (tool === "marquee") {
@@ -1337,6 +1347,8 @@ function startAnnotation(sendEnabled: boolean): void {
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
   const onKeyDown = (event: KeyboardEvent): void => {
+    // Escape and the tool keys are the person's; a page script's synthetic key changes nothing.
+    if (!event.isTrusted) return;
     if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
     if (event.key === "Escape") {
       event.preventDefault();
@@ -1419,7 +1431,10 @@ function startAnnotation(sendEnabled: boolean): void {
         teardown(true);
       });
   };
-  submit.addEventListener("click", () => submitAnnotation("attach"));
+  submit.addEventListener("click", (event) => {
+    // A page script's synthetic click must not send its own text as the person's.
+    if (event.isTrusted) submitAnnotation("attach");
+  });
   root.addEventListener("keydown", (event) => {
     const submission =
       event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;

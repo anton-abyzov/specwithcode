@@ -6,8 +6,9 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { fromPartition, sessions } = vi.hoisted(() => ({
+const { fromPartition, sessions, showMessageBox } = vi.hoisted(() => ({
   fromPartition: vi.fn(),
+  showMessageBox: vi.fn(),
   sessions: new Map<
     string,
     {
@@ -25,6 +26,8 @@ vi.mock("electron", () => ({
   session: {
     fromPartition,
   },
+  dialog: { showMessageBox },
+  BrowserWindow: { fromWebContents: () => null },
 }));
 
 import * as BrowserSession from "./BrowserSession.ts";
@@ -34,6 +37,7 @@ const layer = BrowserSession.layer.pipe(Layer.provide(NodeServices.layer));
 describe("BrowserSession", () => {
   beforeEach(() => {
     sessions.clear();
+    showMessageBox.mockReset();
     fromPartition.mockReset();
     fromPartition.mockImplementation((partition: string) => {
       const browserSession = {
@@ -140,52 +144,158 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
-    Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("scope-a");
-      yield* browserSessions.getSession("scope-a");
-
-      const browserSession = sessions.get(partition);
-      assert.isDefined(browserSession);
-
-      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
-      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
-      assert.isFunction(requestHandler);
-      assert.isFunction(checkHandler);
-
-      const requestAllows = (permission: string): boolean => {
-        let granted: boolean | undefined;
-        requestHandler(null, permission, (value: boolean) => {
-          granted = value;
-        });
-        assert.isDefined(granted);
-        return granted;
-      };
-
-      for (const permission of [
-        "clipboard-read",
-        "clipboard-sanitized-write",
-        "notifications",
-        "geolocation",
-      ]) {
-        assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
-        assert.isTrue(
-          checkHandler(null, permission) as boolean,
-          `check handler should allow ${permission}`,
+  const permissionHandlers = Effect.gen(function* () {
+    const browserSessions = yield* BrowserSession.BrowserSession;
+    const partition = yield* browserSessions.getPartition("scope-a");
+    yield* browserSessions.getSession("scope-a");
+    const browserSession = sessions.get(partition);
+    assert.isDefined(browserSession);
+    const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+    const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+    assert.isFunction(requestHandler);
+    assert.isFunction(checkHandler);
+    const request = (permission: string, requestingUrl?: string): Promise<boolean> =>
+      new Promise((resolve) => {
+        requestHandler(
+          {},
+          permission,
+          resolve,
+          requestingUrl === undefined ? {} : { requestingUrl },
         );
-      }
+      });
+    const check = (
+      permission: string,
+      requestingOrigin = "",
+      details?: { readonly requestingUrl?: string; readonly isMainFrame?: boolean },
+    ): boolean => checkHandler(null, permission, requestingOrigin, details) as boolean;
+    return { request, check };
+  });
+
+  it.effect("grants clipboard-sanitized-write through both handlers without asking", () =>
+    Effect.gen(function* () {
+      const { request, check } = yield* permissionHandlers;
+      assert.isTrue(
+        yield* Effect.promise(() => request("clipboard-sanitized-write", "https://a.example/")),
+      );
+      assert.isTrue(check("clipboard-sanitized-write", "https://a.example"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 0);
 
       // `clipboard-write` is not a real Electron permission — the async write API
       // uses `clipboard-sanitized-write` — so the stale name must not be granted,
       // and unrelated permissions stay denied.
       for (const permission of ["clipboard-write", "midi"]) {
-        assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
+        assert.isFalse(yield* Effect.promise(() => request(permission, "https://a.example/")));
+        assert.isFalse(check(permission, "https://a.example"));
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  for (const permission of ["clipboard-read", "notifications", "geolocation"]) {
+    it.effect(`asks once per origin before granting ${permission}`, () =>
+      Effect.gen(function* () {
+        const { request, check } = yield* permissionHandlers;
+        // Before any answer the check handler reports no grant.
+        assert.isFalse(check(permission, "https://a.example"));
+
+        showMessageBox.mockResolvedValueOnce({ response: 1 });
+        assert.isFalse(yield* Effect.promise(() => request(permission, "https://a.example/page")));
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+        assert.include(JSON.stringify(showMessageBox.mock.calls[0]), "https://a.example");
+
+        // A remembered Block answers without a second prompt.
+        assert.isFalse(yield* Effect.promise(() => request(permission, "https://a.example/other")));
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+        assert.isFalse(check(permission, "https://a.example"));
+
+        // Another origin asks on its own, and Allow is remembered for it.
+        showMessageBox.mockResolvedValueOnce({ response: 0 });
+        assert.isTrue(yield* Effect.promise(() => request(permission, "https://b.example/")));
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+        assert.isTrue(check(permission, "https://b.example"));
+        assert.isTrue(yield* Effect.promise(() => request(permission, "https://b.example/x")));
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+      }).pipe(Effect.provide(layer)),
+    );
+  }
+
+  it.effect("refuses consent permissions for frames whose origin cannot be read", () =>
+    Effect.gen(function* () {
+      const { request, check } = yield* permissionHandlers;
+      for (const url of ["about:srcdoc", "about:blank", "data:text/html,x", undefined]) {
+        assert.isFalse(yield* Effect.promise(() => request("clipboard-read", url)));
+      }
+      assert.isFalse(check("geolocation", "null"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("refuses the check for a child frame without a readable origin of its own", () =>
+    Effect.gen(function* () {
+      const { request, check } = yield* permissionHandlers;
+      showMessageBox.mockResolvedValueOnce({ response: 0 });
+      assert.isTrue(yield* Effect.promise(() => request("geolocation", "https://a.example/")));
+      // The allowed frame itself, and a check made with no frame (a service worker), still read granted.
+      assert.isTrue(
+        check("geolocation", "https://a.example", { requestingUrl: "https://a.example/map" }),
+      );
+      assert.isTrue(check("geolocation", "https://a.example"));
+      // Its about:blank, about:srcdoc and data: children inherit the origin but are refused,
+      // as the request handler refuses them.
+      for (const requestingUrl of ["about:blank", "about:srcdoc", "data:text/html,x"]) {
         assert.isFalse(
-          checkHandler(null, permission) as boolean,
-          `check handler should deny ${permission}`,
+          check("geolocation", "https://a.example", { requestingUrl, isMainFrame: false }),
+          requestingUrl,
         );
       }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the whole origin in the prompt, so two long origins never look alike", () =>
+    Effect.gen(function* () {
+      const { request } = yield* permissionHandlers;
+      const prefix = `${"a".repeat(60)}.${"b".repeat(30)}`;
+      const first = `https://${prefix}.trusted.example:8443`;
+      const second = `https://${prefix}.attacker.example:8443`;
+      showMessageBox.mockResolvedValue({ response: 1 });
+      yield* Effect.promise(() => request("geolocation", `${first}/`));
+      yield* Effect.promise(() => request("geolocation", `${second}/`));
+      const messages = showMessageBox.mock.calls.map((call) => {
+        const options = call.at(-1) as { message: string };
+        return options.message;
+      });
+      assert.strictEqual(messages.length, 2);
+      assert.notStrictEqual(messages[0], messages[1]);
+      assert.include(messages[0], first);
+      assert.include(messages[1], second);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("shows one prompt for concurrent requests from the same origin", () =>
+    Effect.gen(function* () {
+      const { request } = yield* permissionHandlers;
+      let answer: (value: { response: number }) => void = () => {};
+      showMessageBox.mockReturnValueOnce(
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      );
+      const first = request("geolocation", "https://a.example/");
+      const second = request("geolocation", "https://a.example/again");
+      yield* Effect.promise(() => Promise.resolve());
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      answer({ response: 0 });
+      assert.deepEqual(yield* Effect.promise(() => Promise.all([first, second])), [true, true]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("blocks without remembering when the prompt fails", () =>
+    Effect.gen(function* () {
+      const { request } = yield* permissionHandlers;
+      showMessageBox.mockRejectedValueOnce(new Error("no window"));
+      assert.isFalse(yield* Effect.promise(() => request("clipboard-read", "https://a.example/")));
+      showMessageBox.mockResolvedValueOnce({ response: 0 });
+      assert.isTrue(yield* Effect.promise(() => request("clipboard-read", "https://a.example/")));
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
   );
 
