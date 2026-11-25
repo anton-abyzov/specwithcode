@@ -446,6 +446,56 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("a fresh read waits for unread repositories and never takes a bad page as empty", () => {
+    const fresh = RemoteWorkers.RemoteWorkers.pipe(
+      Effect.flatMap((workers) =>
+        workers.listMachines({
+          projectId: ProjectId.make("local-project"),
+          probe: true,
+          only: "m1",
+          fresh: true,
+        }),
+      ),
+      Effect.map((listed) => listed.machines[0]),
+    );
+    let lists = 0;
+    const warming = setup({
+      // Just started: the matching checkout has no repository identity on the first read.
+      studio_project_list: () => ({
+        result: {
+          projects: [
+            {
+              ...remoteProject,
+              repositoryIdentity: ++lists < 2 ? null : remoteProject.repositoryIdentity,
+            },
+          ],
+          nextCursor: null,
+        },
+      }),
+    });
+    const stillCold = setup({
+      studio_project_list: () => ({
+        result: { projects: [{ ...remoteProject, repositoryIdentity: null }], nextCursor: null },
+      }),
+    });
+    const garbled = setup({ studio_project_list: () => ({ result: {} }) });
+    const read = (world: ReturnType<typeof setup>) =>
+      Effect.gen(function* () {
+        yield* allow();
+        return yield* fresh;
+      }).pipe(Effect.provide(world.layer));
+    return Effect.gen(function* () {
+      expect((yield* read(warming))?.project).toMatchObject({ match: "identity" });
+      expect(lists).toBe(2);
+      // Repositories never read: no "none" to act on.
+      expect(yield* read(stillCold)).not.toHaveProperty("project");
+      // An answer with no project array says nothing about what is there.
+      const bad = yield* read(garbled);
+      expect(bad).toMatchObject({ reachable: true });
+      expect(bad).not.toHaveProperty("project");
+    });
+  });
+
   it.live("lists the operating system and simulator support each machine reports", () => {
     const list = Effect.gen(function* () {
       yield* allow();

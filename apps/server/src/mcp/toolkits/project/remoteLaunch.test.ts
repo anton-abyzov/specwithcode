@@ -967,8 +967,14 @@ it.effect("keeps a project thread's scratch work elsewhere to projectless, as he
 it.effect(
   "starts a project's scratch helper on a machine without the project, named for it",
   () => {
-    const helper = setup({ m1ProjectMatch: "none" });
-    const unnamed = setup({ workerMachines: ["m1"], m1ProjectMatch: "none" });
+    const helper = setup({ m1ProjectMatch: "none", m1ProjectScope: "all" });
+    const unnamed = setup({
+      workerMachines: ["m1"],
+      m1ProjectMatch: "none",
+      m1ProjectScope: "all",
+    });
+    // An older M1 does not say what its grant shows, so its list may be filtered.
+    const silent = setup({ m1ProjectMatch: "none" });
     // M1 has this repository by identity although nothing links it: the work goes there.
     const legacy = setup({ m1ProjectMatch: "identity" });
     // M1 said nothing about the project: the old rule stands.
@@ -981,7 +987,7 @@ it.effect(
         yield* unnamed.launch({ title: "Git push check", message: "go", scratch: true }),
       ).toMatchObject({ code: "invalid_request" });
       expect(unnamed.remoteLaunches).toEqual([]);
-      for (const world of [legacy, unknown, scoped]) {
+      for (const world of [legacy, unknown, scoped, silent]) {
         expect(
           yield* world.launch({
             title: "Git push check",

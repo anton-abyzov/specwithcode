@@ -58,7 +58,7 @@ export const confirmScratchHelper = (
       (candidate) =>
         candidate.id === machine.id && candidate.environmentId === machine.environmentId,
     );
-    // A grant that shows only some projects there cannot show that none matches.
-    const seesAll = row?.projectScope === undefined || row.projectScope === "all";
-    return row?.reachable === true && seesAll && row.project?.match === "none";
+    // Only a machine that says its grant shows every project can show that none
+    // matches; an older one says nothing and may still filter its list.
+    return row?.reachable === true && row.projectScope === "all" && row.project?.match === "none";
   }).pipe(Effect.orElseSucceed(() => false));

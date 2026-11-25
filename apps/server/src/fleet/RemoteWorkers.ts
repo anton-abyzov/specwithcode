@@ -592,22 +592,26 @@ const make = Effect.gen(function* () {
       });
       const listed: Project[] = [];
       let cursor: number | null = 0;
+      // A page without a project array is not an empty list: the list is then incomplete.
+      let readable = true;
       for (let page = 0; page < MAX_REMOTE_PROJECT_PAGES && cursor !== null; page++) {
         const result: unknown = yield* client.call({
           machineId: machine.id,
           tool: "studio_project_list",
           arguments: { cursor, limit: 100 },
         });
-        const rows = isRecord(result) && Array.isArray(result.projects) ? result.projects : [];
-        listed.push(...(rows.filter(isRecord) as unknown as Project[]));
-        cursor =
-          isRecord(result) && typeof result.nextCursor === "number" ? result.nextCursor : null;
+        if (!isRecord(result) || !Array.isArray(result.projects)) {
+          readable = false;
+          break;
+        }
+        listed.push(...(result.projects.filter(isRecord) as unknown as Project[]));
+        cursor = typeof result.nextCursor === "number" ? result.nextCursor : null;
       }
       const next: Probe = {
         at: now,
         providers: readProviders(capabilities),
         projects: listed,
-        complete: cursor === null,
+        complete: readable && cursor === null,
         ...readMachineProbeFacts(capabilities),
       };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
@@ -666,7 +670,7 @@ const make = Effect.gen(function* () {
               grantExpiresAt: workers.expiresAt,
             };
             if (!probing || (status !== "ready" && status !== "grant_expiring")) return row;
-            const probed = yield* probe(machine, fresh).pipe(Effect.result);
+            let probed = yield* probe(machine, fresh).pipe(Effect.result);
             if (probed._tag === "Failure") {
               const error = probed.failure;
               if (error.remoteCode === RemoteStudioMcpClient.TEAM_RULES_REMOTE_CODE) {
@@ -700,11 +704,27 @@ const make = Effect.gen(function* () {
             const scope = probed.success.projectScope;
             if (scope !== undefined) row.projectScope = scope;
             if (project !== undefined) {
-              const match = machineRowProjectMatch(
-                matchFor(machine, project, probed.success.projects, undefined),
-              );
-              // A list cut short cannot show that no checkout matches.
-              if (!(fresh && match.match === "none" && !probed.success.complete))
+              let listed = probed.success;
+              let found = matchFor(machine, project, listed.projects, undefined);
+              const unread = () =>
+                listed.projects.some((candidate) => !candidate.repositoryIdentity);
+              // A machine that just started may not have read its repositories yet: ask
+              // again, as a launch does, before a fresh read says nothing matches.
+              for (
+                let attempt = 0;
+                fresh && attempt < COLD_IDENTITY_RETRIES && found.match === "none" && unread();
+                attempt++
+              ) {
+                if (attempt > 0) yield* Effect.sleep(COLD_IDENTITY_DELAY);
+                probed = yield* probe(machine, true).pipe(Effect.result);
+                if (probed._tag === "Failure") break;
+                listed = probed.success;
+                found = matchFor(machine, project, listed.projects, undefined);
+              }
+              const match = machineRowProjectMatch(found);
+              // A list cut short, or one with repositories still unread, cannot show
+              // that no checkout matches.
+              if (!(fresh && match.match === "none" && (!listed.complete || unread())))
                 row.project = match;
               // That machine lists only projects its grant covers, so no match there means
               // the grant leaves this one out: work for it cannot start there yet.
