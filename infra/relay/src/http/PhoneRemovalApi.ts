@@ -225,14 +225,15 @@ export const admitTokenExchange = Effect.fn("relay.phone_removal.admit_token_exc
       yield* Effect.annotateCurrentSpan({ "relay.phone_removal.blocked": true });
       if (!(yield* settleBlockedPhone(blocking, input))) return "device_removed" as const;
     }
-    yield* removals.recordClientKey({
+    const recorded = yield* removals.recordClientKey({
       userId: input.userId,
       proofKeyThumbprint: input.proofKeyThumbprint,
       clientId: input.clientId,
       deviceId: input.deviceId,
       clerkSessionId: input.clerkSessionId,
     });
-    return null;
+    // Not written: the deletion committed after the check above.
+    return recorded ? null : ("invalid_bearer" as const);
   },
 );
 

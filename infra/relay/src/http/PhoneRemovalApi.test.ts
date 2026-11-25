@@ -121,7 +121,7 @@ const makeRelay = Effect.gen(function* () {
       : never
   > = [];
   const connects: Array<{ readonly deviceId?: string; readonly key: string }> = [];
-  const faults = { findBlocking: false };
+  const faults = { findBlocking: false, deletionSeenLate: false };
 
   // The real service, with removal checks that can be made to fail.
   const layerRemovals = Layer.effect(
@@ -130,6 +130,9 @@ const makeRelay = Effect.gen(function* () {
       const real = yield* PhoneRemovals.make;
       return PhoneRemovals.PhoneRemovals.of({
         ...real,
+        // The deletion commits after the exchange read the marker.
+        isAccountDeleted: (input) =>
+          faults.deletionSeenLate ? Effect.succeed(false) : real.isAccountDeleted(input),
         findBlocking: (input) =>
           faults.findBlocking
             ? Effect.fail(
@@ -922,6 +925,22 @@ describe("phone removal over HTTP", () => {
         expect(
           (yield* relay.clientRequest("DELETE", "/v1/client/account", "sess_web")).status,
         ).not.toBe(401);
+      }),
+    ),
+  );
+
+  it.live("mints no token when the deletion lands between the exchange's check and its write", () =>
+    withClerk(
+      Effect.gen(function* () {
+        const relay = yield* makeRelay;
+        relay.faults.deletionSeenLate = true;
+        yield* relay.markDeleted;
+        const phone = { sid: "sess_phone", key: "key-phone", deviceId: "phone-1" };
+        expect(yield* relay.exchange(phone)).toMatchObject({
+          status: 401,
+          body: { _tag: "RelayAuthInvalidError", reason: "invalid_bearer" },
+        });
+        expect(yield* relay.userRows).toEqual({ devices: 0, clientKeys: 0 });
       }),
     ),
   );

@@ -107,7 +107,7 @@ export class PhoneRemovals extends Context.Service<
       readonly clientId: RelayPublicClientId;
       readonly deviceId?: string | undefined;
       readonly clerkSessionId?: string | undefined;
-    }) => Effect.Effect<void, PhoneRemovalPersistenceError>;
+    }) => Effect.Effect<boolean, PhoneRemovalPersistenceError>;
     /**
      * Records a removal for each matching phone, registered or known only by
      * the keys it exchanged, with every key and Clerk session it used, and
@@ -284,26 +284,26 @@ export const make = Effect.gen(function* () {
     }),
     recordClientKey: Effect.fn("relay.phone_removals.record_client_key")(function* (input) {
       const lastSeenAt = DateTime.formatIso(yield* DateTime.now);
-      yield* db
-        .insert(relayClientKeys)
-        .values({
-          userId: input.userId,
-          proofKeyThumbprint: input.proofKeyThumbprint,
-          clientId: input.clientId,
-          deviceId: input.deviceId ?? null,
-          clerkSessionId: input.clerkSessionId ?? null,
-          lastSeenAt,
-        })
-        .onConflictDoUpdate({
-          target: [relayClientKeys.userId, relayClientKeys.proofKeyThumbprint],
-          set: {
-            clientId: input.clientId,
-            deviceId: sql`coalesce(excluded.device_id, ${relayClientKeys.deviceId})`,
-            clerkSessionId: sql`coalesce(excluded.clerk_session_id, ${relayClientKeys.clerkSessionId})`,
-            lastSeenAt,
-          },
-        })
-        .pipe(Effect.mapError(fail(input.userId, "record-key")));
+      // One statement: an account marked for deletion gets no key row, even
+      // when the deletion commits after the caller checked the marker.
+      const [written] = yield* RelayDb.batch(db, [
+        RelayDb.rawQuery(sql`
+          INSERT INTO ${relayClientKeys}
+            (user_id, proof_key_thumbprint, client_id, device_id, clerk_session_id, last_seen_at)
+          SELECT ${input.userId}, ${input.proofKeyThumbprint}, ${input.clientId},
+            ${input.deviceId ?? null}, ${input.clerkSessionId ?? null}, ${lastSeenAt}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${relayAccountDeletions} AS d WHERE d.user_id = ${input.userId}
+          )
+          ON CONFLICT (user_id, proof_key_thumbprint) DO UPDATE SET
+            client_id = excluded.client_id,
+            device_id = coalesce(excluded.device_id, ${relayClientKeys}.device_id),
+            clerk_session_id = coalesce(excluded.clerk_session_id, ${relayClientKeys}.clerk_session_id),
+            last_seen_at = excluded.last_seen_at
+          RETURNING user_id
+        `),
+      ]).pipe(Effect.mapError(fail(input.userId, "record-key")));
+      return (written?.length ?? 0) > 0;
     }),
     remove: Effect.fn("relay.phone_removals.remove")(function* (input) {
       yield* Effect.annotateCurrentSpan({
