@@ -37,6 +37,7 @@ import {
   type ApnsDeliveryJobVerificationError,
 } from "./apnsDeliveryJobs.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -557,20 +558,40 @@ export const make = Effect.gen(function* () {
   // delivered moments after a newer terminal publish already ended the user's
   // work, birthing an orphan activity that shows stale content forever (no
   // token is ever registered for it, so nothing can update or end it).
-  // Re-validate at delivery time that the user still has live work; fail open
-  // on persistence errors so a database hiccup never drops a legitimate start.
-  const userStillHasLiveWork = Effect.fnUntraced(function* (userId: string) {
+  // Re-validate at delivery time that the user still has live work. A failed
+  // read skips the start, as the other rechecks do: a start the relay cannot
+  // confirm could birth an activity nothing ends, and the next publish while
+  // work is live queues a new one. The user's rows come only from machines
+  // they still have linked under the same key, so a start whose content names
+  // a machine that moved to another account is skipped too. The start carries
+  // no keys, and a machine relinked under a new key keeps its environment id,
+  // so the start is sent with content built from those rows instead of the
+  // queued content: an old key's rows never reach the phone. Null skips it.
+  const currentStartAggregate = Effect.fnUntraced(function* (
+    userId: string,
+    aggregate: RelayAgentActivityAggregateState | null,
+  ) {
     const now = yield* DateTime.now;
     return yield* activityRows.listForUser({ userId }).pipe(
-      Effect.map((states) =>
-        states.some(
-          (state) =>
-            !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
-        ),
-      ),
+      Effect.map((states) => {
+        const linked = new Set(states.map((state) => state.environmentId));
+        const live =
+          (aggregate?.activities ?? []).every((row) => linked.has(row.environmentId)) &&
+          states.some(
+            (state) =>
+              !isTerminalPhase(state) && !isExpiredAgentActivityState(state, now.epochMilliseconds),
+          );
+        return live
+          ? makeAggregateState({
+              activeStates: states,
+              terminalState: null,
+              nowMs: now.epochMilliseconds,
+            })
+          : null;
+      }),
       Effect.catchCause((cause) =>
-        Effect.logWarning("live-work recheck failed; allowing queued start", { cause }).pipe(
-          Effect.as(true),
+        Effect.logWarning("live-work recheck failed; skipping queued start", { cause }).pipe(
+          Effect.as(null),
         ),
       ),
     );
@@ -596,15 +617,15 @@ export const make = Effect.gen(function* () {
             current.phase === input.phase &&
             current.updatedAt === input.updatedAt,
         ),
-        // A transient persistence failure must not permanently discard a
-        // legitimate alert. Fail open and let the signed job's retry/dedupe
-        // protections handle transport failures as usual.
+        // Fail closed: this recheck is what keeps an environment that moved to
+        // another account from alerting the previous owner's phones. A missed
+        // alert is cheaper than one delivered to the wrong person.
         Effect.catchCause((cause) =>
-          Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
+          Effect.logWarning("agent-activity state recheck failed; skipping queued delivery", {
             cause,
             environmentId: input.environmentId,
             threadId: input.threadId,
-          }).pipe(Effect.as(true)),
+          }).pipe(Effect.as(false)),
         ),
       );
   });
@@ -631,10 +652,11 @@ export const make = Effect.gen(function* () {
         });
       }),
       Effect.catchCause((cause) =>
-        Effect.logWarning("agent-activity aggregate recheck failed; allowing queued delivery", {
+        // Fail closed, as the per-thread recheck above.
+        Effect.logWarning("agent-activity aggregate recheck failed; skipping queued delivery", {
           cause,
           userId: input.userId,
-        }).pipe(Effect.as(true)),
+        }).pipe(Effect.as(false)),
       ),
     );
   });
@@ -693,7 +715,7 @@ export const make = Effect.gen(function* () {
     });
     let deliveryTarget = input.target;
     const now = yield* DateTime.now;
-    const aggregate =
+    let aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
     let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -734,6 +756,11 @@ export const make = Effect.gen(function* () {
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
       deliveryTarget = currentTarget;
+      // After the claim, and before the alert is recomputed below, so the
+      // alert names current content too.
+      if (input.kind === "live_activity_start") {
+        aggregate = yield* currentStartAggregate(input.target.user_id, aggregate);
+      }
       if (alert) {
         const preferences = parsePreferences(currentTarget.preferences_json);
         const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
@@ -767,11 +794,11 @@ export const make = Effect.gen(function* () {
         });
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
+    } else if (input.kind === "live_activity_start") {
+      // A start sent directly, not from the queue, reads the same rows.
+      aggregate = yield* currentStartAggregate(input.target.user_id, aggregate);
     }
-    if (
-      input.kind === "live_activity_start" &&
-      !(yield* userStillHasLiveWork(input.target.user_id))
-    ) {
+    if (input.kind === "live_activity_start" && aggregate === null) {
       yield* liveActivities.clearStartQueued({
         userId: input.target.user_id,
         deviceId: input.target.device_id,

@@ -261,6 +261,9 @@ export const deleteAccountRecords = Effect.fn("relay.account.deleteAccountRecord
         userId: input.userId,
         environmentId,
         managedEndpointNamespace: input.managedEndpointNamespace,
+        // The account is going away, so its machines' tunnels go too, even
+        // while a machine is still connected.
+        forceDisconnect: true,
       });
       // Unlink clears the inbox only while it still finds the allocation, and
       // only as best effort. A retry may find no allocation left, so clear by

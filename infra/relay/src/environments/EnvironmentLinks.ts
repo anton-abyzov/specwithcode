@@ -39,6 +39,16 @@ export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedError<En
   }
 }
 
+/** The stored link is active under another key, so the write did not apply. */
+export class EnvironmentLinkKeyConflict extends Schema.TaggedError<EnvironmentLinkKeyConflict>()(
+  "EnvironmentLinkKeyConflict",
+  { userId: Schema.String, environmentId: Schema.String },
+) {
+  override get message(): string {
+    return `Environment '${this.environmentId}' is linked for user '${this.userId}' under another key`;
+  }
+}
+
 export class EnvironmentLinkUserListPersistenceError extends Schema.TaggedError<EnvironmentLinkUserListPersistenceError>()(
   "EnvironmentLinkUserListPersistenceError",
   {
@@ -113,7 +123,7 @@ export class EnvironmentLinks extends Context.Service<
       readonly hardwareIdentity?: string | undefined;
       /** Carries the webhook-hold opt-in over from a replaced link of the same machine. */
       readonly inheritHoldWebhooksWhileOffline?: boolean | undefined;
-    }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
+    }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError | EnvironmentLinkKeyConflict>;
     /**
      * The user's other active links made from the same machine (same
      * account-salted hardware identity), excluding one environment.
@@ -239,7 +249,7 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      yield* db
+      const upsertLink = db
         .insert(relayEnvironmentLinks)
         .values({
           userId: input.userId,
@@ -278,18 +288,51 @@ const make = Effect.gen(function* () {
               ? {}
               : { hardwareIdentity: input.hardwareIdentity }),
           },
+          // The linker checked the stored key before provisioning, but two
+          // links can race past that read. The write keeps the check: an
+          // active link moves to no other key.
+          setWhere: sql`${relayEnvironmentLinks.revokedAt} IS NOT NULL OR ${relayEnvironmentLinks.environmentPublicKey} = ${proof.environmentPublicKey}`,
         })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentLinkUpsertPersistenceError({
-                userId: input.userId,
-                environmentId,
-                ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
-                cause,
-              }),
+        .returning({ userId: relayEnvironmentLinks.userId });
+      // One machine key belongs to one account at a time. A machine that links
+      // under another account ends the previous account's link in the same
+      // atomic batch, so no moment has both accounts receiving its pushes and
+      // routes. Runs after the upsert, whose webhook-hold inheritance still sees
+      // the previous link. Credentials stay: they belong to the key, which the
+      // new link uses.
+      const revokeOtherAccounts = db
+        .update(relayEnvironmentLinks)
+        .set({ revokedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, proof.environmentPublicKey),
+            ne(relayEnvironmentLinks.userId, input.userId),
+            isNull(relayEnvironmentLinks.revokedAt),
+            // Only when the upsert applied: a refused write ends nothing.
+            sql`EXISTS (
+        SELECT 1 FROM ${relayEnvironmentLinks} AS own
+        WHERE own.user_id = ${input.userId}
+          AND own.environment_id = ${environmentId}
+          AND own.environment_public_key = ${proof.environmentPublicKey}
+          AND own.revoked_at IS NULL
+      )`,
           ),
         );
+      const [applied] = yield* RelayDb.batch(db, [upsertLink, revokeOtherAccounts]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentLinkUpsertPersistenceError({
+              userId: input.userId,
+              environmentId,
+              ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
+              cause,
+            }),
+        ),
+      );
+      if (applied === undefined || applied.length === 0) {
+        return yield* new EnvironmentLinkKeyConflict({ userId: input.userId, environmentId });
+      }
     }),
 
     findActiveForHardware: Effect.fn("relay.environment_links.find_active_for_hardware")(

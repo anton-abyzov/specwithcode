@@ -117,6 +117,9 @@ function layerTest(input?: {
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
   readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
   readonly ensureAccount?: ConnectAccounts.ConnectAccounts["Service"]["ensureAccount"];
+  readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
+  readonly findActiveManagedForEnvironment?: EnvironmentLinks.EnvironmentLinks["Service"]["findActiveManagedForEnvironment"];
+  readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
 }) {
   return EnvironmentLinker.layer.pipe(
     Layer.provideMerge(RelayTokens.layer),
@@ -145,8 +148,9 @@ function layerTest(input?: {
           upsert: input?.upsert ?? (() => Effect.void),
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),
           listForUser: () => Effect.succeed([]),
-          getForUser: () => Effect.succeed(null),
-          findActiveManagedForEnvironment: () => Effect.succeed([]),
+          getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
+          findActiveManagedForEnvironment:
+            input?.findActiveManagedForEnvironment ?? (() => Effect.succeed([])),
           setHoldWebhooksWhileOffline: () => Effect.void,
           findActiveForHardware: () => Effect.succeed([]),
           listActiveWithoutHardware: () => Effect.succeed([]),
@@ -161,7 +165,7 @@ function layerTest(input?: {
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           reconcileOrigin: () => Effect.succeed("ready"),
-          prepareDeprovision: () => Effect.succeed(null),
+          prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
           deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
           provision:
@@ -440,5 +444,238 @@ describe("EnvironmentLinker", () => {
         }),
       ),
     );
+  });
+
+  describe("an environment that is already linked", () => {
+    const activeLink = (environmentPublicKey: string) => ({
+      environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+      label: "Link Test Environment",
+      endpoint: {
+        httpBaseUrl: "https://env.example.test/",
+        wsBaseUrl: "wss://env.example.test/",
+        providerKind: "manual" as const,
+      },
+      environmentPublicKey,
+      linkedAt: "2026-11-01T00:00:00.000Z",
+    });
+
+    it.effect("refuses to move an active link to a different key", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const error = yield* linker
+          .link({ userId: "user_123", request: { ...request, managedTunnelsEnabled: true } })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "EnvironmentLinkProofInvalid",
+          reason: "descriptor_mismatch",
+          stage: "validate_existing_link",
+        });
+        // Nothing was written, provisioned or torn down for the refused key.
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            getForUser: () => Effect.succeed(activeLink("-----BEGIN PUBLIC KEY-----\nother")),
+            upsert: () => Effect.sync(() => void calls.push("upsert")),
+            provision: () =>
+              Effect.sync(() => {
+                calls.push("provision");
+                return {
+                  endpoint: {
+                    httpBaseUrl: "https://managed.example.test/",
+                    wsBaseUrl: "wss://managed.example.test/ws",
+                    providerKind: "cloudflare_tunnel",
+                  },
+                  runtime: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+                };
+              }),
+            deprovision: () => Effect.sync(() => (calls.push("deprovision"), true)),
+          }),
+        ),
+      );
+    });
+
+    it.effect("refuses when a racing link took the key slot before the write", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const error = yield* linker.link({ userId: "user_123", request }).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "EnvironmentLinkProofInvalid",
+          reason: "descriptor_mismatch",
+          stage: "validate_existing_link",
+        });
+        // A refused write moves no other account's tunnel.
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            // The read saw no link; another key's link landed before the write.
+            upsert: (upsertInput) =>
+              Effect.fail(
+                new EnvironmentLinks.EnvironmentLinkKeyConflict({
+                  userId: upsertInput.userId,
+                  environmentId: upsertInput.proof.environmentId,
+                }),
+              ),
+            findActiveManagedForEnvironment: () =>
+              Effect.succeed([
+                {
+                  ...activeLink(environmentKeyPair.publicKey.trim()),
+                  userId: "user_old",
+                  holdWebhooksWhileOffline: false,
+                },
+              ]),
+            deprovision: (target) =>
+              Effect.sync(() => {
+                if (target.userId !== "user_123") calls.push(`deprovision:${target.userId}`);
+                return true;
+              }),
+          }),
+        ),
+      );
+    });
+
+    it.effect(
+      "refuses when a racing link committed another key before the tunnel is configured",
+      () => {
+        let reads = 0;
+        const calls: Array<string> = [];
+        return Effect.gen(function* () {
+          const { request } = yield* makeRequest;
+          const linker = yield* EnvironmentLinker.EnvironmentLinker;
+          const error = yield* linker
+            .link({ userId: "user_123", request: { ...request, managedTunnelsEnabled: true } })
+            .pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "EnvironmentLinkProofInvalid",
+            reason: "descriptor_mismatch",
+            stage: "validate_existing_link",
+          });
+          expect(calls).toEqual([]);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              // The linker's first read sees no link; the racing key lands after.
+              getForUser: () =>
+                Effect.succeed(
+                  (reads += 1) === 1 ? null : activeLink("-----BEGIN PUBLIC KEY-----\nother"),
+                ),
+              provision: (provisionInput) =>
+                (provisionInput.ownsOrigin ?? Effect.succeed(true)).pipe(
+                  Effect.orDie,
+                  Effect.flatMap((owned) =>
+                    owned
+                      ? Effect.sync(() => {
+                          calls.push("configure");
+                          return {
+                            endpoint: {
+                              httpBaseUrl: "https://managed.example.test/",
+                              wsBaseUrl: "wss://managed.example.test/ws",
+                              providerKind: "cloudflare_tunnel" as const,
+                            },
+                            runtime: {
+                              providerKind: "cloudflare_tunnel" as const,
+                              connectorToken: "token",
+                            },
+                          };
+                        })
+                      : Effect.fail(
+                          new ManagedEndpointProvider.ManagedEndpointProvisioningFailed({
+                            userId: provisionInput.userId,
+                            environmentId: provisionInput.environmentId,
+                            stage: "configure-tunnel",
+                            reason: "key-conflict",
+                          }),
+                        ),
+                  ),
+                ),
+              upsert: () => Effect.sync(() => void calls.push("upsert")),
+            }),
+          ),
+        );
+      },
+    );
+
+    it.effect("a refused publish-only link leaves the winning link's tunnel alone", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const error = yield* linker.link({ userId: "user_123", request }).pipe(Effect.flip);
+        expect(error).toMatchObject({ reason: "descriptor_mismatch" });
+        // The winner's managed link committed after this link's read check.
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            upsert: (upsertInput) =>
+              Effect.fail(
+                new EnvironmentLinks.EnvironmentLinkKeyConflict({
+                  userId: upsertInput.userId,
+                  environmentId: upsertInput.proof.environmentId,
+                }),
+              ),
+            deprovision: (target) =>
+              Effect.sync(() => (calls.push(`deprovision:${target.userId}`), true)),
+          }),
+        ),
+      );
+    });
+
+    it.effect("relinks an active link proven by the same key", () =>
+      Effect.gen(function* () {
+        const { request, payload } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const result = yield* linker.link({ userId: "user_123", request });
+        expect(result.environmentId).toBe(payload.environmentId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            getForUser: () => Effect.succeed(activeLink(environmentKeyPair.publicKey.trim())),
+          }),
+        ),
+      ),
+    );
+
+    it.effect("leaves the previous account's tunnel to that account when the machine moves", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        yield* linker.link({ userId: "user_123", request });
+        // The move ends user_old's link (EnvironmentLinks.upsert); its tunnel
+        // is left to user_old's unlink, account deletion or the idle sweep.
+        expect(calls).toEqual(["upsert:user_123"]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            findActiveManagedForEnvironment: (query) =>
+              Effect.succeed(
+                query.environmentPublicKey === environmentKeyPair.publicKey.trim()
+                  ? [
+                      {
+                        ...activeLink(environmentKeyPair.publicKey.trim()),
+                        userId: "user_old",
+                        holdWebhooksWhileOffline: false,
+                      },
+                    ]
+                  : [],
+              ),
+            upsert: (upsertInput) =>
+              Effect.sync(() => void calls.push(`upsert:${upsertInput.userId}`)),
+            deprovision: (target) =>
+              Effect.sync(() => {
+                // The link's own publish-only cleanup is not the move.
+                if (target.userId !== "user_123") calls.push(`deprovision:${target.userId}`);
+                return true;
+              }),
+          }),
+        ),
+      );
+    });
   });
 });

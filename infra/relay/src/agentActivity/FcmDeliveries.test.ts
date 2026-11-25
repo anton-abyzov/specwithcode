@@ -521,7 +521,12 @@ describe("Android delivery routing", () => {
         alert_title: "Fix notifications",
         alert_body: "Done: Project",
       });
-      expect(h.sent[0]?.data.user_id).toBe("user");
+      // Google sees the data payload: it carries a per-device hash, never the account id.
+      expect(h.sent[0]?.data).not.toHaveProperty("user_id");
+      expect(h.sent[0]?.data.user_hash).toBe(
+        "6d11cb8c16365bd4d82136aef4cf191f7fad3a12047924930a31230fd235adbc",
+      );
+      expect(Object.values(h.sent[0]?.data ?? {})).not.toContain("user");
     }).pipe(Effect.provide(h.layer));
   });
 

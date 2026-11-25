@@ -213,9 +213,9 @@ export const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
  * link timeout, so the client still reads the relay's answer.
  */
 export const RELAY_LINK_REQUEST_DEADLINE_MS = 25_000;
-
-// The routes that provision a tunnel: linking a machine and recovering its tunnel.
-const RELAY_PROVISIONING_PATH = /\/v1\/(client\/environment-links|environments\/[^/]+\/tunnel)$/u;
+// Linking a machine and recovering its tunnel provision one; Clerk's account deletion removes them.
+const RELAY_PROVISIONING_PATH =
+  /\/v1\/(client\/environment-links|environments\/[^/]+\/tunnel|webhooks\/clerk)$/u;
 
 const relayRequestDeadlineMs = (request: HttpServerRequest.HttpServerRequest) =>
   request.method === "POST" && RELAY_PROVISIONING_PATH.test(request.url.split("?")[0] ?? "")
@@ -257,6 +257,8 @@ const relayRequestDeadline = <E, R>(
 
 /** Trace context headers in every format the tracer reads (W3C and B3). */
 const SENDER_TRACE_HEADER = /^(traceparent|tracestate|b3|x-b3-.*)$/i;
+const CALLER_IDENTITY_HEADER =
+  /^(user-agent|forwarded|x-forwarded-for|x-real-ip|x-client-ip|x-cluster-client-ip|true-client-ip|fastly-client-ip|cf-connecting-ip(v6)?|cf-pseudo-ipv4)$/i;
 
 export const traceRelayHttpRequest = <E, R>(
   httpEffect: Effect.Effect<
@@ -267,41 +269,35 @@ export const traceRelayHttpRequest = <E, R>(
 ) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const traced = appendRelayTraceContextResponseHeader.pipe(
-      Effect.andThen(relayRequestDeadline(httpEffect, relayRequestDeadlineMs(request))),
-    );
-    if (!isRelayHookPath(request.url)) {
-      return yield* HttpMiddleware.tracer(traced).pipe(
-        // The worker turns its own request span off; this one is ours.
-        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
-        // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-        Effect.ensuring(Effect.yieldNow),
-      );
-    }
-    // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-    // request, while the route itself still receives the original. A webhook
-    // sender's trace context is dropped, so it cannot pick the trace our relay
-    // and environment spans land in.
-    const redacted = request.modify({
-      url: redactRelayHookUrl(request.url),
+    const isHook = isRelayHookPath(request.url);
+    // The span and the deadline log see a copy of the request without the caller's
+    // address (connection, Cloudflare or proxy headers) or user agent, which would build
+    // a per-user IP history in the trace store. Hook URLs carry a secret token, so their
+    // copy is redacted and a sender's trace context dropped. The route gets the original.
+    const spanRequest = request.modify({
+      remoteAddress: Option.none(),
       headers: Headers.removeMany(
         request.headers,
-        Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+        Object.keys(request.headers).filter(
+          (name) => CALLER_IDENTITY_HEADER.test(name) || (isHook && SENDER_TRACE_HEADER.test(name)),
+        ),
       ),
+      ...(isHook ? { url: redactRelayHookUrl(request.url) } : {}),
     });
     return yield* HttpMiddleware.tracer(
       appendRelayTraceContextResponseHeader.pipe(
         Effect.andThen(
           relayRequestDeadline(
             httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-            RELAY_HOOK_REQUEST_DEADLINE_MS,
+            isHook ? RELAY_HOOK_REQUEST_DEADLINE_MS : relayRequestDeadlineMs(request),
           ),
         ),
       ),
     ).pipe(
-      Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, spanRequest),
       // The worker turns its own request span off; this one is ours.
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
       Effect.ensuring(Effect.yieldNow),
     );
   });
@@ -374,26 +370,26 @@ export const layerClientAuth = Layer.effect(
           "relay.auth.mode": verified.mode,
           "relay.auth.subject": verified.sub,
         });
-        if ("sid" in verified && verified.sid) {
-          // A removed phone's Clerk session is refused even before Clerk ends it.
-          const session = yield* PhoneRemovalApi.clerkSessionStatus({
-            userId: verified.sub,
-            clerkSessionId: verified.sid,
-          }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
-          if (session === "removed") return yield* relayAuthInvalidError("device_removed");
-          if (session === "unavailable") {
-            // The middleware's typed error is auth-only; answer with the
-            // encoded internal error every client endpoint declares.
-            return HttpServerResponse.jsonUnsafe(
-              {
-                _tag: "RelayInternalError",
-                code: "internal_error",
-                reason: "persistence_failed",
-                traceId: yield* currentTraceId,
-              },
-              { status: 500 },
-            );
-          }
+        // A removed phone's Clerk session is refused even before Clerk ends it,
+        // and a deleted account's token as long as it is valid.
+        const session = yield* PhoneRemovalApi.clerkSessionStatus({
+          userId: verified.sub,
+          clerkSessionId: "sid" in verified ? verified.sid : undefined,
+        }).pipe(Effect.provideService(PhoneRemovals.PhoneRemovals, removals));
+        if (session === "removed") return yield* relayAuthInvalidError("device_removed");
+        if (session === "deleted") return yield* relayAuthInvalidError("invalid_bearer");
+        if (session === "unavailable") {
+          // The middleware's typed error is auth-only; answer with the
+          // encoded internal error every client endpoint declares.
+          return HttpServerResponse.jsonUnsafe(
+            {
+              _tag: "RelayInternalError",
+              code: "internal_error",
+              reason: "persistence_failed",
+              traceId: yield* currentTraceId,
+            },
+            { status: 500 },
+          );
         }
 
         return yield* httpEffect.pipe(
@@ -909,15 +905,15 @@ export const layerTokenApi = HttpApiBuilder.group(
             Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
           );
           const clerkSessionId = clerkSessionIdClaim(verified).sid;
-          const admitted = yield* PhoneRemovalApi.admitTokenExchange({
+          const refused = yield* PhoneRemovalApi.admitTokenExchange({
             userId: verified.sub,
             clientId: args.payload.client_id,
             deviceId: args.payload.device_id,
             proofKeyThumbprint,
             clerkSessionId,
           });
-          if (!admitted) {
-            return yield* relayAuthInvalidError("device_removed");
+          if (refused) {
+            return yield* relayAuthInvalidError(refused);
           }
           const now = yield* DateTime.now;
           const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
@@ -1490,7 +1486,7 @@ const requireDpopPrincipalScope = Effect.fn("relay.api.require_dpop_principal_sc
     clerkSessionId: principal.clerkSessionId,
   });
   if (removed) {
-    return yield* relayAuthInvalidError("device_removed");
+    return yield* relayAuthInvalidError(removed);
   }
   return principal.proofKeyThumbprint;
 });
