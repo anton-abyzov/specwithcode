@@ -424,6 +424,51 @@ it.effect(
   },
 );
 
+it.effect("a second launch from an installed page's launcher leaves the main window alone", () => {
+  storageMock.mockReturnValue(storageAdapter);
+  createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+  const listeners = new Map<string, (...args: unknown[]) => void>();
+  const mainWindow = { id: 1 } as Electron.BrowserWindow;
+  const revealed: Electron.BrowserWindow[] = [];
+  const settled = Promise.withResolvers<void>();
+  const electronApp = {
+    on: (name: string, listener: (...args: unknown[]) => void) =>
+      Effect.sync(() => {
+        listeners.set(name, listener);
+      }),
+  } as unknown as ElectronApp.ElectronApp["Service"];
+  const electronWindow = {
+    currentMainOrFirst: Effect.succeed(Option.some(mainWindow)),
+    reveal: (window: Electron.BrowserWindow) =>
+      Effect.sync(() => {
+        revealed.push(window);
+        settled.resolve();
+      }),
+  } as unknown as ElectronWindow.ElectronWindow["Service"];
+  const installId = "0123456789abcdef0123456789abcdef";
+  return Effect.gen(function* () {
+    const clerk = yield* DesktopClerk.DesktopClerk;
+    yield* clerk.configure;
+    // A plain relaunch reveals the main window, and does so before the listener returns.
+    listeners.get("second-instance")!({}, ["specweave-studio"]);
+    assert.deepEqual(revealed, [mainWindow]);
+    yield* Effect.promise(() => settled.promise);
+    // Both schemes, so the case holds for a development and a packaged build alike.
+    listeners.get("second-instance")!({}, [
+      "specweave-studio",
+      `studio://app/artifact-app/${installId}`,
+      `studio-dev://app/artifact-app/${installId}`,
+    ]);
+    assert.deepEqual(revealed, [mainWindow]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(layerDesktopClerk()),
+    Effect.provideService(ElectronApp.ElectronApp, electronApp),
+    Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+    Effect.provideService(DesktopWindow.DesktopWindow, desktopWindow),
+  );
+});
+
 it.effect.each(["startup", "open-url"] as const)(
   "receives web client sign-in through the desktop %s handler",
   (entry) =>

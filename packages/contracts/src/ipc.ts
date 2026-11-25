@@ -11,6 +11,7 @@ export type {
   StudioServiceUpdateState,
 } from "./managedUpdates.ts";
 import type { DesktopUpdateBridge } from "./desktopUpdateBridge.ts";
+import type { DesktopArtifactAppsBridge } from "./artifactApps.ts";
 export type { DesktopUpdateBridge } from "./desktopUpdateBridge.ts";
 export * from "./desktopUpdateState.ts";
 export * from "./desktopUpdateActions.ts";
@@ -1201,7 +1202,7 @@ export interface FirstRunResumeMarker {
   readonly at: number;
 }
 
-export interface DesktopBridge extends DesktopUpdateBridge {
+export interface DesktopBridge extends DesktopUpdateBridge, DesktopArtifactAppsBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;
@@ -1213,7 +1214,7 @@ export interface DesktopBridge extends DesktopUpdateBridge {
    * Which kind of app window this client runs in. Absent on desktop builds
    * that only have a main window.
    */
-  getWindowRole?: () => "main" | "project";
+  getWindowRole?: () => "main" | "project" | "artifact-app";
   /** The project a project window was opened for; null in the main window. */
   getWindowProjectKey?: () => string | null;
   /**

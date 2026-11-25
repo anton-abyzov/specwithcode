@@ -75,3 +75,16 @@ export function isProjectWindow(): boolean {
     return false;
   }
 }
+
+/**
+ * True in a desktop window that shows one installed page. Such a window runs
+ * no workspace: no sidebar, no background work and no main-window duties.
+ */
+export function isArtifactAppWindow(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.desktopBridge?.getWindowRole?.() === "artifact-app";
+  } catch {
+    return false;
+  }
+}

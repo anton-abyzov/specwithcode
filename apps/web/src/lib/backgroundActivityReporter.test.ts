@@ -129,7 +129,7 @@ describe("backgroundActivityClientId", () => {
 
   function stubWindow(input: {
     readonly desktop: boolean;
-    readonly role: "main" | "project";
+    readonly role: "main" | "project" | "artifact-app";
     readonly localStorage?: ReturnType<typeof memoryStorage>;
     readonly sessionStorage?: ReturnType<typeof memoryStorage> | null;
   }) {
@@ -173,6 +173,13 @@ describe("backgroundActivityClientId", () => {
     // A reload keeps session storage, so the same window keeps its id.
     stubWindow({ desktop: true, role: "project", sessionStorage });
     expect(backgroundActivityClientId()).toBe(clientId);
+  });
+
+  it("gives an installed-page window its own id, never the main window's", () => {
+    stubWindow({ desktop: true, role: "artifact-app" });
+    const clientId = backgroundActivityClientId();
+    expect(clientId).not.toBe("stored-client");
+    expect(clientId.slice("stored-client:".length)).toMatch(UUID);
   });
 
   it("separates two project windows that share the stored id", () => {

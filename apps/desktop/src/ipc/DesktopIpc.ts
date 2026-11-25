@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import type * as Electron from "electron";
@@ -223,8 +224,14 @@ export const layer = (ipcMain: DesktopIpcMain) =>
     DesktopIpc,
     Effect.gen(function* () {
       const electronWindow = yield* ElectronWindow.ElectronWindow;
+      // The lookup by sender also answers installed pages' windows, which are
+      // not app windows for menus and notifications but do use the bridge.
       return make(ipcMain, (event) =>
-        Effect.map(electronWindow.appWindows, (windows) => isAppWindowSender(windows, event)),
+        event.sender === undefined
+          ? Effect.succeed(false)
+          : Effect.map(electronWindow.appWindowForWebContents(event.sender.id), (window) =>
+              isAppWindowSender(Option.toArray(window), event),
+            ),
       );
     }),
   );

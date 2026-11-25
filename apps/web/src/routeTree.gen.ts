@@ -47,6 +47,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as DesignDesignKeyRouteImport } from './routes/design.$designKey'
+import { Route as ArtifactAppInstallIdRouteImport } from './routes/artifact-app.$installId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as SettingsIntegrationsIndexRouteImport } from './routes/settings.integrations.index'
 import { Route as SettingsIntegrationsPreviewRouteImport } from './routes/settings.integrations.preview'
@@ -247,6 +248,11 @@ const DesignDesignKeyRoute = DesignDesignKeyRouteImport.update({
   path: '/$designKey',
   getParentRoute: () => DesignRoute,
 } as any)
+const ArtifactAppInstallIdRoute = ArtifactAppInstallIdRouteImport.update({
+  id: '/artifact-app/$installId',
+  path: '/artifact-app/$installId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -310,6 +316,7 @@ export interface FileRoutesByFullPath {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/artifact-app/$installId': typeof ArtifactAppInstallIdRoute
   '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -357,6 +364,7 @@ export interface FileRoutesByTo {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/artifact-app/$installId': typeof ArtifactAppInstallIdRoute
   '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -406,6 +414,7 @@ export interface FileRoutesById {
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/artifact-app/$installId': typeof ArtifactAppInstallIdRoute
   '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/agents': typeof SettingsAgentsRoute
@@ -457,6 +466,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/artifact-app/$installId'
     | '/design/$designKey'
     | '/projects/$projectKey'
     | '/settings/agents'
@@ -504,6 +514,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/artifact-app/$installId'
     | '/design/$designKey'
     | '/projects/$projectKey'
     | '/settings/agents'
@@ -552,6 +563,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
+    | '/artifact-app/$installId'
     | '/design/$designKey'
     | '/projects/$projectKey'
     | '/settings/agents'
@@ -601,6 +613,7 @@ export interface RootRouteChildren {
   StatusRoute: typeof StatusRoute
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
+  ArtifactAppInstallIdRoute: typeof ArtifactAppInstallIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
@@ -872,6 +885,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DesignDesignKeyRouteImport
       parentRoute: typeof DesignRoute
     }
+    '/artifact-app/$installId': {
+      id: '/artifact-app/$installId'
+      path: '/artifact-app/$installId'
+      fullPath: '/artifact-app/$installId'
+      preLoaderRoute: typeof ArtifactAppInstallIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -1057,6 +1077,7 @@ const rootRouteChildren: RootRouteChildren = {
   StatusRoute: StatusRoute,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
+  ArtifactAppInstallIdRoute: ArtifactAppInstallIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }
 export const routeTree = rootRouteImport

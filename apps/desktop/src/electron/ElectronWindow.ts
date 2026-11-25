@@ -122,13 +122,20 @@ export class ElectronWindow extends Context.Service<
     // same client as the main window but is never the main window: the
     // "main or first" fallbacks skip it, so closing the main window while a
     // project window stays open still lets the main window be recreated.
-    readonly registerSecondary: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+    // An installed page's window registers with `role: "page"`: IPC and the
+    // per-window lookups answer it, but it is not one of `appWindows`, so menus,
+    // notifications, the Dock and settings fan-out never pick it as the app.
+    readonly registerSecondary: (
+      window: Electron.BrowserWindow,
+      options?: { readonly role?: "project" | "page" },
+    ) => Effect.Effect<void>;
     // Live app windows: the main window first, then secondary windows in the
     // order they were opened. Splash, picture-in-picture and helper windows
     // are not app windows.
     readonly appWindows: Effect.Effect<readonly Electron.BrowserWindow[]>;
-    // The app window whose renderer has this webContents id, for IPC handlers
-    // that must act on the calling window instead of the main one.
+    // The app window or installed page's window whose renderer has this
+    // webContents id, for IPC handlers that must act on the calling window
+    // instead of the main one, and for the IPC sender check.
     readonly appWindowForWebContents: (
       webContentsId: number,
     ) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
@@ -159,6 +166,7 @@ export const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
   const secondaryWindows = new Set<Electron.BrowserWindow>();
+  const pageWindows = new Set<Electron.BrowserWindow>();
   const createdWindows = new WeakSet<Electron.BrowserWindow>();
 
   const listWindows = Effect.try({
@@ -205,7 +213,8 @@ export const make = Effect.gen(function* () {
     // helper windows (preview popups, picture in picture) never do.
     const first = Option.fromNullishOr(
       (yield* listWindows).find(
-        (window) => createdWindows.has(window) && !secondaryWindows.has(window),
+        (window) =>
+          createdWindows.has(window) && !secondaryWindows.has(window) && !pageWindows.has(window),
       ) ?? null,
     );
     if (Option.isNone(first) || (yield* isWindowDestroyed(first.value))) {
@@ -294,20 +303,25 @@ export const make = Effect.gen(function* () {
         }
         return Option.none();
       }),
-    registerSecondary: (window) =>
+    registerSecondary: (window, options) =>
       Effect.sync(() => {
-        secondaryWindows.add(window);
+        const registry = options?.role === "page" ? pageWindows : secondaryWindows;
+        registry.add(window);
         window.once("closed", () => {
-          secondaryWindows.delete(window);
+          registry.delete(window);
         });
       }),
     appWindows,
     appWindowForWebContents: (webContentsId) =>
-      Effect.map(appWindows, (windows) =>
-        Option.fromNullishOr(
+      Effect.gen(function* () {
+        const windows = [...(yield* appWindows)];
+        for (const window of pageWindows) {
+          if (!(yield* isWindowDestroyed(window))) windows.push(window);
+        }
+        return Option.fromNullishOr(
           windows.find((window) => window.webContents.id === webContentsId) ?? null,
-        ),
-      ),
+        );
+      }),
     prepareReveal: (window) =>
       Effect.promise(async () => {
         if (isDesktopOffscreenTest() || platform !== "win32" || window.isDestroyed()) {

@@ -57,6 +57,9 @@ describe("getDesktopSnapShotBridge", () => {
 
     expect(getDesktopSnapShotBridge()).toBeUndefined();
 
+    vi.mocked(bridge.getWindowRole!).mockReturnValue("artifact-app");
+    expect(getDesktopSnapShotBridge()).toBeUndefined();
+
     vi.mocked(bridge.getWindowRole!).mockReturnValue("main");
     expect(getDesktopSnapShotBridge()).toBe(bridge);
   });
