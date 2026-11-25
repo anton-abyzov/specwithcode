@@ -1357,21 +1357,34 @@ interface SelectedPermissionOption {
   readonly kind: EffectAcpSchema.PermissionOption["kind"];
 }
 
-/** The first offered option of the decision's kind whose ID is not blank. */
 /** Option IDs that switch an agent's own permission checks off for the rest of its session. */
 const NEVER_ANSWERED_PERMISSION_OPTION_IDS: ReadonlySet<string> = new Set(["plan_bypass"]);
 
+const allowsPermission = (kind: EffectAcpSchema.PermissionOption["kind"]) =>
+  kind === "allow_once" || kind === "allow_always";
+
+/**
+ * The first offered option of the decision's kind whose ID is not blank and
+ * that no option of the opposite answer shares, also once spaces are trimmed:
+ * an agent that reads such an ID could take a refusal for an approval.
+ */
 function selectPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
   decision: Exclude<ProviderApprovalDecision, "cancel">,
+  /** Every option the agent offered, when `request` lists only the answerable ones. */
+  offered: ReadonlyArray<EffectAcpSchema.PermissionOption> = request.options,
 ): SelectedPermissionOption | undefined {
   const optionOfKind = (
     kind: EffectAcpSchema.PermissionOption["kind"],
   ): SelectedPermissionOption | undefined => {
     for (const option of request.options) {
-      if (option.kind === kind && option.optionId.trim().length > 0) {
-        return { optionId: option.optionId, kind };
-      }
+      const id = option.optionId.trim();
+      if (option.kind !== kind || id.length === 0) continue;
+      const ambiguous = offered.some(
+        (other) =>
+          other.optionId.trim() === id && allowsPermission(other.kind) !== allowsPermission(kind),
+      );
+      if (!ambiguous) return { optionId: option.optionId, kind };
     }
     return undefined;
   };
@@ -1409,9 +1422,11 @@ function permissionAnswerGrantScope(
  */
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
+  offered: ReadonlyArray<EffectAcpSchema.PermissionOption> = request.options,
 ): string | undefined {
   return (
-    selectPermissionOption(request, "accept") ?? selectPermissionOption(request, "acceptForSession")
+    selectPermissionOption(request, "accept", offered) ??
+    selectPermissionOption(request, "acceptForSession", offered)
   )?.optionId;
 }
 
@@ -6284,7 +6299,7 @@ export function makeAcpAdapterV2(
                     flavor.permissionDisposition,
                   );
                   if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(answerable);
+                    const optionId = selectAutoApprovedPermissionOption(answerable, params.options);
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6294,7 +6309,11 @@ export function makeAcpAdapterV2(
                     };
                   }
                   if (disposition === "deny") {
-                    const optionId = selectPermissionOption(answerable, "decline")?.optionId;
+                    const optionId = selectPermissionOption(
+                      answerable,
+                      "decline",
+                      params.options,
+                    )?.optionId;
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6358,7 +6377,9 @@ export function makeAcpAdapterV2(
                 ),
               );
               const selected =
-                decision === "cancel" ? undefined : selectPermissionOption(answerable, decision);
+                decision === "cancel"
+                  ? undefined
+                  : selectPermissionOption(answerable, decision, params.options);
               const response =
                 selected === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)

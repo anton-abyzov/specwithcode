@@ -619,9 +619,10 @@ describe("Codex adapter structured file approval evidence", () => {
               ];
         expect(approval).toMatchObject({
           turnItem: {
+            // The grant reaches past the files, so it comes first.
             prompt: [
-              ...scope,
               ...(grantRoot ? [`write ${grantRoot}`] : []),
+              ...scope,
               "Reason: Only case.mjs is changed",
             ].join("\n"),
           },

@@ -772,8 +772,11 @@ export function openCodeChildPermissionRules(
   const inheritedRules = parentRules.filter(
     (rule) => rule.permission === "external_directory" || rule.action === "deny",
   );
+  // external_directory comes only from the current parent rules: a child
+  // session copies its parent's, which may be from an earlier, wider mode.
   const childSpecificRules = nativeChildRules.filter(
     (childRule) =>
+      childRule.permission !== "external_directory" &&
       !inheritedRules.some((inheritedRule) => permissionRuleEquals(childRule, inheritedRule)),
   );
   return [...parentRules, ...childSpecificRules];
@@ -1051,6 +1054,10 @@ export function makeOpenCodeAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
         const threads = new Map<string, OpenCodeThreadState>();
+        // The permission rules each root session was last given. A resumed
+        // session keeps the rules of the mode it was created in, so every turn
+        // installs its own policy's rules first when they differ.
+        const installedPermissionRules = new Map<string, PermissionRuleset>();
         const commandReceipts = new Map<string, Deferred.Deferred<void>>();
         const commandControllers = new Map<string, Set<AbortController>>();
         const pendingRequests = new Map<string, PendingOpenCodeRequest>();
@@ -3094,15 +3101,12 @@ export function makeOpenCodeAdapterV2(
               }
               // No title: OpenCode generates one from the first prompt only when
               // session.create leaves it unset (SessionPrompt.ensureTitle).
-              const response = yield* sdkCall(
-                "session.create",
-                { permission: openCodePermissionRules(threadInput.runtimePolicy) },
-                () =>
-                  client.session.create({
-                    permission: openCodePermissionRules(threadInput.runtimePolicy),
-                  }),
+              const permission = openCodePermissionRules(threadInput.runtimePolicy);
+              const response = yield* sdkCall("session.create", { permission }, () =>
+                client.session.create({ permission }),
               );
               const nativeSession = unwrapData("session.create", response);
+              installedPermissionRules.set(nativeSession.id, permission);
               const createdAt = yield* DateTime.now;
               const created = makeProviderThread({
                 idAllocator,
@@ -3195,6 +3199,20 @@ export function makeOpenCodeAdapterV2(
                 return yield* protocolError(
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
+              }
+              // A turn runs under its own policy's rules, also after the
+              // thread was lowered from Full access and its session resumed.
+              const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              const installed = installedPermissionRules.get(sessionId);
+              if (
+                installed === undefined ||
+                installed.length !== permission.length ||
+                !installed.every((rule, index) => permissionRuleEquals(rule, permission[index]!))
+              ) {
+                yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
+                  client.session.update({ sessionID: sessionId, permission }),
+                );
+                installedPermissionRules.set(sessionId, permission);
               }
               const isCompaction =
                 turnInput.message.text.trim() === "/compact" &&

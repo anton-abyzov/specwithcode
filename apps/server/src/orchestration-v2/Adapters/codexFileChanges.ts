@@ -92,8 +92,9 @@ function approvalReasonLine(reason: string | null | undefined): string[] {
 }
 
 /**
- * What a file-change approval allows: every path (the card scrolls, so none
- * is hidden), then the write grant, then the agent's reason.
+ * What a file-change approval allows: the write grant first (it reaches past
+ * the listed files, so it is never scrolled out of view), then every path (the
+ * card scrolls, so none is hidden), then the agent's reason.
  */
 export function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null | undefined;
@@ -111,9 +112,9 @@ export function codexFileChangeApprovalPrompt(input: {
   });
   const grantRoot = input.grantRoot?.trim();
   const lines = [
+    ...(grantRoot ? [`write ${grantRoot}`] : []),
     ...(input.scope ?? []),
     ...paths,
-    ...(grantRoot ? [`write ${grantRoot}`] : []),
     ...approvalReasonLine(input.reason),
   ];
   return lines.length > 0 ? lines.join("\n") : undefined;

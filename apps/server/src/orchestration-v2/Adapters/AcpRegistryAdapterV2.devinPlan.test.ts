@@ -279,4 +279,17 @@ describe("ACP registry permission answers", () => {
       Effect.scoped,
     ),
   );
+
+  // An agent that trims IDs would read "same" as either answer.
+  it.live("an ID that both an allow and a reject option use is never sent", () =>
+    Effect.gen(function* () {
+      const offered: ReadonlyArray<PermissionOption> = [
+        { optionId: " same ", name: "Allow once", kind: "allow_once" },
+        { optionId: "same", name: "Reject", kind: "reject_once" },
+      ];
+      assert.isNull(yield* answerPlanExit("gemini", "approval-required", "decline", offered));
+      assert.isNull(yield* answerPlanExit("gemini", "approval-required", "accept", offered));
+      assert.isNull(yield* answerPlanExit("gemini", "full-access", "accept", offered));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
 });
