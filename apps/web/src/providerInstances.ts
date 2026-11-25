@@ -30,6 +30,7 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@specweave-studio/client-runtime/state/provider-instance-display";
+import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
 
@@ -359,9 +360,12 @@ export function getProviderInstanceEntry(
   return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
 }
 
+const isReviewOnlyModel = reviewOnlyModel({});
+
 /**
  * Default model slug for a specific instance: its declared built-in default,
- * then its first built-in model, then any model it reports, then the driver-level default. Custom
+ * then its first built-in model, then any model it reports, then the driver-level default.
+ * Models that run only on the Review track come last. Custom
  * instances can serve a different model list than the default instance of
  * the same driver kind, so the lookup must be instance-scoped rather than
  * kind-scoped.
@@ -372,11 +376,20 @@ export function getDefaultProviderInstanceModel(
 ): string | undefined {
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
+  // A guessed default is regular work, so a Review-only model is passed over
+  // even when the instance marks it its default (Muse lists Wonder Full as
+  // its default). It stays only when the instance offers nothing else.
+  const regular = entry.models.filter((model) => !isReviewOnlyModel({ model: model.slug }));
+  const builtIn = DEFAULT_MODEL_BY_PROVIDER[entry.driverKind];
   return (
+    regular.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    regular.find((model) => !model.isCustom)?.slug ??
+    regular[0]?.slug ??
+    (builtIn !== undefined && !isReviewOnlyModel({ model: builtIn }) ? builtIn : undefined) ??
     entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     entry.models.find((model) => !model.isCustom)?.slug ??
     entry.models[0]?.slug ??
-    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+    builtIn
   );
 }
 
@@ -418,6 +431,26 @@ export function resolveSelectableProviderInstance(
 ): ProviderInstanceId | undefined {
   const entries = deriveProviderInstanceEntries(providers);
   return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
+}
+
+/**
+ * A guessed default for regular work, such as a machine added as a limit
+ * fallback: the first ready instance whose default is not a Review-only
+ * model, or null when every ready instance offers only Review-only models
+ * (a Muse Code that lists only the Wonder line).
+ */
+export function resolveRegularDefaultModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const first = resolveDefaultProviderModelSelection(providers, null);
+  if (first === null || !isReviewOnlyModel({ model: first.model })) return first;
+  for (const entry of deriveProviderInstanceEntries(providers)) {
+    if (!isProviderInstancePickerReady(entry)) continue;
+    const model = getDefaultProviderInstanceModel(providers, entry.instanceId);
+    if (model !== undefined && !isReviewOnlyModel({ model }))
+      return { instanceId: entry.instanceId, model };
+  }
+  return null;
 }
 
 /**

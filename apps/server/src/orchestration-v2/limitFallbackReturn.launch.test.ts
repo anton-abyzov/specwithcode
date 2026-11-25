@@ -120,4 +120,33 @@ describe("launchReturnCommand", () => {
     const notReady = { ...unread, status: "error" } as ServerProvider;
     expect(launchReturnCommand(thread, home, providers(notReady), rule, nowMs)).toBeNull();
   });
+
+  it("goes back to Muse, which reports no usage, once nothing holds it", () => {
+    const museId = ProviderInstanceId.make("muse");
+    const pick = { instanceId: museId, model: "muse-wonder-full-1.0" };
+    const muse: ServerProvider = {
+      ...provider(museId, "muse", nowMs),
+      models: [{ slug: pick.model, name: "Muse Wonder Full", isCustom: false, capabilities: null }],
+      usageLimits: undefined,
+    };
+    const both = [muse, provider(codexId, "codex", nowMs)];
+    expect(launchReturnCommand(thread, pick, both, rule, nowMs)?.modelSelection).toEqual(pick);
+    expect(launchReturnCommand(thread, pick, both, rule, nowMs, 0, new Set([museId]))).toBeNull();
+  });
+
+  it("never goes back to a metered pick whose usage read failed or ran out", () => {
+    const failed = {
+      ...claude(40),
+      usageLimits: {
+        ...claude(40).usageLimits!,
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      },
+    } as ServerProvider;
+    expect(launchReturnCommand(thread, home, providers(failed), rule, nowMs)).toBeNull();
+    // A full window whose reset passed with no newer read is no proof of room.
+    const expired = claude(100);
+    const afterReset = Date.parse(resetAt) + 60_000;
+    expect(launchReturnCommand(thread, home, providers(expired), rule, afterReset)).toBeNull();
+  });
 });

@@ -20,6 +20,7 @@ import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@specweave-studio/shared/projectSettings";
+import { reviewOnlyModel } from "@specweave-studio/shared/regularTrack";
 
 import { hydrateImagesFromPersisted, type ComposerImageAttachment } from "~/composerDraftStore";
 import { randomUUID } from "~/lib/utils";
@@ -43,7 +44,26 @@ const usable = (selection: ModelSelection | null | undefined): selection is Mode
   selection.model.trim() !== "" &&
   selection.instanceId !== NO_PROVIDER_MODEL_SELECTION.instanceId;
 
-function entryModel(entry: ProviderInstanceEntry): string | null {
+function entryModel(
+  entry: ProviderInstanceEntry,
+  reviewOnly: (selection: { readonly model: string }) => boolean,
+): string | null {
+  // Regular work never guesses a Review-only model, even one the provider
+  // marks its default (Muse lists Wonder Full as its default).
+  const current = entry.models.filter(
+    (model) => model.isLegacy !== true && !reviewOnly({ model: model.slug }),
+  );
+  const fallback = entry.models.find((model) => !reviewOnly({ model: model.slug }))?.slug;
+  const builtIn = DEFAULT_MODEL_BY_PROVIDER[entry.driverKind];
+  const slug =
+    current.find((model) => model.isDefault === true)?.slug ??
+    current[0]?.slug ??
+    fallback ??
+    (builtIn !== undefined && !reviewOnly({ model: builtIn }) ? builtIn : undefined);
+  return slug === undefined || slug.trim() === "" ? null : slug;
+}
+
+function anyEntryModel(entry: ProviderInstanceEntry): string | null {
   const current = entry.models.filter((model) => model.isLegacy !== true);
   const slug =
     current.find((model) => model.isDefault === true)?.slug ??
@@ -56,7 +76,8 @@ function entryModel(entry: ProviderInstanceEntry): string | null {
 /**
  * The model a thread that waits for a provider records: the project's
  * default, then this machine's, then the first enabled provider's default
- * model (any provider's when none is enabled). The composer switches to
+ * model (any provider's when none is enabled), passing over models that run
+ * only on the Review track unless nothing else is listed. The composer switches to
  * whichever provider is ready when the person sends, since a thread that
  * never ran is not tied to one. Null when this machine reports no provider
  * at all; never the local no-provider placeholder.
@@ -69,15 +90,23 @@ export function waitingThreadModel(
   if (entries.length === 0) return null;
   const known = (selection: ModelSelection | null | undefined) =>
     usable(selection) && entries.some((entry) => entry.instanceId === selection.instanceId);
-  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
-    .defaultModelSelection;
+  const resolved = resolveProjectSettings(settings, project?.id ?? null, project).settings;
+  const configured = resolved.defaultModelSelection;
   for (const selection of [configured, settings.defaultModelSelection])
     if (known(selection)) return selection;
-  for (const entry of [
+  const ordered = [
     ...entries.filter((candidate) => candidate.enabled),
     ...entries.filter((candidate) => !candidate.enabled),
-  ]) {
-    const model = entryModel(entry);
+  ];
+  const reviewOnly = reviewOnlyModel(resolved);
+  for (const entry of ordered) {
+    const model = entryModel(entry, reviewOnly);
+    if (model !== null) return { instanceId: entry.instanceId, model };
+  }
+  // Only Review-only models on this machine: record one rather than refuse,
+  // since the composer moves to whichever provider is ready on Send.
+  for (const entry of ordered) {
+    const model = anyEntryModel(entry);
     if (model !== null) return { instanceId: entry.instanceId, model };
   }
   return null;

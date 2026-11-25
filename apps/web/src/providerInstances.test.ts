@@ -13,6 +13,7 @@ import {
   isProviderInstancePickerSelectable,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
+  resolveRegularDefaultModelSelection,
   resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
   sortProviderInstanceEntries,
@@ -516,10 +517,72 @@ describe("getDefaultProviderInstanceModel", () => {
     );
   });
 
+  it("passes over a Review-only default for regular work", () => {
+    const muse = (models: ServerProvider["models"]) => [
+      provider({ provider: ProviderDriverKind.make("muse"), instanceId: "muse", models }),
+    ];
+    const id = ProviderInstanceId.make("muse");
+    // Muse moves its default onto Wonder Full, which only the Review track runs.
+    expect(
+      getDefaultProviderInstanceModel(
+        muse([
+          model("muse-wonder-1.0"),
+          model("muse-wonder-full-1.0", false, true),
+          model("muse-spark-1.3"),
+        ]),
+        id,
+      ),
+    ).toBe("muse-spark-1.3");
+    expect(
+      resolveDefaultProviderModelSelection(
+        muse([model("muse-wonder-full-1.0", false, true), model("muse-spark-1.3")]),
+        null,
+      ),
+    ).toEqual({ instanceId: id, model: "muse-spark-1.3" });
+    // No models reported: only the Review-only driver default is left, as the last resort.
+    expect(getDefaultProviderInstanceModel(muse([]), id)).toBe("muse-wonder-1.0");
+    // Nothing else listed: the Review-only model stays rather than no model at all.
+    expect(
+      getDefaultProviderInstanceModel(muse([model("muse-wonder-full-1.0", false, true)]), id),
+    ).toBe("muse-wonder-full-1.0");
+  });
+
   it("returns undefined for an unknown instance", () => {
     expect(
       getDefaultProviderInstanceModel([], ProviderInstanceId.make("removed_instance")),
     ).toBeUndefined();
+  });
+});
+
+describe("resolveRegularDefaultModelSelection", () => {
+  // Muse Code lists only the Wonder line, which only the Review track runs.
+  const museOnlyWonder = provider({
+    provider: ProviderDriverKind.make("muse"),
+    instanceId: "muse",
+    models: [model("muse-wonder-1.0"), model("muse-wonder-full-1.0", false, true)],
+  });
+  const claude = provider({
+    provider: ProviderDriverKind.make("claudeAgent"),
+    instanceId: "claudeAgent",
+    models: [model("claude-opus-5-5", false, true)],
+  });
+
+  it("moves past an instance that offers only Review-only models", () => {
+    expect(resolveRegularDefaultModelSelection([museOnlyWonder, claude])).toEqual({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    });
+  });
+
+  it("guesses nothing when every ready instance offers only Review-only models", () => {
+    expect(resolveRegularDefaultModelSelection([museOnlyWonder])).toBeNull();
+  });
+
+  it("keeps the first instance's default when it is regular", () => {
+    expect(resolveRegularDefaultModelSelection([claude, museOnlyWonder])).toEqual({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    });
   });
 });
 

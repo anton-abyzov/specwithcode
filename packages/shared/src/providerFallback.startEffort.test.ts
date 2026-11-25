@@ -144,6 +144,32 @@ describe("a limit fallback onto another model", () => {
     ).toEqual({ instanceId: id("claude-work"), model: "claude-opus-5-5" });
   });
 
+  it("keeps the thread's level when the same model moves to another driver", () => {
+    // GPT-6.2 Sol from Codex onto Copilot: options are not copied across
+    // drivers, so the level is carried under the id the new driver reads.
+    const codex = provider("codex", "codex", [
+      { slug: "gpt-6.2-sol", levels: ["low", "medium", "high", "xhigh"] },
+    ]);
+    const copilot = provider("copilot", "acpRegistry", [
+      { slug: "gpt-6.2-sol", levels: ["low", "medium", "high"], optionId: "effort" },
+    ]);
+    const moved = resolveProviderFallback({
+      providers: [codex, copilot],
+      currentInstanceId: codex.instanceId,
+      currentModel: "gpt-6.2-sol",
+      currentOptions: [{ id: "reasoningEffort", value: "high" }],
+      rule: rule({ instanceId: id("copilot"), model: "gpt-6.2-sol" }),
+      nowMs: now,
+      anyReady: true,
+      limitedInstanceIds: new Set([codex.instanceId]),
+    });
+    expect(moved).toEqual({
+      instanceId: id("copilot"),
+      model: "gpt-6.2-sol",
+      options: [{ id: "effort", value: "high" }],
+    });
+  });
+
   it("moves a target's own level saved under another harness's id to the id its model reads", () => {
     // A track entry saved with Claude's `effort` id now resolved onto Muse (`reasoningEffort`).
     const target = {
