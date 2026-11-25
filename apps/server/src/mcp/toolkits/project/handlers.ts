@@ -375,18 +375,36 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       .execute({
         operation: "mcp.assertProjectWorktree.checkout",
         cwd,
-        args: ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        args: [
+          "rev-parse",
+          "--path-format=absolute",
+          "--show-toplevel",
+          "--git-common-dir",
+          "--absolute-git-dir",
+        ],
         allowNonZeroExit: true,
       })
       .pipe(
         Effect.flatMap((result) => {
-          const [toplevel = "", commonDir = ""] = result.stdout.trim().split("\n");
+          const [toplevel = "", commonDir = "", gitDir = ""] = result.stdout.trim().split("\n");
           return result.exitCode === 0 && toplevel.length > 0 && commonDir.length > 0
-            ? Effect.all([real(toplevel), real(commonDir)])
+            ? Effect.all([real(toplevel), real(commonDir), real(gitDir)])
             : Effect.succeed(undefined);
         }),
         Effect.orElseSucceed(() => undefined),
       );
+  // A linked worktree's own Git folder names the checkout it belongs to, as Git
+  // itself checks: a .git file copied from another worktree points elsewhere.
+  const ownsCheckout = (gitDir: string, commonDir: string) =>
+    gitDir === commonDir
+      ? Effect.succeed(true)
+      : fileSystem.readFileString(`${gitDir}/gitdir`).pipe(
+          Effect.flatMap((backlink) => real(backlink.trim())),
+          Effect.flatMap((backlink) =>
+            real(`${asked}/.git`).pipe(Effect.map((dotGit) => backlink === dotGit)),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
   const project = yield* checkoutOf(workspaceRoot);
   for (const path of registered) {
     // The registered path, not the caller's spelling: a symlink that resolves
@@ -397,7 +415,8 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       project !== undefined &&
       checkout !== undefined &&
       checkout[0] === asked &&
-      checkout[1] === project[1]
+      checkout[1] === project[1] &&
+      (yield* ownsCheckout(checkout[2], checkout[1]))
     )
       return path;
   }
