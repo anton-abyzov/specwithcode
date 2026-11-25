@@ -379,6 +379,14 @@ export interface AcpAdapterV2Flavor {
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => AcpPermissionDisposition;
+  /**
+   * The offered options an answer may select, for agents that list options the
+   * app must never choose (Devin's plan exit into bypass permissions). Applied
+   * to automatic and personal answers alike.
+   */
+  readonly answerablePermissionOptions?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => ReadonlyArray<EffectAcpSchema.PermissionOption>;
   /** Approval choices to advertise on the approval card for a permission request. */
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -1344,7 +1352,7 @@ function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): D
 }
 
 interface SelectedPermissionOption {
-  /** The trimmed ID sent to the agent. */
+  /** The ID sent to the agent, exactly as it offered it. */
   readonly optionId: string;
   readonly kind: EffectAcpSchema.PermissionOption["kind"];
 }
@@ -1358,8 +1366,9 @@ function selectPermissionOption(
     kind: EffectAcpSchema.PermissionOption["kind"],
   ): SelectedPermissionOption | undefined => {
     for (const option of request.options) {
-      const optionId = option.optionId.trim();
-      if (option.kind === kind && optionId.length > 0) return { optionId, kind };
+      if (option.kind === kind && option.optionId.trim().length > 0) {
+        return { optionId: option.optionId, kind };
+      }
     }
     return undefined;
   };
@@ -1382,7 +1391,7 @@ function permissionAnswerGrantScope(
 ): "session" | "turn" | undefined {
   const kinds = new Set<string>([selected.kind]);
   for (const option of request.options) {
-    if (option.optionId.trim() === selected.optionId) kinds.add(option.kind);
+    if (option.optionId.trim() === selected.optionId.trim()) kinds.add(option.kind);
   }
   if ([...kinds].some((kind) => kind !== "allow_once" && kind !== "allow_always")) {
     return undefined;
@@ -6246,6 +6255,10 @@ export function makeAcpAdapterV2(
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
+              const answerable =
+                flavor.answerablePermissionOptions === undefined
+                  ? params
+                  : { ...params, options: [...flavor.answerablePermissionOptions(params)] };
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
@@ -6256,7 +6269,7 @@ export function makeAcpAdapterV2(
                     flavor.permissionDisposition,
                   );
                   if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(params);
+                    const optionId = selectAutoApprovedPermissionOption(answerable);
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6266,7 +6279,7 @@ export function makeAcpAdapterV2(
                     };
                   }
                   if (disposition === "deny") {
-                    const optionId = selectPermissionOption(params, "decline")?.optionId;
+                    const optionId = selectPermissionOption(answerable, "decline")?.optionId;
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6330,7 +6343,7 @@ export function makeAcpAdapterV2(
                 ),
               );
               const selected =
-                decision === "cancel" ? undefined : selectPermissionOption(params, decision);
+                decision === "cancel" ? undefined : selectPermissionOption(answerable, decision);
               const response =
                 selected === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
