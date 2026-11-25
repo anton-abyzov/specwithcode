@@ -5577,7 +5577,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.itemId,
               nativeRequestId,
               requestKind: "command",
-              prompt: codexCommandApprovalPrompt(payload) ?? null,
+              prompt: codexCommandApprovalPrompt(payload),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5857,12 +5857,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.callId,
               nativeRequestId,
               requestKind: "command",
-              prompt:
-                codexCommandApprovalPrompt({
-                  command: payload.command.join(" "),
-                  cwd: payload.cwd,
-                  reason: payload.reason,
-                }) ?? null,
+              prompt: codexCommandApprovalPrompt({
+                argv: payload.command,
+                cwd: payload.cwd,
+                reason: payload.reason,
+              }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {

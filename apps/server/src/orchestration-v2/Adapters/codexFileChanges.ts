@@ -105,23 +105,50 @@ export function codexFileChangeApprovalPrompt(input: {
   return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
-/** What a command approval runs: the command first, then where and what it reaches. */
+/** One argument as a POSIX shell would read it back: quoted when it holds anything but safe characters. */
+function shellArgument(argument: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(argument)
+    ? argument
+    : `'${argument.replaceAll("'", `'\\''`)}'`;
+}
+
+/** An argument list as one command line that keeps each argument's boundaries. */
+export function codexArgvCommandLine(argv: ReadonlyArray<string>): string {
+  return argv.map(shellArgument).join(" ");
+}
+
+/**
+ * What a command approval runs: the command first, then where and what it
+ * reaches. Without any command text the card says so before the reason, so
+ * the agent's explanation never reads as the thing being approved.
+ */
 export function codexCommandApprovalPrompt(input: {
-  readonly command?: string | null;
-  readonly cwd?: string | null;
-  readonly networkApprovalContext?: { readonly host: string; readonly protocol: string } | null;
-  readonly reason?: string | null;
-}): string | undefined {
-  const command = input.command?.trim();
+  readonly command?: string | null | undefined;
+  readonly argv?: ReadonlyArray<string> | undefined;
+  readonly commandActions?: ReadonlyArray<{ readonly command: string }> | null | undefined;
+  readonly cwd?: string | null | undefined;
+  readonly networkApprovalContext?:
+    | { readonly host: string; readonly protocol: string }
+    | null
+    | undefined;
+  readonly reason?: string | null | undefined;
+}): string {
+  const actionCommands = (input.commandActions ?? [])
+    .map((action) => action.command.trim())
+    .filter((command) => command.length > 0);
+  const command =
+    input.command?.trim() ||
+    (input.argv && input.argv.length > 0 ? codexArgvCommandLine(input.argv) : "") ||
+    actionCommands.join("\n");
   const cwd = input.cwd?.trim();
   const network = input.networkApprovalContext;
   const lines = [
-    ...(command ? [command] : []),
+    command || "Command not shown by the agent",
     ...(cwd ? [`cwd ${cwd}`] : []),
     ...(network ? [`network ${network.protocol} ${network.host}`] : []),
     ...approvalReasonLine(input.reason),
   ];
-  return lines.length > 0 ? lines.join("\n") : undefined;
+  return lines.join("\n");
 }
 
 type PermissionPath = CodexSchema.PermissionsRequestApprovalParams__FileSystemPath;
