@@ -161,38 +161,41 @@ const card = (
         completedAt: null,
       },
     });
-    if (options.withItem !== false) yield* projections.apply({
-      id: EventId.make(`item:${name}`),
-      type: "turn-item.updated",
-      threadId,
-      occurredAt: now,
-      payload: {
-        id: TurnItemId.make(`item:${name}`),
+    if (options.withItem !== false)
+      yield* projections.apply({
+        id: EventId.make(`item:${name}`),
+        type: "turn-item.updated",
         threadId,
-        runId: null,
-        nodeId,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 1,
-        status: "waiting",
-        title: null,
-        startedAt: now,
-        completedAt: null,
-        updatedAt: now,
-        type: "approval_request",
-        requestId,
-        requestKind: "mcp-elicitation",
-        appName: "github",
-        options: [
-          { decision: "decline", label: "Decline" },
-          { decision: "cancel", label: "Cancel" },
-          ...(elicitation === undefined ? [{ decision: "accept" as const, label: "Approve" }] : []),
-        ],
-        ...(elicitation === undefined ? {} : { elicitation }),
-      },
-    });
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:${name}`),
+          threadId,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "approval_request",
+          requestId,
+          requestKind: "mcp-elicitation",
+          appName: "github",
+          options: [
+            { decision: "decline", label: "Decline" },
+            { decision: "cancel", label: "Cancel" },
+            ...(elicitation === undefined
+              ? [{ decision: "accept" as const, label: "Approve" }]
+              : []),
+          ],
+          ...(elicitation === undefined ? {} : { elicitation }),
+        },
+      });
     const respond = (
       tag: string,
       fields: Omit<

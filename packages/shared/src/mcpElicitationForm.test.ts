@@ -119,7 +119,9 @@ describe("parseMcpElicitationSchema", () => {
       },
       { type: "object", properties: { big: { type: "string", description: "x".repeat(70_000) } } },
       // A prototype-named field would be lost from the content (review finding).
-      JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}'),
+      JSON.parse(
+        '{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}',
+      ),
       { type: "object", properties: { constructor: { type: "string" } } },
     ];
     for (const schema of refused) expect(parseMcpElicitationSchema(schema).ok).toBe(false);

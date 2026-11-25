@@ -130,8 +130,7 @@ export function checkFormResponse(
   if (status === "resolved") return { refusal: FORM_ALREADY_ANSWERED };
   if (status !== "pending") return { refusal: FORM_CLOSED };
   if (command.answeredByThreadId !== undefined) return { refusal: FORM_AGENT_REFUSAL };
-  if (command.decision === "decline" || command.decision === "cancel")
-    return {};
+  if (command.decision === "decline" || command.decision === "cancel") return {};
   if (command.answers === undefined) return { refusal: FORM_NEEDS_CARD };
   const parsed = parseMcpElicitationSchema(form.requestedSchema);
   if (!parsed.ok) return { refusal: FORM_CLOSED };
