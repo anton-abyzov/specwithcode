@@ -54,6 +54,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { routeUnnamedLaunch } from "../project/TracksLaunch.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { checkedPrompt, isModelPinned, runScheduledTaskCheck } from "./ScheduledTaskCheck.ts";
+import { dispatchFailureReason, reasonLine } from "./dispatchFailureReason.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -124,7 +125,6 @@ import { expandRoutinePrompt } from "@specweave-studio/shared/routineTemplates";
 import {
   decodeRow,
   encodeRunPolicyJson,
-  errorMessage,
   iso,
   listDueTasks,
   nextRunAfter,
@@ -1173,7 +1173,9 @@ export const layer = Layer.effect(
         // reports why it did not run.
         const routeDeferral = route?.type === "defer" && trigger === "scheduled" ? route : null;
         const providerSkip =
-          route?.type === "defer" && routeDeferral === null ? `Skipped: ${route.reason}` : null;
+          route?.type === "defer" && routeDeferral === null
+            ? `Skipped: ${reasonLine(route.reason)}`
+            : null;
         // The model a moved fire dispatches on; undefined dispatches as before.
         // A grant's routine never moves to a sign-in its grant does not allow.
         const routedModel =
@@ -1413,10 +1415,17 @@ export const layer = Layer.effect(
           waitUntilMs === null || !scheduleSource.enabled
             ? null
             : iso(DateTime.makeUnsafe(waitUntilMs));
-        const failure = result._tag === "Success" ? null : errorMessage(result.cause);
+        if (result._tag === "Failure") {
+          // The task keeps a short reason; the whole cause is for the server log only.
+          yield* Effect.logWarning("Scheduled task run failed to dispatch", {
+            taskId: active.id,
+            cause: result.cause,
+          });
+        }
+        const failure = result._tag === "Success" ? null : dispatchFailureReason(result.cause);
         const lastRunError =
           deferral !== null
-            ? `Deferred${deferredUntil === null ? "" : ` until ${deferredUntil}`}: ${deferral.reason}`
+            ? `Deferred${deferredUntil === null ? "" : ` until ${deferredUntil}`}: ${reasonLine(deferral.reason)}`
             : once.retryAtMs !== null
               ? `${deferredUntil === null ? "" : `Trying again at ${deferredUntil}: `}${failure}`
               : once.gaveUp
@@ -1493,7 +1502,16 @@ export const layer = Layer.effect(
           Effect.all([Ref.get(admitted), Ref.get(stuckFire)]).pipe(
             Effect.flatMap(([owned, fire]) =>
               owned
-                ? releaseStuckRun(task, errorMessage(cause), trigger === "scheduled", fire)
+                ? Effect.logWarning("Scheduled task run stopped", { taskId: task.id, cause }).pipe(
+                    Effect.andThen(
+                      releaseStuckRun(
+                        task,
+                        dispatchFailureReason(cause),
+                        trigger === "scheduled",
+                        fire,
+                      ),
+                    ),
+                  )
                 : Effect.void,
             ),
           ),

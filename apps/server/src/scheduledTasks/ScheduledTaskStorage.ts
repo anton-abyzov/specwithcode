@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { firstLineOf } from "./dispatchFailureReason.ts";
 import { nextScheduledRunAt } from "./Schedule.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -73,7 +74,9 @@ export interface WebhookDeliveryRow {
 
 export function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
-    message,
+    // A refusal is one line, like every reason a routine shows: a hold or grant note can name
+    // another machine by its label, and labels can span lines.
+    message: firstLineOf(message),
     ...(input?.taskId === undefined ? {} : { taskId: input.taskId }),
     ...(input?.cause === undefined ? {} : { cause: input.cause }),
   });
@@ -260,7 +263,8 @@ export const decodeRow = (
       nextRunAt: row.next_run_at,
       lastRunAt: row.last_run_at,
       lastRunStatus: row.last_run_status,
-      lastRunError: row.last_run_error,
+      // Whichever writer stored it, and rows from before the one-line rule, read as one line.
+      lastRunError: row.last_run_error === null ? null : firstLineOf(row.last_run_error),
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
       ...(policy.modelPinned === undefined ? {} : { modelPinned: policy.modelPinned }),

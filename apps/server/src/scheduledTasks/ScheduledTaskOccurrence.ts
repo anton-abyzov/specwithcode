@@ -14,6 +14,7 @@ import {
 } from "../orchestration-v2/providerOpenFailure.ts";
 import { PROVIDER_RETRY_MESSAGE_PREFIX } from "../orchestration-v2/unopenableFallback.ts";
 import type { ScheduledTask, ScheduledTaskSchedule } from "@specweave-studio/contracts";
+import { firstLineOf } from "./dispatchFailureReason.ts";
 import { isSameSchedule } from "./Schedule.ts";
 import { DEFER_DEFAULT_MS } from "./ScheduledTaskProviderRoute.ts";
 
@@ -192,7 +193,12 @@ export const saveOccurrence = Effect.fn("ScheduledTaskService.saveOccurrence")(f
   at: string,
 ) {
   const sql = yield* SqlClient.SqlClient;
-  const json = encodeOccurrence(occurrence);
+  // A reason is one line, as on the task; one that already is stays exactly as given.
+  const json = encodeOccurrence(
+    occurrence.reason === null
+      ? occurrence
+      : { ...occurrence, reason: firstLineOf(occurrence.reason) },
+  );
   yield* sql`
     INSERT INTO scheduled_task_run_receipts (command_id, project_id, task_id, task_created_at, started_at, result_json)
     VALUES (${`${RECEIPT_PREFIX}${occurrence.fireKey}`}, ${task.projectId}, ${task.id}, ${task.createdAt}, ${at}, ${json})

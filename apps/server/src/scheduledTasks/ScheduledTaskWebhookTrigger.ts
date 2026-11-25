@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
+import { withLocalTracing } from "@specweave-studio/shared/relayTracing";
 
 import * as Metrics from "../observability/Metrics.ts";
 import {
@@ -39,6 +40,7 @@ import type {
   WebhookTriggerRequest,
   WebhookTriggerResult,
 } from "./ScheduledTaskTypes.ts";
+import { firstLineOf } from "./dispatchFailureReason.ts";
 import { redactHeaders, redactQuery, renderWebhookPrompt } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 
@@ -100,7 +102,8 @@ export const makeWebhookTrigger = Effect.fnUntraced(function* (deps: {
     outcome: row.outcome as ScheduledTaskWebhookDeliveryOutcome,
     signatureVerified: row.signature_verified === 1,
     missingFields: Option.getOrElse(decodeMissingFieldsJson(row.missing_fields_json), () => []),
-    error: row.error,
+    // One line, whichever writer stored it (a handoff reason can carry a machine label).
+    error: row.error === null ? null : firstLineOf(row.error),
   });
 
   const listWebhookDeliveries = (
@@ -545,6 +548,9 @@ export const makeWebhookTrigger = Effect.fnUntraced(function* (deps: {
                 "scheduled_task.webhook.delivery_id": deliveryId,
               },
             }),
+            // A relay delivery is answered under the relay's tracer, but the run it starts works
+            // with this machine's files and threads, so the run and its root span stay local.
+            withLocalTracing,
             Effect.ensuring(release),
             Effect.forkIn(serviceScope),
           );

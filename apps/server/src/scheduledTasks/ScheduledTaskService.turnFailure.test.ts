@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  CommandId,
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
@@ -29,6 +30,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Reactor from "./ScheduledTaskRunReactor.ts";
 import * as Service from "./ScheduledTaskService.ts";
 import { routineProject } from "./ScheduledTaskService.test-fixtures.ts";
+import { taskError } from "./ScheduledTaskStorage.ts";
 
 const taskInput = Schema.decodeUnknownSync(ScheduledTaskUpsertInput)({
   id: "routine",
@@ -93,6 +95,83 @@ it.effect("records a dispatched routine's failed turn on the task once", () =>
     assert.equal(yield* service.recordTurnFailure(input), "stale");
   }).pipe(Effect.provide(serviceLayer)),
 );
+
+it.effect("records only the first line of a failed turn's message", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
+    const service = yield* Service.ScheduledTaskService;
+    const { task } = yield* service.upsert(taskInput);
+    yield* service.runNow({ id: task.id });
+
+    const outcome = yield* service.recordTurnFailure({
+      id: task.id,
+      requestedAt: at("2026-10-21T19:00:00.100Z"),
+      error:
+        "Setup failed.\n    at prepare (/Users/someone/private/setup.ts:1:1)\ntoken=sk-private",
+    });
+    assert.equal(outcome, "recorded");
+    const [stored] = (yield* service.list()).tasks;
+    assert.equal(stored?.lastRunError, "Setup failed.");
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
+it.effect.each(["\r", "\u2028", "\u2029", "\u0085"])(
+  "cuts a failed turn's message at any line break: %j",
+  (lineBreak) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
+      const service = yield* Service.ScheduledTaskService;
+      const { task } = yield* service.upsert(taskInput);
+      yield* service.runNow({ id: task.id });
+
+      yield* service.recordTurnFailure({
+        id: task.id,
+        requestedAt: at("2026-10-21T19:00:00.100Z"),
+        error: `Setup failed.${lineBreak}token=sk-private`,
+      });
+      const [stored] = (yield* service.list()).tasks;
+      assert.equal(stored?.lastRunError, "Setup failed.");
+    }).pipe(Effect.provide(serviceLayer)),
+);
+
+it.effect("shows one line of a reason, whichever writer stored it", () =>
+  Effect.gen(function* () {
+    const service = yield* Service.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    const { task } = yield* service.upsert(taskInput);
+    // A note written before this rule, or by a writer that keeps the provider's diagnostic.
+    yield* sql`UPDATE scheduled_tasks SET last_run_status = 'failed',
+      last_run_error = ${"Provider unavailable.\nPATH=/Users/someone/private"}
+      WHERE task_id = ${task.id}`;
+    const [stored] = (yield* service.list()).tasks;
+    assert.equal(stored?.lastRunError, "Provider unavailable.");
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
+it.effect("replays a run's stored result with a one-line reason", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-21T19:00:00.000Z"));
+    const service = yield* Service.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    const { task } = yield* service.upsert(taskInput);
+    const commandId = CommandId.make("replayed-run");
+    yield* service.runNow({ id: task.id, commandId });
+    // A receipt written before the one-line rule keeps the provider's whole diagnostic.
+    yield* sql`UPDATE scheduled_task_run_receipts
+      SET result_json = json_set(result_json, '$.lastRunError', ${"Provider unavailable.\nPATH=/Users/someone/private"})
+      WHERE task_id = ${task.id} AND json_extract(result_json, '$.lastRunStatus') IS NOT NULL`;
+    const replayed = yield* service.runNow({ id: task.id, commandId });
+    assert.equal(replayed.task.lastRunError, "Provider unavailable.");
+  }).pipe(Effect.provide(serviceLayer)),
+);
+
+it("refuses with one line, whatever text a refusal carries", () => {
+  // A hold or grant refusal can name another machine by a label of several lines.
+  const refused = taskError("Waiting for studio-host\nsecond line of the label", {
+    taskId: ScheduledTaskId.make("routine"),
+  });
+  assert.equal(refused.message, "Waiting for studio-host");
+});
 
 it.effect("reports running while the dispatch is not recorded yet", () =>
   Effect.gen(function* () {

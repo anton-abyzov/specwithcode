@@ -383,6 +383,69 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect("reads a deleted thread's snapshot as missing, and a live one as before", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const shell = (threadId: ThreadId) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId: ProjectId.make("project:deleted-read"),
+        title: "Deleted read",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      const deleted = ThreadId.make("thread:deleted-read:gone");
+      const live = ThreadId.make("thread:deleted-read:live");
+      for (const threadId of [deleted, live]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: shell(threadId),
+        });
+      }
+      // Deleting keeps the rows (forks may still read them); readers must not get the thread.
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${deleted}:deleted`),
+        type: "thread.deleted",
+        threadId: deleted,
+        occurredAt: now,
+        payload: { ...shell(deleted), deletedAt: now },
+      });
+
+      const snapshot = yield* projectionStore.getThreadSnapshot(deleted).pipe(Effect.flip);
+      assert.instanceOf(snapshot, ProjectionStore.ProjectionStoreThreadNotFoundError);
+      const window = yield* projectionStore
+        .getThreadSnapshotWindow(deleted, { rowLimit: 50 })
+        .pipe(Effect.flip);
+      assert.instanceOf(window, ProjectionStore.ProjectionStoreThreadNotFoundError);
+
+      assert.equal((yield* projectionStore.getThreadSnapshot(live)).projection.thread.id, live);
+      assert.equal(
+        (yield* projectionStore.getThreadSnapshotWindow(live, { rowLimit: 50 })).projection.thread
+          .id,
+        live,
+      );
+    }),
+  );
+
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,

@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { shortFailureReason } from "./dispatchFailureReason.ts";
 import { markFinishedOneShot } from "./ScheduledTaskExpiry.ts";
 import {
   dispatchedOccurrences,
@@ -90,11 +91,13 @@ export const followDispatchedOccurrences = Effect.fn(
       if (yield* markFinishedOneShot(latest, nowIso)) changed = true;
       continue;
     }
-    const reported = occurrence.runId === outcome.runId && occurrence.reason === outcome.message;
+    // Recorded as the task records any reason: one line, trimmed and capped.
+    const reason = shortFailureReason(outcome.message);
+    const reported = occurrence.runId === outcome.runId && occurrence.reason === reason;
     if (!reported) {
       const updated = yield* sql<{ task_id: string }>`
         UPDATE scheduled_tasks
-        SET last_run_status = 'failed', last_run_error = ${outcome.message},
+        SET last_run_status = 'failed', last_run_error = ${reason},
             updated_at = ${nowIso}
         WHERE ${latest}
           AND (last_run_status = 'succeeded'
@@ -108,7 +111,7 @@ export const followDispatchedOccurrences = Effect.fn(
         ...occurrence,
         state: outcome.settled ? "failed" : "dispatched",
         runId: outcome.runId,
-        reason: outcome.message,
+        reason,
       });
   }
   return changed;
