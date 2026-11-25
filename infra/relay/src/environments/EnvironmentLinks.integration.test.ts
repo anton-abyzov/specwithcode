@@ -70,7 +70,8 @@ const rows = Effect.gen(function* () {
   return Object.fromEntries(all.map((row) => [row.userId, row]));
 });
 
-const layer = EnvironmentLinks.layer.pipe(Layer.provideMerge(layerSqliteRelayDb()));
+/** A fresh database per test; a shared layer would carry rows between tests. */
+const makeLayer = () => EnvironmentLinks.layer.pipe(Layer.provideMerge(layerSqliteRelayDb()));
 
 describe("EnvironmentLinks on SQLite D1", () => {
   it.effect("revokes the previous account's link when the machine links under another", () =>
@@ -80,7 +81,7 @@ describe("EnvironmentLinks on SQLite D1", () => {
       const stored = yield* rows;
       expect(stored["user-a"]?.revokedAt).not.toBeNull();
       expect(stored["user-b"]?.revokedAt).toBeNull();
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(makeLayer())),
   );
 
   it.effect("keeps another account's link that a different key proved", () =>
@@ -90,7 +91,7 @@ describe("EnvironmentLinks on SQLite D1", () => {
       const stored = yield* rows;
       expect(stored["user-a"]?.revokedAt).toBeNull();
       expect(stored["user-b"]?.revokedAt).toBeNull();
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(makeLayer())),
   );
 
   it.effect("keeps the link active when the same account links again", () =>
@@ -99,7 +100,7 @@ describe("EnvironmentLinks on SQLite D1", () => {
       yield* link("user-a", "key-1");
       const stored = yield* rows;
       expect(stored["user-a"]?.revokedAt).toBeNull();
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(makeLayer())),
   );
 
   // The linker reads the stored key before it writes. Two links racing past
@@ -116,7 +117,7 @@ describe("EnvironmentLinks on SQLite D1", () => {
       expect(stored["user-a"]).toMatchObject({ environmentPublicKey: "key-1", revokedAt: null });
       // A refused write ends nothing: the other account's key-2 link stays.
       expect(stored["user-b"]?.revokedAt).toBeNull();
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(makeLayer())),
   );
 
   it.effect("relinks a revoked link under a new key", () =>
@@ -127,6 +128,6 @@ describe("EnvironmentLinks on SQLite D1", () => {
       yield* link("user-a", "key-2");
       const stored = yield* rows;
       expect(stored["user-a"]).toMatchObject({ environmentPublicKey: "key-2", revokedAt: null });
-    }).pipe(Effect.provide(layer)),
+    }).pipe(Effect.provide(makeLayer())),
   );
 });
