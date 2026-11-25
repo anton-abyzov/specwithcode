@@ -30,6 +30,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Reactor from "./ScheduledTaskRunReactor.ts";
 import * as Service from "./ScheduledTaskService.ts";
 import { routineProject } from "./ScheduledTaskService.test-fixtures.ts";
+import { taskError } from "./ScheduledTaskStorage.ts";
 
 const taskInput = Schema.decodeUnknownSync(ScheduledTaskUpsertInput)({
   id: "routine",
@@ -163,6 +164,14 @@ it.effect("replays a run's stored result with a one-line reason", () =>
     assert.equal(replayed.task.lastRunError, "Provider unavailable.");
   }).pipe(Effect.provide(serviceLayer)),
 );
+
+it("refuses with one line, whatever text a refusal carries", () => {
+  // A hold or grant refusal can name another machine by a label of several lines.
+  const refused = taskError("Waiting for studio-host\nsecond line of the label", {
+    taskId: ScheduledTaskId.make("routine"),
+  });
+  assert.equal(refused.message, "Waiting for studio-host");
+});
 
 it.effect("reports running while the dispatch is not recorded yet", () =>
   Effect.gen(function* () {
