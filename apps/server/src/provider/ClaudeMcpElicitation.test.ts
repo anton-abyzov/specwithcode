@@ -333,7 +333,12 @@ describe("ClaudeMcpElicitation", () => {
     );
     expect(await result).toEqual({ action: "accept", content: { name: "octo/repo" } });
     expect(h.notices()).toEqual([]);
-    expect(h.events.some((event) => event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled")).toBe(false);
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toBe(false);
   });
 
   it("never overwrites a recorded answer as cancelled", async () => {
@@ -358,7 +363,8 @@ describe("ClaudeMcpElicitation", () => {
       expect(
         h.events.filter(
           (event) =>
-            (event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled") ||
+            (event.type === "runtime_request.updated" &&
+              event.runtimeRequest.status === "cancelled") ||
             (event.type === "turn_item.updated" && event.turnItem.status === "cancelled"),
         ),
       ).toEqual([]);
