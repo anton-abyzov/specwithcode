@@ -267,6 +267,14 @@ export const makeLinkMove = (deps: LinkMoveDeps) => {
 
       const paused = (detail: string) =>
         Effect.gen(function* () {
+          // Marked only when it was on, or still carries this link's mark: one its
+          // owner turned on or off meanwhile is left as the owner set it.
+          const markable = task.enabled || (yield* deps.linkPause.read(task.id)) === input.target;
+          if (!markable)
+            return result(
+              "failed",
+              `${detail} It was turned on or off here meanwhile, so it stays as it is now.`,
+            );
           const off =
             (yield* deps.pauseHere(task.id, linkPausedNote(targetLabel))) &&
             (yield* deps.linkPause.mark(task.id, input.target));

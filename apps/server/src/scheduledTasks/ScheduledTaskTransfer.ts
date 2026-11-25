@@ -157,8 +157,11 @@ export interface TransferOutDeps {
     readonly taskId: ScheduledTask["id"];
     readonly expected: RoutineRunnerRecord | null;
     readonly moving: (revision: number) => RoutineRunnerRecord;
-    /** Claims it while it is off here (a routine a project link paused). */
-    readonly fromOff?: boolean | undefined;
+    /**
+     * Claims it while it is off here, only if a project link paused it for this
+     * target and nobody turned it on or off since (1472).
+     */
+    readonly fromOff?: string | undefined;
   }) => Effect.Effect<
     | {
         readonly kind: "claimed";
@@ -528,7 +531,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
       const claim = yield* deps.claim({
         taskId: task.id,
         expected: existing,
-        fromOff: input.fromPaused === true,
+        fromOff: input.fromPaused === true ? target : undefined,
         moving: (revision) => ({
           taskId: task.id,
           state: "moving",
@@ -583,7 +586,7 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
             input.fromPaused === true && state.nextRunAt === null
               ? {
                   ...state,
-                  nextRunAt: nextRunAt({ enabled: true, schedule: task.schedule }, armedAt),
+                  nextRunAt: nextRunAt({ enabled: true, schedule: claimed.schedule }, armedAt),
                 }
               : state;
           offOperation = { ...operation, phase: "off", runState };
@@ -880,7 +883,11 @@ export const makeTransfer = ({ sql, scheduled, post, projects, label }: Transfer
                 if (task === undefined)
                   return { kind: "refused", detail: "This routine is gone." } as const;
                 const state = yield* withSql(readStateRow(input.taskId));
-                if (state === null || (!state.enabled && input.fromOff !== true))
+                const pausedFor =
+                  state !== null && !state.enabled && input.fromOff !== undefined
+                    ? yield* makeLinkPauseMarker(sql).read(input.taskId)
+                    : null;
+                if (state === null || (!state.enabled && pausedFor !== input.fromOff))
                   return {
                     kind: "refused",
                     detail: "Stays here, off: it was turned off on this machine.",

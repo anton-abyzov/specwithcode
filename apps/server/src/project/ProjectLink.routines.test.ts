@@ -259,6 +259,38 @@ describe("project link routine moves", () => {
     }),
   );
 
+  it.effect("the owner turning it on and off while Try again is under way keeps it off", () =>
+    Effect.gen(function* () {
+      const { kept, joining, network } = yield* linked;
+      const task = yield* seedOnJoining(joining);
+      kept.state.unlinked.add(joining.environmentId);
+      assert.equal((yield* moverOn(joining, kept)(move(joining, kept))).outcome, "failed");
+      kept.state.unlinked.clear();
+      // Another window, while the move asks the kept machine for its status.
+      let toggled = false;
+      network.before = (_from, _to, op) =>
+        op !== "status" || toggled
+          ? Effect.void
+          : Effect.gen(function* () {
+              toggled = true;
+              yield* joining.service.setEnabled({ id: task.id, enabled: true }).pipe(Effect.orDie);
+              yield* joining.service.setEnabled({ id: task.id, enabled: false }).pipe(Effect.orDie);
+            });
+      const again = yield* moverOn(joining, kept)(move(joining, kept));
+      network.before = undefined;
+      assert.isTrue(toggled);
+      assert.equal(again.outcome, "failed");
+      assert.isFalse(yield* enabledOn(joining));
+      assert.isFalse(yield* enabledOn(kept));
+      // Not paused for the link again: a later Try again leaves it off too.
+      const later = yield* moverOn(joining, kept)(move(joining, kept));
+      assert.equal(later.outcome, "failed");
+      assert.match(later.detail, /off on this machine/);
+      assert.isFalse(yield* enabledOn(kept));
+      assert.isFalse(network.log.some((entry) => /runner-(stage|enable)/.test(entry)));
+    }),
+  );
+
   it.effect("two moves of one routine at once: one moves it, the other waits its turn", () =>
     Effect.gen(function* () {
       const { kept, joining, network } = yield* linked;
