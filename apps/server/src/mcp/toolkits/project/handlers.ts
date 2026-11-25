@@ -407,6 +407,10 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       if (isLink) return false;
       const dotGit = yield* real(entry);
       if (gitDir === commonDir) return dotGit === commonDir;
+      // Git registers a linked worktree only under the repository's own
+      // `worktrees/` folder; metadata kept anywhere else is not a registration.
+      const registry = yield* real(`${commonDir}/worktrees`);
+      if ((yield* real(`${gitDir}/..`)) !== registry) return false;
       const backlink = yield* fileSystem.readFileString(`${gitDir}/gitdir`).pipe(
         Effect.flatMap((text) => real(text.trim())),
         Effect.orElseSucceed(() => undefined),
