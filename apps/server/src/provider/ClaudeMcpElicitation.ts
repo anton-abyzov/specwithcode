@@ -353,10 +353,9 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // for it and pass it on, so the server gets what the record says, and
         // neither overwrites the recorded answer as cancelled.
         const committed = raced.by !== "person" && isClaudeFormAnswered(artifacts.request.id);
-        const awaited =
-          committed
-            ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
-            : raced;
+        const awaited = committed
+          ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
+          : raced;
         // The first to settle the card wins; a person's answer that came in
         // at the same moment as a stop or the timer is kept.
         const won = awaited.by === "person" ? true : yield* Deferred.succeed(answer, awaited);
@@ -378,10 +377,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         if (committed) {
           // The answer never arrived: the call ends, and the note says so.
           yield* notice(
-              context,
-              `${nativeRequestId}:undelivered`,
-              undeliveredAnswerNotice(request.serverName),
-            );
+            context,
+            `${nativeRequestId}:undelivered`,
+            undeliveredAnswerNotice(request.serverName),
+          );
           return CANCEL;
         }
         yield* closeCard(artifacts);
