@@ -754,6 +754,9 @@ const make = Effect.gen(function* () {
       // be, the install fails and the record stays for uninstall to retry.
       if (Option.isSome(location) && (yield* pendingRemovals(location.value)).length > 0) {
         yield* removeLauncher(location.value, existing.installId);
+        if ((yield* pendingRemovals(location.value)).length > 0) {
+          return failed("This page's earlier app is still being removed. Try again.");
+        }
       }
       // The launcher was deleted or replaced by hand: forget the stale record and install again.
       yield* logInfo("forgetting an install whose launcher is gone", {
@@ -838,6 +841,12 @@ const make = Effect.gen(function* () {
     if (Option.isSome(location)) {
       // A launcher that could not be removed keeps its record, so uninstall can be tried again.
       yield* removeLauncher(location.value, installId);
+      // A copy still under a private removal name (one this pass could not
+      // read or trash) keeps the record too: the install is not gone yet.
+      if ((yield* pendingRemovals(location.value)).length > 0) {
+        yield* logWarning("installed page removal is still pending", { installId });
+        return false;
+      }
     }
     yield* records.remove(installId);
     yield* windows.close(installId);
@@ -862,14 +871,17 @@ const make = Effect.gen(function* () {
 
   return ArtifactAppInstaller.of({
     install,
+    // One install or uninstall at a time, so two never race over one launcher.
     uninstall: (installId) =>
-      uninstall(installId).pipe(
-        Effect.catchCause((cause) =>
-          logWarning("installed page uninstall failed", { cause: Cause.pretty(cause) }).pipe(
-            Effect.as(false),
+      installLock
+        .withPermits(1)(uninstall(installId))
+        .pipe(
+          Effect.catchCause((cause) =>
+            logWarning("installed page uninstall failed", { cause: Cause.pretty(cause) }).pipe(
+              Effect.as(false),
+            ),
           ),
         ),
-      ),
     reveal: (installId) =>
       reveal(installId).pipe(
         Effect.catchCause((cause) =>

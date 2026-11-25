@@ -602,6 +602,36 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
       ),
   );
 
+  // File modes do not stop Windows or root from reading.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "keeps the install while a pending copy cannot be read",
+    () =>
+      withHome(({ home, recordsPath, fileSystem, path }) =>
+        Effect.gen(function* () {
+          const failing = yield* harness(
+            { platform: "darwin", fileSystem, trashFails: true },
+            home,
+            recordsPath,
+          );
+          const result = yield* failing.installer.install(input);
+          if (result.status !== "installed") return assert.fail("not installed");
+          assert.isFalse(yield* failing.installer.uninstall(result.app.installId));
+          const folder = path.join(home, "Applications", "SpecWithCode Apps");
+          const [pending] = yield* fileSystem.readDirectory(folder);
+          const plist = path.join(folder, pending!, "Contents", "Info.plist");
+          yield* fileSystem.chmod(plist, 0o000);
+
+          const retry = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+          const uninstalled = yield* retry.installer
+            .uninstall(result.app.installId)
+            .pipe(Effect.ensuring(fileSystem.chmod(plist, 0o644).pipe(Effect.orDie)));
+          assert.isFalse(uninstalled);
+          assert.deepEqual(retry.calls.trashed, []);
+          assert.equal((yield* retry.records.list).length, 1);
+        }),
+      ),
+  );
+
   it.effect("never removes through an apps folder that became a link", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
