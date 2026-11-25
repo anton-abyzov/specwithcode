@@ -1,6 +1,10 @@
 import {
   DesktopArtifactAppInstallInputSchema,
   DesktopArtifactAppInstallResultSchema,
+  DesktopArtifactAppPermissionsInputSchema,
+  DesktopArtifactAppPermissionsSchema,
+  DesktopArtifactAppPowerInputSchema,
+  DesktopArtifactAppPowerReplySchema,
   DesktopArtifactAppSchema,
   DesktopArtifactAppUninstallInputSchema,
 } from "@specweave-studio/contracts";
@@ -9,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ArtifactAppInstaller from "../../artifactApps/ArtifactAppInstaller.ts";
+import * as ArtifactAppPowerService from "../../artifactApps/ArtifactAppPowerService.ts";
 import * as ArtifactAppRecords from "../../artifactApps/ArtifactAppRecords.ts";
 import * as ArtifactAppWindows from "../../artifactApps/ArtifactAppWindows.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -73,5 +78,33 @@ export const getArtifactApp = DesktopIpc.makeIpcMethod({
     const installId = yield* windows.installIdForWebContents(event.sender.id);
     if (Option.isNone(installId)) return null;
     return Option.getOrNull(yield* records.get(installId.value));
+  }),
+});
+
+/**
+ * The Permissions state of the calling installed-page window, after the action.
+ * The service finds the install from the calling window; any other window gets
+ * an empty state and changes nothing.
+ */
+export const artifactAppPermissions = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.ARTIFACT_APP_PERMISSIONS_CHANNEL,
+  payload: DesktopArtifactAppPermissionsInputSchema,
+  result: DesktopArtifactAppPermissionsSchema,
+  handler: Effect.fn("desktop.ipc.artifactApps.permissions")(function* (input, event) {
+    if (event === undefined) return { attachmentId: null, declared: [], granted: [] };
+    const powers = yield* ArtifactAppPowerService.ArtifactAppPowerService;
+    return yield* powers.permissions(event.sender.id, input);
+  }),
+});
+
+/** One request from the calling window's page. Refused unless the service can prove a grant. */
+export const artifactAppPower = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.ARTIFACT_APP_POWER_CHANNEL,
+  payload: DesktopArtifactAppPowerInputSchema,
+  result: DesktopArtifactAppPowerReplySchema,
+  handler: Effect.fn("desktop.ipc.artifactApps.power")(function* (input, event) {
+    if (event === undefined) return { ok: false as const, error: "not-allowed" as const };
+    const powers = yield* ArtifactAppPowerService.ArtifactAppPowerService;
+    return yield* powers.power(event.sender.id, input);
   }),
 });

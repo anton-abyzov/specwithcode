@@ -94,6 +94,8 @@ import { startFileDrag } from "./methods/fileDrag.ts";
 import { printDocumentPdf } from "./methods/documentPdf.ts";
 import { openProjectWindow } from "./methods/projectWindow.ts";
 import {
+  artifactAppPermissions,
+  artifactAppPower,
   getArtifactApp,
   installArtifactApp,
   listArtifactApps,
@@ -189,6 +191,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(listArtifactApps);
   yield* ipc.handle(getArtifactApp);
   yield* ipc.handle(revealArtifactApp);
+  yield* ipc.handle(artifactAppPermissions);
+  yield* ipc.handle(artifactAppPower);
   yield* ipc.handle(startFileDrag);
   yield* ipc.handle(printDocumentPdf);
   yield* ipc.handle(probeRemoteEditors);

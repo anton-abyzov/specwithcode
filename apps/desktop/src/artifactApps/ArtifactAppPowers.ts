@@ -23,8 +23,6 @@ const TRAY_ITEM_ID_MAX = 64;
 const TRAY_ITEM_LABEL_MAX = 80;
 const ACCELERATOR_MAX = 64;
 
-const POWERS: ReadonlySet<string> = new Set(ARTIFACT_APP_POWERS);
-
 // The first manifest element in the file. The type must be the whole quoted value.
 const MANIFEST_ELEMENT =
   /<script\b[^>]*?\btype\s*=\s*(["'])application\/specwithcode-app\+json\1[^>]*>([\s\S]*?)<\/script\s*>/i;
@@ -47,8 +45,9 @@ export function readArtifactAppManifest(html: string): ReadonlyArray<ArtifactApp
   if (!Array.isArray(permissions) || permissions.length > MANIFEST_MAX_ENTRIES) return [];
   const declared = new Set<string>();
   for (const entry of permissions) {
-    if (typeof entry === "string" && POWERS.has(entry)) declared.add(entry);
+    if (typeof entry === "string") declared.add(entry);
   }
+  // Only names from the power list come out, each once.
   return ARTIFACT_APP_POWERS.filter((power) => declared.has(power));
 }
 

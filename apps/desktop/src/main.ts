@@ -77,7 +77,10 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+import * as ArtifactAppGrants from "./artifactApps/ArtifactAppGrants.ts";
 import * as ArtifactAppInstaller from "./artifactApps/ArtifactAppInstaller.ts";
+import * as ArtifactAppPowerService from "./artifactApps/ArtifactAppPowerService.ts";
+import * as ArtifactAppPowersHost from "./artifactApps/ArtifactAppPowersHost.ts";
 import * as ArtifactAppRecords from "./artifactApps/ArtifactAppRecords.ts";
 import * as ArtifactAppRouting from "./artifactApps/ArtifactAppRouting.ts";
 import * as ArtifactAppWindows from "./artifactApps/ArtifactAppWindows.ts";
@@ -252,10 +255,27 @@ const layerArtifactAppRecords = Layer.unwrap(
   }),
 );
 
+// The person's answers about a page's desktop powers, beside the record of installs.
+const layerArtifactAppGrants = Layer.unwrap(
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    return ArtifactAppGrants.layer(
+      environment.path.join(environment.stateDir, ArtifactAppGrants.ARTIFACT_APP_GRANTS_FILE),
+    );
+  }),
+);
+
 const layerArtifactApps = Layer.mergeAll(
-  ArtifactAppInstaller.layer.pipe(Layer.provide(ArtifactAppInstaller.layerElectronHost)),
+  ArtifactAppInstaller.layer,
+  ArtifactAppPowerService.layer.pipe(Layer.provide(ArtifactAppPowersHost.layerElectron)),
   ArtifactAppRouting.layer(earlyArtifactAppLaunches),
-).pipe(Layer.provideMerge(ArtifactAppWindows.layer), Layer.provideMerge(layerArtifactAppRecords));
+).pipe(
+  // One host for both: the consent dialog uses the install confirmation's dialog seam.
+  Layer.provide(ArtifactAppInstaller.layerElectronHost),
+  Layer.provideMerge(ArtifactAppWindows.layer),
+  Layer.provideMerge(layerArtifactAppGrants),
+  Layer.provideMerge(layerArtifactAppRecords),
+);
 
 const layerDesktopApplication = Layer.mergeAll(
   DesktopLifecycle.layer,

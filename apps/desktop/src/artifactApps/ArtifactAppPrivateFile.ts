@@ -69,8 +69,6 @@ export function makeArtifactAppPrivateFileWriter(input: {
             if (error.reason._tag !== "AlreadyExists") created = true;
           }),
         ),
-      )
-      .pipe(
         // The mode on create is masked by the umask; set it explicitly before the file is visible.
         Effect.andThen(fileSystem.chmod(temporaryPath, PRIVATE_FILE_MODE)),
         Effect.mapError(
