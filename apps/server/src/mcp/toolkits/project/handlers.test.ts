@@ -1017,7 +1017,10 @@ it.effect("a launch binds only an existing checkout that is one of the project's
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-launch-worktree-" });
+    // Git registers resolved paths, and a launch starts in the registered one.
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-launch-worktree-" }),
+    );
     const repo = path.join(root, "repo");
     const worktree = path.join(root, "feature");
     const outside = path.join(root, "outside");
@@ -1054,6 +1057,10 @@ it.effect("a launch binds only an existing checkout that is one of the project's
 
     expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({ projectId });
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
+    // Through a link to it, the thread still starts in the registered worktree.
+    const alias = path.join(root, "alias");
+    yield* fileSystem.symlink(worktree, alias);
+    expect((yield* launchInto(alias)).at(-1)?.result).toMatchObject({ projectId });
     for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
       expect((yield* launchInto(elsewhere)).at(-1)?.result).toMatchObject({
         code: "invalid_request",
@@ -1062,6 +1069,7 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([
       { type: "existing_worktree", worktreePath: worktree },
       { type: "existing_worktree", worktreePath: repo },
+      { type: "existing_worktree", worktreePath: worktree },
     ]);
 
     // A removed worktree stays listed as prunable until `git worktree prune`;
