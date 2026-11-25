@@ -1079,6 +1079,27 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({
       code: "invalid_request",
     });
+
+    // A locked worktree is never prunable: git lists it after its folder is
+    // removed, and a folder made there later is still not one of the project's.
+    const locked = path.join(root, "locked");
+    yield* git.execute({
+      operation: "test.setupRepo",
+      cwd: repo,
+      args: ["worktree", "add", "--lock", "-b", "locked", locked],
+    });
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({ projectId });
+    yield* fileSystem.remove(locked, { recursive: true });
+    yield* fileSystem.makeDirectory(locked);
+    expect((yield* git.listWorktreePaths(repo)).includes(locked)).toBe(true);
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
+    // So is another repository made at that path.
+    yield* git.execute({ operation: "test.setupRepo", cwd: locked, args: ["init", "-b", "main"] });
+    expect((yield* launchInto(locked)).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
