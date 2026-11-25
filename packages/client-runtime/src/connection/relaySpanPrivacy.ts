@@ -18,12 +18,27 @@ function redactText(text: string, labels: ReadonlyArray<string>): string {
   return redacted;
 }
 
-/** Machine names a failure carries apart from its text (`machineLabel` on connection errors). */
+const strings = (value: unknown): ReadonlyArray<string> =>
+  typeof value === "string"
+    ? [value]
+    : Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+
+/**
+ * Host-written text a failure carries apart from its message: `machineLabel`, `hostText`
+ * and `deviceApprovalCode` on connection errors, and the raw auth refusal's
+ * `teamRulesMessage` and `approvalCode` before it is mapped.
+ */
 function carriedLabels(value: unknown, depth = 0): ReadonlyArray<string> {
   if (depth > MAX_CAUSE_DEPTH || typeof value !== "object" || value === null) return [];
-  const record = value as { machineLabel?: unknown; cause?: unknown; error?: unknown };
+  const record = value as Record<string, unknown>;
   return [
-    ...(typeof record.machineLabel === "string" ? [record.machineLabel] : []),
+    ...strings(record.machineLabel),
+    ...strings(record.hostText),
+    ...strings(record.deviceApprovalCode),
+    ...strings(record.teamRulesMessage),
+    ...strings(record.approvalCode),
     ...carriedLabels(record.cause, depth + 1),
     ...carriedLabels(record.error, depth + 1),
   ];

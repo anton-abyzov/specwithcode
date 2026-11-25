@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
+  EnvironmentAuthInvalidError,
   type ExecutionEnvironmentDescriptor,
   type ServerConfig,
 } from "@specweave-studio/contracts";
@@ -31,6 +32,7 @@ import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
+import { mapRemoteEnvironmentError } from "./errors.ts";
 import { BearerConnectionProfile } from "./catalog.ts";
 import {
   BearerConnectionTarget,
@@ -574,9 +576,38 @@ describe("EnvironmentSupervisor", () => {
       phase: "backoff" as const,
       machine: RELAY_TARGET.label,
     },
-  ])(
+    {
+      label: "a device-approval refusal from a machine renamed since it was saved",
+      // The host words it with its new name and the code; authorization fails before
+      // the supervisor learns that name, inside a span of its own.
+      failure: () =>
+        Effect.fail(
+          new EnvironmentAuthInvalidError({
+            code: "auth_invalid",
+            reason: "invalid_credential",
+            refusal: "device_not_approved",
+            teamRulesMessage: "Approve this device on Studio Attic Fixture with code K7Q2PX9M.",
+            approvalCode: "K7Q2PX9M",
+            traceId: "trace-approval",
+          }),
+        ).pipe(
+          Effect.withSpan("RemoteEnvironmentAuthorization.authorize"),
+          Effect.mapError(mapRemoteEnvironmentError),
+        ),
+      phase: "backoff" as const,
+      machine: "Studio Attic Fixture",
+      secrets: ["Studio Attic Fixture", "K7Q2PX9M"],
+    },
+  ] as ReadonlyArray<{
+    readonly label: string;
+    readonly failure: () => ConnectionAttemptError | Effect.Effect<never, ConnectionAttemptError>;
+    readonly phase: "blocked" | "backoff";
+    readonly machine: string;
+    readonly secrets?: ReadonlyArray<string>;
+    readonly entry?: ConnectionCatalogEntry;
+  }>)(
     "keeps the machine label out of what relay spans record for $label",
-    ({ failure, phase, machine }) =>
+    ({ failure, phase, machine, secrets, entry }) =>
       Effect.gen(function* () {
         const spans: Array<Tracer.NativeSpan> = [];
         const tracer = Tracer.make({
@@ -590,8 +621,13 @@ describe("EnvironmentSupervisor", () => {
             return span;
           },
         });
-        const harness = yield* makeHarness({ prepare: () => Effect.fail(failure()) });
-        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        const harness = yield* makeHarness({
+          prepare: () => {
+            const failed = failure();
+            return Effect.isEffect(failed) ? failed : Effect.fail(failed);
+          },
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(entry ?? RELAY_ENTRY, {
           initiallyDesired: true,
         }).pipe(
           Effect.provide(harness.dependencies),
@@ -609,7 +645,7 @@ describe("EnvironmentSupervisor", () => {
             events: span.events,
             failure: spanFailureText(span),
           });
-          expect(recorded).not.toContain(machine);
+          for (const secret of secrets ?? [machine]) expect(recorded).not.toContain(secret);
         }
       }),
   );

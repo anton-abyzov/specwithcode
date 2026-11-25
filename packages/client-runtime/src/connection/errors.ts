@@ -129,6 +129,19 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
   }
 }
 
+/**
+ * The host's own words in an auth refusal, and its approval code, kept beside `detail`
+ * so relay spans can leave them out. The host may have been renamed since it was saved,
+ * so its name is not known any other way when authorization fails.
+ */
+function hostTextOf(error: RemoteEnvironmentAuthError): { readonly hostText?: Array<string> } {
+  if (error._tag !== "EnvironmentAuthInvalidError") return {};
+  const text = [error.teamRulesMessage, error.approvalCode].filter(
+    (value): value is string => value !== undefined && value.length > 0,
+  );
+  return text.length === 0 ? {} : { hostText: text };
+}
+
 /** How often a device waiting for approval asks again. */
 export const DEVICE_APPROVAL_RETRY_MS = 4_000;
 
@@ -146,6 +159,7 @@ function waitingForApproval(error: RemoteEnvironmentAuthError): ConnectionAttemp
     traceId: error.traceId,
     retryAfterMs: DEVICE_APPROVAL_RETRY_MS,
     ...(error.approvalCode === undefined ? {} : { deviceApprovalCode: error.approvalCode }),
+    ...hostTextOf(error),
   });
 }
 
@@ -172,6 +186,7 @@ export function mapRemoteEnvironmentError(
             : "The environment credential is invalid."),
         ...(error.reason === "device_reapproval_required" ? { reapprovalRequired: true } : {}),
         traceId: error.traceId,
+        ...hostTextOf(error),
       });
     case "EnvironmentScopeRequiredError":
     case "EnvironmentOperationForbiddenError":
@@ -245,6 +260,7 @@ export function mapRemoteDpopEnvironmentError(
         error.teamRulesMessage ??
         dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),
       traceId: error.traceId,
+      ...hostTextOf(error),
     });
   }
   return mapRemoteEnvironmentError(error);
