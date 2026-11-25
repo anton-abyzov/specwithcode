@@ -26,6 +26,24 @@ export const codexAppServerArgs = (launchArgs?: string) => [
   ...codexLaunchArgv(launchArgs),
 ];
 
+/**
+ * Features text generation keeps off: plugins, apps and connectors start MCP
+ * servers that could act on the prompt, and hooks run the user's commands. An
+ * explicit `--enable` would beat the trailing `--config` that turns them off.
+ */
+const TEXT_GENERATION_OFF_FEATURES = new Set([
+  "plugins",
+  "apps",
+  "connectors",
+  "hooks",
+  "codex_hooks",
+]);
+
+/** Trailing overrides that keep {@link TEXT_GENERATION_OFF_FEATURES} off. */
+export const CODEX_TEXT_GENERATION_FEATURES_OFF = [...TEXT_GENERATION_OFF_FEATURES].flatMap(
+  (feature) => ["--config", `features.${feature}=false`],
+);
+
 export const codexExecLaunchArgs = (launchArgs?: string) => {
   const args = codexLaunchArgv(launchArgs);
   const execArgs: Array<string> = [];
@@ -39,10 +57,14 @@ export const codexExecLaunchArgs = (launchArgs?: string) => {
     } else if (arg === "--config" || arg === "-c" || arg === "--enable" || arg === "--disable") {
       const value = args[index + 1];
       if (value !== undefined && !value.startsWith("-")) {
-        execArgs.push(arg, value);
+        if (!(arg === "--enable" && TEXT_GENERATION_OFF_FEATURES.has(value))) {
+          execArgs.push(arg, value);
+        }
         index++;
       }
-    } else if (arg.startsWith("--enable=") || arg.startsWith("--disable=")) {
+    } else if (arg.startsWith("--enable=")) {
+      if (!TEXT_GENERATION_OFF_FEATURES.has(arg.slice("--enable=".length))) execArgs.push(arg);
+    } else if (arg.startsWith("--disable=")) {
       execArgs.push(arg);
     }
   }

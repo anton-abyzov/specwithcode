@@ -51,6 +51,15 @@ describe("codexExecLaunchArgs", () => {
     );
   });
 
+  it("drops enables for features text generation keeps off", () => {
+    NodeAssert.deepStrictEqual(
+      codexExecLaunchArgs(
+        "--enable plugins --enable=apps --enable connectors --enable hooks --enable=codex_hooks --enable web_search --disable plugins",
+      ),
+      ["--enable", "web_search", "--disable", "plugins"],
+    );
+  });
+
   it("does not pair value-taking flags with adjacent flags", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
