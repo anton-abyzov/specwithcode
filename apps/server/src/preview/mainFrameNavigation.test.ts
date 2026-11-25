@@ -13,7 +13,10 @@ describe("isMainFrameNavigation", () => {
       isMainFrameNavigation({ isNavigationRequest: () => true, frame: () => ({}) }, mainFrame),
     ).toBe(false);
     expect(
-      isMainFrameNavigation({ isNavigationRequest: () => false, frame: () => mainFrame }, mainFrame),
+      isMainFrameNavigation(
+        { isNavigationRequest: () => false, frame: () => mainFrame },
+        mainFrame,
+      ),
     ).toBe(false);
   });
 
