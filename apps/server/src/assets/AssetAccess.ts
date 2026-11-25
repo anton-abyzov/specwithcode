@@ -117,6 +117,14 @@ const isPreviewDependencyPath = (filePath: string, path: Path.Path) =>
   !filePath.split(/[\\/]/).some((segment) => segment.startsWith(".")) &&
   PREVIEW_ASSET_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 
+/** A file's extension, lower-cased; empty when it has none. */
+const fileExtension = (filePath: string) => /\.[^./\\]*$/.exec(filePath)?.[0].toLowerCase() ?? "";
+/**
+ * Whether a link leads to a file of the type its name says. The response's type follows the
+ * target, so a picture name over a page, or a page name over a document, would change what runs.
+ */
+const sameFileType = (target: string, requested: string) =>
+  fileExtension(target) === fileExtension(requested);
 const htmlFilePreview = (filePath: string) =>
   /\.html?$/i.test(filePath) ? ({ htmlPreview: "file" as const }) : {};
 
@@ -552,11 +560,11 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       });
     }
     // The file is served by the type of what a link leads to, so that must be previewable too,
-    // and of the same kind: a page name earns a token for its whole folder, a picture does not.
+    // and the same type as its name: a page name earns a token for its whole folder, a picture
+    // or a document does not.
     if (
       !isWorkspacePreviewEntryPath(canonicalFile) ||
-      isWorkspaceImagePreviewPath(canonicalFile) !==
-        isWorkspaceImagePreviewPath(resolved.relativePath)
+      !sameFileType(canonicalFile, resolved.relativePath)
     ) {
       return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
@@ -1200,11 +1208,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
     );
     // Checked again: a link can be repointed after its URL was issued, to a file that is not a
-    // preview or to the other kind of preview (a picture's URL must never serve a page).
+    // preview or to another type of file (a picture's URL must never serve a page).
     return exactWorkspaceFile &&
       isWorkspacePreviewEntryPath(exactWorkspaceFile) &&
-      isWorkspaceImagePreviewPath(exactWorkspaceFile) ===
-        isWorkspaceImagePreviewPath(claims.relativePath)
+      sameFileType(exactWorkspaceFile, claims.relativePath)
       ? ({
           kind: "file",
           path: exactWorkspaceFile,
@@ -1226,8 +1233,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   );
   // The response's type follows the target, so a link must not change the file's kind: a
   // picture name over a page would render that page, and a page name over a picture likewise.
-  return workspaceFile &&
-    path.extname(workspaceFile).toLowerCase() === path.extname(joinedRelativePath).toLowerCase()
+  return workspaceFile && sameFileType(workspaceFile, joinedRelativePath)
     ? ({
         kind: "file",
         path: workspaceFile,
