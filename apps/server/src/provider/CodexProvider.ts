@@ -34,7 +34,9 @@ import {
   readCustomModelEntries,
 } from "@specweave-studio/shared/model";
 import { modelFamily } from "@specweave-studio/shared/modelTiers";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
+import { inheritableAgentEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
@@ -471,21 +473,24 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // Expand here for parity with `CodexTextGeneration`.
   const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // A complete environment: extending the server's own would merge back the
+  // AppImage runtime and any thread's MCP credentials the server inherited.
   const environment = {
+    ...inheritableAgentEnvironment(yield* HostProcessEnvironment, yield* HostProcessPlatform),
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
     codexAppServerArgs(input.launchArgs),
-    { env: environment, extendEnv: true },
+    { env: environment, extendEnv: false },
   );
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
         env: environment,
-        extendEnv: true,
+        extendEnv: false,
         forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
         shell: spawnCommand.shell,
       }),
