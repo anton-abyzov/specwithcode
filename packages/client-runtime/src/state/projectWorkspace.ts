@@ -59,6 +59,23 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "browser-extension:peer",
       tag: WS_METHODS.browserExtensionPeer,
     }),
+    // The sign-in view (1488): frames come sealed to this window's key, typed text goes sealed.
+    browserSignInStart: createEnvironmentRpcCommand(runtime, {
+      label: "browser-sign-in:start",
+      tag: WS_METHODS.browserSignInStart,
+    }),
+    browserSignInFrame: createEnvironmentRpcCommand(runtime, {
+      label: "browser-sign-in:frame",
+      tag: WS_METHODS.browserSignInFrame,
+    }),
+    browserSignInInput: createEnvironmentRpcCommand(runtime, {
+      label: "browser-sign-in:input",
+      tag: WS_METHODS.browserSignInInput,
+    }),
+    browserSignInEnd: createEnvironmentRpcCommand(runtime, {
+      label: "browser-sign-in:end",
+      tag: WS_METHODS.browserSignInEnd,
+    }),
     nativeConnectionApply: createEnvironmentRpcCommand(runtime, {
       label: "native-connections:apply",
       tag: WS_METHODS.nativeConnectionApply,

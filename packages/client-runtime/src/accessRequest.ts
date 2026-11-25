@@ -68,7 +68,8 @@ export type AccessSubjectGlyph =
   | "android"
   | "machine"
   | "folder"
-  | "permission";
+  | "permission"
+  | "sign-in";
 
 export function accessSubjectGlyph(subject: AccessRequestSubject): AccessSubjectGlyph {
   switch (subject.kind) {
@@ -83,7 +84,23 @@ export function accessSubjectGlyph(subject: AccessRequestSubject): AccessSubject
       return "folder";
     case "permission":
       return "permission";
+    case "sign-in":
+      return "sign-in";
   }
+}
+
+/** A sign-in the person does themselves in a machine's Chrome (1488). */
+export function isSignInRequest(subjects: ReadonlyArray<SubjectLike>): boolean {
+  return subjects.some((subject) => subject.kind === "sign-in");
+}
+
+const SIGN_IN_KEY_PREFIX = "sign-in:";
+
+/** The sign-in request a card's subject opens, or null for any other subject. */
+export function signInRequestIdOf(subject: Pick<AccessRequestSubject, "kind" | "key">) {
+  return subject.kind === "sign-in" && subject.key.startsWith(SIGN_IN_KEY_PREFIX)
+    ? subject.key.slice(SIGN_IN_KEY_PREFIX.length)
+    : null;
 }
 
 /** A macOS permission card: granted in System Settings, only declined on the card. */
@@ -143,6 +160,9 @@ export function accessRequestHeadline(
   subjects: ReadonlyArray<SubjectLike>,
 ): string {
   const agent = agentLabel?.trim() || "The agent";
+  if (isSignInRequest(subjects)) {
+    return `${agent} needs you to sign in to ${joinNames(subjects.map((subject) => subject.label))}`;
+  }
   if (isPermissionRequest(subjects)) {
     return `${agent} needs ${joinNames(subjects.map((subject) => subject.label))}`;
   }
@@ -157,11 +177,18 @@ export function accessRequestHeadline(
 
 /** The scope tag on each subject chip: what the agent may do with it. */
 export function accessSubjectTag(subject: SubjectLike): string {
-  return subject.kind === "permission" ? "Whole machine" : "All";
+  return subject.kind === "permission"
+    ? "Whole machine"
+    : subject.kind === "sign-in"
+      ? "You only"
+      : "All";
 }
 
 /** The one plain line under the chips, saying what Allow lets the agent do. */
 export function accessRequestNote(subjects: ReadonlyArray<SubjectLike>): string {
+  if (isSignInRequest(subjects)) {
+    return "You type the password and any code yourself, from this device. The agent cannot see the tab and hears only that you finished.";
+  }
   const apps = subjects.some((subject) => subject.kind === "app");
   const devices = subjects.some((subject) => subject.kind === "device");
   if (apps && devices) {
@@ -189,6 +216,7 @@ export function accessRequestWaitingSubtitle(subjects: ReadonlyArray<SubjectLike
   if (kinds.size === 1 && kinds.has("folder")) return "Asking to use a folder";
   if (kinds.size === 1 && kinds.has("machine")) return "Asking to work on another machine";
   if (kinds.has("permission")) return "Asking for Full Disk Access";
+  if (kinds.has("sign-in")) return "Waiting for you to sign in";
   return "Asking to use apps on your computer";
 }
 

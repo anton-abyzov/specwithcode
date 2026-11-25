@@ -23,8 +23,7 @@ import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 /** One call waits this long for the person; then the agent calls again with the same id. */
 export const SIGN_IN_WAIT_MS = 4 * 60_000;
 
-export const SIGN_IN_SUBJECT_DETAIL =
-  "You type the password and any code yourself, in a tab agents cannot see until you press Done.";
+export const SIGN_IN_SUBJECT_DETAIL = "A new Chrome tab, held for you until you press Done.";
 
 const MESSAGES: Record<BrowserSignInOutcome | "signing_in", string> = {
   done: "The user signed in and pressed Done. The tab is open in that Chrome profile again; carry on with the chrome_* tools.",
