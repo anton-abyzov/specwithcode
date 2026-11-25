@@ -5437,6 +5437,9 @@ describe("AcpAdapterV2", () => {
           capabilities: AcpProviderCapabilitiesV2,
           restartRuntimeAfterInterrupt: true,
           terminateRuntimeProcessGroupOnInterrupt: true,
+          // Advertise URL elicitation so the agent's request reaches the
+          // adapter, which declines it at once.
+          onUrlElicitation: () => Effect.succeed(false),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
