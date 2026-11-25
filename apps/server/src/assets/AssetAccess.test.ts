@@ -1027,6 +1027,20 @@ describe("AssetAccess", () => {
           }).pipe(Effect.flip);
           expect(refused).toBeInstanceOf(AssetPreviewTypeValidationError);
         }
+
+        // A picture link issued while it pointed at a picture stops serving once it points at a page.
+        const linkPath = path.join(root, "shot.png");
+        yield* fs.symlink(path.join(root, "real.png"), linkPath);
+        const issued = yield* issueAssetUrl({
+          resource: { _tag: "workspace-file", threadId, path: "shot.png" },
+          workspaceRoot: root,
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "shot.png")).toMatchObject({ kind: "file" });
+        yield* fs.remove(linkPath);
+        yield* fs.symlink(path.join(root, "real.html"), linkPath);
+        expect(yield* resolveAsset(token, "shot.png")).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
 
