@@ -269,8 +269,14 @@ function unionRects(
   };
 }
 
+// The overlay's hosts, held here: a page can copy the marker attribute, never this reference.
+const overlayHosts = new WeakSet<Node>();
 function isAnnotationNode(element: Element): boolean {
-  return element instanceof Element && element.closest(`[${OVERLAY_ATTRIBUTE}]`) !== null;
+  for (let node: Node | null = element; node;) {
+    if (overlayHosts.has(node)) return true;
+    node = node instanceof ShadowRoot ? node.host : node.parentNode;
+  }
+  return false;
 }
 
 function pickFromPoint(clientX: number, clientY: number): Element | null {
@@ -521,6 +527,7 @@ function startAnnotation(sendEnabled: boolean): void {
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
   host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
+  overlayHosts.add(host);
   const shadowRoot = host.attachShadow({ mode: "closed" });
   const themeStyle = document.createElement("style");
   themeStyle.textContent = previewAnnotationStyles;
