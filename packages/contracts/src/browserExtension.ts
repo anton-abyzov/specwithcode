@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { Rpc } from "effect/rpc";
 import { EnvironmentAuthorizationError } from "./auth.ts";
+import { BROWSER_SIGN_IN_RPC_METHODS, browserSignInRpcs } from "./browserSignIn.ts";
 
 /**
  * The SpecWithCode Browser extension: one install per Chrome profile, paired
@@ -15,6 +16,7 @@ export const BROWSER_EXTENSION_RPC_METHODS = {
   browserExtensionReconnect: "browserExtension.reconnect",
   browserExtensionStop: "browserExtension.stop",
   browserExtensionPeer: "browserExtension.peer",
+  ...BROWSER_SIGN_IN_RPC_METHODS,
 } as const;
 
 /** The extension's Chrome Web Store item; a copy loaded by hand gets another id. */
@@ -175,6 +177,7 @@ export const browserExtensionRpcs = [
     success: BrowserExtensionStatus,
     error: EnvironmentAuthorizationError,
   }),
+  ...browserSignInRpcs,
 ] as const;
 
 // ── MCP tools (`chrome_*` on studio-code) ───────────────────────────────────

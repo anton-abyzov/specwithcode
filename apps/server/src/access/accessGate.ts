@@ -112,7 +112,7 @@ export const appSubject = (name: string) =>
  * This machine as the person knows it: their nickname for it, else its host
  * label. Read without adding a requirement; undefined where neither is known.
  */
-const thisMachineLabel = Effect.gen(function* () {
+export const thisMachineLabel = Effect.gen(function* () {
   const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
   if (Option.isNone(environment)) return undefined;
   const descriptor = yield* environment.value.getDescriptor;

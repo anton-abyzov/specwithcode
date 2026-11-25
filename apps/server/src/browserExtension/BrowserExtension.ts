@@ -15,6 +15,7 @@ import {
   type BrowserExtensionPairing,
   type BrowserExtensionPeer,
   type BrowserExtensionStatus,
+  BrowserSignInError,
   WS_METHODS,
   WsBrowserExtensionRpcGroup,
   AuthAccessWriteScope,
@@ -39,7 +40,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { EXTENSION_VERSION } from "./extensionVersion.generated.ts";
 import { chromeInstalled } from "../browserBridge/chromeBridgeFacts.ts";
-import { BrowserRelayHub, type RelaySocket } from "./relayHub.ts";
+import { BrowserRelayError, BrowserRelayHub, type RelaySocket } from "./relayHub.ts";
+import { SignInRequests } from "./signInRequests.ts";
 import {
   BROWSER_EXTENSION_DIR,
   PAIRING_FILE,
@@ -272,6 +274,8 @@ export interface BrowserExtensionShape {
   readonly peerState: (id: string) => BrowserExtensionPeer["state"] | undefined;
   /** The owner's answer; taking access back also lets go of that machine's tabs. */
   readonly answerPeer: (id: string, allow: boolean) => Promise<void>;
+  /** Sign-ins a person does here from another device (1488). */
+  readonly signIn: SignInRequests;
 }
 
 export class BrowserExtension extends Context.Service<BrowserExtension, BrowserExtensionShape>()(
@@ -337,7 +341,13 @@ export function makeBrowserExtension(options: {
             id: profile.id,
             label: profile.label,
             ok: true,
-            tabCount: Array.isArray(tabs) ? tabs.length : 0,
+            // A tab held for a person's sign-in is not counted (1488).
+            tabCount: Array.isArray(tabs)
+              ? tabs.filter((tab) => {
+                  const id = (tab as { id?: unknown } | null)?.id;
+                  return typeof id !== "number" || !hub.heldForPerson(profile, id);
+                }).length
+              : 0,
             roundTripMs: Date.now() - started,
           };
         } catch (error) {
@@ -359,9 +369,12 @@ export function makeBrowserExtension(options: {
     };
   };
 
+  const signIn = new SignInRequests(hub);
+
   return {
     hub,
     relayUrl,
+    signIn,
     pairing: (reset) => {
       const token = reset ? store.reset() : store.read();
       if (reset) hub.disconnectAll("pairing code reset");
@@ -457,6 +470,8 @@ export const layer = Layer.effect(
         }
       }),
     ).pipe(Effect.forkScoped);
+    // Views open at shutdown end as cancelled and their tabs close.
+    yield* Effect.addFinalizer(() => Effect.promise(() => extension.signIn.dispose()));
     return extension;
   }),
 );
@@ -557,6 +572,26 @@ export const routeLayer = HttpRouter.use((router) =>
 
 // ── Settings › Chrome RPCs ──────────────────────────────────────────────────
 
+/** The sign-in view's answers; its errors never carry what the person typed. */
+export const signInError = (error: unknown): BrowserSignInError => {
+  if (!(error instanceof BrowserRelayError))
+    return new BrowserSignInError({ code: "failed", reason: "Chrome did not answer. Try again." });
+  const code =
+    error.code === "not_connected"
+      ? "not_connected"
+      : error.code === "tab_in_use"
+        ? "already_open"
+        : /changed since the frame|keeps changing/.test(error.message)
+          ? "page_changed"
+          : /has ended|does not exist/.test(error.message)
+            ? "ended"
+            : "invalid_request";
+  return new BrowserSignInError({ code, reason: error.message.slice(0, 300) });
+};
+
+const signInCall = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: signInError });
+
 export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const extension = yield* BrowserExtension;
@@ -598,6 +633,20 @@ export const layerRpcHandlers = WsBrowserExtensionRpcGroup.middleware(RpcInstrum
         Effect.promise(async () => {
           await extension.answerPeer(payload.id, payload.allow);
           return extension.status();
+        }),
+      [WS_METHODS.browserSignInStart]: (payload) =>
+        signInCall(() => extension.signIn.start(payload.requestId, payload.viewerKey)),
+      [WS_METHODS.browserSignInFrame]: (payload) =>
+        signInCall(() => extension.signIn.frame(payload.viewId)),
+      [WS_METHODS.browserSignInInput]: (payload) =>
+        signInCall(async () => {
+          await extension.signIn.input(payload.viewId, payload.token, payload.input);
+          return {};
+        }),
+      [WS_METHODS.browserSignInEnd]: (payload) =>
+        signInCall(async () => {
+          await extension.signIn.end(payload.viewId, payload.end, payload.token);
+          return {};
         }),
     };
   }),

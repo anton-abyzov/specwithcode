@@ -1,6 +1,7 @@
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthTerminalOperateScope,
   EnvironmentId,
   WS_METHODS,
 } from "@specweave-studio/contracts";
@@ -74,6 +75,27 @@ describe("Away owner-only methods over the socket", () => {
       WS_METHODS.awayPreflight,
     ]) {
       expect(refusesOwnerOnlyRpc(method, coordinator)).toBe(false);
+    }
+  });
+});
+
+/** The sign-in view types a password into Chrome here: never for another machine's key (1488). */
+describe("sign-in view RPCs", () => {
+  it("refuse a coordinator principal and let the owner's devices through", () => {
+    for (const method of [
+      WS_METHODS.browserSignInStart,
+      WS_METHODS.browserSignInFrame,
+      WS_METHODS.browserSignInInput,
+      WS_METHODS.browserSignInEnd,
+    ]) {
+      expect(
+        refusesOwnerOnlyRpc(method, {
+          kind: "coordinator",
+          environmentId: EnvironmentId.make("env-m4"),
+        }),
+      ).toBe(true);
+      expect(refusesOwnerOnlyRpc(method, { kind: "device", id: "owner-mac" })).toBe(false);
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
   });
 });

@@ -52,6 +52,39 @@ const item = (
 const noAnswer = async () => null;
 
 describe("AccessRequestPrompt", () => {
+  it("a sign-in card offers Not now and Sign in on the machine, and no lasting grant (1488)", () => {
+    const signIn = {
+      ...item(),
+      accessTitle: "Sign-in needed on m1: app.squareup.com",
+      reason: "The dues sync needs Square to export today's payments.",
+      subjects: [
+        {
+          kind: "sign-in" as const,
+          key: "sign-in:sign-in-abc",
+          label: "app.squareup.com",
+          detail: "You type the password and any code yourself.",
+          hostLabel: "m1",
+        },
+      ],
+    } as AccessRequestItem;
+    const markup = renderToStaticMarkup(
+      <AccessRequestPrompt
+        item={signIn}
+        agentLabel="Claude"
+        onAnswer={noAnswer}
+        onSignIn={() => {}}
+      />,
+    );
+    expect(markup).toContain("Claude needs you to sign in to app.squareup.com");
+    expect(markup).toContain('data-access-decision="sign-in"');
+    expect(markup).toContain("Sign in on m1");
+    expect(markup).toContain("Not now");
+    expect(markup).toContain("You only");
+    expect(markup).toContain("The agent cannot see the tab");
+    expect(markup).not.toContain("Always allow");
+    expect(markup).not.toContain("Allow for this session");
+  });
+
   it("a Full Disk Access card offers only Not now and Open System Settings, with the risk", () => {
     const permission = {
       ...item(),
@@ -74,7 +107,9 @@ describe("AccessRequestPrompt", () => {
       />,
     );
     expect(markup).toContain("Claude needs Full Disk Access");
-    expect(markup).toContain("Every agent on this machine, in every project and with every provider");
+    expect(markup).toContain(
+      "Every agent on this machine, in every project and with every provider",
+    );
     expect(markup).toContain('data-access-decision="open-system-settings"');
     expect(markup).toContain("Not now");
     expect(markup).toContain("Whole machine");
@@ -216,7 +251,9 @@ describe("AccessRequestPrompt machine (1427 AC-07)", () => {
         machine={{ name: "M5", color: "teal" } as const}
       />,
     );
-    expect(markup).toMatch(/data-access-scope="machine"[^>]*>Always allow on <span[^>]*data-machine-color="teal"[^>]*>M5</);
+    expect(markup).toMatch(
+      /data-access-scope="machine"[^>]*>Always allow on <span[^>]*data-machine-color="teal"[^>]*>M5</,
+    );
     expect(markup).not.toContain("Always allow on this machine");
     expect(markup).toContain("data-action-machine-tag");
   });

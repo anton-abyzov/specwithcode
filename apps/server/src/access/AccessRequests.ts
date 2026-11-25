@@ -40,8 +40,9 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 export const ACCESS_GRANTS_FILE = "access-grants.json";
 
 const StoredGrant = Schema.Struct({
-  // "permission" is never stored (System Settings holds it); listed so the kinds match the card.
-  kind: Schema.Literals(["app", "device", "machine", "folder", "permission"]),
+  // "permission" (System Settings holds it) and "sign-in" (one view, 1488) are never
+  // stored; listed so the kinds match the card.
+  kind: Schema.Literals(["app", "device", "machine", "folder", "permission", "sign-in"]),
   key: Schema.String,
   label: Schema.String,
   grantedAt: Schema.String,
@@ -174,6 +175,8 @@ const make = Effect.gen(function* () {
         const added: Array<AccessGrant> = subjects
           .filter(
             (subject, index) =>
+              // A sign-in is allowed once, for the view it opens; nothing lasts.
+              subject.kind !== "sign-in" &&
               !grantedIn(current, subject.key) &&
               subjects.findIndex((other) => other.key === subject.key) === index,
           )

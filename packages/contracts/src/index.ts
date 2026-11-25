@@ -37,6 +37,7 @@ export * from "./mods.ts";
 export * from "./composerDraft.ts";
 export * from "./browserBridge.ts";
 export * from "./browserExtension.ts";
+export * from "./browserSignIn.ts";
 export * from "./telegramChannel.ts";
 export * from "./statusPage.ts";
 export * from "./releaseRuns.ts";

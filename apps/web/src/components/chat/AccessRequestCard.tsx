@@ -11,6 +11,8 @@ import {
   accessSubjectIconUrl,
   accessSubjectTag,
   isPermissionRequest,
+  isSignInRequest,
+  signInRequestIdOf,
   type AccessRequestItem,
   type AccessSubjectGlyph,
 } from "@specweave-studio/client-runtime/access-request";
@@ -29,6 +31,7 @@ import {
 import {
   AppWindowIcon,
   CheckIcon,
+  KeyRoundIcon,
   FolderIcon,
   HardDriveIcon,
   LaptopIcon,
@@ -66,6 +69,7 @@ import {
   ACCESS_PRIMARY_BUTTON_CLASS,
   ACCESS_BUTTON_ROW_CLASS,
 } from "./AccessCardChrome";
+import { openSignInViewer } from "../signIn/SignInViewer";
 
 export {
   ACCESS_CARD_CLASS,
@@ -109,6 +113,7 @@ const SUBJECT_GLYPHS: Record<AccessSubjectGlyph, LucideIcon> = {
   machine: LaptopIcon,
   folder: FolderIcon,
   permission: HardDriveIcon,
+  "sign-in": KeyRoundIcon,
 };
 
 /**
@@ -160,6 +165,19 @@ export function PendingAccessRequestPanel(props: {
   const permission = isPermissionRequest(props.item.subjects);
   const fullDiskAccess = useFullDiskAccess(props.environmentId, permission);
   const local = useCanOpenSettingsFor(props.environmentId);
+  // A sign-in card opens the live view on the thread's machine once Allow is recorded (1488).
+  const signInSubject = props.item.subjects.find((subject) => subject.kind === "sign-in");
+  const signInRequestId = signInSubject ? signInRequestIdOf(signInSubject) : null;
+  const onSignIn =
+    signInSubject && signInRequestId !== null
+      ? () =>
+          openSignInViewer({
+            environmentId: props.environmentId,
+            requestId: signInRequestId,
+            machine: signInSubject.hostLabel ?? "this machine",
+            site: signInSubject.label,
+          })
+      : undefined;
   return (
     <AccessRequestPrompt
       key={props.item.id}
@@ -169,6 +187,7 @@ export function PendingAccessRequestPanel(props: {
       disabled={props.disabled === true}
       machine={machine}
       {...(permission && local ? { onOpenSystemSettings: fullDiskAccess.openSettings } : {})}
+      {...(onSignIn ? { onSignIn } : {})}
     />
   );
 }
@@ -211,10 +230,13 @@ export function AccessRequestPrompt(props: {
   readonly onOpenSystemSettings?: () => Promise<void>;
   /** The machine the answer applies to, when it is not the window's own. */
   readonly machine?: ActionMachine | null | undefined;
+  /** For a sign-in card: opens the live view once Allow is recorded. */
+  readonly onSignIn?: () => void;
 }) {
   const tx = useTx();
   const { item } = props;
   const permission = isPermissionRequest(item.subjects);
+  const signIn = isSignInRequest(item.subjects);
   const titleId = useId();
   const headline = accessRequestHeadline(props.agentLabel, item.subjects);
   // Filled after mount, so screen readers announce the card when it appears.
@@ -228,14 +250,16 @@ export function AccessRequestPrompt(props: {
   // A double click can run twice before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
 
-  const send = async (reply: AccessRequestAnswer) => {
+  const send = async (reply: AccessRequestAnswer, onAnswered?: () => void) => {
     if (inFlight.current || props.disabled) return;
     inFlight.current = true;
     setSubmitting(true);
     setError(null);
     try {
       // The card goes away once the item updates.
-      setError(await props.onAnswer(reply));
+      const failed = await props.onAnswer(reply);
+      setError(failed);
+      if (failed === null) onAnswered?.();
     } finally {
       inFlight.current = false;
       setSubmitting(false);
@@ -284,7 +308,34 @@ export function AccessRequestPrompt(props: {
         {accessRequestNote(item.subjects)}
       </p>
 
-      {permission ? (
+      {signIn ? (
+        <div className={ACCESS_BUTTON_ROW_CLASS}>
+          <button
+            type="button"
+            className={ACCESS_SECONDARY_BUTTON_CLASS}
+            disabled={buttonsDisabled}
+            data-access-decision="deny"
+            aria-describedby={describedBy}
+            onClick={() => void send({ type: "deny" })}
+          >
+            {tx("Not now")}
+          </button>
+          <button
+            type="button"
+            className={ACCESS_PRIMARY_BUTTON_CLASS}
+            disabled={buttonsDisabled || props.onSignIn === undefined}
+            data-access-decision="sign-in"
+            aria-describedby={describedBy}
+            onClick={() => void send({ type: "allow", scope: "thread" }, () => props.onSignIn?.())}
+          >
+            {renderRich(tx("Sign in on {machine}"), {
+              machine:
+                item.subjects.find((subject) => subject.kind === "sign-in")?.hostLabel ??
+                tx("this machine"),
+            })}
+          </button>
+        </div>
+      ) : permission ? (
         <PermissionButtons
           disabled={buttonsDisabled}
           describedBy={describedBy}
@@ -292,52 +343,52 @@ export function AccessRequestPrompt(props: {
           onOpenSystemSettings={props.onOpenSystemSettings}
         />
       ) : (
-      <div className={ACCESS_BUTTON_ROW_CLASS}>
-        <button
-          type="button"
-          className={ACCESS_SECONDARY_BUTTON_CLASS}
-          disabled={buttonsDisabled}
-          data-access-decision="deny"
-          aria-describedby={describedBy}
-          onClick={() => void send({ type: "deny" })}
-        >
-          {tx("Deny")}
-        </button>
-        <button
-          type="button"
-          className={ACCESS_PRIMARY_BUTTON_CLASS}
-          disabled={buttonsDisabled}
-          data-access-decision="allow"
-          data-access-scope="thread"
-          aria-describedby={describedBy}
-          onClick={() => void send({ type: "allow", scope: "thread" })}
-        >
-          {tx("Allow for this session")}
-        </button>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                className="cursor-pointer rounded-sm text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60"
-                disabled={buttonsDisabled}
-                data-access-decision="allow-machine"
-                data-access-scope="machine"
-                aria-description={ACCESS_REQUEST_FOOTNOTE}
-                aria-describedby={describedBy}
-                onClick={() => void send({ type: "allow", scope: "machine" })}
-              />
-            }
+        <div className={ACCESS_BUTTON_ROW_CLASS}>
+          <button
+            type="button"
+            className={ACCESS_SECONDARY_BUTTON_CLASS}
+            disabled={buttonsDisabled}
+            data-access-decision="deny"
+            aria-describedby={describedBy}
+            onClick={() => void send({ type: "deny" })}
           >
-            {props.machine
-              ? renderRich(tx("Always allow on {machine}"), {
-                  machine: <ActionMachineName machine={props.machine} />,
-                })
-              : tx("Always allow on this machine")}
-          </TooltipTrigger>
-          <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
-        </Tooltip>
-      </div>
+            {tx("Deny")}
+          </button>
+          <button
+            type="button"
+            className={ACCESS_PRIMARY_BUTTON_CLASS}
+            disabled={buttonsDisabled}
+            data-access-decision="allow"
+            data-access-scope="thread"
+            aria-describedby={describedBy}
+            onClick={() => void send({ type: "allow", scope: "thread" })}
+          >
+            {tx("Allow for this session")}
+          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-sm text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60"
+                  disabled={buttonsDisabled}
+                  data-access-decision="allow-machine"
+                  data-access-scope="machine"
+                  aria-description={ACCESS_REQUEST_FOOTNOTE}
+                  aria-describedby={describedBy}
+                  onClick={() => void send({ type: "allow", scope: "machine" })}
+                />
+              }
+            >
+              {props.machine
+                ? renderRich(tx("Always allow on {machine}"), {
+                    machine: <ActionMachineName machine={props.machine} />,
+                  })
+                : tx("Always allow on this machine")}
+            </TooltipTrigger>
+            <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
+          </Tooltip>
+        </div>
       )}
       {error !== null ? (
         <p id={errorId} role="alert" className="text-xs text-destructive-foreground">
@@ -392,11 +443,20 @@ function PermissionButtons(props: {
       </div>
       <p className="text-xs text-muted-foreground" data-access-permission-hint>
         {props.onOpenSystemSettings === undefined
-          ? tx("Turn it on in System Settings › Privacy & Security › Full Disk Access on that Mac. This card closes by itself once it is on.")
+          ? tx(
+              "Turn it on in System Settings › Privacy & Security › Full Disk Access on that Mac. This card closes by itself once it is on.",
+            )
           : opened
-            ? tx("Drag the item into the Full Disk Access list and turn it on. This card closes by itself once agents can read the files.")
+            ? tx(
+                "Drag the item into the Full Disk Access list and turn it on. This card closes by itself once agents can read the files.",
+              )
             : tx("macOS asks you, not SpecWithCode, so this is a switch in System Settings.")}{" "}
-        <a className="underline underline-offset-2" href={FULL_DISK_ACCESS_DOCS_URL} target="_blank" rel="noreferrer">
+        <a
+          className="underline underline-offset-2"
+          href={FULL_DISK_ACCESS_DOCS_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
           {tx("Learn more")}
         </a>
       </p>
