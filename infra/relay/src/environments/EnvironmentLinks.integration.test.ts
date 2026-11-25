@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
+import * as AccountDeletion from "../account/AccountDeletion.ts";
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
 import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
@@ -82,6 +83,21 @@ describe("EnvironmentLinks on SQLite D1", () => {
       expect(stored["user-a"]?.revokedAt).not.toBeNull();
       expect(stored["user-b"]?.revokedAt).toBeNull();
     }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("still lists a moved account's environment for its account deletion", () =>
+    Effect.gen(function* () {
+      yield* link("user-a", "key-1");
+      yield* link("user-b", "key-1");
+      const records = yield* AccountDeletion.AccountRecords;
+      expect(yield* records.listEnvironmentIds({ userId: "user-a" })).toEqual(["env-1"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(EnvironmentLinks.layer, AccountDeletion.layerAccountRecords).pipe(
+          Layer.provideMerge(layerSqliteRelayDb()),
+        ),
+      ),
+    ),
   );
 
   it.effect("keeps another account's link that a different key proved", () =>

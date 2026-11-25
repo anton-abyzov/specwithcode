@@ -221,6 +221,23 @@ describe("account deletion", () => {
     }).pipe(Effect.provide(relay.layer));
   });
 
+  it.effect("removes the tunnel of a link that a machine move revoked", () => {
+    // The machine moved to another account: this account's link is revoked
+    // and its tunnel, still connected, is left for this account to remove.
+    const relay = makeFakeRelay({
+      activeLinks: [],
+      revokedLinks: ["env-m"],
+      allocations: ["env-m"],
+    });
+    relay.faults.liveHost.add("env-m");
+    return Effect.gen(function* () {
+      expect(yield* deleteAccount).toEqual({ deleted: true, environmentCount: 1 });
+      expect(relay.allocations.size).toBe(0);
+      expect(relay.log).toContain("deprovision:env-m");
+      expect(relay.log).toContain(`delete-clerk-user:${USER}`);
+    }).pipe(Effect.provide(relay.layer));
+  });
+
   it.effect("refuses to delete the Clerk user while a managed endpoint remains", () => {
     const relay = makeFakeRelay({ activeLinks: [], allocations: ["env-a"] });
     relay.faults.keepAllocation.add("env-a");
