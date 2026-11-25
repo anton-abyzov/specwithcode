@@ -23,6 +23,7 @@ import {
   type NpmPackageRuntime,
 } from "../environment/ServerReleaseManifest.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsPowerShellPath, windowsSystem32Path } from "../process/windowsSystemTools.ts";
 import { userBusCandidates, userBusEnv } from "../systemdUserBus.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -596,7 +597,7 @@ function powerShellStep(
 ): BootServiceStep {
   return {
     step,
-    command: "powershell.exe",
+    command: windowsPowerShellPath(),
     args: [
       "-NoProfile",
       "-NonInteractive",
@@ -658,7 +659,7 @@ function taskSchedulerManager(input: {
   );
   const run: BootServiceStep = {
     step: "starting the service",
-    command: "schtasks.exe",
+    command: windowsSystem32Path("schtasks.exe"),
     args: ["/Run", "/TN", taskName],
   };
   return {
@@ -672,7 +673,7 @@ function taskSchedulerManager(input: {
     stop: [
       {
         step: "pausing the installed task",
-        command: "schtasks.exe",
+        command: windowsSystem32Path("schtasks.exe"),
         args: ["/Change", "/TN", taskName, "/DISABLE"],
         optional: true,
       },
@@ -697,7 +698,7 @@ function taskSchedulerManager(input: {
     restart: [
       {
         step: "re-enabling the task after a failed update",
-        command: "schtasks.exe",
+        command: windowsSystem32Path("schtasks.exe"),
         args: ["/Change", "/TN", taskName, "/ENABLE"],
         optional: true,
       },
@@ -707,7 +708,7 @@ function taskSchedulerManager(input: {
     deactivate: [
       {
         step: "removing the scheduled task",
-        command: "schtasks.exe",
+        command: windowsSystem32Path("schtasks.exe"),
         args: ["/Delete", "/TN", taskName, "/F"],
         optional: true,
       },
@@ -1187,7 +1188,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     function* () {
       // A cold PowerShell start alone can take a few seconds.
       const state = yield* probe(
-        "powershell.exe",
+        windowsPowerShellPath(),
         taskStateProbeArgs(bootServiceTaskName(windowsUser.name)),
         Duration.seconds(20),
       );

@@ -1,3 +1,4 @@
+import type * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,7 +12,7 @@ import {
   HostProcessWorkingDirectory,
 } from "@specweave-studio/shared/hostProcess";
 
-import { findOwnedLauncher } from "./uninstall.ts";
+import { findOwnedLauncher, spawnWindowsRuntimeRemoval } from "./uninstall.ts";
 import { resolveLaunchedAs } from "./update.ts";
 
 it.layer(NodeServices.layer)("specweave-studio uninstall launcher", (it) => {
@@ -77,4 +78,26 @@ it.layer(NodeServices.layer)("specweave-studio uninstall launcher", (it) => {
         );
       }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
+});
+
+it("removes the Windows runtime from a System32 shell, the folder passed as data", () => {
+  const calls: Array<{ command: string; args: ReadonlyArray<string>; options: unknown }> = [];
+  const spawn = ((command: string, args: ReadonlyArray<string>, options: unknown) => {
+    calls.push({ command, args, options });
+    return { unref: () => undefined };
+  }) as unknown as typeof NodeChildProcess.spawn;
+  const runtimeDir = "C:\\Users\\a&b\\AppData\\Local\\SpecWithCode\\runtime";
+  spawnWindowsRuntimeRemoval(
+    { SystemRoot: "D:\\Windows", ComSpec: "C:\\work\\evil\\cmd.exe", PATH: "C:\\work" },
+    runtimeDir,
+    spawn,
+  );
+  const [call] = calls;
+  assert.equal(call!.command, "D:\\Windows\\System32\\cmd.exe");
+  assert.notInclude(call!.args.join(" "), runtimeDir);
+  assert.notInclude(call!.args.join(" "), "ping ");
+  assert.deepInclude(call!.options as object, { cwd: "D:\\Windows\\System32" });
+  const env = (call!.options as { env: Record<string, string> }).env;
+  assert.equal(env["STUDIO_UNINSTALL_RUNTIME"], runtimeDir);
+  assert.equal(env["STUDIO_UNINSTALL_PING"], "D:\\Windows\\System32\\PING.EXE");
 });
