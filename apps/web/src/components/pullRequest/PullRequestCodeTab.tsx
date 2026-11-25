@@ -349,16 +349,16 @@ function PullRequestCodeTab({
       input: { ...reference, ...(commit === null ? {} : { commit }), ...pinnedDiffHead },
     }),
   );
-  // A new pin drops the open composer and the selection; the diff query is keyed by the pin, so
-  // the new head's diff is read on its own.
+  // A new pin drops the open composer and the selection. The old head's slices are already out
+  // of sight (they carry the old `sliceKey`), and the diff query is keyed by the pin, so the new
+  // head's diff, cached or read, fills in on its own.
   const appliedHead = useRef(headSha);
   useEffect(() => {
     if (appliedHead.current === headSha) return;
     appliedHead.current = headSha;
     setDraft(null);
     setSelectedLines(null);
-    setSliceState({ key: sliceKey, cursor: null, slices: NO_SLICES });
-  }, [headSha, sliceKey]);
+  }, [headSha]);
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
