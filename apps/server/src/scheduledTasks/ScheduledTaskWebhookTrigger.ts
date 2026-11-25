@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
+import { withLocalTracing } from "@specweave-studio/shared/relayTracing";
 
 import * as Metrics from "../observability/Metrics.ts";
 import {
@@ -545,6 +546,9 @@ export const makeWebhookTrigger = Effect.fnUntraced(function* (deps: {
                 "scheduled_task.webhook.delivery_id": deliveryId,
               },
             }),
+            // A relay delivery is answered under the relay's tracer, but the run it starts works
+            // with this machine's files and threads, so the run and its root span stay local.
+            withLocalTracing,
             Effect.ensuring(release),
             Effect.forkIn(serviceScope),
           );

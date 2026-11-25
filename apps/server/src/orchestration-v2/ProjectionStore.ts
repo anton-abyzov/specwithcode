@@ -5620,6 +5620,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             const projection = yield* getThreadProjection(threadId);
+            // Deleting keeps the rows for forks that still read them; a reader gets nothing.
+            if (projection.thread.deletedAt !== null) {
+              return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+            }
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
             SELECT MAX(sequence) AS snapshot_sequence
             FROM orchestration_events
@@ -5859,6 +5863,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
+            if (windowProjection.thread.deletedAt !== null) {
+              return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+            }
             // Dependencies stay in turnItems but out of the paged rows, whose
             // first row is where the next page starts.
             const projection =
@@ -7744,6 +7751,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
       getRuntimeRecoveryProjection: (threadId) => service.getThreadProjection(threadId),
       getThreadSnapshot: (threadId) =>
         service.getThreadProjection(threadId).pipe(
+          Effect.flatMap((projection) =>
+            projection.thread.deletedAt !== null
+              ? Effect.fail(new ProjectionStoreThreadNotFoundError({ threadId }))
+              : Effect.succeed(projection),
+          ),
           Effect.flatMap((projection) =>
             Ref.get(sequence).pipe(
               Effect.map((snapshotSequence) => ({
