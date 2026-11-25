@@ -6,7 +6,7 @@ import * as Result from "effect/Result";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveSymlinkTarget } from "@specweave-studio/shared/symlink";
 
-import { isWindowsRenameLock } from "./atomicWrite.ts";
+import { isWindowsRenameLock, syncFolder, writeSyncedTemp } from "./atomicWrite.ts";
 
 // About 2 seconds, as in atomicWrite.ts: a denial that is not a brief scan
 // (Excel holding the workbook open) has to surface quickly.
@@ -20,6 +20,7 @@ const LOCKED_RENAME_RETRY_DELAY = "100 millis";
  * target is resolved first so the link survives and its destination is
  * rewritten, since renaming over the link itself would swap it for a regular file.
  * On Windows a rename refused by a brief lock is retried (see isWindowsRenameLock).
+ * Elsewhere it keeps the replaced file's mode and syncs, as atomicWrite.ts does.
  */
 export const writeFileBytesAtomically = (input: {
   readonly filePath: string;
@@ -46,8 +47,11 @@ export const writeFileBytesAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFile(tempPath, input.contents);
-      if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
+      yield* writeSyncedTemp({ fs, platform, tempPath, targetPath, contents: input.contents });
+      if (platform !== "win32") {
+        yield* fs.rename(tempPath, targetPath);
+        return yield* syncFolder(fs, targetDirectory);
+      }
 
       // A retry must not replace a save another process landed meanwhile, so it
       // stops once the target is no longer the file seen here. A read-only

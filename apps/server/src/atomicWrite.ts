@@ -17,6 +17,60 @@ export const isWindowsRenameLock = (error: PlatformError.PlatformError) => {
   return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 };
 
+/**
+ * The mode a save leaves: the replaced file's, or owner-only for a new file.
+ * The owner keeps read and write, so a save also repairs a file it could not
+ * read. Set with chmod after writing, since the umask narrows the mode a file
+ * is opened with.
+ */
+const modeAfterSave = (fs: FileSystem.FileSystem, targetPath: string) =>
+  fs.stat(targetPath).pipe(
+    Effect.map((info) => (info.mode & 0o777) | 0o600),
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(0o600),
+    ),
+  );
+
+/**
+ * Writes a save's temp file. Synced before the rename, since otherwise a crash
+ * soon after it can leave the target empty; closed before it too, which
+ * Windows needs. Off Windows it takes the mode the save leaves.
+ */
+export const writeSyncedTemp = (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly platform: NodeJS.Platform;
+  readonly tempPath: string;
+  readonly targetPath: string;
+  readonly contents: Uint8Array;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { fs, tempPath } = input;
+      const file = yield* fs.open(tempPath, { flag: "w" });
+      yield* file.writeAll(input.contents);
+      if (input.platform !== "win32") {
+        yield* fs.chmod(tempPath, yield* modeAfterSave(fs, input.targetPath));
+      }
+      yield* file.sync;
+    }),
+  );
+
+/**
+ * Makes a rename into `directory` durable. Best effort: the rename has landed
+ * by then, so a folder this process cannot open (replacing a file needs only
+ * write and search access to it) or cannot sync (Windows, some filesystems)
+ * leaves the save standing.
+ */
+export const syncFolder = (fs: FileSystem.FileSystem, directory: string) =>
+  fs.open(directory, { flag: "r" }).pipe(
+    Effect.flatMap((folder) => folder.sync),
+    Effect.scoped,
+    Effect.catch((error) =>
+      Effect.logDebug("A saved file's folder could not be synced", { directory, error }),
+    ),
+  );
+
 // About 2 seconds. Settings and keybinding saves hold their write lock while
 // they wait, so a denial that is not a brief scan has to surface quickly.
 const LOCKED_RENAME_RETRIES = 20;
@@ -27,6 +81,8 @@ const LOCKED_RENAME_RETRY_DELAY = "100 millis";
  * target is resolved first so the link survives and its destination is
  * rewritten, since renaming over the link itself would swap it for a regular file.
  * On Windows a rename refused by a brief lock is retried (see isWindowsRenameLock).
+ * Elsewhere the save keeps the replaced file's mode, creates a new one owner-only,
+ * and syncs the data and the rename to disk.
  */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
@@ -53,8 +109,17 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
-      if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
+      yield* writeSyncedTemp({
+        fs,
+        platform,
+        tempPath,
+        targetPath,
+        contents: new TextEncoder().encode(input.contents),
+      });
+      if (platform !== "win32") {
+        yield* fs.rename(tempPath, targetPath);
+        return yield* syncFolder(fs, targetDirectory);
+      }
 
       // A retry must not replace a save another process landed meanwhile, so it
       // stops once the target is no longer the file seen here. A read-only

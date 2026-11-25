@@ -17,6 +17,7 @@ import type * as NodeStream from "node:stream";
 
 import { browserLastError } from "../preview/PreviewBrowserHost.ts";
 import { publicProxy } from "./publicProxy.ts";
+import { windowsSystem32Path } from "../process/windowsSystemTools.ts";
 
 export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowserError>()(
   "HtmlRenderBrowserError",
@@ -288,10 +289,14 @@ const spawnBrowser = Effect.fnUntraced(function* (executable: string, args: Read
             const fallback = () => {
               if (!browserExited(child)) child.kill();
             };
-            NodeChildProcess.spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-              stdio: "ignore",
-              windowsHide: true,
-            })
+            NodeChildProcess.spawn(
+              windowsSystem32Path("taskkill.exe"),
+              ["/PID", String(child.pid), "/T", "/F"],
+              {
+                stdio: "ignore",
+                windowsHide: true,
+              },
+            )
               .on("error", fallback)
               .on("exit", (code) => code !== 0 && fallback());
           }

@@ -23,6 +23,7 @@ import {
   type NpmPackageRuntime,
 } from "../environment/ServerReleaseManifest.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsPowerShellPath, windowsSystem32Path } from "../process/windowsSystemTools.ts";
 import { userBusCandidates, userBusEnv } from "../systemdUserBus.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -344,8 +345,8 @@ export function renderBootServiceTask(
     `  </Settings>`,
     `  <Actions Context="Author">`,
     `    <Exec>`,
-    `      <Command>conhost.exe</Command>`,
-    `      <Arguments>--headless cmd.exe /d /c "${escapeXmlText(options.scriptPath)}"</Arguments>`,
+    `      <Command>${escapeXmlText(windowsSystem32Path("conhost.exe"))}</Command>`,
+    `      <Arguments>--headless "${escapeXmlText(windowsSystem32Path("cmd.exe"))}" /d /c "${escapeXmlText(options.scriptPath)}"</Arguments>`,
     `      <WorkingDirectory>${escapeXmlText(options.homeDir)}</WorkingDirectory>`,
     `    </Exec>`,
     `  </Actions>`,
@@ -596,7 +597,7 @@ function powerShellStep(
 ): BootServiceStep {
   return {
     step,
-    command: "powershell.exe",
+    command: windowsPowerShellPath(),
     args: [
       "-NoProfile",
       "-NonInteractive",
@@ -632,8 +633,8 @@ export function renderBootServiceStopScript(input: {
     `$root = ${quotePowerShell(root)}`,
     "Get-CimInstance Win32_Process -Filter \"Name = 'specweave-studio.exe'\" |",
     "  Where-Object { $_.CommandLine -like '*__service-launcher*' -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) } |",
-    "  ForEach-Object { & taskkill.exe /F /T /PID $_.ProcessId | Out-Null }",
-    `& schtasks.exe /End /TN ${quotePowerShell(input.taskName)} 2>&1 | Out-Null`,
+    `  ForEach-Object { & ${quotePowerShell(windowsSystem32Path("taskkill.exe"))} /F /T /PID $_.ProcessId | Out-Null }`,
+    `& ${quotePowerShell(windowsSystem32Path("schtasks.exe"))} /End /TN ${quotePowerShell(input.taskName)} 2>&1 | Out-Null`,
     "exit 0",
   ].join("\n");
 }
@@ -658,7 +659,7 @@ function taskSchedulerManager(input: {
   );
   const run: BootServiceStep = {
     step: "starting the service",
-    command: "schtasks.exe",
+    command: windowsSystem32Path("schtasks.exe"),
     args: ["/Run", "/TN", taskName],
   };
   return {
@@ -672,7 +673,7 @@ function taskSchedulerManager(input: {
     stop: [
       {
         step: "pausing the installed task",
-        command: "schtasks.exe",
+        command: windowsSystem32Path("schtasks.exe"),
         args: ["/Change", "/TN", taskName, "/DISABLE"],
         optional: true,
       },
@@ -697,7 +698,7 @@ function taskSchedulerManager(input: {
     restart: [
       {
         step: "re-enabling the task after a failed update",
-        command: "schtasks.exe",
+        command: windowsSystem32Path("schtasks.exe"),
         args: ["/Change", "/TN", taskName, "/ENABLE"],
         optional: true,
       },
@@ -707,7 +708,7 @@ function taskSchedulerManager(input: {
     deactivate: [
       {
         step: "removing the scheduled task",
-        command: "schtasks.exe",
+        command: windowsSystem32Path("schtasks.exe"),
         args: ["/Delete", "/TN", taskName, "/F"],
         optional: true,
       },
@@ -1187,7 +1188,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     function* () {
       // A cold PowerShell start alone can take a few seconds.
       const state = yield* probe(
-        "powershell.exe",
+        windowsPowerShellPath(),
         taskStateProbeArgs(bootServiceTaskName(windowsUser.name)),
         Duration.seconds(20),
       );

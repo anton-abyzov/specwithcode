@@ -22,6 +22,7 @@ import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { windowsSystem32Path } from "../process/windowsSystemTools.ts";
 
 export class MachineHardwareIdentity extends Context.Service<
   MachineHardwareIdentity,
@@ -111,7 +112,7 @@ const readRawHardwareId = Effect.fn("cloud.machineHardwareIdentity.readRaw")(fun
       return stdout === null ? null : parseIoregPlatformUuid(stdout);
     }
     case "win32": {
-      const stdout = yield* runProbe("reg", [
+      const stdout = yield* runProbe(windowsSystem32Path("reg.exe"), [
         "query",
         "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
         "/v",

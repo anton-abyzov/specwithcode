@@ -365,16 +365,198 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const real = (path: string) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
-  const worktrees = yield* git.listWorktreePaths(workspaceRoot).pipe(
-    Effect.flatMap((paths) => Effect.forEach(paths, real)),
-    Effect.orElseSucceed((): ReadonlyArray<string> => []),
-  );
-  if (!worktrees.includes(yield* real(worktreePath)))
-    return yield* new OrchestratorMcpFailure({
-      code: "invalid_request",
-      message: `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
+  const registered = yield* git
+    .listWorktreePaths(workspaceRoot)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const asked = yield* real(worktreePath);
+  // Git keeps a locked worktree listed after its folder is gone, so whatever
+  // directory now sits at that path must itself be a checkout of this repository.
+  const checkoutOf = (cwd: string) =>
+    git
+      .execute({
+        operation: "mcp.assertProjectWorktree.checkout",
+        cwd,
+        args: ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        allowNonZeroExit: true,
+        // Only the folder decides which repository it belongs to, never a
+        // repository named by this server's own environment.
+        env: SAME_FOLDER_GIT_ENV,
+      })
+      .pipe(
+        Effect.flatMap((result) => {
+          // Exactly two lines, read as written: a path with a newline or
+          // trailing space in it is never cut down to another one.
+          const lines = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1).split("\n") : [];
+          const [toplevel = "", commonDir = ""] = lines;
+          return result.exitCode === 0 &&
+            lines.length === 2 &&
+            toplevel.length > 0 &&
+            commonDir.length > 0
+            ? Effect.all([real(toplevel), real(commonDir)])
+            : Effect.succeed(undefined);
+        }),
+        Effect.orElseSucceed(() => undefined),
+      );
+  // Git's own test for "the worktree registered at this path", on the bytes it
+  // reads: the folder's own `.git` entry (never a link) is either the
+  // repository's git folder itself (the main checkout), or a file whose
+  // `gitdir:` line names a slot directly under `<common dir>/worktrees/`
+  // whose `gitdir` record names this folder's `.git` exactly. That match is
+  // never trimmed, decoded loosely or resolved past what Git resolves; only
+  // the count of other slots naming the folder reads records loosely.
+  const encoder = new TextEncoder();
+  const sameBytes = (left: Uint8Array, right: Uint8Array) =>
+    left.length === right.length && left.every((byte, index) => byte === right[index]);
+  // Windows paths come back from Node with `\`; Git writes them with `/`.
+  const gitSpelling = (path: string) =>
+    /^[A-Za-z]:[\\/]/u.test(path) ? path.replaceAll("\\", "/") : path;
+  // Git resolves a path one component at a time, following a link before
+  // the `..` after it; Node's realPath collapses `..` first. Takes `/` or a
+  // drive root and either separator; undefined when the links do not settle.
+  const resolveLikeGit = (path: string) =>
+    Effect.gen(function* () {
+      const rootOf = (text: string) => /^[A-Za-z]:(?=[\\/])/u.exec(text)?.[0] ?? "";
+      let root = rootOf(path);
+      // `\` separates only on a drive path; elsewhere it is part of a name.
+      const split = (text: string) =>
+        text.split(root === "" ? "/" : /[\\/]/u).filter((part) => part.length > 0);
+      const pending = split(path.slice(root.length));
+      let resolved: Array<string> = [];
+      for (let hops = 0; pending.length > 0;) {
+        const part = pending.shift() as string;
+        if (part === ".") continue;
+        if (part === "..") {
+          resolved.pop();
+          continue;
+        }
+        const target = yield* fileSystem
+          .readLink(`${root}/${[...resolved, part].join("/")}`)
+          .pipe(Effect.option);
+        if (Option.isNone(target)) {
+          resolved.push(part);
+          continue;
+        }
+        if ((hops += 1) > 40) return undefined;
+        // Drives exist only on a drive path; a share or device path is not
+        // followed, so the record counts.
+        const onDrive = root !== "";
+        if (onDrive && /^[\\/]{2}/u.test(target.value)) return undefined;
+        const targetRoot = onDrive ? rootOf(target.value) : "";
+        // An absolute target starts over; one without a drive stays on this one.
+        if (targetRoot !== "") root = targetRoot;
+        const rooted = onDrive ? /^[\\/]/u.test(target.value) : target.value.startsWith("/");
+        if (targetRoot !== "" || rooted) resolved = [];
+        pending.unshift(...split(target.value.slice(targetRoot.length)));
+      }
+      return `${root}/${resolved.join("/")}`;
     });
+  const ownsCheckout = (commonDir: string, isMain: boolean) =>
+    Effect.gen(function* () {
+      if (asked.includes("\n")) return false;
+      const entry = `${asked}/.git`;
+      const isLink = yield* fileSystem.readLink(entry).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (isLink) return false;
+      const info = yield* fileSystem.stat(entry).pipe(Effect.option);
+      if (Option.isNone(info)) return false;
+      if (info.value.type === "Directory") return isMain && (yield* real(entry)) === commonDir;
+      if (info.value.type !== "File") return false;
+      const pointer = yield* fileSystem.readFile(entry).pipe(Effect.option);
+      if (Option.isNone(pointer)) return false;
+      const slots = `${gitSpelling(commonDir)}/worktrees/`;
+      // Only text that survives decoding unchanged: a path Git keeps as raw
+      // bytes is never matched against a decoded spelling of it.
+      const text = new TextDecoder().decode(pointer.value);
+      if (!sameBytes(encoder.encode(text), pointer.value)) return false;
+      const line = /^gitdir: ([^\r\n]+)\r?\n?$/u.exec(text)?.[1];
+      if (line === undefined) return false;
+      const slot = gitSpelling(line);
+      const id = slot.startsWith(slots) ? slot.slice(slots.length) : "";
+      if (!/^[^/\\\n]+$/u.test(id) || id === "." || id === "..") return false;
+      // The slot itself must be a plain folder there, not a link elsewhere.
+      if (gitSpelling(yield* real(slot)) !== slot) return false;
+      const record = yield* fileSystem.readFile(`${slot}/gitdir`).pipe(Effect.option);
+      if (Option.isNone(record)) return false;
+      const named = encoder.encode(gitSpelling(entry));
+      const withNewline = encoder.encode(`${gitSpelling(entry)}\n`);
+      const namesThisFolder = (bytes: Uint8Array) =>
+        sameBytes(bytes, named) || sameBytes(bytes, withNewline);
+      if (!namesThisFolder(record.value)) return false;
+      // Git looks a path up in the first slot that names it, so a path two
+      // slots name is not one registration. Git trims a record's trailing
+      // whitespace and resolves it before that lookup, so the count does too:
+      // counting more slots than Git would only refuses more.
+      const ids = yield* fileSystem
+        .readDirectory(slots.slice(0, -1))
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      let naming = 0;
+      for (const other of ids) {
+        const otherRecord = yield* fileSystem
+          .readFile(`${slots}${other}/gitdir`)
+          .pipe(Effect.option);
+        if (Option.isNone(otherRecord)) continue;
+        // Git reads the record as a C string: it stops at a NUL byte.
+        const text = new TextDecoder().decode(otherRecord.value);
+        const trimmed = text.split("\0")[0]!.trimEnd();
+        const folder = trimmed.replace(/[\\/]\.git$/u, "");
+        const absolute =
+          folder.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(folder)
+            ? folder
+            : `${slots}${other}/${folder}`;
+        const resolved = yield* resolveLikeGit(absolute);
+        // Case is ignored here: on a case-insensitive disk Git matches paths
+        // that way, and elsewhere this only refuses more.
+        const same = (path: string) =>
+          gitSpelling(path).toLowerCase() === gitSpelling(asked).toLowerCase();
+        if (
+          namesThisFolder(otherRecord.value) ||
+          same(folder) ||
+          resolved === undefined ||
+          same(resolved)
+        )
+          naming += 1;
+      }
+      return naming === 1;
+    });
+  const project = yield* checkoutOf(workspaceRoot);
+  let listedButChanged = false;
+  for (const [index, path] of registered.entries()) {
+    // The registered path, not the caller's spelling: a symlink that resolves
+    // here now could point somewhere else by the time the thread starts.
+    if ((yield* real(path)) !== asked) continue;
+    const checkout = yield* checkoutOf(path);
+    if (
+      project !== undefined &&
+      checkout !== undefined &&
+      checkout[0] === asked &&
+      checkout[1] === project[1] &&
+      // git lists the main checkout first.
+      (yield* ownsCheckout(project[1], index === 0))
+    )
+      return path;
+    listedButChanged = true;
+  }
+  return yield* new OrchestratorMcpFailure({
+    code: "invalid_request",
+    message: listedButChanged
+      ? `git still lists ${worktreePath} as one of ${owner} worktrees, but the folder there is no longer that worktree, or more than one of git's worktree records names it. \`git worktree repair\` reconnects a moved worktree; to drop the record, unlock it if locked, move the folder away and run \`git worktree prune\`.`
+      : `worktreePath must be one of ${owner} git worktrees. studio_worktree_list shows them.`,
+  });
 });
+
+/** Git variables that would make a probe read some other repository than the folder's own. */
+const SAME_FOLDER_GIT_ENV: NodeJS.ProcessEnv = {
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_COMMON_DIR: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_CEILING_DIRECTORIES: undefined,
+  GIT_DISCOVERY_ACROSS_FILESYSTEM: undefined,
+};
 
 /**
  * Apply the effort the caller named to a launch's model selection, matched to
@@ -610,6 +792,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Effect.mapError(unavailable),
           Effect.map(Option.getOrUndefined),
         );
+        // An existing worktree launches in the path the check matched.
+        let launchStrategy = input.workspaceStrategy;
         if (input.workspaceStrategy?.type === "existing_worktree") {
           const project = yield* readProject;
           if (project === undefined)
@@ -631,11 +815,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               label: `repository "${resolved.checkout.id}"'s`,
             };
           }
-          yield* assertProjectWorktree(
+          const worktreePath = yield* assertProjectWorktree(
             worktreeOwner.cwd,
             input.workspaceStrategy.worktreePath,
             worktreeOwner.label,
           );
+          launchStrategy = { ...input.workspaceStrategy, worktreePath };
         }
         const project = yield* readProject;
         if (work !== undefined) {
@@ -652,7 +837,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // worktree, else the project. A new worktree is not made yet, so a ref
         // the project lacks is looked up in the caller's own worktree, as
         // delegate_task and create_threads do. A bad ref launches nothing.
-        const strategy = input.workspaceStrategy;
+        const strategy = launchStrategy;
         const { stateDir } = yield* ServerConfig.ServerConfig;
         const incrementResolution =
           project === undefined
@@ -871,8 +1056,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // checkout that never happens; the agent switches branches itself.
         const workspace = declinedWorktree
           ? { strategy: { type: "root" as const }, notice: WORKTREE_OFF_NOTICE }
-          : input.workspaceStrategy !== undefined
-            ? { strategy: input.workspaceStrategy }
+          : launchStrategy !== undefined
+            ? { strategy: launchStrategy }
             : project === undefined || scratchProjectId !== undefined
               ? { strategy: { type: "root" as const } }
               : yield* projectLaunchWorkspace(project, increment.increment);

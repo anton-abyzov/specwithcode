@@ -214,8 +214,9 @@ it("keeps the Windows task alive for the signed-in user without elevation or a w
   expect(task).toContain("<Interval>PT1M</Interval>");
   expect(task).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
   expect(task).toContain("<RestartOnFailure>");
-  expect(task).toContain("<Command>conhost.exe</Command>");
-  expect(task).toContain("<Arguments>--headless cmd.exe /d /c ");
+  // By absolute path: the task starts in the user's home, where a planted conhost.exe could sit.
+  expect(task).toContain("<Command>C:\\Windows\\System32\\conhost.exe</Command>");
+  expect(task).toContain('<Arguments>--headless "C:\\Windows\\System32\\cmd.exe" /d /c ');
   expect(task).not.toContain("STUDIO_HOME");
 });
 
@@ -230,6 +231,9 @@ it("escapes the Windows launcher script and reads the Studio home back", () => {
 /** How the unit quotes a path: a Windows temp folder has backslashes, a POSIX one none. */
 const systemdQuoted = (value: string) =>
   /[\s"'\\]/.test(value) ? `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"` : value;
+
+const WINDOWS_SYSTEM_TOOL =
+  /^C:\\Windows\\System32\\(?:WindowsPowerShell\\v1\.0\\)?(powershell\.exe|schtasks\.exe)$/i;
 
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
@@ -255,6 +259,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   );
 
   const commands: string[] = [];
+  const windowsPrograms: string[] = [];
   const timeouts = new Map<string, unknown>();
   const envs = new Map<string, NodeJS.ProcessEnv | undefined>();
   const control: {
@@ -275,10 +280,14 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     run: Effect.fn("test.run_boot_service_command")(function* (
       input: ProcessRunner.ProcessRunInput,
     ) {
+      // Windows system tools run by their System32 path; the log names the tool.
+      const systemTool = WINDOWS_SYSTEM_TOOL.exec(input.command)?.[1];
+      if (platform === "win32") windowsPrograms.push(input.command);
+      const tool = systemTool ?? input.command;
       const command =
-        input.command === "powershell.exe"
+        tool === "powershell.exe"
           ? `powershell.exe ${decodePowerShell(input.args)}`
-          : `${input.command} ${input.args.join(" ")}`;
+          : `${tool} ${input.args.join(" ")}`;
       commands.push(command);
       timeouts.set(command, input.timeout);
       envs.set(command, input.env);
@@ -378,6 +387,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     fs,
     statePath,
     commands,
+    windowsPrograms,
     timeouts,
     envs,
     control,
@@ -970,7 +980,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, reports current state, and uninstalls on Windows", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime, control } =
+      const { service, fs, statePath, commands, timeouts, runtime, control, windowsPrograms } =
         yield* makeHarness("win32");
       const path = yield* Path.Path;
       const plan = yield* service.install();
@@ -983,7 +993,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       ).toBe(true);
       const task = yield* fs.readFileString(plan.unitPath);
       expect(task).toContain("<UserId>WORKSTATION\\dev</UserId>");
-      expect(task).toContain(`--headless cmd.exe /d /c "${scriptPath}"`);
+      expect(task).toContain(`System32\\cmd.exe" /d /c "${scriptPath}"`);
       const script = yield* fs.readFileString(scriptPath);
       expect(script).toContain(
         `"${runtime.entryPath}" "__service-launcher" >>"${plan.logPath}" 2>&1`,
@@ -992,6 +1002,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(parseServiceState(yield* fs.readFileString(statePath))).toMatchObject({
         activeVersion: "1.2.3",
       });
+      // A bare name would be looked up in the current folder first.
+      expect(
+        windowsPrograms.filter((program) => !program.endsWith("specweave-studio.exe")),
+      ).toEqual(windowsPrograms.filter((program) => WINDOWS_SYSTEM_TOOL.test(program)));
+      expect(windowsPrograms.some((program) => WINDOWS_SYSTEM_TOOL.test(program))).toBe(true);
       // Nothing was installed before, so nothing is stopped first.
       expect(commands.filter((command) => !command.includes("--version"))).toEqual([
         `powershell.exe $ErrorActionPreference = 'Stop'\n$xml = [System.IO.File]::ReadAllText('${plan.unitPath}')\nRegister-ScheduledTask -TaskName '${taskName}' -Xml $xml -Force | Out-Null`,
@@ -1026,7 +1041,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.exists(scriptPath)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands[0]).toBe(`schtasks.exe /Delete /TN ${taskName} /F`);
-      expect(commands[1]).toContain("taskkill.exe /F /T /PID");
+      expect(commands[1]).toContain("System32\\taskkill.exe' /F /T /PID");
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       expect(timeouts.get(commands[1]!)).toEqual(Duration.seconds(120));
     }),
@@ -1046,8 +1061,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const versionsDir = path.join(plan.baseDir, "runtime", "versions");
       expect(commands[1]).toContain(`$root = '${versionsDir}\\'`);
       expect(commands[1]).toContain("-like '*__service-launcher*'");
-      expect(commands[1]).toContain("taskkill.exe /F /T /PID $_.ProcessId");
-      expect(commands[1]).toContain(`schtasks.exe /End /TN '${taskName}'`);
+      expect(commands[1]).toContain("System32\\taskkill.exe' /F /T /PID $_.ProcessId");
+      expect(commands[1]).toContain(`System32\\schtasks.exe' /End /TN '${taskName}'`);
       expect(commands[2]).toContain("Register-ScheduledTask");
       expect(commands[3]).toBe(`schtasks.exe /Run /TN ${taskName}`);
     }),

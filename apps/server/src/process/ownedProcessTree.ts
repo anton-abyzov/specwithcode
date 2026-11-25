@@ -22,6 +22,7 @@
  * never thrown.
  */
 import { type ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
+import { windowsPowerShellPath } from "./windowsSystemTools.ts";
 
 export interface ProcessEntry {
   readonly pid: number;
@@ -1006,7 +1007,7 @@ export async function readProcessList(
 ): Promise<ProcessEntry[] | undefined> {
   if (platform === "win32") {
     const text = await run(
-      "powershell.exe",
+      windowsPowerShellPath(),
       ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_LIST],
       timeoutMs,
     );
@@ -1033,7 +1034,7 @@ export const nodeTreeHost = (): TreeHost => ({
   killVerified: async (entries, timeoutMs) => {
     if (entries.length === 0) return;
     await run(
-      "powershell.exe",
+      windowsPowerShellPath(),
       ["-NoProfile", "-NonInteractive", "-Command", windowsKillScript(entries)],
       timeoutMs,
     );

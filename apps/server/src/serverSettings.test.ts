@@ -1584,6 +1584,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         },
+        // Saved settings are marked as past the one-time project settings cleanup.
+        projectSettingsSimplified: true,
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
