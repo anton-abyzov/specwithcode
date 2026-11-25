@@ -932,12 +932,12 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
       })
       .pipe(
         Effect.mapError(
-          (cause) => new TerminalSubprocessCheckError({ cause, command: powerShell }),
+          (cause) => new TerminalSubprocessCheckError({ cause, command: "powershell" }),
         ),
       );
     if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
       return yield* new TerminalSubprocessCheckError({
-        command: powerShell,
+        command: "powershell",
         exitCode: result.code,
         timedOut: result.timedOut,
         stdoutTruncated: result.stdoutTruncated,
