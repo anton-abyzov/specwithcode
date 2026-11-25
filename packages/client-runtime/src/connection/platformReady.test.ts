@@ -5,10 +5,10 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { type PlatformConnectionRegistration, PrimaryConnectionRegistration } from "./catalog.ts";
+import type { PlatformConnectionRegistration } from "./catalog.ts";
 import { followPlatformSource } from "./platformReady.ts";
 import * as EnvironmentRegistry from "./registry.ts";
-import { RELAY_TARGET, TARGET, hasRoutes, makeHarness } from "./registry.testHarness.ts";
+import { RELAY_TARGET, hasRoutes, makeHarness } from "./registry.testHarness.ts";
 
 // Synthetic accounts only: nothing here reaches a real Connect account or machine.
 const A = "user_fixture_a";
@@ -33,7 +33,7 @@ describe("account cleanup and the platform source (1434, AC-04)", () => {
     }),
   );
 
-  it.effect("cleanup waits for a report that includes the window's own machine", () =>
+  it.effect("cleanup waits for the platform's first report, with or without a primary", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([RELAY_TARGET], [], [], {
         accountOwners: { lastAccount: A, machines: { [RELAY]: A } },
@@ -45,12 +45,10 @@ describe("account cleanup and the platform source (1434, AC-04)", () => {
         yield* followPlatformSource(Stream.fromQueue(reports), registry).pipe(Effect.forkScoped);
         const cleanup = yield* registry.setAccount(B).pipe(Effect.forkChild);
         yield* settle;
+        // The descriptor is slow: no report yet, nothing touched.
         expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
-        // The first descriptor read failed: the report has no primary yet.
+        // A failed read (it has its own timeout) still reports, without the primary.
         yield* Queue.offer(reports, []);
-        yield* settle;
-        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(true);
-        yield* Queue.offer(reports, [new PrimaryConnectionRegistration({ target: TARGET })]);
         yield* Fiber.join(cleanup);
         expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY)).toBe(false);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);

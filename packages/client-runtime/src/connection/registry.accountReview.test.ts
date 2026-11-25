@@ -117,10 +117,6 @@ describe("EnvironmentRegistry account switch review fixes (1434)", () => {
         // The local descriptor has not answered: nothing is touched yet.
         expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
         expect(yield* SubscriptionRef.get(registry.accountScope)).toBe(B);
-        // A report without the primary (its first read failed) keeps waiting.
-        yield* registry.reconcilePlatform([]);
-        yield* settle;
-        expect(yield* Ref.get(harness.cacheClears)).toEqual([]);
 
         yield* registry.reconcilePlatform([new PrimaryConnectionRegistration({ target: TARGET })]);
         yield* Fiber.join(cleanup);
