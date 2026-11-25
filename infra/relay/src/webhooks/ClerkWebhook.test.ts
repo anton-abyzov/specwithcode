@@ -10,6 +10,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 
 import * as AccountDeletion from "../account/AccountDeletion.ts";
+import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
@@ -37,7 +38,17 @@ const config = (secret: string | undefined) =>
 /** The relay with no machines: what deletion touched is all that is recorded. */
 const makeRelay = (secret: string | undefined) => {
   const deleted: Array<string> = [];
+  const consumed = new Set<string>();
   const layer = Layer.mergeAll(
+    Layer.mock(DpopProofs.DpopProofReplay, {
+      consume: ({ thumbprint, jti }) =>
+        Effect.sync(() => {
+          const key = `${thumbprint}:${jti}`;
+          if (consumed.has(key)) return false;
+          consumed.add(key);
+          return true;
+        }),
+    }),
     Layer.succeed(
       AccountDeletion.AccountRecords,
       AccountDeletion.AccountRecords.of({
@@ -189,6 +200,36 @@ describe("Clerk user.deleted webhook", () => {
       const response = yield* deliver(relay, body);
       expect(response.status).toBe(204);
       expect(relay.deleted).toEqual([]);
+    });
+  });
+
+  it.effect("answers a replayed delivery without acting on it again", () => {
+    const relay = makeRelay(SECRET);
+    const timestamp = now();
+    const captured = {
+      "svix-id": "msg_1",
+      "svix-timestamp": String(timestamp),
+      "svix-signature": sign("msg_1", timestamp, userDeleted),
+    };
+    return Effect.gen(function* () {
+      expect((yield* deliver(relay, userDeleted, () => captured)).status).toBe(204);
+      expect((yield* deliver(relay, userDeleted, () => captured)).status).toBe(204);
+      expect(relay.deleted).toEqual(["user_2gone"]);
+    });
+  });
+
+  it.effect("acts on Clerk's retry, which signs the same message with a new timestamp", () => {
+    const relay = makeRelay(SECRET);
+    const timestamp = now();
+    const attempt = (at: number) => () => ({
+      "svix-id": "msg_1",
+      "svix-timestamp": String(at),
+      "svix-signature": sign("msg_1", at, userDeleted),
+    });
+    return Effect.gen(function* () {
+      yield* deliver(relay, userDeleted, attempt(timestamp - 1));
+      expect((yield* deliver(relay, userDeleted, attempt(timestamp))).status).toBe(204);
+      expect(relay.deleted).toEqual(["user_2gone", "user_2gone"]);
     });
   });
 });
