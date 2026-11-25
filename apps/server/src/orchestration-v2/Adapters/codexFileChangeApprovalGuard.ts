@@ -8,6 +8,8 @@ const id = (value: unknown): string | undefined =>
 /** A rejected update must never leave an earlier, narrower scope approvable. */
 export function makeCodexFileChangeApprovalGuard() {
   const itemRevisions = new Map<string, Map<string, number | null>>();
+  // The paths each valid revision announced, so an approval can name them all.
+  const itemScopes = new Map<string, Map<string, ReadonlyArray<string>>>();
   const rejectedItems = new Map<string, Set<string>>();
   const rejectedTurns = new Set<string>();
   const rejectedThreads = new Set<string>();
@@ -15,10 +17,14 @@ export function makeCodexFileChangeApprovalGuard() {
   let revision = 0;
 
   return {
-    record(turnId: string, itemId: string, valid: boolean) {
+    record(turnId: string, itemId: string, valid: boolean, scope: ReadonlyArray<string> = []) {
       const items = itemRevisions.get(turnId) ?? new Map<string, number | null>();
       items.set(itemId, valid ? ++revision : null);
       itemRevisions.set(turnId, items);
+      const scopes = itemScopes.get(turnId) ?? new Map<string, ReadonlyArray<string>>();
+      if (valid) scopes.set(itemId, scope);
+      else scopes.delete(itemId);
+      itemScopes.set(turnId, scopes);
     },
     rejectNotification(method: string, params: unknown) {
       const payload = record(params);
@@ -49,6 +55,11 @@ export function makeCodexFileChangeApprovalGuard() {
       } else if (turnId) rejectedTurns.add(turnId);
       else if (threadId) rejectedThreads.add(threadId);
       else unidentifiedRejection = true;
+    },
+    /** The paths of the item's current valid revision; empty when it has none. */
+    scope(input: { threadId: string; turnId: string; itemId: string }): ReadonlyArray<string> {
+      if (this.revision(input) === null) return [];
+      return itemScopes.get(input.turnId)?.get(input.itemId) ?? [];
     },
     revision(input: { threadId: string; turnId: string; itemId: string }): number | null {
       if (

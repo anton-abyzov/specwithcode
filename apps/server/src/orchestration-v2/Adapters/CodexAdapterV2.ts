@@ -7,6 +7,7 @@ import {
 } from "../../project/workflowCapabilities.ts";
 import {
   codexCommandApprovalPrompt,
+  codexFileChangeScope,
   codexFileChangeApprovalPrompt,
   codexPermissionsApprovalPrompt,
   legacyCodexFileChanges,
@@ -4148,7 +4149,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               driver: CODEX_PROVIDER,
               turnItem: artifacts.turnItem,
             });
-            fileChangeApprovalGuard.record(context.nativeTurnId, item.id, true);
+            fileChangeApprovalGuard.record(
+              context.nativeTurnId,
+              item.id,
+              true,
+              artifacts.turnItem.type === "file_change" && artifacts.turnItem.changes
+                ? codexFileChangeScope(artifacts.turnItem.changes)
+                : [],
+            );
           });
 
         const buildWebSearchArtifacts = (input: {
@@ -5644,7 +5652,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind: "file-change",
-              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
+              prompt:
+                codexFileChangeApprovalPrompt({
+                  reason: payload.reason,
+                  grantRoot: payload.grantRoot,
+                  scope: fileChangeApprovalGuard.scope(payload),
+                }) ?? null,
               ...(payload.grantRoot === undefined ? {} : { grantRoot: payload.grantRoot }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();

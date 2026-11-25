@@ -47,6 +47,17 @@ export function projectCodexFileChanges(
   return { fileName: changes[0]!.path, changes };
 }
 
+/** Each projected change as one approval line: its operation and path (a move names both). */
+export function codexFileChangeScope(
+  changes: NonNullable<FileChangeItem["changes"]>,
+): ReadonlyArray<string> {
+  return changes.map((change) =>
+    change.operation === "move"
+      ? `update ${change.oldPath} -> ${change.path}`
+      : `${change.operation} ${change.path}`,
+  );
+}
+
 /** Older approvals include the patch themselves, before any item notification. */
 export function legacyCodexFileChanges(
   fileChanges: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"],
@@ -85,9 +96,11 @@ function approvalReasonLine(reason: string | null | undefined): string[] {
  * is hidden), then the write grant, then the agent's reason.
  */
 export function codexFileChangeApprovalPrompt(input: {
-  readonly reason?: string | null;
-  readonly grantRoot?: string | null;
+  readonly reason?: string | null | undefined;
+  readonly grantRoot?: string | null | undefined;
   readonly fileChanges?: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"];
+  /** Paths the turn already announced for this item, as `codexFileChangeScope` lists them. */
+  readonly scope?: ReadonlyArray<string> | undefined;
 }): string | undefined {
   const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
     left.localeCompare(right),
@@ -98,6 +111,7 @@ export function codexFileChangeApprovalPrompt(input: {
   });
   const grantRoot = input.grantRoot?.trim();
   const lines = [
+    ...(input.scope ?? []),
     ...paths,
     ...(grantRoot ? [`write ${grantRoot}`] : []),
     ...approvalReasonLine(input.reason),

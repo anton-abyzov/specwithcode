@@ -596,6 +596,8 @@ describe("Codex adapter structured file approval evidence", () => {
             event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
         );
         // The prompt states what is approved; the agent's reason is a trailing, labelled line.
+        // Legacy approvals carry their own patch; newer ones name the files the
+        // turn already announced, so every path is on the card (also on mobile).
         const scope =
           scenario === "legacy"
             ? [
@@ -603,7 +605,11 @@ describe("Codex adapter structured file approval evidence", () => {
                 "update /workspace/old.mjs -> /workspace/new.mjs",
                 "add /workspace/unapproved.mjs",
               ]
-            : [];
+            : [
+                "update /workspace/case.mjs",
+                "add /workspace/unapproved.mjs",
+                "update /workspace/old.mjs -> /workspace/new.mjs",
+              ];
         expect(approval).toMatchObject({
           turnItem: {
             prompt: [
