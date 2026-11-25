@@ -53,3 +53,39 @@ it.effect("a revoke-all waits for an issue already holding the lock, then ends i
     assert.deepEqual(revoked, [["session"]]);
   }),
 );
+
+it.effect("refuses a sign-in that read the counter while a revoke-all was running", () =>
+  Effect.gen(function* () {
+    const gate = yield* makeRevocationEpoch;
+    // A code spent mid-revoke: the read lands after the first bump, before the codes are ended.
+    const readDuringRevoke = yield* gate.revokeAll(gate.current);
+
+    const refused = yield* Effect.flip(
+      gate.issueIfUnrevoked(readDuringRevoke, Effect.succeed("session"), () => "revoked"),
+    );
+    assert.equal(refused, "revoked");
+    assert.equal(
+      yield* gate.issueIfUnrevoked(yield* gate.current, Effect.succeed("session"), () => "revoked"),
+      "session",
+    );
+  }),
+);
+
+it.effect("a failed revoke-all still refuses sign-ins that read the counter during it", () =>
+  Effect.gen(function* () {
+    const gate = yield* makeRevocationEpoch;
+    let readDuringRevoke = -1;
+    yield* Effect.flip(
+      gate.revokeAll(
+        gate.current.pipe(
+          Effect.tap((epoch) => Effect.sync(() => (readDuringRevoke = epoch))),
+          Effect.andThen(Effect.fail("store down")),
+        ),
+      ),
+    );
+    const refused = yield* Effect.flip(
+      gate.issueIfUnrevoked(readDuringRevoke, Effect.succeed("session"), () => "revoked"),
+    );
+    assert.equal(refused, "revoked");
+  }),
+);

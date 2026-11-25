@@ -6,8 +6,9 @@ import * as Semaphore from "effect/Semaphore";
  *
  * A sign-in reads `current` when it starts (a pairing code spent, an MCP code
  * minted) and issues its session through `issueIfUnrevoked`. Revoke-all bumps
- * the counter under the same lock before it ends sessions and codes, so a
- * sign-in that began before the revoke never gets a session after it.
+ * the counter under the same lock before it ends sessions and codes and again
+ * when it is done (also when it fails), so a sign-in that began before or
+ * during the revoke never gets a session after it; it signs in again.
  */
 export interface RevocationEpoch {
   readonly current: Effect.Effect<number>;
@@ -32,12 +33,11 @@ export const makeRevocationEpoch: Effect.Effect<RevocationEpoch> = Effect.gen(fu
         epoch === startedAt ? issue : Effect.fail(refused()),
       ),
     );
+  const bump = Effect.sync(() => {
+    epoch += 1;
+  });
   const revokeAll = <A, E, R>(revoke: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-    lock.withPermits(1)(
-      Effect.sync(() => {
-        epoch += 1;
-      }).pipe(Effect.andThen(revoke)),
-    );
+    lock.withPermits(1)(bump.pipe(Effect.andThen(revoke), Effect.ensuring(bump)));
   return {
     current: Effect.sync(() => epoch),
     issueIfUnrevoked,
