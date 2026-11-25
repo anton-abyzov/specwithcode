@@ -27,6 +27,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2RuntimeRequest,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -448,7 +449,16 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(auto.approvalPolicy, "on-request");
       assert.equal(auto.approvalsReviewer, "auto_review");
       assert.equal(auto.sandboxPolicy?.type, "workspaceWrite");
-      assert.equal(fullAccess.approvalPolicy, "never");
+      // Full access still lets MCP access prompts (browser and app access) reach the app.
+      assert.deepEqual(fullAccess.approvalPolicy, {
+        granular: {
+          mcp_elicitations: true,
+          request_permissions: false,
+          rules: false,
+          sandbox_approval: false,
+          skill_approval: false,
+        },
+      });
       assert.equal(fullAccess.approvalsReviewer, "user");
       assert.equal(fullAccess.sandboxPolicy?.type, "dangerFullAccess");
     }),
@@ -2385,6 +2395,138 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         firstTerminal: Deferred.await(firstTerminal),
       };
     });
+
+  const mcpAccessTranscript = (input: {
+    readonly scenario: string;
+    readonly nativeThreadId: string;
+    readonly nativeTurnId: string;
+    readonly prompt: string;
+    readonly request: Record<string, unknown>;
+    readonly answer: Record<string, unknown>;
+  }) =>
+    makeCodexReplayTranscript({
+      scenario: input.scenario,
+      entries: [
+        ...codexReplayPreamble(input),
+        {
+          type: "emit_inbound",
+          frame: { id: 0, method: "mcpServer/elicitation/request", params: input.request },
+        },
+        { type: "expect_outbound", frame: { id: 0, result: input.answer } },
+        {
+          type: "emit_inbound",
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: input.nativeThreadId,
+              turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "completed" }),
+            },
+          },
+        },
+      ],
+    });
+
+  it.effect("cancels an MCP access prompt it cannot show, so no refusal is saved", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "mcp-url-thread";
+      const nativeTurnId = "mcp-url-turn";
+      const prompt = "Sign in to the dashboard.";
+      const harness = yield* makeCodexReplayHarness(
+        mcpAccessTranscript({
+          scenario: "mcp-url-cancel",
+          nativeThreadId,
+          nativeTurnId,
+          prompt,
+          request: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            serverName: "browser",
+            mode: "url",
+            message: "Finish signing in to continue.",
+            elicitationId: "sign-in-1",
+            url: "https://example.com/authorize",
+          },
+          answer: { action: "cancel" },
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-url-cancel-attempt"),
+          text: prompt,
+        }),
+      );
+      yield* harness.firstTerminal;
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.scoped,
+      Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+    ),
+  );
+
+  it.effect("shows a Full access browser access prompt to the app instead of losing it", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "mcp-browser-thread";
+      const nativeTurnId = "mcp-browser-turn";
+      const prompt = "Read the dashboard in the browser.";
+      const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+      const harness = yield* makeCodexReplayHarness(
+        mcpAccessTranscript({
+          scenario: "mcp-browser-full-access",
+          nativeThreadId,
+          nativeTurnId,
+          prompt,
+          request: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            serverName: "browser",
+            mode: "form",
+            message: "Allow access to example.com?",
+            requestedSchema: {
+              type: "object",
+              properties: { approval: { type: "string", enum: ["once", "always"] } },
+              required: ["approval"],
+            },
+          },
+          answer: { action: "accept", content: { approval: "once" } },
+        }),
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+            ? Queue.offer(pending, event.runtimeRequest)
+            : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-browser-full-access-attempt"),
+          text: prompt,
+        }),
+      );
+      const request = yield* Queue.take(pending);
+      assert.equal(request.kind, "mcp-elicitation");
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: request.id,
+        decision: "accept",
+      });
+      yield* harness.firstTerminal;
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.scoped,
+      Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+    ),
+  );
 
   it.effect.each(["supported", "unsupported", "unsaved", "invalid"] as const)(
     "delivers native history with %s app-server protocol",

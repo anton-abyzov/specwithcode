@@ -714,6 +714,16 @@ const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapterRuntimeRequestResponseError,
 );
 
+export const CODEX_FULL_ACCESS_APPROVAL_POLICY = {
+  granular: {
+    mcp_elicitations: true,
+    request_permissions: false,
+    rules: false,
+    sandbox_approval: false,
+    skill_approval: false,
+  },
+} as const satisfies CodexSchema.V2TurnStartParams__AskForApproval;
+
 function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
   readonly approvalsReviewer: CodexSchema.V2TurnStartParams__ApprovalsReviewer;
@@ -746,7 +756,12 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
       };
     case "full-access":
       return {
-        approvalPolicy: "never",
+        // Everything Codex would ask about is refused or skipped as with
+        // "never", except MCP access prompts (browser and app access): under
+        // "never" Codex refuses those itself and the app never sees them.
+        // They reach the app, where Full access answers the plain yes-or-no
+        // ones (FullAccessApprovals) unless team rules keep them for a person.
+        approvalPolicy: CODEX_FULL_ACCESS_APPROVAL_POLICY,
         approvalsReviewer: "user",
         sandboxPolicy: {
           type: "dangerFullAccess",
@@ -5760,14 +5775,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
             // Unsupported elicitation shapes cannot express an approval, so
-            // decline instead of presenting a request the user cannot answer.
+            // cancel instead of presenting a request the user cannot answer.
+            // Not decline: that reads as the person's refusal, which a browser
+            // tool can save as a lasting denial for the site.
             if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
-              yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
+              yield* Effect.logWarning("Cancelled an unsupported MCP elicitation.", {
                 serverName: payload.serverName,
                 mode: payload.mode,
               });
               return {
-                action: "decline",
+                action: "cancel",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
             const context =
@@ -5776,11 +5793,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 : yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               yield* Effect.logWarning(
-                "Declined an MCP elicitation without an active Codex turn context.",
+                "Cancelled an MCP elicitation without an active Codex turn context.",
                 { serverName: payload.serverName },
               );
               return {
-                action: "decline",
+                action: "cancel",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
             const studioToolResponse = studioMcpToolApprovalAutoResponse(payload);
