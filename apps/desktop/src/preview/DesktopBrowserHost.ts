@@ -30,6 +30,28 @@ const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBr
 const lineEncoder = new TextEncoder();
 const ANNOTATING_MESSAGE =
   "This page is being annotated in the desktop app. Input resumes when the annotation ends.";
+const WRAPPED_COMMAND_DEPTH = 4;
+
+/**
+ * True when a command is input or may carry input: `Input.*` itself, or a
+ * `Target.sendMessageToTarget` whose inner message is input, is wrapped too
+ * deeply, or cannot be read.
+ */
+const carriesInput = (method: string, params: unknown, depth = 0): boolean => {
+  if (method.startsWith("Input.")) return true;
+  if (method !== "Target.sendMessageToTarget") return false;
+  if (depth >= WRAPPED_COMMAND_DEPTH) return true;
+  const message = (params as { message?: unknown } | undefined)?.message;
+  if (typeof message !== "string") return true;
+  try {
+    const inner: unknown = JSON.parse(message);
+    const innerMethod = (inner as { method?: unknown } | null)?.method;
+    if (typeof innerMethod !== "string") return true;
+    return carriesInput(innerMethod, (inner as { params?: unknown }).params, depth + 1);
+  } catch {
+    return true;
+  }
+};
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -108,7 +130,7 @@ export const make = Effect.gen(function* () {
         send: (method, params, sessionId) => {
           // Checked at dispatch, so input that arrives before an annotation
           // starts and is sent after it is refused too.
-          if (method.startsWith("Input.") && tab.debuggee.annotating?.() === true) {
+          if (tab.debuggee.annotating?.() === true && carriesInput(method, params)) {
             return Promise.reject(new Error(ANNOTATING_MESSAGE));
           }
           return sessionId === undefined

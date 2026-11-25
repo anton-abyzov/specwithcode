@@ -173,4 +173,72 @@ describe("DesktopBrowserHost", () => {
       expect(sent).toContain("DOM.enable");
     }).pipe(Effect.scoped),
   );
+
+  it.effect("refuses input wrapped in another command while the person annotates", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const sent: Array<{ method: string; params: unknown }> = [];
+      const sendCommand = debuggee.tab.debugger.sendCommand.bind(debuggee.tab.debugger);
+      (debuggee.tab.debugger as unknown as { sendCommand: unknown }).sendCommand = (
+        method: string,
+        params?: unknown,
+        ...rest: Array<unknown>
+      ) => {
+        sent.push({ method, params });
+        return (sendCommand as (...args: Array<unknown>) => Promise<unknown>)(
+          method,
+          params,
+          ...rest,
+        );
+      };
+      let annotating = true;
+      host.attach(key, {
+        ...debuggee.tab,
+        annotating: () => annotating,
+      } as DesktopBrowserHost.DesktopBrowserTabDebugger);
+      const reader = yield* takeEvents(host, 7).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const wrap = (inner: unknown) => ({
+        sessionId: "child-session",
+        message: typeof inner === "string" ? inner : encodeJson(inner),
+      });
+      const command = (id: number, method: string, params: unknown) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({ id, method, params, sessionId: "studio-preview-page" }),
+          }),
+        );
+      const input = { id: 1, method: "Input.dispatchMouseEvent", params: { type: "mousePressed" } };
+      yield* command(1, "Target.sendMessageToTarget", wrap(input));
+      yield* command(2, "Target.sendMessageToTarget", wrap("{not json"));
+      yield* command(
+        3,
+        "Target.sendMessageToTarget",
+        wrap({ id: 2, method: "Target.sendMessageToTarget", params: wrap(input) }),
+      );
+      yield* command(4, "Target.sendMessageToTarget", wrap({ id: 3, method: "DOM.enable" }));
+      yield* command(5, "DOM.enable", {});
+      // The annotation ends; wrapped input reaches the page again.
+      annotating = false;
+      yield* command(6, "Target.sendMessageToTarget", wrap(input));
+      debuggee.release();
+      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      const replies = (yield* Fiber.join(reader))
+        .slice(1)
+        .map((event) => JSON.parse((event as { message: string }).message));
+      for (const id of [1, 2, 3]) {
+        expect(replies.find((reply) => reply.id === id)?.error?.message, `id ${id}`).toMatch(
+          /annotated/,
+        );
+      }
+      const wrapped = sent.filter((entry) => entry.method === "Target.sendMessageToTarget");
+      expect(wrapped.map((entry) => (entry.params as { message: string }).message)).toEqual([
+        encodeJson({ id: 3, method: "DOM.enable" }),
+        encodeJson(input),
+      ]);
+    }).pipe(Effect.scoped),
+  );
 });
