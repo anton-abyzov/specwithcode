@@ -39,6 +39,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.browserExtensionStop]: AuthTerminalOperateScope,
   // Lets another machine's threads act in the signed-in Chrome here.
   [WS_METHODS.browserExtensionPeer]: AuthAccessWriteScope,
+  // A person drives a held Chrome tab here from another device (1488).
+  [WS_METHODS.browserSignInStart]: AuthTerminalOperateScope,
+  [WS_METHODS.browserSignInFrame]: AuthTerminalOperateScope,
+  [WS_METHODS.browserSignInInput]: AuthTerminalOperateScope,
+  [WS_METHODS.browserSignInEnd]: AuthTerminalOperateScope,
   [WS_METHODS.nativeConnectionApply]: AuthFilesystemWriteScope,
   // Skills control center. Writes widen per action kind in `projectSkillsActionScopes`.
   [WS_METHODS.projectsSkillsVersions]: AuthOrchestrationReadScope,

@@ -8,6 +8,8 @@ import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
  * A `permission` is a macOS privacy permission (Full Disk Access) that only
  * the user can turn on, in System Settings: its card resolves when the
  * service sees the grant, and the user can only decline it from the card.
+ * A `sign-in` is one sign-in the person does themselves in a machine's
+ * Chrome (1488): Allow opens the view and is never stored as a grant.
  */
 export const AccessRequestSubjectKind = Schema.Literals([
   "app",
@@ -15,6 +17,7 @@ export const AccessRequestSubjectKind = Schema.Literals([
   "machine",
   "folder",
   "permission",
+  "sign-in",
 ]);
 export type AccessRequestSubjectKind = typeof AccessRequestSubjectKind.Type;
 
