@@ -7,6 +7,7 @@ import { actionMachineJa } from "./actionMachine/ja";
 import { coordinatorMessagesJa } from "./coordinatorMessages/ja";
 import { providerSignInJa } from "./providerSignIn/ja";
 import { limitHopsJa } from "./limitHops/ja";
+import { guidedTourJa } from "./guidedTour/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
@@ -18,6 +19,7 @@ export const ja: PhraseCatalog = {
   ...coordinatorMessagesJa,
   ...providerSignInJa,
   ...limitHopsJa,
+  ...guidedTourJa,
   About: "このアプリについて",
   "Accent color": "アクセントカラー",
   Account: "アカウント",

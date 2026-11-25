@@ -397,7 +397,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             ) : (
               <nav aria-label={tx("Settings sections")} className="flex flex-col gap-4">
                 {groupSettingsNavItems(navItems).map((group) => (
-                  <div key={group.label} className="flex flex-col gap-1">
+                  <div
+                    key={group.label}
+                    data-settings-nav-group={group.label}
+                    className="flex flex-col gap-1"
+                  >
                     <div className="px-2 text-xs font-medium text-sidebar-muted-foreground">
                       {tx(group.label)}
                     </div>

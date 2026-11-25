@@ -7,6 +7,7 @@ import { actionMachineRu } from "./actionMachine/ru";
 import { coordinatorMessagesRu } from "./coordinatorMessages/ru";
 import { providerSignInRu } from "./providerSignIn/ru";
 import { limitHopsRu } from "./limitHops/ru";
+import { guidedTourRu } from "./guidedTour/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
 export const ru: PhraseCatalog = {
@@ -18,6 +19,7 @@ export const ru: PhraseCatalog = {
   ...coordinatorMessagesRu,
   ...providerSignInRu,
   ...limitHopsRu,
+  ...guidedTourRu,
   About: "О приложении",
   "Accent color": "Акцентный цвет",
   Account: "Аккаунт",

@@ -182,6 +182,8 @@ import {
 } from "./settingsLayout";
 import { DictationSettings } from "./DictationSettings";
 import { searchableSetting } from "./settingsSearch";
+import { GuidedTourButton } from "../studio/guidedTour/GuidedTourSetting";
+import { GUIDED_TOUR_SETTING_DESCRIPTION } from "../studio/guidedTour/guidedTour.logic";
 import {
   TIMELINE_DETAIL_DESCRIPTIONS,
   TIMELINE_DETAIL_LABELS,
@@ -3506,6 +3508,11 @@ export function GeneralSettingsPanel() {
             />
           ) : null}
           {canHostVoiceCall() ? <DictationSettings /> : null}
+          <SettingsRow
+            {...searchableSetting("guided-tour")}
+            description={GUIDED_TOUR_SETTING_DESCRIPTION}
+            control={<GuidedTourButton />}
+          />
           <SettingsRow
             {...searchableSetting("what-you-can-do")}
             description="A short checklist on Overview, ticked from what you have set up. It goes away once everything is done."

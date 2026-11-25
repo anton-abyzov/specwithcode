@@ -544,6 +544,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "guided-tour",
+    title: "Guided tour",
+    to: "/settings/general",
+    searchTerms: [
+      "tour onboarding guide walkthrough help learn where settings skills machines tracks",
+    ],
+  },
+  {
     id: "what-you-can-do",
     title: "Show What you can do",
     to: "/settings/general",
