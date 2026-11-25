@@ -367,7 +367,11 @@ describe("ArtifactAppPowerService consent", () => {
           assert.include(dialog?.detail, "Add an item to the menu bar");
           assert.notInclude(dialog?.detail, "keyboard shortcuts");
           // The frame may be at this version's address and nowhere else.
-          assert.deepEqual(fixture.versionUrls, [[ID, URL_1]]);
+          // What the window showed before is ended first.
+          assert.deepEqual(fixture.versionUrls, [
+            [ID, null],
+            [ID, URL_1],
+          ]);
 
           const html = yield* fixture.fileSystem.readFile(`${fixture.attachmentsDir}/${V1}.html`);
           const sha256 = NodeCrypto.createHash("sha256").update(html).digest("hex");
@@ -1024,6 +1028,25 @@ describe("ArtifactAppPowerService permissions", () => {
       "its window was replaced",
       (fixture: Fixture) => {
         fixture.liveWindows.set(ID, windowOf(ID));
+      },
+    ],
+    [
+      "its view took the page away",
+      (fixture: Fixture) => {
+        // The view's "close" waits for the request in flight; the version ends before it.
+        void Effect.runFork(fixture.powers.permissions(WC, { action: "close" }));
+      },
+    ],
+    [
+      "its view moved to another version",
+      (fixture: Fixture) => {
+        void Effect.runFork(open(fixture, V2));
+      },
+    ],
+    [
+      "its install was removed",
+      (fixture: Fixture) => {
+        fixture.apps.delete(ID);
       },
     ],
     [

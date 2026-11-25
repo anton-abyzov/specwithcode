@@ -455,6 +455,29 @@ describe("ArtifactAppWindows", () => {
       assert.isFalse(yield* windows.isFrameOnVersion(ID));
       assert.isTrue(blocked("will-frame-navigate", VERSION));
       assert.deepEqual(strayed, [ID, ID, ID, ID]);
+      // The version's address answering with an error, or failing to load, is not the version.
+      const failed = (code: number, isMainFrame = false) =>
+        emit(fake.contentsListeners, "did-fail-load", {}, code, "x", VERSION, isMainFrame);
+      for (const lost of [
+        () => emit(fake.contentsListeners, "did-frame-navigate", {}, VERSION, 404, "x", false),
+        () => emit(fake.contentsListeners, "did-frame-navigate", {}, VERSION, undefined, "", false),
+        () => failed(-105),
+        () => failed(-105, true),
+      ]) {
+        yield* windows.setVersionUrl(ID, Option.some(VERSION));
+        strayed.length = 0;
+        lost();
+        assert.isFalse(yield* windows.isFrameOnVersion(ID));
+        assert.deepEqual(strayed, [ID]);
+      }
+      // A navigation that was only stopped leaves the document where it was.
+      yield* windows.setVersionUrl(ID, Option.some(VERSION));
+      strayed.length = 0;
+      failed(-3);
+      failed(-3, true);
+      assert.isTrue(yield* windows.isFrameOnVersion(ID));
+      yield* windows.setVersionUrl(ID, Option.none());
+      strayed.push(ID, ID, ID, ID);
       // With no version named there is nothing to end.
       landed(WINDOW_URL, true);
       assert.deepEqual(strayed, [ID, ID, ID, ID]);

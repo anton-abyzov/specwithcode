@@ -238,6 +238,8 @@ const make = Effect.gen(function* () {
       if (!(yield* windows.isFrameOnVersion(installId))) return Option.none<Verified>();
       const { version, powers } = yield* grantedNow(installId, session.attachmentId);
       if (Option.isNone(version) || powers.length === 0) return Option.none<Verified>();
+      // The install may have been removed meanwhile; its record goes first.
+      if (Option.isNone(yield* records.get(installId))) return Option.none<Verified>();
       // The file was read meanwhile. The window may have closed, been replaced, moved to
       // another version, or its frame may have left: each is asked again, now.
       if (sessions.get(installId) !== session) return Option.none<Verified>();
@@ -427,6 +429,20 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  /**
+   * Ends the version a window shows. The session and the frame's address go first and at
+   * once, so a request already in flight finds neither when it comes to act; what the
+   * version held is given back as soon as that request is done.
+   */
+  const end = (installId: string) =>
+    Effect.suspend(() => {
+      const session = sessions.get(installId);
+      sessions.delete(installId);
+      return windows
+        .setVersionUrl(installId, Option.none())
+        .pipe(Effect.andThen(lock.withPermits(1)(releaseHeld(installId, session))));
+    });
+
   const state = (installId: string, session: Session) =>
     Effect.gen(function* () {
       const { version, powers } = yield* grantedNow(installId, session.attachmentId);
@@ -467,8 +483,10 @@ const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(-1)),
         Effect.ensuring(Effect.sync(() => asking.delete(installId))),
       );
-    // The window closed or moved to another version while the dialog was up: the answer is for nothing.
+    // The window closed, reloaded or moved to another version while the dialog was up: the
+    // answer is for nothing.
     if (sessions.get(installId) !== session) return;
+    if (!(yield* windows.isFrameOnVersion(installId))) return;
     // Only the Allow button allows. A closed dialog, a failed one and any other number do not.
     const allowed = response === ARTIFACT_APP_CONSENT_ALLOW;
     const key = versionKey(installId, session.attachmentId);
@@ -503,7 +521,7 @@ const make = Effect.gen(function* () {
     input: Extract<DesktopArtifactAppPermissionsInput, { action: "open" }>,
   ) {
     // Whatever the window showed before holds nothing from here on.
-    yield* release(installId);
+    yield* end(installId);
     const session: Session = {
       attachmentId: input.attachmentId,
       declared: [],
@@ -568,9 +586,7 @@ const make = Effect.gen(function* () {
       if (input.action === "open") return yield* open(installId.value, input);
       const session = sessions.get(installId.value);
       if (input.action === "close") {
-        yield* release(installId.value);
-        sessions.delete(installId.value);
-        yield* windows.setVersionUrl(installId.value, Option.none());
+        yield* end(installId.value);
         return NO_PERMISSIONS;
       }
       if (session === undefined) return NO_PERMISSIONS;

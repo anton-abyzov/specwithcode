@@ -89,6 +89,9 @@ export function isArtifactAppFrameNavigationAllowed(input: {
   return target !== null && target === input.versionUrl;
 }
 
+// Chromium's ERR_ABORTED: the navigation was stopped before anything loaded.
+const NAVIGATION_ABORTED = -3;
+
 // A frame's empty first document and inline `srcdoc` content: no address was loaded.
 const INLINE_FRAME_URLS: ReadonlySet<string> = new Set(["about:blank", "about:srcdoc"]);
 
@@ -330,15 +333,24 @@ const make = Effect.gen(function* () {
     });
     // What actually loaded. A frame that arrives anywhere else, by a road the
     // two guards above did not see, ends this version's powers.
-    window.webContents.on("did-frame-navigate", (_event, url, _code, _status, isMainFrame) => {
-      if (isMainFrame === true) {
-        // The window's own document was replaced (a reload, say). The view that named the
-        // version is gone with it, so the version is over until the new view names one.
-        if (windows.get(installId) === window && versionUrls.delete(installId)) stray();
-        return;
-      }
+    // The window's own document was replaced (a reload, say) or failed to load. The view
+    // that named the version is gone with it, so the version is over until a new view names one.
+    const windowDocumentGone = () => {
+      if (windows.get(installId) === window && versionUrls.delete(installId)) stray();
+    };
+    window.webContents.on("did-frame-navigate", (_event, url, code, _status, isMainFrame) => {
+      if (isMainFrame === true) return windowDocumentGone();
       if (typeof url === "string" && INLINE_FRAME_URLS.has(url)) return;
-      if (typeof url !== "string" || !frameMayGoTo(url)) stray();
+      if (typeof url !== "string" || !frameMayGoTo(url)) return stray();
+      // The right address with an error answer (an expired link, say) is not the version.
+      if (typeof code !== "number" || !(code >= 200 && code < 400)) stray();
+    });
+    // A load that failed left an error page where the document was. A navigation that was
+    // only stopped (ours are) leaves the document in place and is not one of these.
+    window.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
+      if (code === NAVIGATION_ABORTED) return;
+      if (isMainFrame === true) return windowDocumentGone();
+      stray();
     });
     // A page process that ended holds no version: what comes back is a new document.
     window.webContents.on("render-process-gone", stray);
