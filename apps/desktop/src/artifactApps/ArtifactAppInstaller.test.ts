@@ -440,6 +440,30 @@ describe("ArtifactAppInstaller uninstall leaves files that are not its launcher"
     ),
   );
 
+  it.effect("keeps a bundle whose launcher script was swapped, even with its plist kept", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const bundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Morning dashboard.app",
+        );
+        const macOS = path.join(bundle, "Contents", "MacOS");
+        for (const entry of yield* fileSystem.readDirectory(macOS)) {
+          yield* fileSystem.writeFileString(path.join(macOS, entry), "#!/bin/sh\necho other\n");
+        }
+
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(h.calls.trashed, []);
+        assert.isTrue(yield* fileSystem.exists(bundle));
+      }),
+    ),
+  );
+
   it.effect("never removes through an apps folder that became a link", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
@@ -513,6 +537,8 @@ describe("ArtifactAppInstaller on Windows", () => {
     const directories: Array<string> = [];
     const removed: Array<string> = [];
     const existing = new Set<string>();
+    // Paths that are links (a junction on Windows).
+    const links = new Set<string>();
     const recordsDirectory = recordsPath.slice(0, recordsPath.lastIndexOf("/"));
     const isRecords = (path: string) => path.startsWith(recordsDirectory);
     const notFound = (path: string, method: string) =>
@@ -526,7 +552,11 @@ describe("ArtifactAppInstaller on Windows", () => {
       ...real,
       exists: (path) => (isRecords(path) ? real.exists(path) : Effect.succeed(existing.has(path))),
       readLink: (path) =>
-        isRecords(path) ? real.readLink(path) : Effect.fail(notFound(path, "readLink")),
+        isRecords(path)
+          ? real.readLink(path)
+          : links.has(path)
+            ? Effect.succeed("D:\\Elsewhere")
+            : Effect.fail(notFound(path, "readLink")),
       readDirectory: (path) =>
         isRecords(path) ? real.readDirectory(path) : Effect.fail(notFound(path, "readDirectory")),
       makeDirectory: (path, options) =>
@@ -544,7 +574,7 @@ describe("ArtifactAppInstaller on Windows", () => {
               existing.delete(path);
             }),
     });
-    return { fileSystem, directories, removed, existing };
+    return { fileSystem, directories, removed, existing, links };
   };
 
   it.effect("creates Start menu and Desktop shortcuts with a per-install identity", () =>
@@ -583,6 +613,27 @@ describe("ArtifactAppInstaller on Windows", () => {
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
         assert.deepEqual(recording.removed, [`${startMenu}\\Morning dashboard.lnk`]);
         assert.deepEqual(yield* h.records.list, []);
+      }),
+    ),
+  );
+  it.effect("leaves the Desktop shortcut when the Desktop folder became a link", () =>
+    withHome(({ home, recordsPath, fileSystem: real }) =>
+      Effect.gen(function* () {
+        const recording = recordingFileSystem(real, recordsPath);
+        const h = yield* harness(
+          { platform: "win32", fileSystem: recording.fileSystem },
+          home,
+          recordsPath,
+        );
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail(JSON.stringify(result));
+        for (const shortcut of h.calls.shortcuts) recording.existing.add(shortcut.path);
+        recording.links.add("C:\\Users\\alice\\Desktop");
+
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(recording.removed, [
+          "C:\\Users\\alice\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\SpecWithCode Apps\\Morning dashboard.lnk",
+        ]);
       }),
     ),
   );

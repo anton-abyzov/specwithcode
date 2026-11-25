@@ -383,16 +383,24 @@ const make = Effect.gen(function* () {
     path: string,
     installId: string,
   ) {
-    if (yield* isSymbolicLink(location.folder)) return false;
+    // The folder this path is in: the Start menu and the Desktop shortcut each have their own.
+    if (yield* isSymbolicLink(rules.dirname(path))) return false;
     if (yield* isSymbolicLink(path)) return false;
     if (!(yield* exists(path))) return false;
     switch (location.kind) {
       case "mac-bundle": {
-        const launcher = location.files.find(
+        // Every file this install wrote that names its id must still name it:
+        // the launcher script that runs, not only the Info.plist beside it.
+        const marked = location.files.filter(
           (file) => file.kind === "text" && file.contents.includes(installId),
         );
-        if (launcher === undefined) return false;
-        return yield* fileMentions(rules.join(path, launcher.relativePath), installId);
+        if (marked.length === 0) return false;
+        for (const file of marked) {
+          const target = rules.join(path, file.relativePath);
+          if (yield* isSymbolicLink(target)) return false;
+          if (!(yield* fileMentions(target, installId))) return false;
+        }
+        return true;
       }
       case "windows-shortcuts":
         return Option.match(yield* host.readShortcutArgs(path), {

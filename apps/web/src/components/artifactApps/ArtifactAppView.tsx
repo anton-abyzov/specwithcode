@@ -123,6 +123,12 @@ function InstalledPageWindow({ app }: { readonly app: DesktopArtifactApp }) {
     history.error === null &&
     !historyFailed &&
     historyPages < MAX_HISTORY_PAGES;
+  // A failed read (thrown, or reported as the history's error) or the paging
+  // guard leaves older history unread, so a missing page there is unknown.
+  const historyIncomplete =
+    page === null &&
+    history.hasMoreHistory &&
+    (historyFailed || history.error !== null || historyPages >= MAX_HISTORY_PAGES);
   useEffect(() => {
     if (!canPageBack || history.loading || historyPages >= MAX_HISTORY_PAGES) return;
     // Counted when the read settles: the history's own loading flag holds off a second read.
@@ -136,8 +142,8 @@ function InstalledPageWindow({ app }: { readonly app: DesktopArtifactApp }) {
   const state = artifactAppViewState({
     install: app,
     routeInstallId: app.installId,
-    // History that could not be read is not proof the page is gone.
-    environmentUnreachable: unreachable || historyFailed,
+    // History that could not be read to its start is not proof the page is gone.
+    environmentUnreachable: unreachable || historyIncomplete,
     threadListLoaded: shell.data?.snapshot._tag === "Some",
     threadListed: threadShell !== null,
     threadDeleted: threadShell?.deletedAt != null,
