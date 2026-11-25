@@ -104,6 +104,12 @@ export class LiveSheetStore {
    * window shows beyond it is exactly what the home machine has not confirmed.
    */
   #home: SheetYDoc | null = null;
+  /**
+   * Changes received while the home machine said the sheet was not saved.
+   * They are kept out of `#home` until it is: if the home machine starts over
+   * from the file before then, they are part of what is made again.
+   */
+  #unsavedAtHome: Uint8Array[] = [];
   /** Each sheet this store has shown, with its tabs' ids: what an edit built on it started from. */
   #shown = new WeakMap<SheetDocument, SheetSnapshot>();
   readonly #listeners = new Set<() => void>();
@@ -197,6 +203,7 @@ export class LiveSheetStore {
       return;
     }
     if (event.type === "save") {
+      if (event.saved) this.#confirmSaved();
       this.#set({ unsaved: event.saved ? null : (event.detail ?? "") });
       return;
     }
@@ -205,10 +212,11 @@ export class LiveSheetStore {
       if (bytes === null) return;
       const fresh = this.#doc === null || this.#epoch !== event.epoch || this.#discard;
       // The home machine began again from the file (a restart): an edit still on its way is not in it.
+      // So is one the home machine had merged and said it could not save.
       const lost =
         this.#doc !== null &&
         this.#epoch !== event.epoch &&
-        (this.#unsent > 0 || this.#undelivered);
+        (this.#unsent > 0 || this.#undelivered || this.#unsavedAtHome.length > 0);
       this.#undelivered = false;
       if (fresh) {
         const mine = this.#snapshot?.document ?? null;
@@ -217,6 +225,7 @@ export class LiveSheetStore {
         applySheetUpdate(doc, bytes, REMOTE);
         this.#home = createSheetYDoc();
         applySheetUpdate(this.#home, bytes, REMOTE);
+        this.#unsavedAtHome = [];
         this.#adopt(doc, event.epoch);
         this.#unsent = 0;
         // What this window changed and the home machine never got is made again on the new sheet.
@@ -226,7 +235,7 @@ export class LiveSheetStore {
       } else {
         // The same log after a reconnect: merge, then send what the home machine lacks.
         applySheetUpdate(this.#doc!, bytes, REMOTE);
-        if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
+        this.#heardFromHome(bytes, event.unsaved !== undefined);
         const missing =
           event.access === "edit"
             ? encodeSheetMissing(this.#doc!, sheetStateVectorOf(bytes))
@@ -251,13 +260,27 @@ export class LiveSheetStore {
     }
     if (bytes === null || this.#doc === null) return;
     applySheetUpdate(this.#doc, bytes, REMOTE);
-    if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
+    this.#heardFromHome(bytes, this.#state.unsaved !== null);
     this.#set({
       ...(event.activity === undefined
         ? {}
         : { activity: [...this.#state.activity, event.activity].slice(-ACTIVITY_SHOWN) }),
       ...this.#read(),
     });
+  }
+
+  /** A change the home machine sent: part of what it has, once it has it saved. */
+  #heardFromHome(bytes: Uint8Array, unsaved: boolean): void {
+    if (unsaved) this.#unsavedAtHome.push(bytes);
+    else if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
+  }
+
+  /** The home machine saved the sheet: what it sent meanwhile is now part of what it has. */
+  #confirmSaved(): void {
+    for (const bytes of this.#unsavedAtHome) {
+      if (this.#home !== null) applySheetUpdate(this.#home, bytes, REMOTE);
+    }
+    this.#unsavedAtHome = [];
   }
 
   /**
@@ -279,8 +302,16 @@ export class LiveSheetStore {
     const trial = cloneSheetYDoc(doc);
     writeSheetChange(trial, sheetSnapshotByName(trial, base), mine, LOCAL);
     if (!validateSheetDocument(readSheetYDoc(trial).document).ok) return false;
-    writeSheetChange(doc, sheetSnapshotByName(doc, base), mine, LOCAL);
-    return true;
+    const from = sheetSnapshotByName(doc, base);
+    writeSheetChange(doc, from, mine, LOCAL);
+    // An edit to a tab the new document does not have (renamed or removed in the file) could
+    // not be made: the rest was, and the window says that something may be missing.
+    const held = new Set(readSheetYDoc(doc).tabIds);
+    return base.tabs.every((tab, index) => {
+      if (held.has(from.tabIds[index]!)) return true;
+      const kept = mine.tabs.find((entry) => entry.name === tab.name);
+      return kept !== undefined && JSON.stringify(kept) === JSON.stringify(tab);
+    });
   }
 
   get editable(): boolean {

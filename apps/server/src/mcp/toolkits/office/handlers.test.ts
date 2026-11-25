@@ -693,6 +693,37 @@ it.effect(
   2_000,
 );
 
+it.effect("reads an open sheet from its live session, without the file", () => {
+  const parsed = parseSheetDocument(JSON.stringify({ v: 1, kind: "sheet", ...BUDGET }));
+  if (!parsed.ok) throw new Error(parsed.error);
+  const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "office-mcp-live-read-"));
+  const sessions = Layer.mock(DocumentSession.DocumentSession)({
+    settle: () =>
+      Effect.succeed(
+        Option.some({
+          name: "q3-budget",
+          relativePath: ".specweave/artifacts/q3-budget.sheet.json",
+          absolutePath: NodePath.join(folder, ".specweave/artifacts/q3-budget.sheet.json"),
+          document: parsed.document,
+          revision: "open-sheet-revision",
+          created: false,
+        }),
+      ),
+  });
+  return Effect.gen(function* () {
+    // Nothing is on disk at all: what the reader gets is what the session holds.
+    const read = yield* call("sheet_read", { name: "q3-budget" });
+    expect(read).toMatchObject({
+      name: "q3-budget",
+      title: parsed.document.title,
+      revision: "open-sheet-revision",
+      tabs: parsed.document.tabs.map((tab) => tab.name),
+    });
+    expect((read as { cells: ReadonlyArray<unknown> }).cells.length).toBeGreaterThan(0);
+    NodeFS.rmSync(folder, { recursive: true, force: true });
+  }).pipe(Effect.provide(layerFor(scopeFor("codex"), caller, folder, sessions)));
+});
+
 it.effect("hands a write to the sheet's live session when a window has it open", () => {
   const parsed = parseSheetDocument(JSON.stringify({ v: 1, kind: "sheet", ...BUDGET }));
   if (!parsed.ok) throw new Error(parsed.error);
@@ -731,7 +762,7 @@ it.effect("hands a write to the sheet's live session when a window has it open",
       merge: true,
       by: { id: caller.id },
     });
-    // A read first has the session write what the windows show.
+    // A read asks the session first; with none open on the sheet it goes to the file.
     yield* call("sheet_read", { name: "q3-budget" }).pipe(Effect.exit);
     expect(settled).toEqual(["q3-budget"]);
     NodeFS.rmSync(folder, { recursive: true, force: true });

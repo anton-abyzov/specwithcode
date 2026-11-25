@@ -116,8 +116,12 @@ function writeOrdered(
   };
   const assigned: number[] = [];
   let previous = Number.NEGATIVE_INFINITY;
+  /** An entry this edit left as it was, which someone else removed meanwhile: it stays removed. */
+  const removedElsewhere = (key: string, value: unknown): boolean =>
+    beforeValues.has(key) && same(beforeValues.get(key), value) && !isOrdered(target.get(key));
   for (let index = 0; index < after.length; index += 1) {
     const [key, value] = after[index]!;
+    if (removedElsewhere(key, value)) continue;
     const current = placed(key);
     if (current !== null && current.o > previous) {
       if (!same(beforeValues.get(key), value)) target.set(key, { v: value, o: current.o });
@@ -149,6 +153,7 @@ function writeOrdered(
   const increasing = assigned.every((order, index) => index === 0 || order > assigned[index - 1]!);
   if (!increasing) {
     after.forEach(([key, value], index) => {
+      if (removedElsewhere(key, value)) return;
       const current = placed(key);
       const kept = current !== null && same(beforeValues.get(key), value) ? current.v : value;
       target.set(key, { v: kept, o: index + 1 });

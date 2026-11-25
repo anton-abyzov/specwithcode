@@ -417,6 +417,38 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
       }),
     );
 
+    it.effect("removes a chart for an agent that read the open sheet and left it out", () =>
+      Effect.gen(function* () {
+        const { target, cwd, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        NodeFS.writeFileSync(file, "{ half written");
+        yield* window.send((document) => ({
+          ...document,
+          tabs: [
+            {
+              ...document.tabs[0]!,
+              charts: [
+                { id: "chart-window", type: "bar", title: "Old", labels: "A2:A3", values: "B2:B3" },
+              ],
+            },
+          ],
+        }));
+        // The agent reads the open sheet, chart and all, though the file has not got it.
+        const read = Option.getOrThrow(
+          yield* sessions.settle({ workspaceRoot: cwd, name: "budget" }),
+        );
+        expect(read.document.tabs[0]!.charts).toHaveLength(1);
+        NodeFS.writeFileSync(file, TEXT);
+        const result = yield* agentWrite(
+          cwd,
+          { tabs: [{ name: "Plan", charts: [] }] },
+          { expectedRevision: read.revision },
+        );
+        expect(Option.getOrThrow(result).document.tabs[0]!.charts ?? []).toEqual([]);
+      }),
+    );
+
     it.effect("finds no session through a link to a sheet open under another project", () =>
       Effect.gen(function* () {
         const { target, file, read } = yield* project;
@@ -467,15 +499,22 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
             cell: "B2",
           });
 
-          // A saved file reads as the sheet does: the reader uses the file.
+          // An open sheet is read from its session, under the revision of the file that has it all.
           const name = { workspaceRoot: cwd, name: "budget" };
-          expect(Option.isNone(yield* sessions.settle(name))).toBe(true);
+          const current = Option.getOrThrow(yield* sessions.settle(name));
+          expect(current.revision).toBe(sheetContentRevision(NodeFS.readFileSync(file, "utf8")));
+          expect(Option.isNone(yield* sessions.settle({ workspaceRoot: cwd, name: "other" }))).toBe(
+            true,
+          );
           // A file that will not take the next change: the reader gets the sheet the windows see.
           NodeFS.writeFileSync(file, "{ half written");
           yield* window.send(put("A4", "Not in the file"));
           const open = Option.getOrThrow(yield* sessions.settle(name));
           expect(open.document.tabs[0]!.cells.A4).toBe("Not in the file");
           expect(open).toMatchObject({ name: "budget", absolutePath: file });
+          // Its revision is the open sheet's, not the file's: a write built on this read is current,
+          // so a chart the agent saw and leaves out is removed, not put back.
+          expect(open.revision).not.toBe(current.revision);
         }),
     );
 
@@ -582,6 +621,54 @@ it.layer(layerTest, { excludeTestServices: true })("DocumentSession", (it) => {
         expect(window.cells()).toMatchObject({ B2: 2000, A4: "Unsaved" });
         expect(cells()).toMatchObject({ B2: 2000, A4: "Unsaved" });
       }),
+    );
+
+    it.effect("keeps the log of a sheet that went away before its last changes were saved", () =>
+      Effect.gen(function* () {
+        const { target, file } = yield* project;
+        const sessions = yield* DocumentSession.DocumentSession;
+        const window = yield* openWindow(target, "window-aaaa");
+        yield* window.send(put("A4", "Never saved"));
+        // Moved out of the folder: there is no file here to follow.
+        NodeFS.renameSync(
+          file,
+          NodePath.join(NodePath.dirname(NodePath.dirname(file)), "gone.json"),
+        );
+        yield* sessions.reconcile(target);
+        expect((yield* window.nextOf("closed")).reason).toContain(
+          "before the last changes were saved",
+        );
+        expect(logOf(file).updates).toBe(2);
+      }),
+    );
+
+    it.effect(
+      "starts a log written late from the sheet the file has, so earlier edits still count as unsaved",
+      () =>
+        Effect.gen(function* () {
+          const { target, file, cells } = yield* project;
+          const sessions = yield* DocumentSession.DocumentSession;
+          const window = yield* openWindow(target, "window-aaaa");
+          // Neither the log nor the file can be written for the first edit.
+          const blocked = NodePath.join(NodePath.dirname(file), SHEET_SIDECAR_DIR);
+          NodeFS.writeFileSync(blocked, "in the way");
+          NodeFS.writeFileSync(file, "{ half written");
+          yield* window.send(put("A4", "First"));
+          expect((yield* window.nextOf("save")).saved).toBe(false);
+          // The log can be written again; the file still cannot.
+          NodeFS.unlinkSync(blocked);
+          yield* window.send(put("A5", "Second"));
+          const log = logOf(file);
+          const loaded = loadSheet(BUDGET, log.text, "new-epoch", sheetContentRevision(TEXT));
+          expect(loaded.unsaved).toBe(true);
+          expect(readSheetYDoc(loaded.doc).document.tabs[0]!.cells).toMatchObject({
+            A4: "First",
+            A5: "Second",
+          });
+          NodeFS.writeFileSync(file, TEXT);
+          yield* sessions.settleAll;
+          expect(cells()).toMatchObject({ A4: "First", A5: "Second" });
+        }),
     );
 
     it.effect("ends the session and removes the sidecar when the document is deleted", () =>

@@ -28,6 +28,8 @@ import {
   writeSheetChange,
 } from "./sheetYDoc.ts";
 
+const validated = (input: unknown): SheetDocument => sheet(input);
+
 function sheet(input: unknown): SheetDocument {
   const checked = validateSheetDocument(input);
   if (!checked.ok) throw new Error(checked.error);
@@ -217,6 +219,28 @@ describe("sheet as a Yjs document", () => {
     const merged = readSheetYDoc(doc).document.tabs[0]!;
     expect(merged.widths).toEqual({ A: 200 });
     expect(merged.formats?.B3).toEqual({ kind: "percent", decimals: 1 });
+  });
+
+  it("leaves a chart someone else removed when an edit built on the earlier sheet ends", () => {
+    const chart = { id: "chart-1", type: "bar", title: "Costs", labels: "A2:A3", values: "B2:B3" };
+    const start = sheet({
+      title: "Charts",
+      tabs: [{ name: "Plan", cells: { A2: "Rent", B2: 1 }, charts: [chart] }],
+    });
+    const doc = sheetYDocFrom(start);
+    const atStart = readSheetYDoc(doc);
+    const theirs = { ...atStart.document, tabs: [{ ...atStart.document.tabs[0]!, charts: [] }] };
+    writeSheetChange(doc, atStart, validated(theirs), "theirs");
+    expect(readSheetYDoc(doc).document.tabs[0]!.charts).toBeUndefined();
+    // This writer's edit still names the chart, unchanged, and changes one width.
+    const mine = {
+      ...atStart.document,
+      tabs: [{ ...atStart.document.tabs[0]!, widths: { A: 200 } }],
+    };
+    writeSheetChange(doc, atStart, mine, "mine");
+    const merged = readSheetYDoc(doc).document.tabs[0]!;
+    expect(merged.widths).toEqual({ A: 200 });
+    expect(merged.charts).toBeUndefined();
   });
 
   it("writes nothing when the sheet did not change", () => {

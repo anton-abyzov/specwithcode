@@ -139,7 +139,6 @@ export const layer = Access.toLayer(OfficeToolkit, {
       const { caller } = yield* readCaller();
       if (caller === undefined) return yield* noCaller;
       const sheets = yield* OfficeArtifactService.OfficeArtifactService;
-      // An open sheet is written to its file first, so the read is what the windows show.
       const live = yield* DocumentSession.DocumentSession;
       const shown = yield* sheets
         .projectFolder({ projectId: caller.projectId, threadId: caller.id })
@@ -147,8 +146,8 @@ export const layer = Access.toLayer(OfficeToolkit, {
           Effect.flatMap((workspaceRoot) => live.settle({ workspaceRoot, name: input.name })),
           Effect.orElseSucceed(() => Option.none<SavedSheet>()),
         );
-      // A file that would not take the open sheet's changes, or cannot be read right now:
-      // the reader gets the open sheet, not the file.
+      // A sheet that is open is read from its session, which holds what the windows see even
+      // when the file would not take it or cannot be read right now.
       const saved = Option.isSome(shown)
         ? shown.value
         : yield* sheets

@@ -327,8 +327,13 @@ function restoreSheet(
       pending.length === 0 && after === 0 && marked !== null && fileRevision !== undefined
         ? marked.revision
         : null,
-    // Kept edits stay told apart from the state they were made on until they are saved.
-    base: kept ? { revision: marked!.revision, state: marked!.state } : null,
+    // Kept edits stay told apart from the state they were made on until they are saved, and
+    // a log that ends in a mark of the file as it is has that state to start a short log from.
+    base:
+      marked !== null &&
+      (kept || (after === 0 && pending.length === 0 && marked.revision === fileRevision))
+        ? { revision: marked.revision, state: marked.state }
+        : null,
     pending,
     unsaved,
   };
@@ -384,41 +389,53 @@ export async function readSheetSidecar(sidecarPath: string): Promise<string | nu
  * writing it), so the next line added does not run into it and make the whole
  * log unreadable.
  */
-async function trimTornSidecar(sidecarPath: string): Promise<void> {
+async function trimTornSidecar(sidecarPath: string): Promise<boolean> {
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(sidecarPath, NodeFS.constants.O_RDWR | NO_FOLLOW);
-  } catch {
-    return;
+  } catch (error) {
+    // No log yet is fine. A log that cannot be looked at is not added to: a line
+    // run into a cut-off one would make all of it unreadable.
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
   }
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.size === 0) return;
+    if (!stat.isFile()) return false;
+    if (stat.size === 0) return true;
     const last = Buffer.alloc(1);
     await handle.read(last, 0, 1, stat.size - 1);
-    if (last[0] === 0x0a) return;
+    if (last[0] === 0x0a) return true;
     const whole = await handle.readFile();
     await handle.truncate(whole.lastIndexOf(0x0a) + 1);
+    return true;
   } catch {
-    // Left as it is: the log is then read as far as its last whole line.
+    return false;
   } finally {
     await handle.close().catch(() => undefined);
   }
 }
 
-/** Move a sidecar to stand beside a document that was renamed in its folder. */
+/**
+ * Move a sidecar to stand beside a document that was renamed in its folder.
+ * A sidecar already there (the document was opened under its new name
+ * meanwhile) is never replaced: false then, and the old one stays.
+ */
 export async function moveSheetSidecar(from: string, to: string): Promise<boolean> {
   if ((await sidecarFolder(from, false)) === null) return false;
-  return NodeFSP.rename(from, to).then(
-    () => true,
-    () => false,
-  );
+  try {
+    // A hard link fails where the name is taken, which a rename would silently replace.
+    await NodeFSP.link(from, to);
+  } catch {
+    return false;
+  }
+  await NodeFSP.unlink(from).catch(() => undefined);
+  return true;
 }
 
 /** Add lines to the sidecar. False when it could not be written. */
 export async function appendSheetSidecar(sidecarPath: string, text: string): Promise<boolean> {
   if ((await sidecarFolder(sidecarPath, true)) === null) return false;
-  await trimTornSidecar(sidecarPath);
+  if (!(await trimTornSidecar(sidecarPath))) return false;
   try {
     const handle = await NodeFSP.open(
       sidecarPath,
