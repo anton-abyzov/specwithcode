@@ -104,16 +104,19 @@ export function useCopySecrets({
    * Saves the person's change. Only what differs from the choice they saw is recorded, so a
    * file another window left out after this one last drew stays out.
    */
-  const choose = (next: SecretsChoice, seen: SecretsChoice = choice) => {
-    recordExclusions(storageKey, seen, next);
+  const choose = (change: SecretsChoice, seen: SecretsChoice = choice) => {
+    recordExclusions(storageKey, seen, change);
+    // A copy the person asked to send every secret on keeps that through later changes.
+    const since = change.since ?? seen.since;
+    const next = since !== undefined ? { ...change, since } : change;
     setChosen(next);
     keep(next);
   };
-  /** The person asked for every secret ("Sync again with secrets"): no exclusion stays recorded. */
-  const includeAll = (): SecretsChoice => {
-    recordExclusions(storageKey, settled(), ALL_SECRETS);
-    return ALL_SECRETS;
-  };
+  /**
+   * The person asked for every secret on the next copy ("Sync again with secrets"): what any
+   * window left out before now does not apply to that copy, and stays recorded for others.
+   */
+  const includeAll = (): SecretsChoice => ({ ...ALL_SECRETS, since: Date.now() });
   // Another window recorded an exclusion: show it here too.
   const [, heard] = useState(0);
   useEffect(() => {

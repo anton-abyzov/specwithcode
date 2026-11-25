@@ -292,6 +292,11 @@ export function reshowFinishedCopy(key: string, pointer: PendingCopy): PendingCo
 export interface SecretsChoice {
   readonly included: boolean;
   readonly out: ReadonlyArray<string>;
+  /**
+   * When the person asked for every secret on this copy ("Sync again with secrets"):
+   * exclusions any window recorded before then do not apply to it; later ones do.
+   */
+  readonly since?: number;
 }
 
 export interface CopyDraft {
@@ -325,6 +330,7 @@ export function untickedSecrets(
   return {
     included: base.included && current.included,
     out: [...new Set([...base.out, ...current.out, ...added])],
+    ...(current.since !== undefined ? { since: current.since } : {}),
   };
 }
 
@@ -343,19 +349,23 @@ export function recordExclusions(
   next: SecretsChoice,
 ): void {
   const prefix = exclusionPrefix(storageKey);
+  const at = String(Date.now());
   try {
     for (const path of next.out)
-      if (!before.out.includes(path)) localStorage.setItem(`${prefix}file:${path}`, "1");
+      if (!before.out.includes(path)) localStorage.setItem(`${prefix}file:${path}`, at);
     for (const path of before.out)
       if (!next.out.includes(path)) localStorage.removeItem(`${prefix}file:${path}`);
-    if (before.included && !next.included) localStorage.setItem(`${prefix}off`, "1");
+    if (before.included && !next.included) localStorage.setItem(`${prefix}off`, at);
     else if (!before.included && next.included) localStorage.removeItem(`${prefix}off`);
   } catch {
     /* Without storage only this window's own choice applies. */
   }
 }
 
-/** The choice with every exclusion any window recorded for this project's copies. */
+/**
+ * The choice with every exclusion any window recorded for this project's copies, except
+ * those recorded before the person asked for every secret on this copy (`since`).
+ */
 export function settledSecrets(storageKey: string, choice: SecretsChoice): SecretsChoice {
   const prefix = exclusionPrefix(storageKey);
   const out: Array<string> = [];
@@ -364,6 +374,10 @@ export function settledSecrets(storageKey: string, choice: SecretsChoice): Secre
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index);
       if (!key?.startsWith(prefix)) continue;
+      // An unreadable time counts as now: it is never overridden.
+      const at = Number(localStorage.getItem(key));
+      if (choice.since !== undefined && Number.isFinite(at) && at > 0 && at <= choice.since)
+        continue;
       const name = key.slice(prefix.length);
       if (name === "off") off = true;
       else if (name.startsWith("file:")) out.push(name.slice("file:".length));
@@ -373,7 +387,7 @@ export function settledSecrets(storageKey: string, choice: SecretsChoice): Secre
   }
   const added = out.filter((path) => !choice.out.includes(path)).sort();
   if (added.length === 0 && !(off && choice.included)) return choice;
-  return { included: choice.included && !off, out: [...choice.out, ...added] };
+  return { ...choice, included: choice.included && !off, out: [...choice.out, ...added] };
 }
 
 /**
@@ -388,7 +402,12 @@ export function readSecretsChoice(value: unknown): SecretsChoice | undefined {
   if (!value || typeof value !== "object") return undefined;
   const { included, out } = value as Partial<SecretsChoice>;
   if (typeof included !== "boolean" || !Array.isArray(out)) return undefined;
-  return { included, out: out.filter((path): path is string => typeof path === "string") };
+  const since = (value as { since?: unknown }).since;
+  return {
+    included,
+    out: out.filter((path): path is string => typeof path === "string"),
+    ...(typeof since === "number" && Number.isFinite(since) ? { since } : {}),
+  };
 }
 
 export const folderCopyDraftKey = (environmentId: string, projectId: string) =>
