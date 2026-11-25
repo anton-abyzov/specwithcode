@@ -157,6 +157,9 @@ The `production` GitHub environment must define these Actions secrets:
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 - `FCM_SERVICE_ACCOUNT` when Android push is enabled
+- `CLERK_WEBHOOK_SIGNING_SECRET`, the signing secret (`whsec_...`) of the Clerk webhook endpoint
+  `https://<relay domain>/v1/webhooks/clerk` subscribed to `user.deleted`. Without it the deploy
+  still runs and that endpoint answers 503 to every request.
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The release workflow reads the production relay's

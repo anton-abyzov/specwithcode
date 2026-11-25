@@ -67,7 +67,6 @@ import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
-import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedEndpointCloudflareBindings from "./environments/ManagedEndpointCloudflareBindings.ts";
 import * as ManagedTunnelBinding from "./environments/ManagedTunnelBinding.ts";
@@ -79,6 +78,7 @@ import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as Reports from "./reports/Reports.ts";
+import * as ClerkWebhook from "./webhooks/ClerkWebhook.ts";
 
 const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
@@ -174,6 +174,10 @@ export const layer = Api.make(
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
 
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
+    // Optional, as FCM_SERVICE_ACCOUNT: without it the Clerk webhook answers 503.
+    const clerkWebhookSigningSecret = Option.getOrUndefined(
+      yield* RelayConfiguration.clerkWebhookSigningSecretConfig,
+    );
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
     const clerkJwtKey = Option.getOrUndefined(
@@ -263,6 +267,7 @@ export const layer = Api.make(
         clerkPublishableKey,
         clerkJwtAudience,
         ...(clerkJwtKey ? { clerkJwtKey } : {}),
+        ...(clerkWebhookSigningSecret ? { clerkWebhookSigningSecret } : {}),
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain,
@@ -523,6 +528,7 @@ export const layer = Api.make(
         ),
         HttpApiScalar.layer(RelayApi, { path: "/docs" }),
         RelayHttpApi.layerDocsRedirectRoute,
+        ClerkWebhook.layerClerkWebhookRoute.pipe(Layer.provide(layerRuntime)),
       ).pipe(
         Layer.provide([Etag.layerWeak, layerHttpPlatformNotSupported, RelayHttpApi.layerCors]),
       ),
