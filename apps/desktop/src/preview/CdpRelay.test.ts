@@ -153,6 +153,42 @@ describe("CDP relay target scope", () => {
   });
 });
 
+describe("CDP relay browser commands on page sessions", () => {
+  it("refuses browser-level commands sent on the page or a frame session", async () => {
+    const send = vi.fn(async (method: string) => ({ method }));
+    const written: Array<Record<string, unknown>> = [];
+    const relay = createCdpRelayConnection(makeTarget(send), (raw) =>
+      written.push(JSON.parse(raw)),
+    );
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    relay.event(
+      "Target.attachedToTarget",
+      { sessionId: "iframe-1", targetInfo: { targetId: "IFRAME-1", type: "iframe" } },
+      "",
+    );
+    const page = (id: number, method: string, params: unknown = {}, sessionId?: string) =>
+      relay.receive(
+        JSON.stringify({ id, method, params, sessionId: sessionId ?? "studio-preview-page" }),
+      );
+    // A permission override set through the tab's debugger would skip the person's Allow prompt.
+    page(2, "Browser.grantPermissions", { permissions: ["clipboardReadWrite"] });
+    page(3, "Browser.setPermission", { permission: { name: "geolocation" }, setting: "granted" });
+    page(4, "Browser.grantPermissions", { permissions: ["notifications"] }, "iframe-1");
+    // Page commands keep working.
+    page(5, "Runtime.evaluate", { expression: "1" });
+    await settle();
+    for (const id of [2, 3, 4]) {
+      expect(
+        written.find((m) => m["id"] === id),
+        `id ${id}`,
+      ).toHaveProperty("error");
+    }
+    expect(written.find((m) => m["id"] === 5)).toHaveProperty("result");
+    expect(send.mock.calls.map((call) => call[0])).toEqual(["Runtime.evaluate"]);
+  });
+});
+
 describe("CDP relay extra sessions", () => {
   it("gives a second page session the page's commands and events", async () => {
     const send = vi.fn(async () => ({}));
