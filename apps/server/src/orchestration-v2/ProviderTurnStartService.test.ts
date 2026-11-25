@@ -572,6 +572,8 @@ function makeLocalCommandHarness(input: {
     thread: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
     } as OrchestrationV2ThreadProjection["thread"],
@@ -953,7 +955,14 @@ function makeLocalCommandHarness(input: {
             )
           : Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
-          resolve: () => Effect.succeed({} as never),
+          // The thread is on Full access; the provider does not offer it, so
+          // its policy runs Supervised.
+          resolve: () =>
+            Effect.succeed({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: null,
+            } as never),
         }),
       ),
     ),
@@ -1737,6 +1746,11 @@ effectIt.effect(
       );
       expect(harness.projection().runs[0]?.status).toBe("running");
       expect(harness.projection().attempts[0]?.status).toBe("running");
+      // The turn keeps the modes the provider was given, not the thread's.
+      expect(harness.projection().attempts[0]?.startedModes).toEqual({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+      });
       // A repeated durable start effect cannot spend the command again.
       yield* harness.start;
       expect(harness.nativeStarts).toHaveBeenCalledOnce();
