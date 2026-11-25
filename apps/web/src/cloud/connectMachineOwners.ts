@@ -23,7 +23,7 @@ export function readConnectMachineOwners(store: Storage | null = storage()): Acc
     if (raw === null) return null;
     const value: unknown = JSON.parse(raw);
     if (typeof value !== "object" || value === null) return null;
-    const { lastAccount, machines, saving } = value as Record<string, unknown>;
+    const { lastAccount, machines, saving, localMachine } = value as Record<string, unknown>;
     if (lastAccount !== null && (typeof lastAccount !== "string" || lastAccount.length === 0)) {
       return null;
     }
@@ -45,6 +45,7 @@ export function readConnectMachineOwners(store: Storage | null = storage()): Acc
       lastAccount,
       machines: owners,
       ...(Object.keys(pending).length > 0 ? { saving: pending } : {}),
+      ...(typeof localMachine === "string" && localMachine.length > 0 ? { localMachine } : {}),
     };
   } catch {
     return null;

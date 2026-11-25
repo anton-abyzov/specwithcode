@@ -24,6 +24,12 @@ export interface AccountOwners {
    * here means the app stopped in between; the next plan settles it.
    */
   readonly saving?: Readonly<Record<string, PendingOwnerSave>>;
+  /**
+   * The environment id of this window's own machine, as the platform last
+   * reported it. Cleanup never touches it, even when the local server cannot
+   * be read this time.
+   */
+  readonly localMachine?: string;
 }
 
 export interface PendingOwnerSave {
@@ -48,6 +54,12 @@ export interface AccountOwnersInput {
    * their owner and are not tried again until the next start or account change.
    */
   readonly pending?: ReadonlySet<string>;
+  /**
+   * With nothing stored yet: the last account settled in this session before
+   * this one, whose plan never ran. Machines already saved count as its, as
+   * they would have had its plan run first (D-03).
+   */
+  readonly adoptedFrom?: string | null;
 }
 
 export interface AccountOwnersPlan {
@@ -74,7 +86,7 @@ function isAccount(owner: string | undefined): owner is string {
 export function planAccountOwners(input: AccountOwnersInput): AccountOwnersPlan {
   const { account, savedMachines } = input;
   const firstRecord = input.stored === null;
-  const stored = input.stored ?? { lastAccount: null, machines: {} };
+  const stored = input.stored ?? { lastAccount: input.adoptedFrom ?? null, machines: {} };
   const pending = input.pending ?? new Set<string>();
   const switched =
     account !== null && stored.lastAccount !== null && stored.lastAccount !== account;
@@ -105,6 +117,7 @@ export function planAccountOwners(input: AccountOwnersInput): AccountOwnersPlan 
       lastAccount: owed ? stored.lastAccount : (account ?? stored.lastAccount),
       machines,
       ...(stored.saving === undefined ? {} : { saving: stored.saving }),
+      ...(stored.localMachine === undefined ? {} : { localMachine: stored.localMachine }),
     },
   };
 }
@@ -191,6 +204,7 @@ export function ownerForSave(
 /** Whether two records differ. */
 export function accountOwnersChanged(stored: AccountOwners | null, next: AccountOwners): boolean {
   if (stored === null || stored.lastAccount !== next.lastAccount) return true;
+  if (stored.localMachine !== next.localMachine) return true;
   if (JSON.stringify(stored.saving ?? {}) !== JSON.stringify(next.saving ?? {})) return true;
   const before = Object.entries(stored.machines);
   const after = Object.entries(next.machines);

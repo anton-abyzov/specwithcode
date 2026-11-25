@@ -197,9 +197,9 @@ export function createEnvironmentCatalogAtoms<R, E>(
     label: "environment-catalog:remove-relay-environments",
     scheduler: commandScheduler,
     concurrency: serial,
-    execute: (_input: void) =>
+    execute: (options?: { readonly forgetRemoved?: boolean }) =>
       EnvironmentRegistry.EnvironmentRegistry.pipe(
-        Effect.flatMap((registry) => registry.removeRelayEnvironments()),
+        Effect.flatMap((registry) => registry.removeRelayEnvironments(options)),
       ),
   });
   const setEnabled = createRuntimeCommand(runtime, {

@@ -14,7 +14,9 @@ import { ManagedRelayAuthProvider } from "./managedAuth";
 
 const auth = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 const clerkSession = vi.hoisted(() => ({ current: null as { expireAt: Date } | null }));
-const removeRelayEnvironments = vi.hoisted(() => vi.fn(async () => ({})));
+const removeRelayEnvironments = vi.hoisted(() =>
+  vi.fn(async (_options?: { readonly forgetRemoved?: boolean }) => ({})),
+);
 
 vi.mock("@clerk/react", () => ({
   useAuth: () => auth.current,

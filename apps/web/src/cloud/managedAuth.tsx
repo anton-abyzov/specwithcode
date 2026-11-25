@@ -102,13 +102,22 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
     // `keepMachines` after an expiry or a renew (AC-16): the token cache still
     // resets, but the machines reached through Connect stay, to say "Needs sign-in".
-    const queueAccountCleanup = (options?: { readonly keepMachines?: boolean }) => {
+    // `switching`: a fleet pairing still out must not bring back a machine the
+    // switch removes, so removed machines are skipped for it (1434, AC-05).
+    const queueAccountCleanup = (options?: {
+      readonly keepMachines?: boolean;
+      readonly switching?: boolean;
+    }) => {
       const keepMachines = options?.keepMachines === true;
       if (!keepMachines) clearConnectSessionRecord();
       const previousTransition = accountTransitionRef.current ?? Promise.resolve();
       accountTransitionRef.current = previousTransition.then(async () => {
         const results = await Promise.all([
-          keepMachines ? Promise.resolve(null) : removeRelayEnvironments(),
+          keepMachines
+            ? Promise.resolve(null)
+            : removeRelayEnvironments(
+                options?.switching === true ? { forgetRemoved: true } : undefined,
+              ),
           settleAsyncResult(() =>
             runtime.runPromiseExit(
               ManagedRelay.ManagedRelayClient.pipe(
@@ -161,7 +170,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
         keptConnectMachinesBelongToAnother(readConnectSessionRecord(), userId)
       ) {
         deactivateManagedRelayAuthentication();
-        activateAfterTransition(queueAccountCleanup());
+        activateAfterTransition(queueAccountCleanup({ switching: true }));
       } else {
         activateAfterTransition(accountTransitionRef.current ?? Promise.resolve());
       }

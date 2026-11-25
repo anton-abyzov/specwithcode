@@ -1,6 +1,8 @@
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import type { PlatformConnectionRegistration } from "./catalog.ts";
@@ -17,24 +19,43 @@ export class AwaitPlatformPrimary extends Context.Reference<boolean>(
   { defaultValue: () => false },
 ) {}
 
+export interface PlatformReady {
+  readonly await: Effect.Effect<void>;
+  /** The window's own machine, from the latest report that included it. */
+  readonly primary: Effect.Effect<EnvironmentId | undefined>;
+  readonly reconciled: (
+    registrations: ReadonlyArray<PlatformConnectionRegistration>,
+  ) => Effect.Effect<void>;
+  readonly ended: Effect.Effect<void>;
+}
+
 /**
- * Open once the platform has reported the window's own machine, or once its
- * source has ended without one (a hosted page, mobile, or a desktop with its
- * local environment off). A report without the primary, such as a first
- * descriptor read that failed, keeps it closed.
+ * Open once the platform has reported, or once its source has ended (a hosted
+ * page, mobile, or a desktop with its local environment off). The web source
+ * reports only after its descriptor read returns, and that read has its own
+ * timeout, so a report without the primary is a definite failure, not a slow
+ * answer: cleanup then runs, and `primary` stays unknown, so callers fall back
+ * to the own machine recorded by an earlier start. Silence means slow: wait.
  */
 export const makePlatformReady = Effect.fn("EnvironmentRegistry.makePlatformReady")(function* (
   required: boolean,
-) {
+): Effect.fn.Return<PlatformReady> {
   const ready = yield* Deferred.make<void>();
   if (!required) yield* Deferred.succeed(ready, undefined);
   const open = Deferred.succeed(ready, undefined).pipe(Effect.asVoid);
+  // The window's own machine, from the latest report that included it.
+  const primary = yield* Ref.make<EnvironmentId | undefined>(undefined);
   return {
     await: Deferred.await(ready),
-    reconciled: (registrations: ReadonlyArray<PlatformConnectionRegistration>) =>
-      registrations.some((registration) => registration._tag === "PrimaryConnectionRegistration")
-        ? open
-        : Effect.void,
+    primary: Ref.get(primary),
+    reconciled: (registrations: ReadonlyArray<PlatformConnectionRegistration>) => {
+      const reported = registrations.find(
+        (registration) => registration._tag === "PrimaryConnectionRegistration",
+      );
+      return (
+        reported === undefined ? Effect.void : Ref.set(primary, reported.target.environmentId)
+      ).pipe(Effect.andThen(open));
+    },
     ended: open,
   };
 });

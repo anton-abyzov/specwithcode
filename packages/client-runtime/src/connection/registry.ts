@@ -24,15 +24,10 @@ import {
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
 } from "./catalog.ts";
-import {
-  accountOwnersChanged,
-  cancelPendingSave,
-  finishPendingSave,
-  planAccountOwners,
-  settlePendingSaves,
-} from "./accountOwners.ts";
-import { makeOwnerMemory, makeOwnerSaves, savedFingerprints } from "./registryOwnerSaves.ts";
+import { cancelPendingSave, finishPendingSave } from "./accountOwners.ts";
+import { makeOwnerMemory, makeOwnerSaves } from "./registryOwnerSaves.ts";
 import { makeEntryFlags } from "./registryEntryFlags.ts";
+import { makeAccountCleanup } from "./registryAccount.ts";
 import { AwaitPlatformPrimary, makePlatformReady } from "./platformReady.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -196,7 +191,15 @@ export class EnvironmentRegistry extends Context.Service<
      * Drops the Studio Connect route of every environment, after a cloud sign-out
      * or account change. Environments with no other route are removed.
      */
-    readonly removeRelayEnvironments: () => Effect.Effect<
+    readonly removeRelayEnvironments: (options?: {
+      /**
+       * On an account switch: a machine left with no route is skipped for
+       * automatic pairing, as the switch's own removals are, so a fleet pairing
+       * still out cannot bring it back (1434, AC-05). A sign-out keeps today's
+       * rule and leaves no marker (D-02).
+       */
+      readonly forgetRemoved?: boolean;
+    }) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
       | ConnectionAttemptError
@@ -820,109 +823,18 @@ export const make = Effect.gen(function* () {
   const owners = makeOwnerMemory(accountOwners);
   const { beginOwnerSaveLocked, endOwnerSaveLocked, takesMachineLocked } = makeOwnerSaves(owners);
 
-  /** Machines this client saved, never platform-managed ones. */
-  const savedMachineIds = Effect.gen(function* () {
-    const platform = yield* Ref.get(platformEnvironmentIds);
-    return [...(yield* Ref.get(persistedEnvironmentIds))]
-      .filter((environmentId) => !platform.has(environmentId))
-      .sort();
-  });
-
-  let settledSaves = false;
-
-  /** Plans owners for `account`, writes them, and returns the machines to forget. */
-  const planOwnersLocked = Effect.fn("EnvironmentRegistry.planOwnersLocked")(function* (
-    account: string | null,
-  ) {
-    const read = yield* owners.read;
-    const saved = yield* savedMachineIds;
-    // Saves cut short are settled once, by the first plan: only then do the
-    // loaded entries match the catalog. A note left later in this session waits
-    // for the next start, or is replaced by the next save of that machine.
-    const settle = read !== null && !settledSaves;
-    settledSaves = true;
-    const stored = settle
-      ? settlePendingSaves(read, savedFingerprints(yield* SubscriptionRef.get(entries), saved))
-      : read;
-    const failed = yield* Ref.get(failedRemovals);
-    const plan = planAccountOwners({
-      stored,
-      account,
-      savedMachines: saved,
-      pending: failed.account === account ? failed.ids : new Set<string>(),
-    });
-    if (owners.stale() || accountOwnersChanged(read, plan.next)) yield* owners.write(plan.next);
-    return plan.drop as ReadonlyArray<EnvironmentId>;
-  });
-
-  /** Whether a machine still leaves for `account` now. Callers hold `accountLock`. */
-  const stillLeavesLocked = Effect.fn("EnvironmentRegistry.stillLeavesLocked")(function* (
-    environmentId: EnvironmentId,
-    account: string | null,
-  ) {
-    const saved = yield* savedMachineIds;
-    if (!saved.includes(environmentId)) return false;
-    const plan = planAccountOwners({
-      stored: yield* owners.read,
-      account,
-      savedMachines: [environmentId],
-    });
-    return plan.drop.includes(environmentId);
-  });
-
-  const setAccount = Effect.fn("EnvironmentRegistry.setAccount")(function* (
-    account: string | null,
-  ) {
-    // Set at once, not behind the lock: a removal still running for an earlier
-    // account sees the change before its next machine and stops.
-    yield* SubscriptionRef.set(accountScope, account);
-    // Planning waits until the window's own machine is known, so a saved route
-    // that shares its environment id is never taken for another machine.
-    yield* platformReady.await;
-    const drop = yield* accountLock.withPermits(1)(
-      Effect.gen(function* () {
-        if ((yield* SubscriptionRef.get(accountScope)) !== account) return [];
-        yield* Ref.update(failedRemovals, (current) =>
-          current.account === account ? current : { account, ids: new Set<string>() },
-        );
-        return yield* planOwnersLocked(account);
-      }),
-    );
-    if (drop.length === 0) return;
-    for (const environmentId of drop) {
-      const exit = yield* withLeaseLock(
-        environmentId,
-        accountLock.withPermits(1)(
-          Effect.gen(function* () {
-            // Checked under the lease: a removal planned for an account that
-            // has since left never runs.
-            if ((yield* SubscriptionRef.get(accountScope)) !== account) return;
-            // Planned again here: the new account may have saved it since.
-            if (!(yield* stillLeavesLocked(environmentId, account))) return;
-            yield* accountOwners.forgotten(environmentId);
-            yield* dropMachineLocked(environmentId);
-          }),
-        ),
-      ).pipe(Effect.exit);
-      if (Exit.isSuccess(exit)) continue;
-      yield* Effect.logWarning("Could not forget a machine saved under another Connect account.", {
-        environmentId,
-        cause: exit.cause,
-      });
-      yield* Ref.update(failedRemovals, (current) =>
-        current.account === account
-          ? { account, ids: new Set(current.ids).add(environmentId) }
-          : current,
-      );
-    }
-    // Owners again: the account that left stays recorded while any removal is
-    // owed, so the next start finishes the switch.
-    yield* accountLock.withPermits(1)(
-      Effect.gen(function* () {
-        if ((yield* SubscriptionRef.get(accountScope)) !== account) return;
-        yield* planOwnersLocked(account);
-      }),
-    );
+  const { ownMachineId, setAccount } = makeAccountCleanup({
+    owners,
+    ownersStore: accountOwners,
+    accountScope,
+    accountLock,
+    failedRemovals,
+    platformEnvironmentIds,
+    persistedEnvironmentIds,
+    entries,
+    platformReady,
+    withLeaseLock,
+    dropMachineLocked,
   });
 
   /** Writes a new route list for a user-saved environment and restarts its connection. */
@@ -1340,7 +1252,7 @@ export const make = Effect.gen(function* () {
    * before its saved entry, so a stop in between leaves it saved, where the
    * next start still finds it (1434, AC-04). A failed clear stops the removal.
    */
-  const removeRelayRoute = (environmentId: EnvironmentId) =>
+  const removeRelayRoute = (environmentId: EnvironmentId, forgetRemoved: boolean) =>
     withLeaseLock(
       environmentId,
       Effect.gen(function* () {
@@ -1349,6 +1261,8 @@ export const make = Effect.gen(function* () {
         if (!routes.some((route) => connectionRouteId(route.target) === RELAY_ROUTE_ID)) return;
         const remaining = routesAfterRemoving(routes, RELAY_ROUTE_ID);
         if (remaining.length > 0) return yield* replaceRoutesLocked(entry, remaining);
+        // Under the lease, before the entry goes: `register` checks it there.
+        if (forgetRemoved) yield* accountOwners.forgotten(environmentId);
         yield* closeServiceScope(environmentId);
         yield* cache.clear(environmentId);
         yield* ownedDataCleanup.clear(environmentId);
@@ -1360,11 +1274,17 @@ export const make = Effect.gen(function* () {
     );
 
   const removeRelayEnvironments = Effect.fn("EnvironmentRegistry.removeRelayEnvironments")(
-    function* () {
+    function* (options?: { readonly forgetRemoved?: boolean }) {
+      // Bumped at once, so a Connect save still out is refused; the removals
+      // wait until the platform has reported, and never touch the own machine.
       yield* Ref.update(relayRouteEpoch, (epoch) => epoch + 1);
+      yield* platformReady.await;
+      const own = yield* ownMachineId;
       const relayEnvironmentIds = [...(yield* SubscriptionRef.get(entries)).values()]
-        .filter((entry) =>
-          connectionRoutes(entry).some((route) => route.target._tag === "RelayConnectionTarget"),
+        .filter(
+          (entry) =>
+            entry.target.environmentId !== own &&
+            connectionRoutes(entry).some((route) => route.target._tag === "RelayConnectionTarget"),
         )
         .map((entry) => entry.target.environmentId);
 
@@ -1373,7 +1293,7 @@ export const make = Effect.gen(function* () {
       const exits = yield* Effect.forEach(
         relayEnvironmentIds,
         (environmentId) =>
-          removeRelayRoute(environmentId).pipe(
+          removeRelayRoute(environmentId, options?.forgetRemoved === true).pipe(
             Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
             Effect.exit,
           ),
