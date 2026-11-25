@@ -118,6 +118,16 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("reads a long run of unclosed tags in linear time", () => {
+    // Each `<source` opens a tag that never closes with `>`, so an attribute scan that may cross
+    // into the next tag rescans the rest of the line from every one of them.
+    const body = `<video ${"<source ".repeat(10_000)}</video>`;
+    const started = performance.now();
+    const segments = splitPullRequestBody(body);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(segments).toEqual([{ id: "markdown:0", kind: "markdown", text: body }]);
+  });
+
   it("leaves an unclosed video tag as prose without eating the rest of the body", () => {
     const body = ['<video src="https://example.com/a.mp4">', "still prose", "more prose"].join(
       "\n",

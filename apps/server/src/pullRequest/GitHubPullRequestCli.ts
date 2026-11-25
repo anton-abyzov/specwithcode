@@ -754,6 +754,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
+      /** The head the person checked; the merge names it instead of the head read here. */
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly commentOnPullRequest: (input: {
@@ -772,6 +774,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      readonly expectedHeadSha?: string;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly replyToReviewThread: (input: {
@@ -2772,8 +2775,10 @@ export const make = Effect.gen(function* () {
         }
         let body: string | undefined;
         // Every merge names the head it was decided on, so a push that lands after this read
-        // makes GitHub refuse the merge rather than merge commits nobody looked at.
-        let expectedHead = state.headRefOid;
+        // makes GitHub refuse the merge rather than merge commits nobody looked at. A head the
+        // person checked wins over the one read here.
+        const pinned = input.expectedHeadSha;
+        let expectedHead = pinned ?? state.headRefOid;
         if (input.removeAgentCreditsOnMerge === true && input.mergeMethod !== "rebase") {
           const message = yield* graphqlRead({
             cwd: input.cwd,
@@ -2794,7 +2799,7 @@ export const make = Effect.gen(function* () {
             const cleaned = removeAgentCredits(message.viewerMergeBodyText);
             if (cleaned !== message.viewerMergeBodyText) {
               body = cleaned;
-              expectedHead = message.headRefOid;
+              if (pinned === undefined) expectedHead = message.headRefOid;
             }
           }
         }
@@ -2848,6 +2853,9 @@ export const make = Effect.gen(function* () {
             verdict: input.verdict,
             body: input.body,
             comments: input.comments,
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
           }),
         })
         .pipe(Effect.asVoid);

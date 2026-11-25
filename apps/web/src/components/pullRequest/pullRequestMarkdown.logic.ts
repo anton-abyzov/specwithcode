@@ -32,7 +32,8 @@ const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
 /** A dropped video becomes a bare asset link; a dropped image becomes an `<img>` tag. */
 const GITHUB_ASSET_PATTERN = /^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu;
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+/** The attribute scan stops at either angle bracket, so it never runs on into the next tag. */
+const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
 /** Only a tag that owns its line is an embed; inline, it is prose the renderer should keep. */
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;

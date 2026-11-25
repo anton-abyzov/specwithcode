@@ -603,6 +603,9 @@ export const make = Effect.gen(function* () {
             : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
 

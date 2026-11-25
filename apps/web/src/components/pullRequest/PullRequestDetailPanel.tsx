@@ -88,6 +88,7 @@ import {
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
+import { mergeHeadPin, type SeenPullRequestHead, seenPullRequestHead } from "./pullRequestHeadPin";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -119,6 +120,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -696,6 +698,29 @@ export function PullRequestDetailPanel({
     [resolvedCoreDetail, sharedSummary],
   );
   const activity = activityQuery.data;
+  // The head on screen when the reader first saw this pull request, cached or fresh. A refresh
+  // does not move it: a merge or review stays on those commits until the reader loads newer
+  // ones. Only a server that refuses a moved head is sent one, and only then is the promise made.
+  const supportsHeadPin =
+    environmentConfigs.get(environmentId)?.environment.capabilities.pullRequestHeadPin === true;
+  const seenHeadKey = `${environmentId}:${pullRequestKey}`;
+  const [storedSeenHead, setSeenHead] = useState<SeenPullRequestHead | null>(null);
+  const seenHead = seenPullRequestHead(
+    storedSeenHead,
+    seenHeadKey,
+    coreDetail?.headSha ?? undefined,
+  );
+  if (seenHead !== storedSeenHead) setSeenHead(seenHead);
+  const shownHeadSha = supportsHeadPin ? seenHead.sha : undefined;
+  const unseenHeadSha =
+    shownHeadSha !== undefined &&
+    coreDetail?.state === "open" &&
+    coreDetail.headSha !== undefined &&
+    coreDetail.headSha !== shownHeadSha
+      ? coreDetail.headSha
+      : undefined;
+  // "Load new commits" moves the pin only once the reload has finished, to the head it painted.
+  const [reloadingHeadKey, setReloadingHeadKey] = useState<string | null>(null);
   const detail = useMemo(
     () =>
       coreDetail === null
@@ -871,6 +896,10 @@ export function PullRequestDetailPanel({
   // One word for "the host is being asked again", whichever of the two halves is in flight:
   // the invalidation round trip, then the detail read it kicks off.
   const refreshing = isInvalidating || detailQuery.isPending;
+  if (reloadingHeadKey === seenHeadKey && !refreshing) {
+    setReloadingHeadKey(null);
+    setSeenHead({ key: seenHeadKey, sha: coreDetail?.headSha ?? undefined });
+  }
   const refreshFromHost = useCallback(async () => {
     setIsInvalidating(true);
     try {
@@ -968,10 +997,13 @@ export function PullRequestDetailPanel({
         action,
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
+        ...mergeHeadPin(action, shownHeadSha),
       },
     });
     setPendingAction(null);
     if (result._tag === "Failure") {
+      // A refused merge is usually new commits, so the panel shows what the host has now.
+      if (action === "merge" || action === "enable-auto-merge") refreshDetail();
       // The host's own sentence, because it is the only thing that says why. A merge strategy a
       // branch policy forbids is refused at completion and nowhere earlier — Azure DevOps
       // publishes no per-strategy availability to hide the control with — so "action failed"
@@ -2438,6 +2470,30 @@ export function PullRequestDetailPanel({
                 </div>
               </div>
             ) : null}
+            {unseenHeadSha !== undefined && shownHeadSha !== undefined ? (
+              <div className="px-4 pb-2">
+                <Alert variant="warning">
+                  <TriangleAlertIcon />
+                  <AlertDescription>
+                    New commits were pushed. A merge or review still applies to{" "}
+                    <code>{shownHeadSha.slice(0, 7)}</code>.
+                  </AlertDescription>
+                  <AlertAction>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={reloadingHeadKey === seenHeadKey}
+                      onClick={() => {
+                        setReloadingHeadKey(seenHeadKey);
+                        void refreshFromHost();
+                      }}
+                    >
+                      Load new commits
+                    </Button>
+                  </AlertAction>
+                </Alert>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -2907,6 +2963,7 @@ export function PullRequestDetailPanel({
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
+                    headSha={shownHeadSha}
                   />
                 </Suspense>
               </div>
@@ -2933,6 +2990,7 @@ export function PullRequestDetailPanel({
             onCommentAction={performCommentAction}
             onCommented={refreshDetail}
             onReviewSubmitted={refreshDetail}
+            headSha={shownHeadSha}
           />
         </div>
       ) : null}

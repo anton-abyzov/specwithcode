@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -7552,3 +7552,187 @@ it.effect.each([
       assert.deepStrictEqual(calls, [expected]);
     }),
 );
+
+describe("a merge or review pinned to the head the person saw", () => {
+  const HEAD = "a".repeat(40);
+  const NEWER = "b".repeat(40);
+  const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+  const pinnedProvider = (
+    head: string,
+    sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }>,
+  ) =>
+    fakeProvider("github", {
+      getChangeRequest: () => Effect.succeed({ headSha: head } as never),
+      runAction: (input) =>
+        Effect.sync(() => {
+          sent.push({
+            operation: input.action,
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
+          });
+        }),
+      submitReview: (input) =>
+        Effect.sync(() => {
+          sent.push({
+            operation: "review",
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
+          });
+        }),
+    });
+  const serviceWith = (provider: PullRequestProviderApi) =>
+    makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+
+  it.effect("refuses a merge and a review once new commits arrived", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(NEWER, sent));
+      const merge = yield* Effect.flip(
+        service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD }),
+      );
+      assert.strictEqual(merge._tag, "PullRequestOperationError");
+      assert.include(merge.message, "New commits arrived");
+      const review = yield* Effect.flip(
+        service.submitReview({
+          ...reference,
+          verdict: "approve",
+          body: "",
+          comments: [],
+          expectedHeadSha: HEAD,
+        }),
+      );
+      assert.strictEqual(review._tag, "PullRequestOperationError");
+      assert.deepStrictEqual(sent, []);
+    }),
+  );
+
+  it.effect("refuses a short prefix, which can name more than one commit", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(HEAD, sent));
+      const refused = yield* Effect.flip(
+        service.runAction({ ...reference, action: "merge", expectedHeadSha: HEAD.slice(0, 7) }),
+      );
+      assert.strictEqual(refused._tag, "PullRequestOperationError");
+      assert.deepStrictEqual(sent, []);
+    }),
+  );
+
+  it.effect("hands the host's own spelling of the checked head on when it still matches", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(HEAD, sent));
+      yield* service.runAction({
+        ...reference,
+        action: "merge",
+        expectedHeadSha: HEAD.toUpperCase(),
+      });
+      yield* service.submitReview({
+        ...reference,
+        verdict: "approve",
+        body: "",
+        comments: [],
+        expectedHeadSha: HEAD,
+      });
+      assert.deepStrictEqual(sent, [
+        { operation: "merge", expectedHeadSha: HEAD },
+        { operation: "review", expectedHeadSha: HEAD },
+      ]);
+    }),
+  );
+
+  it.effect("keeps an older client that sends no head working as before", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      // No head from the caller means nothing to refuse: the provider pins to the head it sees.
+      const service = yield* serviceWith(pinnedProvider(NEWER, sent));
+      yield* service.runAction({ ...reference, action: "merge" });
+      yield* service.submitReview({ ...reference, verdict: "comment", body: "ok", comments: [] });
+      assert.deepStrictEqual(sent, [{ operation: "merge" }, { operation: "review" }]);
+    }),
+  );
+
+  it.effect("ignores a head sent with an action that is not a merge", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ readonly operation: string; readonly expectedHeadSha?: string }> = [];
+      const service = yield* serviceWith(pinnedProvider(NEWER, sent));
+      yield* service.runAction({ ...reference, action: "close", expectedHeadSha: HEAD });
+      assert.deepStrictEqual(sent, [{ operation: "close" }]);
+    }),
+  );
+});
+
+describe("a whole diff read for the head the reader is pinned to", () => {
+  const HEAD = "a".repeat(40);
+  const NEWER = "b".repeat(40);
+  const LATER = "c".repeat(40);
+  const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+  it.effect("never serves one head's cached diff to a reader pinned to another", () =>
+    Effect.gen(function* () {
+      let head = HEAD;
+      let reads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequest: () => Effect.sync(() => ({ headSha: head }) as never),
+            getDiff: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return { patch: `@@ ${head}`, truncated: false, nextCursor: null };
+              }),
+          }),
+        ],
+      });
+      assert.strictEqual(
+        (yield* service.diff({ ...reference, headSha: HEAD })).patch,
+        `@@ ${HEAD}`,
+      );
+      // A push with no newer summary read: the change request's revision time has not moved.
+      head = NEWER;
+      assert.strictEqual(
+        (yield* service.diff({ ...reference, headSha: NEWER })).patch,
+        `@@ ${NEWER}`,
+      );
+      assert.strictEqual(reads, 2);
+      // A read whose host head is not the pinned one is refused rather than kept under that pin.
+      head = LATER;
+      const moved = yield* Effect.flip(service.diff({ ...reference, headSha: "d".repeat(40) }));
+      assert.strictEqual(moved._tag, "PullRequestOperationError");
+    }),
+  );
+
+  it.effect("keeps nothing a push and its revert raced, reading the pin fresh next time", () =>
+    Effect.gen(function* () {
+      // The head moves away and back during the first read, so both head checks see the pin
+      // while the patch itself came from the other commit.
+      let patchHead = NEWER;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequest: () => Effect.succeed({ headSha: HEAD } as never),
+            getDiff: () =>
+              Effect.sync(() => ({ patch: `@@ ${patchHead}`, truncated: false, nextCursor: null })),
+          }),
+        ],
+      });
+      yield* service.diff({ ...reference, headSha: HEAD });
+      patchHead = HEAD;
+      assert.strictEqual(
+        (yield* service.diff({ ...reference, headSha: HEAD })).patch,
+        `@@ ${HEAD}`,
+      );
+    }),
+  );
+});

@@ -1231,6 +1231,47 @@ it.effect("queues merge preparation with actions without restarting it on refres
   ),
 );
 
+it.effect.each([
+  { name: "pins a quick merge to the head the fresh read judged mergeable", shown: undefined },
+  { name: "keeps the head the caller showed over the fresh read", shown: "b".repeat(40) },
+])("$name", ({ shown }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sent: Array<{ expectedHeadSha?: string }> = [];
+      const client = {
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.succeed({
+            state: "open",
+            isDraft: false,
+            headSha: "a".repeat(40),
+            capabilities: { actions: ["merge"], stackActions: false },
+            viewerPermissions: { actions: ["merge"] },
+          }),
+        [WS_METHODS.pullRequestsRunAction]: (input: { expectedHeadSha?: string }) =>
+          Effect.sync(() => {
+            sent.push(input);
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const result = yield* Effect.promise(() =>
+        atoms.runAction.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: {
+            projectId: ProjectId.make("project-1"),
+            repository: "acme/web",
+            number: 1,
+            action: "merge",
+            resolveMergeMethod: () => "squash",
+            ...(shown === undefined ? {} : { expectedHeadSha: shown }),
+          },
+        }),
+      );
+      expect(AsyncResult.isSuccess(result)).toBe(true);
+      expect(sent.map((input) => input.expectedHeadSha)).toEqual([shown ?? "a".repeat(40)]);
+    }),
+  ),
+);
+
 it.effect.each(["closed", "draft", "permission", "stack", "method"] as const)(
   "rejects an unsafe quick merge with %s and keeps later actions running",
   (reason) =>
