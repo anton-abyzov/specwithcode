@@ -104,10 +104,16 @@ const hostLayer = (input: {
           return true;
         }),
       // The shortcut this test wrote at that path, read back like Windows would.
-      readShortcutArgs: (path) =>
+      readShortcut: (path) =>
         Effect.sync(() => {
           const written = input.calls.shortcuts.findLast((shortcut) => shortcut.path === path);
-          return written === undefined ? Option.none() : Option.some(written.options.args ?? "");
+          return written === undefined
+            ? Option.none()
+            : Option.some({
+                target: written.options.target,
+                args: written.options.args ?? "",
+                appUserModelId: written.options.appUserModelId ?? "",
+              });
         }),
       trashItem: (path) =>
         Effect.gen(function* () {
@@ -402,7 +408,15 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.deepEqual(h.calls.revealed, [bundle]);
 
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
-        assert.deepEqual(h.calls.trashed, [bundle]);
+        // Moved to a private name and checked there before it goes to the Trash.
+        assert.deepEqual(h.calls.trashed, [
+          path.join(
+            home,
+            "Applications",
+            "SpecWithCode Apps",
+            `.Morning dashboard.app.removing-${result.app.installId}`,
+          ),
+        ]);
         assert.isFalse(yield* fileSystem.exists(bundle));
         assert.deepEqual(yield* h.records.list, []);
         assert.deepEqual(h.closed, [result.app.installId]);
@@ -571,6 +585,30 @@ describe("ArtifactAppInstaller on Linux", () => {
       }),
     ),
   );
+
+  it.effect("leaves an entry whose Exec was pointed at another program", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "linux", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const entryPath = path.join(
+          home,
+          ".local/share/applications",
+          `specwithcode-app-${result.app.installId}.desktop`,
+        );
+        const entry = yield* fileSystem.readFileString(entryPath);
+        yield* fileSystem.writeFileString(
+          entryPath,
+          entry.replace(/^Exec=.*$/m, "Exec=/usr/bin/other"),
+        );
+
+        assert.isFalse(yield* h.installer.reveal(result.app.installId));
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.isTrue(yield* fileSystem.exists(entryPath));
+      }),
+    ),
+  );
 });
 
 describe("ArtifactAppInstaller on Windows", () => {
@@ -676,6 +714,34 @@ describe("ArtifactAppInstaller on Windows", () => {
         assert.deepEqual(recording.removed, [
           "C:\\Users\\alice\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\SpecWithCode Apps\\Morning dashboard.lnk",
         ]);
+      }),
+    ),
+  );
+  it.effect("leaves a shortcut that was pointed at another program", () =>
+    withHome(({ home, recordsPath, fileSystem: real }) =>
+      Effect.gen(function* () {
+        const recording = recordingFileSystem(real, recordsPath);
+        const h = yield* harness(
+          { platform: "win32", fileSystem: recording.fileSystem },
+          home,
+          recordsPath,
+        );
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail(JSON.stringify(result));
+        for (const shortcut of h.calls.shortcuts) recording.existing.add(shortcut.path);
+        // Both shortcuts keep the URL argument but now start another program.
+        // A copy: the loop adds to the list it reads.
+        const written = h.calls.shortcuts.slice();
+        for (const shortcut of written) {
+          h.calls.shortcuts.push({
+            path: shortcut.path,
+            options: { ...shortcut.options, target: "C:\\Tools\\other.exe" },
+          });
+        }
+
+        assert.isFalse(yield* h.installer.reveal(result.app.installId));
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(recording.removed, []);
       }),
     ),
   );

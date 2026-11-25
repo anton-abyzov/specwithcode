@@ -178,12 +178,21 @@ export class ArtifactAppInstallerHost extends Context.Service<
       shortcutPath: string,
       options: Electron.ShortcutDetails,
     ) => Effect.Effect<boolean>;
-    /** The arguments a Windows shortcut starts its target with; none when it cannot be read. */
-    readonly readShortcutArgs: (shortcutPath: string) => Effect.Effect<Option.Option<string>>;
+    /** What a Windows shortcut starts; none when it cannot be read. */
+    readonly readShortcut: (
+      shortcutPath: string,
+    ) => Effect.Effect<Option.Option<ArtifactAppShortcutReadBack>>;
     readonly trashItem: (path: string) => Effect.Effect<void, ArtifactAppTrashError>;
     readonly showItemInFolder: (path: string) => Effect.Effect<void>;
   }
 >()("@specweave-studio/desktop/artifactApps/ArtifactAppInstaller/ArtifactAppInstallerHost") {}
+
+/** The fields of a Windows shortcut that decide what it starts. */
+export interface ArtifactAppShortcutReadBack {
+  readonly target: string;
+  readonly args: string;
+  readonly appUserModelId: string;
+}
 
 export interface ArtifactAppInstallOptions {
   /** The window that asked; the confirmation is attached to it. */
@@ -366,12 +375,6 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const fileMentions = (path: string, installId: string) =>
-    fileSystem.readFileString(path).pipe(
-      Effect.map((contents) => contents.includes(installId)),
-      Effect.orElseSucceed(() => false),
-    );
-
   /**
    * Whether the file at a launcher path is this install's own launcher: not a
    * link, in a folder that is not a link, and naming the install's random id.
@@ -410,12 +413,21 @@ const make = Effect.gen(function* () {
         return true;
       }
       case "windows-shortcuts":
-        return Option.match(yield* host.readShortcutArgs(path), {
+        // It must still start this app with this install's URL and identity.
+        return Option.match(yield* host.readShortcut(path), {
           onNone: () => false,
-          onSome: (args) => args.includes(installId),
+          onSome: (shortcut) =>
+            shortcut.target.toLowerCase() === location.options.target.toLowerCase() &&
+            shortcut.args === (location.options.args ?? "") &&
+            shortcut.appUserModelId === (location.options.appUserModelId ?? ""),
         });
-      case "linux-entry":
-        return yield* fileMentions(path, installId);
+      case "linux-entry": {
+        // Exactly the entry this install wrote, so an Exec pointed elsewhere is not it.
+        const onDisk = yield* fileSystem
+          .readFileString(path)
+          .pipe(Effect.orElseSucceed(() => null));
+        return onDisk === location.contents;
+      }
     }
   });
 
@@ -640,9 +652,27 @@ const make = Effect.gen(function* () {
           ),
         );
       switch (location.kind) {
-        case "mac-bundle":
-          if (yield* owned(location.path)) yield* host.trashItem(location.path);
+        case "mac-bundle": {
+          // Checked under a private name it was first moved to, so nothing can
+          // take its place between the check and the Trash.
+          if (!(yield* owned(location.path))) return;
+          const claimed = rules.join(
+            location.folder,
+            `.${rules.basename(location.path)}.removing-${installId}`,
+          );
+          yield* fileSystem
+            .rename(location.path, claimed)
+            .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
+          if (yield* owned(claimed)) {
+            yield* host.trashItem(claimed);
+            return;
+          }
+          // Not ours after all: put it back where it was.
+          yield* fileSystem
+            .rename(claimed, location.path)
+            .pipe(Effect.mapError(writeError("remove-launcher", location.path)));
           return;
+        }
         case "windows-shortcuts":
           if (yield* owned(location.path)) yield* removeFile(location.path);
           if (location.desktopPath !== null && (yield* owned(location.desktopPath))) {
@@ -1006,12 +1036,17 @@ const makeElectronHost = Effect.gen(function* () {
           return false;
         }
       }),
-    readShortcutArgs: (shortcutPath) =>
+    readShortcut: (shortcutPath) =>
       Effect.sync(() => {
         try {
-          return Option.some(Electron.shell.readShortcutLink(shortcutPath).args ?? "");
+          const shortcut = Electron.shell.readShortcutLink(shortcutPath);
+          return Option.some({
+            target: shortcut.target,
+            args: shortcut.args ?? "",
+            appUserModelId: shortcut.appUserModelId ?? "",
+          });
         } catch {
-          return Option.none<string>();
+          return Option.none<ArtifactAppShortcutReadBack>();
         }
       }),
     trashItem: (path) =>
