@@ -53,7 +53,13 @@ const LEADING_SKILL = /^\s*\$([A-Za-z0-9:_-]*[A-Za-z])(?:\s|$)/u;
 function startsWithKnownCommand(text: string, known: KnownProviderCommands | undefined): boolean {
   if (known === undefined) return false;
   const slash = LEADING_SLASH_COMMAND.exec(text)?.[1];
-  if (slash !== undefined) return known.slash.has(slash);
+  // Pi runs a skill as `/skill:<name>` and lists it under its bare name.
+  if (slash !== undefined) {
+    return (
+      known.slash.has(slash) ||
+      (slash.startsWith("skill:") && known.skills.has(slash.slice("skill:".length)))
+    );
+  }
   const skill = LEADING_SKILL.exec(text)?.[1];
   return skill !== undefined && known.skills.has(skill);
 }

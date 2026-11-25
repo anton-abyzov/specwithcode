@@ -21,6 +21,11 @@ describe("withMessageSenderNote", () => {
     expect(withMessageSenderNote(agent, "  /goal ship it", known)).toBe("  /goal ship it");
     expect(withMessageSenderNote(agent, "/review", known)).toBe("/review");
     expect(withMessageSenderNote(agent, "$deploy staging", known)).toBe("$deploy staging");
+    // Pi's form of a listed skill.
+    expect(withMessageSenderNote(agent, "/skill:deploy staging", known)).toBe(
+      "/skill:deploy staging",
+    );
+    expect(withMessageSenderNote(agent, "/skill:other", known)).toContain("[SpecWithCode:");
   });
 
   it("leaves the app's own /compact as sent, in any case, even when the provider does not list it", () => {
