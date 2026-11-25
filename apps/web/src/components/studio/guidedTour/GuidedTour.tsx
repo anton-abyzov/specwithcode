@@ -85,6 +85,17 @@ const needsScroll = (rect: TourRect) => {
   return hidden || (fits && cut);
 };
 
+/**
+ * The tour's key handler, registered when this module loads, before any component's effect
+ * adds its own window listener, so the tour sees every key first (capture listeners on one
+ * target run in the order they were added).
+ */
+let activeKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+if (typeof window !== "undefined") {
+  for (const type of ["keydown", "keyup", "keypress"] as const)
+    window.addEventListener(type, (event) => activeKeyHandler?.(event), true);
+}
+
 export function GuidedTourHost() {
   const tour = useGuidedTour();
   if (!tour.open) return null;
@@ -163,9 +174,7 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
   }, [finish, index, total]);
   const goBack = useCallback(() => showGuidedTourStep(backStepIndex(index)), [index]);
 
-  // Open the step's page, then wait for its target. `attempt` restarts this when something
-  // other than the tour moves the page away from the step's route.
-  const [attempt, setAttempt] = useState(0);
+  // Open the step's page, then wait for its target.
   useEffect(() => {
     setResolution({ kind: "waiting" });
     setRect(null);
@@ -176,6 +185,8 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
     }
     // The wait starts once the page is the step's own, not while it is still loading.
     let started: number | null = null;
+    // A page that never arrives still ends the wait.
+    const deadline = Date.now() + 2 * TARGET_WAIT_MS;
     let best: number | null = null;
     let timer: number | undefined;
     const poll = () => {
@@ -189,7 +200,8 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
         setResolution({ kind: "found", ...found });
         if (found.match === 0) return;
       }
-      if (started !== null && Date.now() - started >= TARGET_WAIT_MS) {
+      const now = Date.now();
+      if ((started !== null && now - started >= TARGET_WAIT_MS) || now >= deadline) {
         if (best === null) setResolution({ kind: step.required ? "missing" : "none" });
         return;
       }
@@ -197,13 +209,14 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
     };
     poll();
     return () => window.clearTimeout(timer);
-  }, [navigate, step, attempt]);
+  }, [navigate, step]);
 
-  // Bring the step's page back if browser Back or a link outside the tour moved away.
+  // Browser Back, or a link outside the tour, moved away from the step's page: the person
+  // left the tour, so it ends where they are and leaves history alone.
   useEffect(() => {
     if (resolution.kind === "waiting") return;
     const check = window.setInterval(() => {
-      if (window.location.pathname !== step.route) setAttempt((value) => value + 1);
+      if (window.location.pathname !== step.route) endGuidedTour();
     }, 250);
     return () => window.clearInterval(check);
   }, [resolution.kind, step.route]);
@@ -293,13 +306,9 @@ function GuidedTourOverlay({ index }: { readonly index: number }) {
       // Typing reaches nothing under the tour; Enter and Space only press a tour button.
       if (!inCard || (event.key !== "Enter" && event.key !== " ")) event.preventDefault();
     };
-    window.addEventListener("keydown", onKey, true);
-    window.addEventListener("keyup", swallow, true);
-    window.addEventListener("keypress", swallow, true);
+    activeKeyHandler = (event) => (event.type === "keydown" ? onKey(event) : swallow(event));
     return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("keyup", swallow, true);
-      window.removeEventListener("keypress", swallow, true);
+      activeKeyHandler = null;
     };
   }, [finish, goBack, goNext]);
 

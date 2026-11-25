@@ -38,8 +38,8 @@ export const guidedTourFr: PhraseCatalog = {
     "Dans un chat, la puce du modèle sous la zone de message ne change que ce chat, et Switch model and continue… dans son menu change le modèle d'un chat qui travaille déjà.",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "{machines} liste cette machine et celles que vous rejoignez ; avec une seule machine, rien n'est à régler ici avant d'en rejoindre une autre.",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
-    "Move thread… dans le menu d'un chat l'exécute sur une autre machine, et Déplacer les fils en cours… transmet les chats en cours sur cette machine.",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the running chats marked Keep ready to move.":
+    "Move thread… dans le menu d'un chat l'exécute sur une autre machine, et Déplacer les fils en cours… transmet les chats en cours marqués Keep ready to move.",
   "Take it again": "La refaire",
   "Start this tour again here or from Quick guides on Overview.":
     "Relancez cette visite ici ou depuis Guides rapides dans Vue d’ensemble.",

@@ -38,8 +38,8 @@ export const guidedTourJa: PhraseCatalog = {
     "チャットでは、入力欄の下のモデルチップでそのチャットだけを変更でき、メニューの Switch model and continue… ですでに作業中のチャットのモデルを変更できます。",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "{machines} にはこのマシンと参加したマシンが表示されます。マシンが 1 台なら、別のマシンを追加するまでここで設定することはありません。",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
-    "チャットのメニューの Move thread… で別のマシンで実行でき、実行中のスレッドを移動… でこのマシンで実行中のチャットを引き継げます。",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the running chats marked Keep ready to move.":
+    "チャットのメニューの Move thread… で別のマシンで実行でき、実行中のスレッドを移動… で Keep ready to move が付いた実行中のチャットを引き継げます。",
   "Take it again": "もう一度見る",
   "Start this tour again here or from Quick guides on Overview.":
     "このツアーはここ、または 概要 の クイックガイド からもう一度始められます。",

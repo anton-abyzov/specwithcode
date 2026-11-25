@@ -336,14 +336,22 @@ try {
           theme: document.documentElement.className,
           stored: JSON.stringify({ ...localStorage }),
           dialogs: document.querySelectorAll('[role="dialog"]').length,
+          cookies: document.cookie,
+          sidebar:
+            document.querySelector("[data-state][data-collapsible]")?.getAttribute("data-state") ??
+            null,
         }));
-        for (const shortcut of ["Meta+K", "Control+K", "Meta+Alt+Shift+A", "Meta+[", "n"])
+        for (const shortcut of ["Meta+K", "Control+K", "Meta+B", "Meta+Alt+Shift+A", "Meta+[", "n"])
           await page.keyboard.press(shortcut);
         await page.waitForTimeout(300);
         const after = await page.evaluate(() => ({
           theme: document.documentElement.className,
           stored: JSON.stringify({ ...localStorage }),
           dialogs: document.querySelectorAll('[role="dialog"]').length,
+          cookies: document.cookie,
+          sidebar:
+            document.querySelector("[data-state][data-collapsible]")?.getAttribute("data-state") ??
+            null,
         }));
         check(
           `${name}: shortcuts do nothing under the tour`,

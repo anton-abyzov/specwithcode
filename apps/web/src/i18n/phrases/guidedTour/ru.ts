@@ -38,8 +38,8 @@ export const guidedTourRu: PhraseCatalog = {
     "В чате значок модели под полем ввода меняет модель только этого чата, а Switch model and continue… в его меню меняет модель чата, который уже работает.",
   "{machines} lists this machine and any you join; with one machine, nothing here needs setting until you join another.":
     "В разделе {machines} эта машина и те, что вы подключите; с одной машиной здесь нечего настраивать, пока не подключите другую.",
-  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.":
-    "Move thread… в меню чата запускает его на другой машине, а Перенести запущенные треды… передаёт чаты, которые работают на этой машине.",
+  "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the running chats marked Keep ready to move.":
+    "Move thread… в меню чата запускает его на другой машине, а Перенести запущенные треды… передаёт работающие чаты, отмеченные Keep ready to move.",
   "Take it again": "Пройти снова",
   "Start this tour again here or from Quick guides on Overview.":
     "Запустите эту экскурсию снова здесь или из Краткие руководства в Обзоре.",

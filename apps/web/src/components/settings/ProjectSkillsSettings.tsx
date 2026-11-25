@@ -963,7 +963,10 @@ function ScopedProjectSkillsView({
             </p>
           ) : null}
           {!anyInstalled ? (
-            <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
+            <p
+              className="px-3 py-2 text-sm text-muted-foreground sm:px-4"
+              data-testid="skills-empty"
+            >
               {tx("Nothing is installed on {machine} yet.", { machine: machineName })}
             </p>
           ) : (

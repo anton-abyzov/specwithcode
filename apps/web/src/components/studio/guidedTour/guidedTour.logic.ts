@@ -166,7 +166,7 @@ export const GUIDED_TOUR_STEPS: readonly GuidedTourStep[] = [
     targets: [sectionHeader("handoff-mode")],
     required: true,
     title: "Moving work between machines",
-    body: "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the chats running on this machine.",
+    body: "Move thread… in a chat's menu runs it on another machine, and Move running threads… hands off the running chats marked Keep ready to move.",
   },
   {
     id: "again",

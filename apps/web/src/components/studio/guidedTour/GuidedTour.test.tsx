@@ -186,6 +186,8 @@ describe("guided tour host (1486)", () => {
   it("lets no key reach the app under it, and still takes its own (AC-04)", async () => {
     drawTargets();
     const pageKeys = vi.fn();
+    // Like the sidebar's Mod+B: a window capture listener added before the tour opens.
+    window.addEventListener("keydown", pageKeys, true);
     window.addEventListener("keydown", pageKeys);
     document.addEventListener("keydown", pageKeys, true);
     await act(async () => root.render(<GuidedTourHost />));
@@ -195,6 +197,7 @@ describe("guided tour host (1486)", () => {
       { key: "k", metaKey: true },
       { key: "A", metaKey: true, altKey: true, shiftKey: true },
       { key: "[", metaKey: true },
+      { key: "b", metaKey: true },
       { key: "a" },
       { key: "Enter" },
     ]) {
@@ -216,6 +219,7 @@ describe("guided tour host (1486)", () => {
     await settle();
     expect(overlay()?.dataset.tourStep).toBe("projects");
     expect(pageKeys).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", pageKeys, true);
     window.removeEventListener("keydown", pageKeys);
     document.removeEventListener("keydown", pageKeys, true);
   });
@@ -233,6 +237,25 @@ describe("guided tour host (1486)", () => {
     expect(getMainAppHref()).toBe("/projects/sample");
     expect(router.replace).toHaveBeenLastCalledWith("/settings/skills");
     expect(router.navigate.mock.calls.every(([options]) => options.replace === true)).toBe(true);
+  });
+
+  it("ends without touching history when the person leaves its page (AC-04)", async () => {
+    drawTargets();
+    await act(async () => root.render(<GuidedTourHost />));
+    await act(async () => startGuidedTour());
+    await settle();
+    await act(async () => button("Next").click());
+    await settle();
+    expect(overlay()?.dataset.tourStep).toBe("projects");
+    router.replace.mockClear();
+    router.navigate.mockClear();
+    // Browser Back to a page from before the tour.
+    window.history.replaceState(null, "", "/projects/sample");
+    await settle(400);
+    expect(overlay()).toBeNull();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/projects/sample");
   });
 
   it("moves to the real target when it draws after a stand-in (AC-03)", async () => {
