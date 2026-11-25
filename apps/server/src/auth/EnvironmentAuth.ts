@@ -60,6 +60,7 @@ import {
   type PrincipalApproval,
 } from "./principalApproval.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
+import { makeRevocationEpoch } from "./revocationEpoch.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
@@ -369,6 +370,8 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    /** Counts "revoke other clients" runs; a sign-in reads it when it begins. */
+    readonly revocationEpoch: Effect.Effect<number>;
     /**
      * A cookie, bearer or DPoP credential. A cookie authorizes a request other
      * than GET or HEAD only from this server's own origin or a trusted
@@ -438,6 +441,8 @@ export class EnvironmentAuth extends Context.Service<
       readonly ttl?: Duration.Duration;
       /** The approved device asking: the session stays gated by that device (1327). */
       readonly deviceKey?: string | undefined;
+      /** `revocationEpoch` when the sign-in began; a revoke-all since then refuses it. */
+      readonly revocationEpoch?: number;
     }) => Effect.Effect<
       {
         readonly sessionId: AuthSessionId;
@@ -604,6 +609,9 @@ export const make = Effect.gen(function* () {
   const devAuth = resolveReusableDevAuth(config);
   // Unwired, it refuses every gated device: the gate fails closed.
   const deviceTrust = yield* ConnectDeviceTrust.ConnectDeviceTrust;
+  const revocation = yield* makeRevocationEpoch;
+  const refusedAfterRevoke = () =>
+    new ServerAuthInvalidCredentialError({ diagnostic: "revoked_while_signing_in" });
 
   const authenticateToken = (
     token: string,
@@ -1055,6 +1063,7 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("EnvironmentAuth.createBrowserSession"),
       );
     }
+    const startedAt = yield* revocation.current;
     const previousSession =
       previousSessionToken === undefined
         ? undefined
@@ -1083,20 +1092,24 @@ export const make = Effect.gen(function* () {
         diagnostic: "device_reapproval_required",
       });
     }
-    const session = yield* sessions
-      .issue({
-        method: "browser-session-cookie",
-        ...principalApproval(grant),
-        subject: grant.subject,
-        scopes: grant.scopes,
-        // A code an approved device made lasts only while that device stays approved (1327).
-        ...(grant.creatorDevice === undefined ? {} : { boundDevice: grant.creatorDevice }),
-        ...(previousSession?.method === "browser-session-cookie"
-          ? { replaceSessionId: previousSession.sessionId }
-          : {}),
-        client: sessionClient(requestMetadata, grant),
-      })
-      .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })));
+    const session = yield* revocation.issueIfUnrevoked(
+      startedAt,
+      sessions
+        .issue({
+          method: "browser-session-cookie",
+          ...principalApproval(grant),
+          subject: grant.subject,
+          scopes: grant.scopes,
+          // A code an approved device made lasts only while that device stays approved (1327).
+          ...(grant.creatorDevice === undefined ? {} : { boundDevice: grant.creatorDevice }),
+          ...(previousSession?.method === "browser-session-cookie"
+            ? { replaceSessionId: previousSession.sessionId }
+            : {}),
+          client: sessionClient(requestMetadata, grant),
+        })
+        .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause }))),
+      refusedAfterRevoke,
+    );
     return {
       response: {
         authenticated: true,
@@ -1165,107 +1178,119 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
-      return refuseCredentialByTeamRules(
-        credential,
-        requestMetadata.deviceType,
-        input?.overConnect,
-      ).pipe(
-        Effect.andThen(
-          resolveBootstrapGrant(credential, {
-            ...input,
-            ...(requestedScopes !== undefined ? { requestedScopes } : {}),
-          }),
-        ),
-        Effect.flatMap((grant) =>
-          Effect.gen(function* () {
-            yield* refuseFleetRedeemGrant(grant);
-            yield* refuseUnboundCoordinatorGrant(grant, input);
-            // A removed or denied key gets no session under a subject the gate
-            // exempts. A gated one (its own Connect sign-in) may ask again.
-            if (
-              ConnectDeviceTrust.gatedDevice({ subject: grant.subject }) === null &&
-              (yield* refuseTurnedAwayKey(input?.proofKeyThumbprint))
-            )
-              return yield* new ServerAuthInvalidCredentialError({
-                diagnostic: "device_not_approved",
-                deviceRefusal: "device_not_approved",
-              });
-            yield* refuseNewSessionByTeamRules({
-              subject: grant.subject,
-              deviceType: requestMetadata.deviceType,
-              coordinator: grant.principal?.kind === "coordinator",
-              overConnect: input?.overConnect,
-            });
-            if (
-              grant.method === "one-time-token" &&
-              !grant.principal &&
-              grant.subject !== INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT
-            ) {
-              return yield* new ServerAuthInvalidCredentialError({
-                diagnostic: "device_reapproval_required",
-              });
-            }
-            const grantedScopes =
-              requestedScopes === undefined
-                ? grant.scopes
-                : [...new Set(requestedScopes)].filter((scope) => grant.scopes.includes(scope));
-            if (grantedScopes.length === 0) {
-              return yield* new ServerAuthScopeNotGrantedError({});
-            }
-            // A bad or absent proof is no error: the session is the plain pairing it was.
-            const desktopOwner =
-              input?.desktopOwnerProof !== undefined &&
-              input.proofKeyThumbprint === undefined &&
-              input.overConnect !== true &&
-              grant.method === "one-time-token" &&
-              grant.subject === "one-time-token" &&
-              grant.principal?.kind !== "coordinator" &&
-              grant.creatorDevice === undefined &&
-              grantedScopes.includes(AuthAccessWriteScope) &&
-              (yield* desktopOwnerProofAccepted(input.desktopOwnerProof));
-            return yield* sessions
-              .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                ...principalApproval(grant),
-                subject: desktopOwner ? DESKTOP_OWNER_SUBJECT : grant.subject,
-                scopes: grantedScopes,
-                // Bound to the device that made the code: Remove ends it too (1327).
-                ...(grant.creatorDevice === undefined ? {} : { boundDevice: grant.creatorDevice }),
-                ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
-                    }
-                  : {}),
-                // Desktop restarts forget the previous bearer token. Replace
-                // its session, including stale entries left by older versions.
-                replaceActiveForSubjectAndMethod:
-                  grant.method === "desktop-bootstrap" || desktopOwner,
-                client: sessionClient(requestMetadata, grant),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                ),
-              );
-          }),
-        ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
-                  access_token: session.token,
-                  issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
-                  expires_in: Math.max(
-                    0,
-                    Math.floor(
-                      (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
+      return revocation.current.pipe(
+        Effect.flatMap((startedAt) =>
+          refuseCredentialByTeamRules(
+            credential,
+            requestMetadata.deviceType,
+            input?.overConnect,
+          ).pipe(
+            Effect.andThen(
+              resolveBootstrapGrant(credential, {
+                ...input,
+                ...(requestedScopes !== undefined ? { requestedScopes } : {}),
+              }),
+            ),
+            Effect.flatMap((grant) =>
+              Effect.gen(function* () {
+                yield* refuseFleetRedeemGrant(grant);
+                yield* refuseUnboundCoordinatorGrant(grant, input);
+                // A removed or denied key gets no session under a subject the gate
+                // exempts. A gated one (its own Connect sign-in) may ask again.
+                if (
+                  ConnectDeviceTrust.gatedDevice({ subject: grant.subject }) === null &&
+                  (yield* refuseTurnedAwayKey(input?.proofKeyThumbprint))
+                )
+                  return yield* new ServerAuthInvalidCredentialError({
+                    diagnostic: "device_not_approved",
+                    deviceRefusal: "device_not_approved",
+                  });
+                yield* refuseNewSessionByTeamRules({
+                  subject: grant.subject,
+                  deviceType: requestMetadata.deviceType,
+                  coordinator: grant.principal?.kind === "coordinator",
+                  overConnect: input?.overConnect,
+                });
+                if (
+                  grant.method === "one-time-token" &&
+                  !grant.principal &&
+                  grant.subject !== INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT
+                ) {
+                  return yield* new ServerAuthInvalidCredentialError({
+                    diagnostic: "device_reapproval_required",
+                  });
+                }
+                const grantedScopes =
+                  requestedScopes === undefined
+                    ? grant.scopes
+                    : [...new Set(requestedScopes)].filter((scope) => grant.scopes.includes(scope));
+                if (grantedScopes.length === 0) {
+                  return yield* new ServerAuthScopeNotGrantedError({});
+                }
+                // A bad or absent proof is no error: the session is the plain pairing it was.
+                const desktopOwner =
+                  input?.desktopOwnerProof !== undefined &&
+                  input.proofKeyThumbprint === undefined &&
+                  input.overConnect !== true &&
+                  grant.method === "one-time-token" &&
+                  grant.subject === "one-time-token" &&
+                  grant.principal?.kind !== "coordinator" &&
+                  grant.creatorDevice === undefined &&
+                  grantedScopes.includes(AuthAccessWriteScope) &&
+                  (yield* desktopOwnerProofAccepted(input.desktopOwnerProof));
+                return yield* revocation.issueIfUnrevoked(
+                  startedAt,
+                  sessions
+                    .issue({
+                      method: input?.proofKeyThumbprint
+                        ? "dpop-access-token"
+                        : "bearer-access-token",
+                      ...principalApproval(grant),
+                      subject: desktopOwner ? DESKTOP_OWNER_SUBJECT : grant.subject,
+                      scopes: grantedScopes,
+                      // Bound to the device that made the code: Remove ends it too (1327).
+                      ...(grant.creatorDevice === undefined
+                        ? {}
+                        : { boundDevice: grant.creatorDevice }),
+                      ...(input?.proofKeyThumbprint
+                        ? {
+                            proofKeyThumbprint: input.proofKeyThumbprint,
+                            ttl: Duration.hours(1),
+                          }
+                        : {}),
+                      // Desktop restarts forget the previous bearer token. Replace
+                      // its session, including stale entries left by older versions.
+                      replaceActiveForSubjectAndMethod:
+                        grant.method === "desktop-bootstrap" || desktopOwner,
+                      client: sessionClient(requestMetadata, grant),
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
+                      ),
                     ),
-                  ),
-                  scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
+                  refusedAfterRevoke,
+                );
+              }),
+            ),
+            Effect.flatMap((session) =>
+              DateTime.now.pipe(
+                Effect.map(
+                  (now) =>
+                    ({
+                      access_token: session.token,
+                      issued_token_type: AuthAccessTokenType,
+                      token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
+                      expires_in: Math.max(
+                        0,
+                        Math.floor(
+                          (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
+                        ),
+                      ),
+                      scope: encodeOAuthScope(session.scopes),
+                    }) satisfies AuthAccessTokenResult,
+                ),
+              ),
             ),
           ),
         ),
@@ -1547,12 +1572,24 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("EnvironmentAuth.revokeSessionsByProofKeyThumbprints"),
       );
 
+  // Every other way in ends with the sessions: codes not yet spent, and sign-ins under way.
   const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] = (
     currentSessionId,
   ) =>
-    revokeOtherSessionsExcept(currentSessionId).pipe(
-      Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"),
-    );
+    revocation
+      .revokeAll(
+        revokeOtherSessionsExcept(currentSessionId).pipe(
+          Effect.tap(() => revokeUnspentPairingLinks),
+        ),
+      )
+      .pipe(Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"));
+
+  const revokeUnspentPairingLinks = bootstrapCredentials.listActive().pipe(
+    Effect.flatMap((links) =>
+      Effect.forEach(links, (link) => bootstrapCredentials.revoke(link.id), { discard: true }),
+    ),
+    Effect.mapError((cause) => new ServerAuthPairingLinkRevocationError({ cause })),
+  );
 
   const issueStartupPairingUrl: EnvironmentAuth["Service"]["issueStartupPairingUrl"] = (baseUrl) =>
     issueStartupPairingCredential().pipe(
@@ -1745,7 +1782,7 @@ export const make = Effect.gen(function* () {
         input.deviceKey === undefined ? undefined : yield* deviceTrust.bindingFor(input.deviceKey);
       if (binding === null)
         return yield* issueRefused("The approving device is not approved here.");
-      const issued = yield* sessions
+      const issue = sessions
         .issue({
           ...principalApproval(input),
           subject: MCP_CLIENT_SUBJECT,
@@ -1758,6 +1795,18 @@ export const make = Effect.gen(function* () {
           ...(binding === undefined ? {} : { boundDevice: binding }),
         })
         .pipe(Effect.mapError((cause) => new ServerAuthSessionTokenIssueError({ cause })));
+      const issued = yield* input.revocationEpoch === undefined
+        ? issue
+        : revocation.issueIfUnrevoked(
+            input.revocationEpoch,
+            issue,
+            () =>
+              new ServerAuthSessionTokenIssueError({
+                cause: new Error(
+                  "Every other client was signed out while this sign-in was pending.",
+                ),
+              }),
+          );
       // Noted so Remove ends it at once; its claims refuse it either way.
       if (binding !== undefined)
         yield* deviceTrust.trackCredential({
@@ -1870,6 +1919,7 @@ export const make = Effect.gen(function* () {
     revokeClientSession,
     revokeSessionsByProofKeyThumbprints,
     revokeOtherClientSessions,
+    revocationEpoch: revocation.current,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
     watchSessionEnd,
