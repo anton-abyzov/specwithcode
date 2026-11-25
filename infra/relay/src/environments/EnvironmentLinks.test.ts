@@ -129,13 +129,13 @@ describe("EnvironmentLinks", () => {
       insert: () => ({
         values: (values: Record<string, unknown>) => {
           inserted.push(values);
-          return { onConflictDoUpdate: () => statement };
+          return { onConflictDoUpdate: () => ({ returning: () => statement }) };
         },
       }),
       update: () => ({ set: () => ({ where: () => statement }) }),
       $client: {
         unsafe: () => statement,
-        batch: () => Effect.succeed([[], []]),
+        batch: () => Effect.succeed([[{ user_id: "user-1" }], []]),
       },
     } as unknown as RelayDb.RelayDb["Service"];
 

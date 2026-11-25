@@ -439,13 +439,33 @@ const make = Effect.gen(function* () {
           Effect.map((rows) => rows.filter((row) => row.userId !== input.userId)),
           Effect.orElseSucceed(() => []),
         );
-      yield* links.upsert({
-        ...input,
-        proof: verified,
-        endpoint,
-        hardwareIdentity,
-        inheritHoldWebhooksWhileOffline,
-      });
+      yield* links
+        .upsert({
+          ...input,
+          proof: verified,
+          endpoint,
+          hardwareIdentity,
+          inheritHoldWebhooksWhileOffline,
+        })
+        .pipe(
+          // A link under another key landed after the read above: same refusal.
+          Effect.catchTags({
+            EnvironmentLinkKeyConflict: () =>
+              Effect.logWarning("refused to relink an active environment under another key", {
+                environmentId: verified.environmentId,
+                reason: "environment_key_mismatch",
+              }).pipe(
+                Effect.andThen(
+                  new EnvironmentLinkProofInvalid({
+                    userId: input.userId,
+                    environmentId: verified.environmentId,
+                    reason: "descriptor_mismatch",
+                    stage: "validate_existing_link",
+                  }),
+                ),
+              ),
+          }),
+        );
       for (const previous of previousAccounts) {
         // Best effort, as for a replaced machine link: a tunnel left behind is
         // offline once the machine reconnects under its new account, and the

@@ -5,6 +5,7 @@ import type {
 import { describe, expect, it } from "@effect/vitest";
 import { eq } from "drizzle-orm";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as RelayDb from "../db.ts";
@@ -98,6 +99,34 @@ describe("EnvironmentLinks on SQLite D1", () => {
       yield* link("user-a", "key-1");
       const stored = yield* rows;
       expect(stored["user-a"]?.revokedAt).toBeNull();
+    }).pipe(Effect.provide(layer)),
+  );
+
+  // The linker reads the stored key before it writes. Two links racing past
+  // that read must not let the second key overwrite an active link, so the
+  // write itself checks the key.
+  it.effect("refuses to move an active link to another key in the write itself", () =>
+    Effect.gen(function* () {
+      yield* link("user-a", "key-1");
+      yield* link("user-b", "key-2");
+      const exit = yield* Effect.exit(link("user-a", "key-2"));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("EnvironmentLinkKeyConflict");
+      const stored = yield* rows;
+      expect(stored["user-a"]).toMatchObject({ environmentPublicKey: "key-1", revokedAt: null });
+      // A refused write ends nothing: the other account's key-2 link stays.
+      expect(stored["user-b"]?.revokedAt).toBeNull();
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("relinks a revoked link under a new key", () =>
+    Effect.gen(function* () {
+      yield* link("user-a", "key-1");
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      yield* links.revokeForUser({ userId: "user-a", environmentId: "env-1" });
+      yield* link("user-a", "key-2");
+      const stored = yield* rows;
+      expect(stored["user-a"]).toMatchObject({ environmentPublicKey: "key-2", revokedAt: null });
     }).pipe(Effect.provide(layer)),
   );
 });

@@ -497,6 +497,48 @@ describe("EnvironmentLinker", () => {
       );
     });
 
+    it.effect("refuses when a racing link took the key slot before the write", () => {
+      const calls: Array<string> = [];
+      return Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const error = yield* linker.link({ userId: "user_123", request }).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "EnvironmentLinkProofInvalid",
+          reason: "descriptor_mismatch",
+          stage: "validate_existing_link",
+        });
+        // A refused write moves no other account's tunnel.
+        expect(calls).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            // The read saw no link; another key's link landed before the write.
+            upsert: (upsertInput) =>
+              Effect.fail(
+                new EnvironmentLinks.EnvironmentLinkKeyConflict({
+                  userId: upsertInput.userId,
+                  environmentId: upsertInput.proof.environmentId,
+                }),
+              ),
+            findActiveManagedForEnvironment: () =>
+              Effect.succeed([
+                {
+                  ...activeLink(environmentKeyPair.publicKey.trim()),
+                  userId: "user_old",
+                  holdWebhooksWhileOffline: false,
+                },
+              ]),
+            deprovision: (target) =>
+              Effect.sync(() => {
+                if (target.userId !== "user_123") calls.push(`deprovision:${target.userId}`);
+                return true;
+              }),
+          }),
+        ),
+      );
+    });
+
     it.effect("relinks an active link proven by the same key", () =>
       Effect.gen(function* () {
         const { request, payload } = yield* makeRequest;
