@@ -18,11 +18,14 @@ import {
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 
 /** How long a token is reused before `gh` is asked again, so a `gh auth switch` applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
 /** No credential is retried sooner, so a fresh `gh auth login` takes effect on the next read. */
 const MISSING_TTL = Duration.seconds(10);
+/** An empty login list (no gh, a gh too old for `--json`, signed out) is asked again this often. */
+const NO_LOGINS_TTL = Duration.minutes(1);
 
 export const GitHubCredentialSource = Schema.Literals(["settings", "env", "gh"]);
 export type GitHubCredentialSource = typeof GitHubCredentialSource.Type;
@@ -33,6 +36,24 @@ export interface GitHubCredential {
   readonly source: GitHubCredentialSource;
   /** A digest of host and token: safe for cache keys and rate-limit scopes, never the token. */
   readonly fingerprint: string;
+  /** The gh login the token belongs to, set only when it was picked for a repository's owner. */
+  readonly account?: string;
+}
+
+/** A login `gh` holds for a host and can hand a token for. */
+export interface GitHubLogin {
+  readonly login: string;
+  /** The one `gh` and its git credential helper use when nothing names another. */
+  readonly active: boolean;
+}
+
+export interface GitHubCredentialOptions {
+  /**
+   * The owner of the repository the request is about. A gh login with that name (any letter case)
+   * is used ahead of the pinned account and the active login, never ahead of a token saved in
+   * Settings or set in the environment.
+   */
+  readonly owner?: string | undefined;
 }
 
 /** Nothing in the environment, and no `gh` on PATH to ask. */
@@ -97,9 +118,18 @@ export class GitHubCredentials extends Context.Service<
   {
     readonly get: (
       host: string,
+      options?: GitHubCredentialOptions,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
-    /** Drops the held token after GitHub refused it, so the next read asks its source again. */
+    /** Drops the held tokens after GitHub refused one, so the next read asks its source again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
+    /**
+     * The logins gh holds for the host, from `gh auth status` (no token is read). Empty when gh
+     * is missing, too old to list them, or signed out. `fresh` asks gh again now.
+     */
+    readonly logins: (
+      host: string,
+      options?: { readonly fresh?: boolean },
+    ) => Effect.Effect<ReadonlyArray<GitHubLogin>>;
   }
 >()("specweave-studio/sourceControl/GitHubCredentials") {}
 
@@ -220,9 +250,21 @@ export const make = Effect.gen(function* () {
   /** Cache key: the host plus its pinned account, so a changed pin misses the cache. */
   const cacheKey = (host: string, account: string | undefined) =>
     account === undefined ? host : `${host}\u0000${account}`;
+  /** Cache key for a login picked for a repository's owner: that login's token or nothing. */
+  const ownerCacheKey = (host: string, login: string) => `${host}\u0000${login}\u0000owner`;
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
-    const [host = key, choice] = key.split("\u0000");
+    const [host = key, choice, owner] = key.split("\u0000");
+    if (owner !== undefined && choice !== undefined) {
+      const token = yield* fromGh(host, choice);
+      return {
+        host,
+        token: Redacted.make(token),
+        source: "gh",
+        fingerprint: yield* fingerprintOf(host, token),
+        account: choice,
+      } satisfies GitHubCredential;
+    }
     // An environment token wins over a pinned account, exactly as it does in gh.
     const fromEnv = environmentToken(host, environment);
     // A pinned login gh no longer holds (logged out, expired) falls back to the active one,
@@ -256,8 +298,67 @@ export const make = Effect.gen(function* () {
           : MISSING_TTL,
   });
 
+  const loginCache = yield* Cache.makeWith(
+    (host: string) =>
+      process
+        .run({
+          operation: "GitHubCredentials.logins",
+          command: "gh",
+          args: ["auth", "status", "--json", "hosts"],
+          cwd: workingDirectory,
+          env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1", NO_COLOR: "1" },
+          // gh exits non-zero when any login is broken and still lists the others.
+          allowNonZeroExit: true,
+          timeoutMs: 15_000,
+        })
+        .pipe(
+          Effect.map((output) =>
+            parseGitHubAuthStatus(output.stdout)
+              .accounts.filter(
+                (account) =>
+                  account.host === host &&
+                  account.authenticated &&
+                  // A token variable shows up as a login, but gh cannot hand it out by name.
+                  account.environmentVariable === null,
+              )
+              .map(
+                (account) =>
+                  ({ login: account.account, active: account.active }) satisfies GitHubLogin,
+              ),
+          ),
+          Effect.orElseSucceed((): ReadonlyArray<GitHubLogin> => []),
+        ),
+    {
+      capacity: 8,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value.length > 0 ? TOKEN_TTL : NO_LOGINS_TTL,
+    },
+  );
+
+  // Owner keys read per host, so a refused token drops them along with the host's own.
+  const ownerKeys = new Map<string, Set<string>>();
+
+  /** The token of the gh login named like `owner`, or null: every failure falls back. */
+  const forOwner = Effect.fn("GitHubCredentials.forOwner")(function* (host: string, owner: string) {
+    const wanted = owner.trim().toLowerCase();
+    if (wanted === "" || environmentToken(host, environment) !== null) return null;
+    const held = (yield* Cache.get(loginCache, host)).find(
+      (entry) => entry.login.toLowerCase() === wanted,
+    );
+    if (held === undefined) return null;
+    // gh's own spelling of the login, never text taken from a URL or a path.
+    const key = ownerCacheKey(host, held.login);
+    let keys = ownerKeys.get(host);
+    if (keys === undefined) {
+      keys = new Set();
+      ownerKeys.set(host, keys);
+    }
+    keys.add(key);
+    return yield* Cache.get(cache, key).pipe(Effect.orElseSucceed(() => null));
+  });
+
   return GitHubCredentials.of({
-    get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
+    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, options) {
       const host = normalizeHost(rawHost);
       if (!isGitHubHost(host)) return yield* new GitHubNotSignedInError({ host });
       const choice = yield* hostChoice(host);
@@ -275,12 +376,27 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
+      if (options?.owner !== undefined) {
+        const owned = yield* forOwner(host, options.owner);
+        if (owned !== null) return owned;
+      }
       return yield* Cache.get(cache, cacheKey(host, choice?.account));
     }),
     invalidate: (rawHost) => {
       const host = normalizeHost(rawHost);
+      const owned = [...(ownerKeys.get(host) ?? [])];
+      ownerKeys.delete(host);
       return hostChoice(host).pipe(
         Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+        Effect.andThen(Effect.forEach(owned, (key) => Cache.invalidate(cache, key))),
+        Effect.andThen(Cache.invalidate(loginCache, host)),
+      );
+    },
+    logins: (rawHost, options) => {
+      const host = normalizeHost(rawHost);
+      if (!isGitHubHost(host)) return Effect.succeed([]);
+      return (options?.fresh === true ? Cache.invalidate(loginCache, host) : Effect.void).pipe(
+        Effect.andThen(Cache.get(loginCache, host)),
       );
     },
   });

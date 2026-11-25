@@ -475,6 +475,7 @@ it.effect(
               fingerprint: `${host}:${activeToken.length}${activeToken.at(-1)}`,
             })),
           invalidate: () => Effect.void,
+          logins: () => Effect.succeed([]),
         }),
       );
       const http = Layer.succeed(

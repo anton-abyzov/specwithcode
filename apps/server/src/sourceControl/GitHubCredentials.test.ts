@@ -21,6 +21,8 @@ function harness(
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
   reply?: (input: VcsProcess.VcsProcessInput) => string | undefined,
+  /** What `gh auth status --json hosts` lists for github.com; the first login is the active one. */
+  ghLogins: ReadonlyArray<string> = [],
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
   const process = Layer.mock(VcsProcess.VcsProcess)({
@@ -32,6 +34,25 @@ function harness(
           return {
             exitCode: ChildProcessSpawner.ExitCode(0),
             stdout: `${replied}\n`,
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          };
+        }
+        if (input.args[1] === "status") {
+          return {
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: JSON.stringify({
+              hosts: {
+                "github.com": ghLogins.map((login, index) => ({
+                  state: "success",
+                  active: index === 0,
+                  host: "github.com",
+                  login,
+                  tokenSource: "keyring",
+                })),
+              },
+            }),
             stderr: "",
             stdoutTruncated: false,
             stderrTruncated: false,
@@ -204,7 +225,6 @@ describe("GitHubCredentials", () => {
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
-
   describe("enterprise token", () => {
     it.effect("is never handed by gh to a host GH_HOST does not name", () => {
       vi.stubEnv("GH_HOST", "ghe.corp.example");
@@ -230,6 +250,110 @@ describe("GitHubCredentials", () => {
         expect(Redacted.value(credential.token)).toBe("enterprise-secret");
         expect(credential.source).toBe("env");
         expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("a repository owner's login", () => {
+    const STATUS = ["auth", "status", "--json", "hosts"];
+    const tokenOf = (login?: string) => [
+      "auth",
+      "token",
+      "--hostname",
+      "github.com",
+      ...(login === undefined ? [] : ["--user", login]),
+    ];
+
+    it.effect("is used ahead of the pinned account and the active login", () => {
+      const { layer, calls } = harness({ "github.com": { account: "work" } }, [], {}, undefined, [
+        "other",
+        "Acme-Owner",
+        "work",
+      ]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("github.com", { owner: "acme-owner" });
+        // gh's own spelling goes to --user, not the text from the repository path.
+        expect(Redacted.value(credential.token)).toBe("token-for-Acme-Owner");
+        expect(credential.account).toBe("Acme-Owner");
+        expect(credential.source).toBe("gh");
+        // A second read asks gh nothing.
+        yield* credentials.get("github.com", { owner: "ACME-OWNER" });
+        expect(calls).toEqual([STATUS, tokenOf("Acme-Owner")]);
+        // Without an owner the pinned account still applies.
+        expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("token-for-work");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("keeps the existing order when gh holds no login with that name", () => {
+      const { layer, calls } = harness({}, [], {}, undefined, ["other"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("github.com", { owner: "some-org" });
+        expect(Redacted.value(credential.token)).toBe("active-token");
+        expect(credential.account).toBeUndefined();
+        yield* credentials.get("github.com", { owner: "another-org" });
+        // One listing answers for every owner; no `--user` call is made for a login gh lacks.
+        expect(calls).toEqual([STATUS, tokenOf()]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("never replaces a token saved in Settings", () => {
+      const { layer, calls } = harness({}, [], { "github.com": "saved-token" }, undefined, ["other", "acme"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("github.com", { owner: "acme" });
+        expect(Redacted.value(credential.token)).toBe("saved-token");
+        expect(credential.source).toBe("settings");
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("never replaces a token set in the environment", () => {
+      vi.stubEnv("GH_TOKEN", "from-env");
+      const { layer, calls } = harness({}, [], {}, undefined, ["other", "acme"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("github.com", { owner: "acme" });
+        expect(Redacted.value(credential.token)).toBe("from-env");
+        expect(credential.source).toBe("env");
+        expect(calls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("falls back when gh cannot hand over the owner's token", () => {
+      const { layer } = harness({}, ["acme"], {}, undefined, ["other", "acme"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const credential = yield* credentials.get("github.com", { owner: "acme" });
+        expect(Redacted.value(credential.token)).toBe("active-token");
+        expect(credential.account).toBeUndefined();
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("is asked again after GitHub refused the token", () => {
+      const { layer, calls } = harness({}, [], {}, undefined, ["other", "acme"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        yield* credentials.get("github.com", { owner: "acme" });
+        yield* credentials.invalidate("github.com");
+        yield* credentials.get("github.com", { owner: "acme" });
+        expect(calls).toEqual([STATUS, tokenOf("acme"), STATUS, tokenOf("acme")]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("lists gh's logins without reading a token", () => {
+      const { layer, calls } = harness({}, [], {}, undefined, ["other", "acme"]);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        expect(yield* credentials.logins("GitHub.com")).toEqual([
+          { login: "other", active: true },
+          { login: "acme", active: false },
+        ]);
+        yield* credentials.logins("github.com");
+        expect(calls).toEqual([STATUS]);
+        yield* credentials.logins("github.com", { fresh: true });
+        expect(calls).toEqual([STATUS, STATUS]);
       }).pipe(Effect.provide(layer));
     });
   });
