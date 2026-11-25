@@ -39,10 +39,12 @@ const config = (secret: string | undefined) =>
 const makeRelay = (secret: string | undefined) => {
   const deleted: Array<string> = [];
   const consumed = new Set<string>();
+  const expiries: Array<number> = [];
   const layer = Layer.mergeAll(
     Layer.mock(DpopProofs.DpopProofReplay, {
-      consume: ({ thumbprint, jti }) =>
+      consume: ({ thumbprint, jti, expiresAt }) =>
         Effect.sync(() => {
+          expiries.push(expiresAt.epochMilliseconds);
           const key = `${thumbprint}:${jti}`;
           if (consumed.has(key)) return false;
           consumed.add(key);
@@ -68,7 +70,7 @@ const makeRelay = (secret: string | undefined) => {
     RelayConfiguration.layer(config(secret)),
     NodeCryptoLayer.layer,
   );
-  return { deleted, layer };
+  return { deleted, expiries, layer };
 };
 
 const sign = (id: string, timestamp: number, body: string, key: Buffer = SIGNING_KEY) =>
@@ -230,6 +232,24 @@ describe("Clerk user.deleted webhook", () => {
       yield* deliver(relay, userDeleted, attempt(timestamp - 1));
       expect((yield* deliver(relay, userDeleted, attempt(timestamp))).status).toBe(204);
       expect(relay.deleted).toEqual(["user_2gone", "user_2gone"]);
+    });
+  });
+
+  // The verifier takes a timestamp up to 300 s old, through the end of that
+  // last second. The replay record must outlive it, or a prune in that second
+  // lets the same delivery in again.
+  it.effect("keeps the replay record past the last second the signature is accepted", () => {
+    const relay = makeRelay(SECRET);
+    const timestamp = now();
+    return Effect.gen(function* () {
+      yield* deliver(relay, userDeleted, (id) => ({
+        "svix-id": id,
+        "svix-timestamp": String(timestamp),
+        "svix-signature": sign(id, timestamp, userDeleted),
+      }));
+      const lastAccepted = (timestamp + ClerkWebhook.SVIX_TIMESTAMP_TOLERANCE_SECONDS + 1) * 1_000;
+      expect(relay.expiries).toHaveLength(1);
+      expect(relay.expiries[0]).toBeGreaterThanOrEqual(lastAccepted + 59_000);
     });
   });
 });

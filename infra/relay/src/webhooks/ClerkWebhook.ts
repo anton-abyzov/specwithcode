@@ -26,6 +26,9 @@ export const SVIX_TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 /** The replay store's scope for Clerk deliveries, apart from DPoP keys and link challenges. */
 const CLERK_WEBHOOK_REPLAY_SCOPE = "clerk-webhook";
 
+/** Past the last accepted second, so a prune can never readmit a delivery the window still takes. */
+const CLERK_WEBHOOK_REPLAY_MARGIN_SECONDS = 60;
+
 const encoder = new TextEncoder();
 
 const decodeBase64 = (value: string): Uint8Array | null => {
@@ -120,14 +123,16 @@ export const handleClerkWebhook = Effect.fn("relay.webhooks.clerk")(function* (
   if (!verified) return empty(401);
   // A captured delivery replayed inside the window does nothing. Clerk's own
   // retry signs the same message id with a new timestamp, so the pair is the
-  // nonce: a retry after a 500 still acts. The record outlives the window.
+  // nonce: a retry after a 500 still acts. The record outlives the window by a minute.
   const issuedAt = Number(timestamp);
   const fresh = yield* DpopProofs.DpopProofReplay.use((replay) =>
     replay.consume({
       thumbprint: CLERK_WEBHOOK_REPLAY_SCOPE,
       jti: `${id}.${timestamp}`,
       iat: issuedAt,
-      expiresAt: DateTime.makeUnsafe((issuedAt + SVIX_TIMESTAMP_TOLERANCE_SECONDS) * 1_000),
+      expiresAt: DateTime.makeUnsafe(
+        (issuedAt + SVIX_TIMESTAMP_TOLERANCE_SECONDS + CLERK_WEBHOOK_REPLAY_MARGIN_SECONDS) * 1_000,
+      ),
     }),
   ).pipe(
     Effect.catch((error) =>
