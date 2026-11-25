@@ -23,13 +23,21 @@ export function HelperChatBlockers({ thread }: { thread: EnvironmentThreadShell 
   const shells = useThreadShells(thread !== null);
   const blocked = useMemo(() => {
     if (thread === null) return [];
-    // Only helpers another machine's thread started can be this thread's; most shells are not.
+    // One pass picks the helpers this machine's threads started elsewhere; usually none.
     const helpers = shells.filter(
-      (shell) => shell.origin?.parentThreadRef !== undefined && shell.archivedAt === null,
+      (shell) =>
+        shell.archivedAt === null &&
+        shell.environmentId !== thread.environmentId &&
+        shell.origin?.parentThreadRef?.environmentId === thread.environmentId,
     );
     if (helpers.length === 0) return [];
+    const parents = new Map(
+      shells
+        .filter((shell) => shell.environmentId === thread.environmentId)
+        .map((shell) => [shell.id as string, shell]),
+    );
     return blockedHelpersOf(thread, helpers, {
-      thread: (key) => shells.find((shell) => `${shell.environmentId}:${shell.id}` === key),
+      thread: (_environmentId, threadId) => parents.get(threadId),
       blockerOf: threadBlocker,
     });
   }, [shells, thread]);

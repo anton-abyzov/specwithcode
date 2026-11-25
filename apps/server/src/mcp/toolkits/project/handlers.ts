@@ -61,7 +61,7 @@ import {
   withStartEffort,
 } from "../../../project/TaskRouting.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
-import { mayStartScratchHelper } from "./scratchHelper.ts";
+import { confirmScratchHelper } from "./scratchHelper.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -511,7 +511,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             caller !== undefined &&
             input.projectless !== true &&
             !(
-              input.machine !== undefined && mayStartScratchHelper(callerProject, machine.machine)
+              input.machine !== undefined &&
+              (yield* confirmScratchHelper(callerProject, machine.machine))
             ) &&
             !(yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
               Effect.flatMap((folders) => folders.isScratch(caller.projectId)),

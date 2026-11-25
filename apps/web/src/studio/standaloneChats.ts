@@ -73,50 +73,75 @@ type HelperOrigin = {
     | undefined;
 };
 
-/** `environmentId:threadId` of the thread on another machine that started this one. */
-export function helperParentKey(chat: {
+/** The thread on another machine that started this one. Kept whole: ids may hold ":". */
+export function helperParentRef(chat: {
   readonly origin?: HelperOrigin | undefined;
-}): string | undefined {
+}): { readonly environmentId: string; readonly threadId: string } | undefined {
   const ref = chat.origin?.parentThreadRef;
   const environmentId = ref?.environmentId ?? chat.origin?.environmentId;
   return ref === undefined || environmentId === undefined
     ? undefined
-    : `${environmentId}:${ref.threadId}`;
+    : { environmentId, threadId: ref.threadId };
 }
 
+/** The requester as a project thread, a chat of its own, or not loaded here. */
+export type HelperRequester =
+  | { readonly kind: "project"; readonly name: string }
+  | { readonly kind: "chat" }
+  | { readonly kind: "unknown" };
+
 /**
- * What a helper chat another machine's thread started says about where it
- * belongs, for its header and the chats list: the requesting project's name
- * (the loaded requester's project first, else the name that machine sent),
- * and the machine the request came from. Undefined for a person's chat.
+ * Where a helper chat another machine's thread started belongs, for its header
+ * and the chats list: the requesting project's name (the loaded requester's
+ * first, else the name that machine sent) and the machine the request came
+ * from. Undefined for a person's chat and for a chat another chat started.
  */
 export function helperChatOrigin(
   chat: { readonly origin?: HelperOrigin | undefined },
-  requesterProjectName: string | undefined,
-): { readonly projectName: string; readonly fromMachine: string | undefined } | undefined {
-  if (helperParentKey(chat) === undefined) return undefined;
-  const projectName = requesterProjectName ?? chat.origin?.parentProjectLabel?.trim();
-  if (!projectName) return undefined;
-  return { projectName, fromMachine: chat.origin?.machineLabel?.trim() || undefined };
+  requester: HelperRequester,
+):
+  | { readonly projectName: string | undefined; readonly fromMachine: string | undefined }
+  | undefined {
+  if (helperParentRef(chat) === undefined || requester.kind === "chat") return undefined;
+  const projectName =
+    requester.kind === "project"
+      ? requester.name
+      : chat.origin?.parentProjectLabel?.trim() || undefined;
+  const fromMachine = chat.origin?.machineLabel?.trim() || undefined;
+  return projectName === undefined && fromMachine === undefined
+    ? undefined
+    : { projectName, fromMachine };
 }
+
+/** Words for a helper's group and header, so each surface translates them alike. */
+export interface HelperWords {
+  readonly projectOnMachine: (project: string, machine: string) => string;
+  readonly project: (project: string) => string;
+  readonly machine: (machine: string) => string;
+}
+
+export const ENGLISH_HELPER_WORDS: HelperWords = {
+  projectOnMachine: (project, machine) => `From ${project} on ${machine}`,
+  project: (project) => `From ${project}`,
+  machine: (machine) => `From ${machine}`,
+};
 
 /**
  * The chats list's group for a helper chat whose requesting thread is not
- * loaded here, so it cannot open from that project's row: "From specweave on
- * M5", never "No project". Undefined when the origin names no project.
+ * loaded here: "From specweave on M5", or "From M5" from a machine that sent
+ * no project name; never "No project". Undefined for any other chat.
  */
-export function helperChatGroupLabel(chat: {
-  readonly origin?: HelperOrigin | undefined;
-}): string | undefined {
-  const helper = helperChatOrigin(chat, undefined);
-  // A machine before the project name travelled still says where the request came from.
-  if (helper === undefined) {
-    const machine = chat.origin?.machineLabel?.trim();
-    return helperParentKey(chat) !== undefined && machine ? `From ${machine}` : undefined;
-  }
-  return helper.fromMachine
-    ? `From ${helper.projectName} on ${helper.fromMachine}`
-    : `From ${helper.projectName}`;
+export function helperChatGroupLabel(
+  chat: { readonly origin?: HelperOrigin | undefined },
+  words: HelperWords = ENGLISH_HELPER_WORDS,
+): string | undefined {
+  const helper = helperChatOrigin(chat, { kind: "unknown" });
+  if (helper === undefined) return undefined;
+  if (helper.projectName && helper.fromMachine)
+    return words.projectOnMachine(helper.projectName, helper.fromMachine);
+  return helper.projectName
+    ? words.project(helper.projectName)
+    : words.machine(helper.fromMachine!);
 }
 
 type HelperCandidate = {
@@ -135,9 +160,10 @@ export function blockedHelpersOf<T extends HelperCandidate>(
   thread: { readonly environmentId: string; readonly id: string },
   candidates: Iterable<T>,
   input: {
-    /** A thread by `environmentId:threadId`, for the starting thread's root. */
+    /** A thread by environment and id, for the starting thread's root. */
     readonly thread: (
-      key: string,
+      environmentId: string,
+      threadId: string,
     ) => { readonly lineage?: { readonly rootThreadId?: string | null } } | undefined;
     readonly blockerOf: (helper: T) => string | null;
   },
@@ -145,14 +171,11 @@ export function blockedHelpersOf<T extends HelperCandidate>(
   const out: Array<{ helper: T; blocker: string }> = [];
   for (const helper of candidates) {
     if (helper.environmentId === thread.environmentId) continue;
-    const parentKey = helperParentKey(helper);
-    if (parentKey === undefined) continue;
-    const ownKey = `${thread.environmentId}:${thread.id}`;
-    const parentEnvironment = parentKey.slice(0, parentKey.indexOf(":"));
-    const root = input.thread(parentKey)?.lineage?.rootThreadId;
+    const parent = helperParentRef(helper);
+    if (parent === undefined || parent.environmentId !== thread.environmentId) continue;
     const startedHere =
-      parentKey === ownKey ||
-      (parentEnvironment === thread.environmentId && root != null && root === thread.id);
+      parent.threadId === thread.id ||
+      input.thread(parent.environmentId, parent.threadId)?.lineage?.rootThreadId === thread.id;
     if (!startedHere) continue;
     const blocker = input.blockerOf(helper);
     if (blocker !== null) out.push({ helper, blocker });
@@ -164,7 +187,7 @@ export function blockedHelpersOf<T extends HelperCandidate>(
  * Where the chats list puts a chat a thread on another machine started: with
  * that thread's project (`group`, opened from its project row), or, while that
  * thread is not loaded here, under the helper's "From <project> on <machine>".
- * Undefined for a project's own thread and for a person's chat.
+ * Undefined for a project's own thread, a person's chat and a chat's chat.
  */
 export function chatRequester<
   T extends { readonly origin?: HelperOrigin | undefined },
@@ -175,14 +198,18 @@ export function chatRequester<
     readonly isChat: (thread: T) => boolean;
     readonly thread: (key: string) => T | undefined;
     readonly project: (thread: T) => G | undefined;
+    readonly words?: HelperWords;
   },
 ): { readonly group?: G; readonly label: string } | undefined {
   if (!input.isChat(chat)) return undefined;
-  const group = requesterProject(chat, {
-    thread: input.thread,
-    project: (requester) => (input.isChat(requester) ? undefined : input.project(requester)),
-  });
-  if (group !== undefined) return { group, label: group.displayName };
-  const label = helperChatGroupLabel(chat);
+  const ref = helperParentRef(chat);
+  if (ref === undefined) return undefined;
+  const requester = input.thread(`${ref.environmentId}:${ref.threadId}`);
+  if (requester !== undefined) {
+    if (input.isChat(requester)) return undefined;
+    const group = input.project(requester);
+    if (group !== undefined) return { group, label: group.displayName };
+  }
+  const label = helperChatGroupLabel(chat, input.words);
   return label === undefined ? undefined : { label };
 }

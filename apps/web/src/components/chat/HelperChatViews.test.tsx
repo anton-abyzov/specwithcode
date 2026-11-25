@@ -20,6 +20,19 @@ describe("a helper chat's header", () => {
   });
 });
 
+describe("a helper chat's header from a machine that sent no project name", () => {
+  it("says which machine asked instead of No project", () => {
+    const html = renderToStaticMarkup(
+      <HelperChatBreadcrumbView
+        helper={{ projectName: undefined, fromMachine: "M5" }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain("From M5");
+    expect(html).not.toContain("No project");
+  });
+});
+
 describe("blocked helpers in the thread that started them", () => {
   it("lists each blocked helper with its blocker and an Open link", () => {
     const html = renderToStaticMarkup(
@@ -30,7 +43,7 @@ describe("blocked helpers in the thread that started them", () => {
               environmentId: "win",
               id: "helper",
               title: "Git push credentials check on win",
-            },
+            } as never,
             blocker: "On win: run gh auth login --hostname github.com.",
           },
         ]}

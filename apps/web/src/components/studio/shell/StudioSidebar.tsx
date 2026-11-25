@@ -476,8 +476,16 @@ export default function StudioSidebar() {
         isChat: isStandaloneChat,
         thread: (key) => threadByKey.get(key),
         project: (t) => projectByMember.get(`${t.environmentId}:${t.projectId}`),
+        words: {
+          projectOnMachine: (project, machine) =>
+            tx("From {project} on {machine}")
+              .replace("{project}", project)
+              .replace("{machine}", machine),
+          project: (project) => tx("From {project}").replace("{project}", project),
+          machine: (machine) => tx("From {machine}").replace("{machine}", machine),
+        },
       }),
-    [isStandaloneChat, projectByMember, threadByKey],
+    [isStandaloneChat, projectByMember, threadByKey, tx],
   );
   const chatGroupInput = useMemo(
     () => ({

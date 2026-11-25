@@ -95,6 +95,8 @@ const setup = (
     readonly m1CopyThreads?: ReadonlyArray<Record<string, unknown>>;
     /** The shared project still lists an M1 member that M1 no longer has (unlinked there). */
     readonly staleM1Member?: boolean;
+    /** What M1 reports about this project when probed. */
+    readonly m1ProjectMatch?: "none" | "identity";
     /** M1 holds a linked copy of this project. */
     readonly m1Member?: boolean;
     /** What each machine reports about itself; a machine left out has not said. */
@@ -197,6 +199,9 @@ const setup = (
             grantExpiresAt: null,
             reachable: true,
             ...(platform === undefined ? {} : { platform }),
+            ...(options.m1ProjectMatch !== undefined && machine === M1
+              ? { project: { match: options.m1ProjectMatch } }
+              : {}),
           };
         }),
         projectWorkerMachine: null,
@@ -950,14 +955,29 @@ it.effect("keeps a project thread's scratch work elsewhere to projectless, as he
 it.effect(
   "starts a project's scratch helper on a machine without the project, named for it",
   () => {
-    const helper = setup();
-    const unnamed = setup({ workerMachines: ["m1"] });
+    const helper = setup({ m1ProjectMatch: "none" });
+    const unnamed = setup({ workerMachines: ["m1"], m1ProjectMatch: "none" });
+    // M1 has this repository by identity although nothing links it: the work goes there.
+    const legacy = setup({ m1ProjectMatch: "identity" });
+    // M1 said nothing about the project: the old rule stands.
+    const unknown = setup();
     return Effect.gen(function* () {
       // Without a named machine, a saved worker machine is no reason to leave the project.
       expect(
         yield* unnamed.launch({ title: "Git push check", message: "go", scratch: true }),
       ).toMatchObject({ code: "invalid_request" });
       expect(unnamed.remoteLaunches).toEqual([]);
+      for (const world of [legacy, unknown]) {
+        expect(
+          yield* world.launch({
+            title: "Git push check",
+            message: "go",
+            machine: "m1",
+            scratch: true,
+          }),
+        ).toMatchObject({ code: "invalid_request" });
+        expect(world.remoteLaunches).toEqual([]);
+      }
       // M1 has no copy of this project: a check there needs no projectless.
       yield* helper.launch({
         title: "Git push check",

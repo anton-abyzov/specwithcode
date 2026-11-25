@@ -5,6 +5,7 @@ import {
   chatRequester,
   helperChatGroupLabel,
   helperChatOrigin,
+  helperParentRef,
   requesterProject,
 } from "./standaloneChats";
 
@@ -56,23 +57,34 @@ describe("helper chats another machine's thread started", () => {
     parentProjectLabel: "specweave",
     parentThreadRef: { environmentId: "m5", threadId: "thread:delegated-task:worker" },
   };
+  const unknown = { kind: "unknown" } as const;
 
   it("names the requesting project, the loaded one first, never No project", () => {
-    expect(helperChatOrigin({ origin }, undefined)).toEqual({
+    expect(helperChatOrigin({ origin }, unknown)).toEqual({
       projectName: "specweave",
       fromMachine: "M5",
     });
-    expect(helperChatOrigin({ origin }, "specweave umbrella")?.projectName).toBe(
-      "specweave umbrella",
-    );
-    // A person's chat, and a helper from a machine that sent no project name.
-    expect(helperChatOrigin({}, undefined)).toBeUndefined();
     expect(
-      helperChatOrigin({ origin: { ...origin, parentProjectLabel: undefined } }, undefined),
+      helperChatOrigin({ origin }, { kind: "project", name: "specweave umbrella" })?.projectName,
+    ).toBe("specweave umbrella");
+    // A machine that sent no project name still says where the request came from.
+    expect(
+      helperChatOrigin({ origin: { ...origin, parentProjectLabel: undefined } }, unknown),
+    ).toEqual({ projectName: undefined, fromMachine: "M5" });
+    // A person's chat, and a chat another chat started, stay chats.
+    expect(helperChatOrigin({}, unknown)).toBeUndefined();
+    expect(helperChatOrigin({ origin }, { kind: "chat" })).toBeUndefined();
+    expect(
+      helperChatOrigin({ origin: { ...origin, parentThreadRef: undefined } }, unknown),
     ).toBeUndefined();
-    expect(helperChatOrigin({ origin: { ...origin, parentThreadRef: undefined } }, "x")).toBe(
-      undefined,
-    );
+  });
+
+  it("keeps an environment id that holds a colon whole", () => {
+    expect(
+      helperParentRef({
+        origin: { parentThreadRef: { environmentId: "lab:east", threadId: "t:1" } },
+      }),
+    ).toEqual({ environmentId: "lab:east", threadId: "t:1" });
   });
 
   it("groups a helper whose requester is not loaded under From <project> on <machine>", () => {
@@ -84,6 +96,17 @@ describe("helper chats another machine's thread started", () => {
       "From M5",
     );
     expect(helperChatGroupLabel({})).toBeUndefined();
+    // Words come from the caller, so a translated list says them in its language.
+    expect(
+      helperChatGroupLabel(
+        { origin },
+        {
+          projectOnMachine: (project, machine) => `Von ${project} auf ${machine}`,
+          project: (project) => `Von ${project}`,
+          machine: (machine) => `Von ${machine}`,
+        },
+      ),
+    ).toBe("Von specweave auf M5");
   });
 
   it("shows a blocked helper in the thread that started it and in that thread's root", () => {
@@ -94,8 +117,8 @@ describe("helper chats another machine's thread started", () => {
       origin: { ...origin, parentThreadRef: { environmentId: "m5", threadId: "someone-else" } },
     };
     const local = { environmentId: "m5", id: "local", origin };
-    const lookup = (key: string) =>
-      key === "m5:thread:delegated-task:worker"
+    const lookup = (environmentId: string, threadId: string) =>
+      environmentId === "m5" && threadId === "thread:delegated-task:worker"
         ? { lineage: { rootThreadId: "project-coordinator:p" } }
         : undefined;
     const input = { thread: lookup, blockerOf: () => "On win: run gh auth login" };
@@ -143,5 +166,13 @@ describe("chatRequester", () => {
     // A project's own thread, and a person's chat.
     expect(chatRequester(worker, input(true))).toBeUndefined();
     expect(chatRequester({ ...helper, origin: undefined }, input(true))).toBeUndefined();
+    // A chat another machine's chat started is a chat, not "From M5".
+    const chatParent: T = { id: "m5:worker", chat: true, projectId: "scratch" };
+    expect(
+      chatRequester(helper, {
+        ...input(true),
+        thread: (key) => (key === "m5:worker" ? chatParent : undefined),
+      }),
+    ).toBeUndefined();
   });
 });
