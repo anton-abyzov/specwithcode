@@ -24,6 +24,7 @@ from unittest.mock import patch
 import additive_migrations
 import live_database
 import rehearse_update
+import sqlite_fixture
 import studio_paths
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -64,6 +65,22 @@ def previous_release_state(folder):
     db.close()
     _STATE['db'] = database
     return previous_release_state(folder)
+
+
+class ProtectedRead(unittest.TestCase):
+    def test_a_clone_of_a_stopped_source_is_read_on_any_sqlite(self):
+        # A stopped service leaves no -wal, so the rehearsal clones the main file alone; Apple's
+        # SQLite 3.54.0 (/usr/bin/python3 on macOS 27) refused a plain mode=ro read of it.
+        folder = tempfile.TemporaryDirectory(prefix='rehearse-protected-')
+        self.addCleanup(folder.cleanup)
+        database = pathlib.Path(folder.name) / 'statev2.sqlite'
+        db = sqlite3.connect(str(database))
+        db.executescript('PRAGMA journal_mode=WAL; CREATE TABLE kept (id INTEGER PRIMARY KEY, v TEXT);'
+                         "INSERT INTO kept (v) VALUES ('a'), ('b');")
+        sqlite_fixture.close(db)
+        self.assertEqual(sorted(path.name for path in database.parent.iterdir()), ['statev2.sqlite'])
+        found = rehearse_update.protected(database)
+        self.assertEqual(found['kept'][0], 2)
 
 
 class Rehearsal(unittest.TestCase):

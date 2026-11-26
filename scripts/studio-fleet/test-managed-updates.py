@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 import managed_updates as managed
+import sqlite_fixture
 import update
 import update_agent as agent
 
@@ -171,6 +172,26 @@ class ManagedConsent(unittest.TestCase):
         self.assertEqual(receipt, self.receipt_path.read_bytes())
         self.assertEqual(database, self.database.read_bytes())
         self.assertFalse((self.updates / 'config.json').exists())
+
+    def stopped_service(self):
+        """The service's database is in WAL mode; a stopped service leaves only the main file."""
+        db = sqlite3.connect(str(self.database))
+        db.execute('PRAGMA journal_mode=WAL')
+        sqlite_fixture.close(db)
+        self.assertEqual(sorted(path.name for path in self.state.glob('statev2.sqlite*')), ['statev2.sqlite'])
+
+    def test_a_stopped_service_grant_is_read_on_any_sqlite(self):
+        # Apple's SQLite 3.54.0 (/usr/bin/python3 on macOS 27) refused this read as "unavailable".
+        self.stopped_service()
+        self.assertEqual(self.run_request()['remoteConsent'], 'not-enrolled')
+        self.stopped_service()
+        self.run_request('enroll')
+        self.assertEqual(self.run_request()['remoteConsent'], 'enrolled')
+
+    def test_a_stopped_service_grant_stays_authoritative(self):
+        self.grant(revoked_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+        self.stopped_service()
+        self.assert_code('unauthorized', self.request())
 
     def test_standard_pairing_worker_or_one_missing_scope_cannot_enroll_or_revoke(self):
         for scopes in (['environment:maintain'], ['access:write'], ['orchestration:read'], [], ['server:write']):
