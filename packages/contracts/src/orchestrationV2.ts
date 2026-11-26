@@ -71,6 +71,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { OrchestrationV2McpElicitation } from "./mcpElicitation.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -1959,6 +1960,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The form an MCP server asked the person to fill in (1481). */
+    elicitation: Schema.optional(OrchestrationV2McpElicitation),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2862,6 +2865,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The form an MCP server asked the person to fill in (1481). */
+    elicitation: Schema.optional(OrchestrationV2McpElicitation),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

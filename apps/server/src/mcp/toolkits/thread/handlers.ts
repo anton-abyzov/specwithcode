@@ -413,7 +413,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       // Approval cards for project changes, and reply cards whose Send sends
       // mail, are the user's alone to answer.
-      if (isProjectActionRequestId(input.requestId) || isGmailSendRequestId(input.requestId))
+      // So are an MCP server's forms: the person reviews what is sent (1481).
+      const { projection: target } = yield* readReadableThread(input.threadId, ["runtimeRequests"]);
+      if (
+        isProjectActionRequestId(input.requestId) ||
+        isGmailSendRequestId(input.requestId) ||
+        target.runtimeRequests.some(
+          (request) => request.id === input.requestId && request.kind === "mcp-elicitation",
+        )
+      )
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "Only the user can answer an approval card. Wait for their answer.",
