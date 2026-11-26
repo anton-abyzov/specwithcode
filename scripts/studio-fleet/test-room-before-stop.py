@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE))
 import kept_lines  # noqa: E402
 import state_backup  # noqa: E402
 import update_apply  # noqa: E402
+import sqlite_fixture  # noqa: E402
 
 
 def _load(name, alias):
@@ -109,7 +110,9 @@ class FullPathRoom(unittest.TestCase):
         db = sqlite3.connect(str(self.h.own / 'userdata' / 'statev2.sqlite'))
         db.executescript("PRAGMA journal_mode=WAL;CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, created_at TEXT, name TEXT);"
                          "INSERT INTO effect_sql_migrations VALUES (68, 'now', 'ActiveTurnItemIndexes');")
-        db.close()
+        sqlite_fixture.close(db)
+        self.service = sqlite_fixture.RunningService(self.h.own / 'userdata' / 'statev2.sqlite')
+        self.addCleanup(self.service.stop)
         self.watched = Watched(self, update)
 
     def test_short_fallback_room_refuses_before_the_stop(self):
@@ -129,10 +132,7 @@ class FullPathRoom(unittest.TestCase):
         self.assertEqual((self.h.stops, self.h.launchd, self.h.restart_calls), ([], [], []))
 
     def test_migrated_database_asks_no_fallback_room(self):
-        db = sqlite3.connect(str(self.h.own / 'userdata' / 'statev2.sqlite'))
-        db.execute("INSERT INTO effect_sql_migrations VALUES (69, 'now', 'AuthSessionProofKeyThumbprint')")
-        db.commit()
-        db.close()
+        self.service.write("INSERT INTO effect_sql_migrations VALUES (69, 'now', 'AuthSessionProofKeyThumbprint')")
         with patch.object(kept_lines, 'available_disk', return_value=1), \
              patch.object(update_apply, 'largest_table_bytes', side_effect=AssertionError('walked')):
             self.h.execute()

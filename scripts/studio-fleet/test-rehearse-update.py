@@ -22,6 +22,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import additive_migrations
+import live_database
 import rehearse_update
 import studio_paths
 
@@ -109,7 +110,7 @@ class Rehearsal(unittest.TestCase):
         self.assertFalse(pathlib.Path(report['folder']).exists())
         self.assertEqual(list(self.scratch.iterdir()), [])
         # The source is never written: 072 has still not run there.
-        db = sqlite3.connect('file:%s?mode=ro' % before, uri=True)
+        db = live_database.connect(before)
         self.assertIsNone(db.execute('SELECT 1 FROM effect_sql_migrations WHERE migration_id = 72').fetchone())
         db.close()
 

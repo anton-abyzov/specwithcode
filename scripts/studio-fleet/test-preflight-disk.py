@@ -27,6 +27,7 @@ sys.path.insert(0, str(HERE.parent / 'release'))
 import disk_room  # noqa: E402
 import kept_lines  # noqa: E402
 import preflight_fleet  # noqa: E402
+import sqlite_fixture  # noqa: E402
 import state_backup  # noqa: E402
 
 GB = 10 ** 9
@@ -57,8 +58,7 @@ class Home(object):
                          "CREATE TABLE orchestration_events (sequence INTEGER PRIMARY KEY, body TEXT);")
         db.execute('INSERT INTO effect_sql_migrations VALUES (?, ?, ?)', (migration, 'now', 'm'))
         db.executemany('INSERT INTO orchestration_events(body) VALUES (?)', [('x' * 500,)] * 200)
-        db.commit()
-        db.close()
+        sqlite_fixture.close(db)
         if size:
             os.truncate(str(self.database), size)  # Sparse: the size backups are measured by, no data.
 

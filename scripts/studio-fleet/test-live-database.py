@@ -24,8 +24,10 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import live_database
+import sqlite_fixture
 
 ROWS = 3000
 HOLDER = r"""
@@ -142,6 +144,109 @@ class LiveDatabase(unittest.TestCase):
                          .replace('#', '%23').replace('?', '%3F') + '/statev2.sqlite?mode=ro')
         self.hold('intact')
         self.assertTrue(live_database.readonly_uri(self.database).endswith('?mode=ro&readonly_shm=1'))
+
+    def stopped(self):
+        """A WAL database its service has closed: only the main file is left, as Node's SQLite leaves it."""
+        db = sqlite3.connect(str(self.database))
+        db.executescript('PRAGMA journal_mode=WAL; CREATE TABLE kept (x); INSERT INTO kept VALUES (1), (2);')
+        sqlite_fixture.close(db)
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ['statev2.sqlite'])
+
+    def test_a_stopped_database_is_read_on_any_sqlite(self):
+        # Apple's SQLite 3.54.0 (macOS 27) refuses a plain mode=ro open of this database.
+        self.stopped()
+        db = live_database.connect(self.database)
+        try:
+            self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+            with self.assertRaises(sqlite3.OperationalError):
+                db.execute('INSERT INTO kept VALUES (3)')
+        finally:
+            db.close()
+        # The reader joined as an ordinary WAL reader and left the index and log as stock SQLite does.
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()),
+                         ['statev2.sqlite', 'statev2.sqlite-shm', 'statev2.sqlite-wal'])
+
+    @contextlib.contextmanager
+    def refusing(self, always=False):
+        """sqlite3.connect as Apple's 3.54.0 has it: a plain mode=ro open of a WAL database with
+        no -wal is refused. Yields the query of every URI opened."""
+        real, queries = sqlite3.connect, []
+
+        def connect(target, *args, **kwargs):
+            queries.append(target.rsplit('?', 1)[1])
+            if always or not os.path.exists(str(self.database) + '-wal'):
+                raise sqlite3.OperationalError('unable to open database file')
+            return real(target, *args, **kwargs)
+        with mock.patch.object(live_database.sqlite3, 'connect', side_effect=connect):
+            yield queries
+
+    def test_a_stopped_database_read_keeps_a_service_that_starts_from_checkpointing_under_it(self):
+        self.stopped()
+        with self.refusing() as queries:
+            db = live_database.connect(self.database)
+        self.addCleanup(db.close)
+        self.assertEqual(queries, ['mode=ro', 'mode=ro'])
+        db.execute('BEGIN')
+        self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+        before = self.database.read_bytes()
+        service = sqlite_fixture.RunningService(self.database)  # The service starts mid-read.
+        self.addCleanup(service.stop)
+        service.write('CREATE TABLE grown (v)', *['INSERT INTO grown VALUES (randomblob(4000))'] * 200)
+        service.write('PRAGMA wal_checkpoint(TRUNCATE)')
+        # The read holds SQLite's read lock: the checkpoint could not write over the pages it uses.
+        self.assertEqual(self.database.read_bytes(), before)
+        self.assertEqual(db.execute('SELECT count(*) FROM sqlite_master').fetchone(), (1,))
+        db.execute('COMMIT')
+        self.assertEqual(db.execute('SELECT count(*) FROM grown').fetchone(), (200,))
+
+    def test_a_second_read_shares_the_index_the_first_left(self):
+        self.stopped()
+        for _ in range(2):
+            db = live_database.connect(self.database)
+            self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+            db.close()
+        self.assertTrue(live_database.readonly_uri(self.database).endswith('?mode=ro&readonly_shm=1'))
+        db = live_database.connect(self.database)
+        self.addCleanup(db.close)
+        db.execute('BEGIN')
+        db.execute('SELECT count(*) FROM kept').fetchone()
+        service = sqlite_fixture.RunningService(self.database)  # It starts and writes during that read.
+        self.addCleanup(service.stop)
+        service.write('INSERT INTO kept VALUES (3)')
+        self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+        db.execute('COMMIT')
+        self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (3,))
+
+    def test_an_index_a_starting_service_initialised_is_opened_read_only(self):
+        self.stopped()
+        create, started = live_database._create_side_files, []
+
+        def create_then_start(path):  # The service starts between the reader's create and its open.
+            created = create(path)
+            started.append(sqlite_fixture.RunningService(self.database))
+            self.addCleanup(started[0].stop)
+            return created
+        with self.refusing() as queries, mock.patch.object(live_database, '_create_side_files', side_effect=create_then_start):
+            db = live_database.connect(self.database)
+        db.close()
+        self.assertEqual(queries, ['mode=ro', 'mode=ro&readonly_shm=1'])
+
+    def test_a_held_database_never_falls_back(self):
+        self.hold('intact')
+        with self.refusing(always=True) as queries, self.assertRaisesRegex(sqlite3.OperationalError, 'unable to open'):
+            live_database.connect(self.database)
+        self.assertEqual(queries, ['mode=ro&readonly_shm=1'])
+
+    def test_a_database_held_without_its_wal_and_index_is_refused(self):
+        # A process still has it open, but its -wal and -shm were removed under it: the main file
+        # alone would miss that process's log, so nothing is created and nothing is read.
+        self.hold('intact')
+        for suffix in ('-wal', '-shm'):
+            pathlib.Path(str(self.database) + suffix).unlink()
+        with self.refusing() as queries, self.assertRaisesRegex(sqlite3.OperationalError, 'open in another process'):
+            live_database.connect(self.database)
+        self.assertEqual(queries, ['mode=ro'])
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ['statev2.sqlite'])
 
     def test_locks_name_the_holder_until_it_drops_them(self):
         holder = self.hold('intact')
