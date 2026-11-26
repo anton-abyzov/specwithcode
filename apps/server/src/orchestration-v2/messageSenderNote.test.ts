@@ -114,6 +114,39 @@ describe("withMessageSenderNote", () => {
   });
 });
 
+describe("withMessageSenderNote command exemption", () => {
+  const known = (driver: string) => ({
+    driver,
+    slash: new Set(["compact", "goal", "feedback", "review"]),
+    skills: new Set(["deploy"]),
+  });
+  const noted = (text: string, driver: string, attachments: ReadonlyArray<unknown> = []) =>
+    withMessageSenderNote({ ...agent, attachments }, text, known(driver)) !== text;
+
+  it("exempts only /goal on Codex, the one listed command it runs from text", () => {
+    expect(noted("/goal ship it", "codex")).toBe(false);
+    expect(noted("/feedback do it now", "codex")).toBe(true);
+    expect(noted("/compact keep the plan", "codex")).toBe(true);
+  });
+
+  it("notes /compact with words on OpenCode, which compacts only the bare form", () => {
+    expect(noted("/compact keep the plan", "opencode")).toBe(true);
+    expect(noted("/review", "opencode")).toBe(false);
+  });
+
+  it("keeps /compact with instructions for a provider that reads them", () => {
+    expect(noted("/compact keep the plan", "claudeAgent")).toBe(false);
+    expect(noted("/compact keep the plan", "pi")).toBe(false);
+  });
+
+  it("notes a command or skill sent with attachments", () => {
+    expect(noted("/goal ship it", "codex", [{}])).toBe(true);
+    expect(noted("/review", "claudeAgent", [{}])).toBe(true);
+    expect(noted("$deploy staging", "codex", [{}])).toBe(true);
+    expect(noted("$deploy staging", "codex")).toBe(false);
+  });
+});
+
 describe("messageSentByPerson", () => {
   it("counts only a person's own message", () => {
     expect(messageSentByPerson({ createdBy: "user", creationSource: "web" })).toBe(true);

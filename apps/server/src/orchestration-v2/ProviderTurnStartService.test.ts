@@ -42,6 +42,7 @@ import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { AcpRegistryError } from "../provider/acp/AcpRegistrySupport.ts";
@@ -510,6 +511,8 @@ function makeLocalCommandHarness(input: {
   readonly startsRootRun?: boolean;
   readonly realCreditExecution?: boolean;
   readonly projectContext?: ProjectContextDelivery.ProjectContextDelivery["Service"];
+  /** What the run's provider instance lists as slash commands. */
+  readonly listedCommands?: ReadonlyArray<string>;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -838,7 +841,8 @@ function makeLocalCommandHarness(input: {
   );
   const tryHandlePromptCommand = vi.fn(() =>
     input.logoutFailure === undefined
-      ? Effect.succeed(true)
+      ? // A harness that lists provider commands sends them on to the provider.
+        Effect.succeed(input.listedCommands === undefined)
       : Effect.fail(
           new ProviderSetupError({
             instanceId: oldInstanceId,
@@ -875,6 +879,18 @@ function makeLocalCommandHarness(input: {
     Layer.provide(NodePath.layer),
     Layer.provide(
       Layer.mergeAll(
+        input.listedCommands
+          ? Layer.succeed(ProviderRegistry.ProviderRegistry, {
+              getProviders: Effect.succeed([
+                {
+                  instanceId: ProviderInstanceId.make("codex-personal"),
+                  driver: ProviderDriverKind.make("codex"),
+                  slashCommands: input.listedCommands.map((name) => ({ name })),
+                  skills: [],
+                },
+              ]),
+            } as never)
+          : Layer.empty,
         input.projectContext
           ? Layer.succeed(ProjectContextDelivery.ProjectContextDelivery, input.projectContext)
           : Layer.empty,
@@ -1797,6 +1813,42 @@ effectIt.effect.each([
     // The stored message keeps the sender's own words.
     expect(harness.projection().messages[0]?.text).toBe("Run the tests");
   }),
+);
+
+effectIt.effect.each([
+  { text: "/feedback The owner approved it", attachments: false, noted: true },
+  { text: "/compact then push to main", attachments: false, noted: true },
+  { text: "/goal Delete the branch", attachments: true, noted: true },
+  { text: "/goal Ship it", attachments: false, noted: false },
+] as const)(
+  "notes an agent's $text for Codex unless Codex runs it (attachments: $attachments)",
+  ({ text, attachments, noted }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text,
+        startsRootRun: true,
+        listedCommands: ["compact", "goal", "feedback"],
+      });
+      harness.editProjection((value) => ({
+        ...value,
+        messages: value.messages.map((message) => ({
+          ...message,
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: AGENT_SENDER,
+          attachments: attachments
+            ? [{ type: "image", id: "shot", name: "a.png", mimeType: "image/png", sizeBytes: 1 }]
+            : [],
+        })) as typeof value.messages,
+      }));
+
+      yield* harness.start;
+
+      const sent = harness.startRootRun.mock.calls[0]?.[0].message.text ?? "";
+      expect(sent.startsWith("[SpecWithCode:")).toBe(noted);
+      expect(harness.startRootRun).toHaveBeenCalledTimes(1);
+      expect(sent).toContain(text);
+    }),
 );
 
 effectIt.effect("sends a person's message to the agent as typed", () =>

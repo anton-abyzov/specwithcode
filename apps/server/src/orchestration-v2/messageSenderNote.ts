@@ -37,12 +37,25 @@ export function messageSentByPerson(message: SenderFields): boolean {
 
 /** The slash commands and skills the thread's provider instance lists, without `/` or `$`. */
 export interface KnownProviderCommands {
+  readonly driver?: string;
   readonly slash: ReadonlySet<string>;
   readonly skills: ReadonlySet<string>;
 }
 
 const LEADING_SLASH_COMMAND = /^\s*\/([^\s/]+)(?:\s|$)/u;
 const LEADING_SKILL = /^\s*\$([A-Za-z0-9:_-]*[A-Za-z])(?:\s|$)/u;
+
+/**
+ * Some names are listed for the composer but not run from a turn's text with
+ * words after them: Codex runs only `/goal` that way (`/feedback` is a button
+ * and only a bare `/compact` compacts), and OpenCode compacts only the bare
+ * form. Those go to the model as ordinary text, so they are noted.
+ */
+function providerRunsListedCommand(driver: string | undefined, name: string): boolean {
+  if (driver === "codex") return name === "goal";
+  if (driver === "opencode") return name !== "compact";
+  return true;
+}
 
 /**
  * Whether the text starts with a command or skill the provider lists, which a
@@ -55,6 +68,7 @@ function startsWithKnownCommand(text: string, known: KnownProviderCommands | und
   const slash = LEADING_SLASH_COMMAND.exec(text)?.[1];
   // Pi runs a skill as `/skill:<name>` and lists it under its bare name.
   if (slash !== undefined) {
+    if (!providerRunsListedCommand(known.driver, slash)) return false;
     return (
       known.slash.has(slash) ||
       (slash.startsWith("skill:") && known.skills.has(slash.slice("skill:".length)))
@@ -85,9 +99,9 @@ function senderNote(message: SenderFields): string | undefined {
  * The provider text with one leading line naming who sent it, when an agent,
  * a routine or a tool caller did, so the model never takes it for the
  * person's own instruction. A person's message, the app's own `/compact`, and
- * text that starts with a slash command or `$skill` the provider lists, is
- * returned unchanged; when the
- * provider's list cannot be read, every such message is noted. Only the text
+ * text without attachments that starts with a slash command the provider runs
+ * or a `$skill` it lists, is returned unchanged; when the provider's list
+ * cannot be read, every such message is noted. Only the text
  * sent to the provider carries the note; the stored message keeps its words.
  */
 export function withMessageSenderNote(
@@ -96,7 +110,13 @@ export function withMessageSenderNote(
   known?: KnownProviderCommands,
 ): string {
   const note = senderNote(message);
-  if (note === undefined || isAppCompaction(message, text) || startsWithKnownCommand(text, known)) {
+  // Codex and OpenCode read a command only from a message without attachments.
+  const bare = (message.attachments?.length ?? 0) === 0;
+  if (
+    note === undefined ||
+    isAppCompaction(message, text) ||
+    (bare && startsWithKnownCommand(text, known))
+  ) {
     return text;
   }
   return text.length === 0 ? note : `${note}\n\n${text}`;
