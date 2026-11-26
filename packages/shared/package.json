@@ -388,6 +388,10 @@
       "types": "./src/dpop.ts",
       "import": "./src/dpop.ts"
     },
+    "./screenShareChannel": {
+      "types": "./src/screenShareChannel.ts",
+      "import": "./src/screenShareChannel.ts"
+    },
     "./desktopBootstrapToken": {
       "types": "./src/desktopBootstrapToken.ts",
       "import": "./src/desktopBootstrapToken.ts"

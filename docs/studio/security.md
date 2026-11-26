@@ -51,14 +51,15 @@ SpecWithCode still shows limits for the accounts signed in on each machine.
 
 ## What each layer protects
 
-| Layer                      | Protects                                                                                                             | Does not protect                                               |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| SpecWithCode bind address  | The server listens on `127.0.0.1:8319`; the fleet installer and updater refuse anything else                         | Anything that forwards into loopback (Serve, SSH `-L`)         |
-| SpecWithCode pairing       | Every origin needs its own one-time pairing; sessions are scoped cookies, bearer or DPoP tokens                      | A browser profile or device that is already paired             |
-| SpecWithCode Connect       | HTTPS through a Cloudflare tunnel to a loopback origin; each client gets its own DPoP-bound session from the machine | A compromised relay signing key: the relay is a trusted broker |
-| Tailscale Serve            | Private HTTPS inside your tailnet, encrypted by WireGuard; never Funnel                                              | Who in the tailnet may connect: that is your tailnet policy    |
-| Pinned SSH forwards        | Primary-to-worker traffic over the LAN with strict host keys, bound to `127.0.0.1`                                   | A compromised primary Mac, which holds the worker keys         |
-| CLIProxyAPI management key | SpecWithCode stores it in its secret store and never sends it to a browser                                           | Anyone who holds the key: it can act as every pooled account   |
+| Layer                      | Protects                                                                                                                  | Does not protect                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| SpecWithCode bind address  | The server listens on `127.0.0.1:8319`; the fleet installer and updater refuse anything else                              | Anything that forwards into loopback (Serve, SSH `-L`)         |
+| SpecWithCode pairing       | Every origin needs its own one-time pairing; sessions are scoped cookies, bearer or DPoP tokens                           | A browser profile or device that is already paired             |
+| SpecWithCode Connect       | HTTPS through a Cloudflare tunnel to a loopback origin; each client gets its own DPoP-bound session from the machine      | A compromised relay signing key: the relay is a trusted broker |
+| Tailscale Serve            | Private HTTPS inside your tailnet, encrypted by WireGuard; never Funnel                                                   | Who in the tailnet may connect: that is your tailnet policy    |
+| Pinned SSH forwards        | Primary-to-worker traffic over the LAN with strict host keys, bound to `127.0.0.1`                                        | A compromised primary Mac, which holds the worker keys         |
+| CLIProxyAPI management key | SpecWithCode stores it in its secret store and never sends it to a browser                                                | Anyone who holds the key: it can act as every pooled account   |
+| Screen sharing             | Off until turned on at the machine; a person's approved device only; sealed end to end; prompt with system authentication | A program already running as you on the machine being viewed   |
 
 SpecWithCode ignores Tailscale identity headers (`Tailscale-User-Login` and similar). Network reachability
 never authenticates a request; pairing does. Keep it that way in any new transport, including the
@@ -164,6 +165,29 @@ preparation with the device's Git login. Review findings against that branch:
   every repository your login can. Its URL host is unrestricted; refuse loopback, link-local and
   this machine's own addresses.
 
+### 7. Screen sharing shows a whole screen
+
+[Screen sharing](./screen-sharing.md) lets one of your approved devices see a Mac's screen through
+SpecWithCode Connect. A screen can show anything: passwords being typed, private windows, other
+accounts. What keeps that narrow:
+
+- It is off on every machine. Only a person at the machine can turn it on, with Touch ID or the
+  account password. No setting, RPC, MCP tool or agent can.
+- Only a device on the machine's approved list can ask, and it must show the key it was approved
+  with before the server opens anything: a copied sign-in ticket without that key reaches nothing.
+  The first view from a device needs a person at the machine to allow it and a code read off its
+  screen.
+- The picture is sealed between the two ends. The relay and the server on the machine cannot open
+  it.
+- A banner with a Stop button stays up while anyone is viewing, and each session is listed on the
+  machine's card.
+
+What it does not cover: a program already running as you on that machine (it can take screenshots
+anyway, and could run code as the app), a person who approves the system's dialog without reading
+which device it names, and a viewer open in a browser tab against a network edge that rewrites the
+page's code (the installed app has no such limit). Review the "always allowed" devices on each machine's card and
+remove the ones you no longer use.
+
 ## Desktop app requirements
 
 The Mac desktop app inherits these rules:
@@ -175,5 +199,8 @@ The Mac desktop app inherits these rules:
   desktop code does, not in web storage.
 - Treat the hub key and provider tokens as server-side secrets only; renderer code must never
   receive them.
+- Keep screen sharing's switch, grants and key in the main process. The window asks for them
+  through four calls that reach only the machine the app runs on; it never holds the proof the
+  app shows its own server.
 - SpecWithCode Connect is the supported way to reach the desktop app's machine from other devices. Keep telemetry
   off, and keep self-update limited to signed, verified SpecWithCode releases.

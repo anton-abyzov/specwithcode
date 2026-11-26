@@ -43,3 +43,54 @@ export function isValidDesktopBootstrapToken(
     return expected.length === presented.length && NodeCrypto.timingSafeEqual(expected, presented);
   });
 }
+
+/**
+ * How long one screen sharing host proof lasts. Short, because the app sends a
+ * new one over its open link well inside this time.
+ */
+export const SCREEN_SHARE_HOST_PROOF_WINDOW_MS = 10 * 60 * 1000;
+
+function deriveScreenShareHostProof(secret: string, window: number): string {
+  return NodeCrypto.createHmac("sha256", secret)
+    .update(`studio-screen-share-host:${window}`)
+    .digest("hex");
+}
+
+/**
+ * What the desktop app's main process proves itself with to a backend it
+ * launched, on the screen sharing host socket. It comes from the same secret
+ * as the bootstrap token and from a different label, so the bootstrap token
+ * the renderer holds says nothing about it: only a holder of the secret can
+ * make one, and the secret never leaves the main process and its backends.
+ */
+export function currentScreenShareHostProof(secret: string, nowMs: number): string {
+  return deriveScreenShareHostProof(secret, Math.floor(nowMs / SCREEN_SHARE_HOST_PROOF_WINDOW_MS));
+}
+
+/**
+ * When `proof` stops being accepted, in epoch milliseconds, or null when it is
+ * not the previous, current or next window's host proof at `nowMs`. A proof is
+ * good for its own window and one either side, so it ends with the window
+ * after its own, whenever inside that span it was presented.
+ */
+export function screenShareHostProofEnd(
+  secret: string,
+  proof: string,
+  nowMs: number,
+): number | null {
+  const presented = Buffer.from(proof);
+  const current = Math.floor(nowMs / SCREEN_SHARE_HOST_PROOF_WINDOW_MS);
+  let matched: number | null = null;
+  // All three are compared whichever matches, so the time taken says nothing.
+  for (const window of [current - 1, current, current + 1]) {
+    const expected = Buffer.from(deriveScreenShareHostProof(secret, window));
+    if (expected.length === presented.length && NodeCrypto.timingSafeEqual(expected, presented))
+      matched = window;
+  }
+  return matched === null ? null : (matched + 2) * SCREEN_SHARE_HOST_PROOF_WINDOW_MS;
+}
+
+/** Whether `proof` is the previous, current or next window's host proof at `nowMs`. */
+export function isValidScreenShareHostProof(secret: string, proof: string, nowMs: number): boolean {
+  return screenShareHostProofEnd(secret, proof, nowMs) !== null;
+}

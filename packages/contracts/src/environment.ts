@@ -226,6 +226,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** A new Connect device or linked phone needs one approval on this machine
       (1327). Absent on older servers, which let any signed-in device in. */
   deviceApproval: Schema.optionalKey(Schema.Boolean),
+  /** Passes screen sharing sessions between an approved device and this
+      machine's app (1490). True only where the machine's system can show its
+      screen (macOS so far). Says nothing about whether it is turned on there,
+      or whether the app is running. Absent on older servers. */
+  screenShare: Schema.optionalKey(Schema.Boolean),
   /** Accepts format `svg` on `design.export`; older servers omit it. */
   designSvgExport: Schema.optionalKey(Schema.Boolean),
   /** Server removes a private machine from its list (`removeFleetMachine`).

@@ -21,6 +21,7 @@ import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type { DesktopKeepAwakeReport, DesktopKeepAwakeState } from "./keepAwake.ts";
+import type { ScreenShareBridge } from "./screenShare.ts";
 import type {
   ComputerUseAction,
   ComputerUseActionResult,
@@ -1269,6 +1270,8 @@ export interface DesktopBridge extends DesktopUpdateBridge, DesktopArtifactAppsB
    * builds before 1457 answer nothing. Absent on desktop builds predating it.
    */
   setKeepAwake?: (state: DesktopKeepAwakeReport) => Promise<DesktopKeepAwakeState | void>;
+  /** Screen sharing on this machine (1490). Absent on desktop builds predating it. */
+  screenShare?: ScreenShareBridge;
   /**
    * Performs one computer-use action on this machine's desktop for an agent.
    * Rejects with a message written for the agent. Absent on desktop builds

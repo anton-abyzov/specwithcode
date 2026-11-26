@@ -167,6 +167,15 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/mac-permission-preload.ts"],
     },
+    {
+      // The screen sharing prompt and banner: self-contained, like the one above.
+      format: "cjs",
+      outDir: "dist-electron",
+      dts: false,
+      sourcemap: true,
+      outExtensions: () => ({ js: ".cjs" }),
+      entry: ["src/screen-share-preload.ts"],
+    },
   ],
   test: {
     // The Windows lane runs workspace suites concurrently; filesystem-heavy

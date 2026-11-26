@@ -158,6 +158,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setNotificationBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_NOTIFICATION_BADGE_CHANNEL, badge),
   setKeepAwake: (state) => ipcRenderer.invoke(IpcChannels.SET_KEEP_AWAKE_CHANNEL, state),
+  screenShare: {
+    getState: () => ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_GET_STATE_CHANNEL),
+    setEnabled: (enabled) =>
+      ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_SET_ENABLED_CHANNEL, enabled),
+    removeGrant: (thumbprint) =>
+      ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_REMOVE_GRANT_CHANNEL, thumbprint),
+    setViewing: (viewing) =>
+      ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_SET_VIEWING_CHANNEL, viewing),
+  },
   commandLineTool: (action) => ipcRenderer.invoke(IpcChannels.COMMAND_LINE_TOOL_CHANNEL, action),
   ...(clientPlatform === "darwin"
     ? {

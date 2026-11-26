@@ -3096,7 +3096,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       extendInfo: {
         NSScreenCaptureUsageDescription:
-          "SpecWithCode captures the active window when you use the window capture shortcut.",
+          "SpecWithCode captures the screen for the window capture shortcut, for computer use you allow, and for screen sharing with your own approved devices after you turn it on.",
         NSMicrophoneUsageDescription:
           "SpecWithCode listens only during a voice call you start with the coordinator. Audio is transcribed on this Mac.",
         NSSpeechRecognitionUsageDescription:
