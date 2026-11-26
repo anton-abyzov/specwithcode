@@ -24,8 +24,10 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 import live_database
+import sqlite_fixture
 
 ROWS = 3000
 HOLDER = r"""
@@ -142,6 +144,45 @@ class LiveDatabase(unittest.TestCase):
                          .replace('#', '%23').replace('?', '%3F') + '/statev2.sqlite?mode=ro')
         self.hold('intact')
         self.assertTrue(live_database.readonly_uri(self.database).endswith('?mode=ro&readonly_shm=1'))
+
+    def stopped(self):
+        """A WAL database its service has closed: only the main file is left, as Node's SQLite leaves it."""
+        db = sqlite3.connect(str(self.database))
+        db.executescript('PRAGMA journal_mode=WAL; CREATE TABLE kept (x); INSERT INTO kept VALUES (1), (2);')
+        sqlite_fixture.close(db)
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ['statev2.sqlite'])
+
+    def test_a_stopped_database_is_read_on_any_sqlite(self):
+        # Apple's SQLite 3.54.0 (macOS 27) refuses a plain mode=ro open of this database.
+        self.stopped()
+        db = live_database.connect(self.database)
+        try:
+            self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+            with self.assertRaises(sqlite3.OperationalError):
+                db.execute('INSERT INTO kept VALUES (3)')
+        finally:
+            db.close()
+
+    def test_only_a_closed_database_falls_back_to_reading_the_main_file_alone(self):
+        self.stopped()
+        real, uris = sqlite3.connect, []
+
+        def refusing(target, *args, **kwargs):  # What Apple's 3.54.0 does with a plain mode=ro open.
+            uris.append(target)
+            if 'immutable=1' not in target:
+                raise sqlite3.OperationalError('unable to open database file')
+            return real(target, *args, **kwargs)
+        with mock.patch.object(live_database.sqlite3, 'connect', side_effect=refusing):
+            db = live_database.connect(self.database)
+            db.close()
+            self.assertEqual([uri.rsplit('?', 1)[1] for uri in uris], ['mode=ro', 'mode=ro&immutable=1'])
+            self.assertEqual(sorted(path.name for path in self.root.iterdir()), ['statev2.sqlite'])
+            # With -shm on disk some process may have the database open: no fallback.
+            self.hold('intact')
+            uris.clear()
+            with self.assertRaisesRegex(sqlite3.OperationalError, 'unable to open'):
+                live_database.connect(self.database)
+            self.assertEqual([uri.rsplit('?', 1)[1] for uri in uris], ['mode=ro&readonly_shm=1'])
 
     def test_locks_name_the_holder_until_it_drops_them(self):
         holder = self.hold('intact')

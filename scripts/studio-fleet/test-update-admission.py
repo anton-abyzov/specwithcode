@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 import live_database
+import sqlite_fixture
 import update_admission
 import update_agent
 import update_read
@@ -229,11 +230,15 @@ class RowsChangingDuringTheSnapshot(Fixture):
             def write():  # Inside the first read after BEGIN: its snapshot is already taken.
                 if not done and reading:
                     done.append(True)
-                    mutate_state(self.state, *statements)
+                    service.write(*statements)
                 return 0
             db.set_trace_callback(lambda sql: reading.append(sql) if db.in_transaction and sql != 'BEGIN' else None)
             db.set_progress_handler(write, 10)
             return db
+        # The service is running, as it is for an admission read: it holds the database open and
+        # makes the write itself.
+        service = sqlite_fixture.RunningService(self.state / 'statev2.sqlite')
+        self.addCleanup(service.stop)
         with patch.object(live_database, 'connect', side_effect=connect):
             expected = self.admission()
         self.assertEqual(done, [True], 'The write must land while the admission read runs')

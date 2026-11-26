@@ -17,6 +17,13 @@ deleting -wal. In the reproduction (studio-research-notes/sqlite-crash-2026-10-1
 no process has the current index mapped, and readonly_shm could not open the database, so plain
 mode=ro is used.
 
+Apple's SQLite on macOS 27 (3.54.0, /usr/bin/python3) refuses that plain mode=ro open of a
+database in WAL mode whose -shm and -wal are both gone, as a stopped service leaves them: it will
+not create them read-only and reports "unable to open database file". Stock SQLite creates them.
+`connect` then opens it with immutable=1, which reads the main file without locks or side files;
+with neither file on disk no process has the database open, so the main file holds every commit.
+It is a fallback only, and nothing else changes for other SQLite builds.
+
 `service_locks` reports whether some process holds SQLite's locks on the database file and on
 -shm, as any other process sees them. The service holds both for as long as its connection is
 open, so a running service with neither has lost them.
@@ -47,11 +54,20 @@ SHARED_FIRST, SHARED_SIZE = PENDING_BYTE + 2, 510
 SHM_DMS = 120 + 8  # UNIX_SHM_BASE + SQLITE_SHM_NLOCK
 
 
-def readonly_uri(path):
+def readonly_uri(path, immutable=False):
     """The URI `connect` opens: never able to change the database, its -wal or its -shm."""
     absolute = os.path.abspath(str(path))
-    query = 'mode=ro&readonly_shm=1' if os.path.exists(absolute + '-shm') else 'mode=ro'
+    if immutable:
+        query = 'mode=ro&immutable=1'
+    else:
+        query = 'mode=ro&readonly_shm=1' if os.path.exists(absolute + '-shm') else 'mode=ro'
     return 'file:' + urllib.parse.quote(absolute, safe='/') + '?' + query
+
+
+def _closed(path):
+    """No -shm and no -wal: no process has the database open."""
+    absolute = os.path.abspath(str(path))
+    return os.path.exists(absolute) and not any(os.path.exists(absolute + s) for s in ('-wal', '-shm'))
 
 
 def connect(path, timeout=5.0):
@@ -60,9 +76,20 @@ def connect(path, timeout=5.0):
     if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:
         raise RuntimeError('SQLite %s cannot open the live database safely; 3.22.0 or newer is needed'
                            % sqlite3.sqlite_version)
-    connection = sqlite3.connect(readonly_uri(path), uri=True, timeout=timeout)
+    try:
+        return _open(readonly_uri(path), timeout)
+    except sqlite3.OperationalError as error:
+        if 'unable to open database file' not in str(error) or not _closed(path):
+            raise
+    return _open(readonly_uri(path, immutable=True), timeout)
+
+
+def _open(uri, timeout):
+    """A query-only connection to `uri` that has read the schema (the open is lazy until then)."""
+    connection = sqlite3.connect(uri, uri=True, timeout=timeout)
     try:
         connection.execute('PRAGMA query_only=ON')
+        connection.execute('SELECT count(*) FROM sqlite_master').fetchone()
     except BaseException:
         connection.close()
         raise

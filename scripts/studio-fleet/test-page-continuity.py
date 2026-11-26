@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import additive_migrations
+import live_database
 import database_continuity as continuity
 import page_continuity as proof
 import kept_lines
@@ -381,7 +382,7 @@ def compaction_rows(count=260):
 
 def read_capture(path, widen_from=None):
     """The complete capture (database_continuity) of the database at `path`, read only."""
-    db = sqlite3.connect('file:%s?mode=ro' % path, uri=True)
+    db = live_database.connect(path)
     try:
         db.execute('BEGIN')
         return continuity.capture_connection(db, widen_from)
