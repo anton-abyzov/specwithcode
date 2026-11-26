@@ -19,10 +19,14 @@ mode=ro is used.
 
 Apple's SQLite on macOS 27 (3.54.0, /usr/bin/python3) refuses that plain mode=ro open of a
 database in WAL mode whose -shm and -wal are both gone, as a stopped service leaves them: it will
-not create them read-only and reports "unable to open database file". Stock SQLite creates them.
-`connect` then opens it with immutable=1, which reads the main file without locks or side files;
-with neither file on disk no process has the database open, so the main file holds every commit.
-It is a fallback only, and nothing else changes for other SQLite builds.
+not create them read-only and reports "unable to open database file". Stock SQLite creates them
+and joins as an ordinary reader. `connect` then does the same by hand: when no process holds a
+lock on the database, it creates the two files empty (O_EXCL, so never over a file another
+process made) and opens plain mode=ro. The reader then takes SQLite's WAL locks like any other
+connection, so a service that starts during the read still cannot checkpoint over the pages the
+read uses. The empty files stay behind, as stock SQLite leaves them. A process that holds the
+database without its -wal and -shm is refused; one that also lost its locks looks like no process
+at all, to this check as to stock SQLite.
 
 `service_locks` reports whether some process holds SQLite's locks on the database file and on
 -shm, as any other process sees them. The service holds both for as long as its connection is
@@ -54,20 +58,32 @@ SHARED_FIRST, SHARED_SIZE = PENDING_BYTE + 2, 510
 SHM_DMS = 120 + 8  # UNIX_SHM_BASE + SQLITE_SHM_NLOCK
 
 
-def readonly_uri(path, immutable=False):
-    """The URI `connect` opens: never able to change the database, its -wal or its -shm."""
+def readonly_uri(path, shared_index=None):
+    """The URI `connect` opens: never able to change the database, its -wal or its -shm.
+    `shared_index` False opens -shm read-write, for an index this reader created itself."""
     absolute = os.path.abspath(str(path))
-    if immutable:
-        query = 'mode=ro&immutable=1'
-    else:
-        query = 'mode=ro&readonly_shm=1' if os.path.exists(absolute + '-shm') else 'mode=ro'
-    return 'file:' + urllib.parse.quote(absolute, safe='/') + '?' + query
+    if shared_index is None:
+        shared_index = os.path.exists(absolute + '-shm')
+    return 'file:' + urllib.parse.quote(absolute, safe='/') + '?' + ('mode=ro&readonly_shm=1' if shared_index else 'mode=ro')
 
 
-def _closed(path):
-    """No -shm and no -wal: no process has the database open."""
+def _create_side_files(path):
+    """For a WAL database no process holds (no -wal, no -shm, no lock on the file): creates both
+    empty, as stock SQLite's first reader does. True when this call created both."""
     absolute = os.path.abspath(str(path))
-    return os.path.exists(absolute) and not any(os.path.exists(absolute + s) for s in ('-wal', '-shm'))
+    if any(os.path.lexists(absolute + suffix) for suffix in ('-wal', '-shm')):
+        return False
+    if lock_holder(absolute, SHARED_FIRST, SHARED_SIZE) is not None:
+        # Some process has it open with its -wal and -shm gone: a reader of the main file alone
+        # would miss its log. Refused, as for any database that cannot be read safely.
+        raise sqlite3.OperationalError('unable to open database file: it is open in another process without its -wal and -shm')
+    mode = os.stat(absolute).st_mode & 0o666
+    for suffix in ('-shm', '-wal'):  # SQLite opens the index first.
+        try:
+            os.close(os.open(absolute + suffix, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode))
+        except FileExistsError:  # A process opened it meanwhile: it is now an ordinary shared read.
+            return False
+    return True
 
 
 def connect(path, timeout=5.0):
@@ -79,9 +95,12 @@ def connect(path, timeout=5.0):
     try:
         return _open(readonly_uri(path), timeout)
     except sqlite3.OperationalError as error:
-        if 'unable to open database file' not in str(error) or not _closed(path):
+        absolute = os.path.abspath(str(path))
+        if 'unable to open database file' not in str(error) or not os.path.exists(absolute) \
+                or any(os.path.lexists(absolute + suffix) for suffix in ('-wal', '-shm')):
             raise
-    return _open(readonly_uri(path, immutable=True), timeout)
+    created = _create_side_files(path)
+    return _open(readonly_uri(path, shared_index=False if created else None), timeout)
 
 
 def _open(uri, timeout):

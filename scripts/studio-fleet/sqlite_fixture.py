@@ -62,8 +62,3 @@ class RunningService(object):
         if self.child.poll() is None:
             self.child.stdin.close()
             self.child.wait(timeout=10)
-
-
-def running_service(path):
-    """A RunningService for `path`; returns its stop function (for addCleanup)."""
-    return RunningService(path).stop

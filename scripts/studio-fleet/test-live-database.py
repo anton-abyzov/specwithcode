@@ -162,27 +162,59 @@ class LiveDatabase(unittest.TestCase):
                 db.execute('INSERT INTO kept VALUES (3)')
         finally:
             db.close()
+        # The reader joined as an ordinary WAL reader and left the index and log as stock SQLite does.
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()),
+                         ['statev2.sqlite', 'statev2.sqlite-shm', 'statev2.sqlite-wal'])
 
-    def test_only_a_closed_database_falls_back_to_reading_the_main_file_alone(self):
-        self.stopped()
-        real, uris = sqlite3.connect, []
+    @contextlib.contextmanager
+    def refusing(self, always=False):
+        """sqlite3.connect as Apple's 3.54.0 has it: a plain mode=ro open of a WAL database with
+        no -wal is refused. Yields the query of every URI opened."""
+        real, queries = sqlite3.connect, []
 
-        def refusing(target, *args, **kwargs):  # What Apple's 3.54.0 does with a plain mode=ro open.
-            uris.append(target)
-            if 'immutable=1' not in target:
+        def connect(target, *args, **kwargs):
+            queries.append(target.rsplit('?', 1)[1])
+            if always or not os.path.exists(str(self.database) + '-wal'):
                 raise sqlite3.OperationalError('unable to open database file')
             return real(target, *args, **kwargs)
-        with mock.patch.object(live_database.sqlite3, 'connect', side_effect=refusing):
+        with mock.patch.object(live_database.sqlite3, 'connect', side_effect=connect):
+            yield queries
+
+    def test_a_stopped_database_read_keeps_a_service_that_starts_from_checkpointing_under_it(self):
+        self.stopped()
+        with self.refusing() as queries:
             db = live_database.connect(self.database)
-            db.close()
-            self.assertEqual([uri.rsplit('?', 1)[1] for uri in uris], ['mode=ro', 'mode=ro&immutable=1'])
-            self.assertEqual(sorted(path.name for path in self.root.iterdir()), ['statev2.sqlite'])
-            # With -shm on disk some process may have the database open: no fallback.
-            self.hold('intact')
-            uris.clear()
-            with self.assertRaisesRegex(sqlite3.OperationalError, 'unable to open'):
-                live_database.connect(self.database)
-            self.assertEqual([uri.rsplit('?', 1)[1] for uri in uris], ['mode=ro&readonly_shm=1'])
+        self.addCleanup(db.close)
+        self.assertEqual(queries, ['mode=ro', 'mode=ro'])
+        db.execute('BEGIN')
+        self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+        before = self.database.read_bytes()
+        service = sqlite_fixture.RunningService(self.database)  # The service starts mid-read.
+        self.addCleanup(service.stop)
+        service.write('CREATE TABLE grown (v)', *['INSERT INTO grown VALUES (randomblob(4000))'] * 200)
+        service.write('PRAGMA wal_checkpoint(TRUNCATE)')
+        # The read holds SQLite's read lock: the checkpoint could not write over the pages it uses.
+        self.assertEqual(self.database.read_bytes(), before)
+        self.assertEqual(db.execute('SELECT count(*) FROM sqlite_master').fetchone(), (1,))
+        db.execute('COMMIT')
+        self.assertEqual(db.execute('SELECT count(*) FROM grown').fetchone(), (200,))
+
+    def test_a_held_database_never_falls_back(self):
+        self.hold('intact')
+        with self.refusing(always=True) as queries, self.assertRaisesRegex(sqlite3.OperationalError, 'unable to open'):
+            live_database.connect(self.database)
+        self.assertEqual(queries, ['mode=ro&readonly_shm=1'])
+
+    def test_a_database_held_without_its_wal_and_index_is_refused(self):
+        # A process still has it open, but its -wal and -shm were removed under it: the main file
+        # alone would miss that process's log, so nothing is created and nothing is read.
+        self.hold('intact')
+        for suffix in ('-wal', '-shm'):
+            pathlib.Path(str(self.database) + suffix).unlink()
+        with self.refusing() as queries, self.assertRaisesRegex(sqlite3.OperationalError, 'open in another process'):
+            live_database.connect(self.database)
+        self.assertEqual(queries, ['mode=ro'])
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ['statev2.sqlite'])
 
     def test_locks_name_the_holder_until_it_drops_them(self):
         holder = self.hold('intact')
