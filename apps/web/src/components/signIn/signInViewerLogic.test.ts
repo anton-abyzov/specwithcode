@@ -1,5 +1,5 @@
 import { newSignInViewerKey, unsealForSignIn } from "@specweave-studio/shared/signInSeal";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createSignInSender,
@@ -60,32 +60,35 @@ describe("sign-in viewer sending (1488)", () => {
       },
     });
     const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
-    return { sender, sent, timers, settle };
+    // Sealing is WebCrypto work; on a busy machine it can outlast any fixed pause.
+    const sentCount = (count: number) =>
+      vi.waitFor(() => expect(sent).toHaveLength(count), { timeout: 5_000 });
+    return { sender, sent, timers, settle, sentCount };
   };
 
   it("batches characters, seals them with a growing seq, and keeps them before the next key", async () => {
-    const { sender, sent, settle } = await harness();
+    const { sender, sent, sentCount } = await harness();
     sender.text("100:1", "hun");
     sender.text("100:1", "ter2");
     sender.key("100:1", "enter");
-    await settle();
+    await sentCount(2);
     expect(sent).toEqual([
       { kind: "text", value: { seq: 1, frame: "100:1", text: "hunter2" } },
       { kind: "key", value: { frame: "100:1", key: "enter" } },
     ]);
     sender.text("100:1", "x");
     sender.flush();
-    await settle();
+    await sentCount(3);
     expect(sent.at(-1)).toEqual({ kind: "text", value: { seq: 2, frame: "100:1", text: "x" } });
   });
 
   it("never sends text typed on one frame against another, and splits long pastes", async () => {
-    const { sender, sent, settle } = await harness();
+    const { sender, sent, sentCount } = await harness();
     sender.text("100:1", "a");
     sender.text("100:2", "b");
     sender.text("100:2", "c".repeat(SIGN_IN_TEXT_CHUNK + 1));
     sender.flush();
-    await settle();
+    await sentCount(3);
     expect(sent.map((entry) => (entry.value as { frame: string }).frame)).toEqual([
       "100:1",
       "100:2",
