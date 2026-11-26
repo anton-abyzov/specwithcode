@@ -24,7 +24,9 @@ and joins as an ordinary reader. `connect` then does the same by hand: when no p
 lock on the database, it creates the two files empty (O_EXCL, so never over a file another
 process made) and opens plain mode=ro. The reader then takes SQLite's WAL locks like any other
 connection, so a service that starts during the read still cannot checkpoint over the pages the
-read uses. The empty files stay behind, as stock SQLite leaves them. A process that holds the
+read uses. Just before that open it checks the new -shm is still empty: once another process
+has initialised it, it is opened read-only like any shared index. The files stay behind, as
+stock SQLite leaves them, and later reads share them read-only. A process that holds the
 database without its -wal and -shm is refused; one that also lost its locks looks like no process
 at all, to this check as to stock SQLite.
 
@@ -100,7 +102,9 @@ def connect(path, timeout=5.0):
                 or any(os.path.lexists(absolute + suffix) for suffix in ('-wal', '-shm')):
             raise
     created = _create_side_files(path)
-    return _open(readonly_uri(path, shared_index=False if created else None), timeout)
+    # A process that opened the database since then has initialised the new index: share it read-only.
+    own_index = created and os.stat(os.path.abspath(str(path)) + '-shm').st_size == 0
+    return _open(readonly_uri(path, shared_index=False if own_index else None), timeout)
 
 
 def _open(uri, timeout):

@@ -199,6 +199,38 @@ class LiveDatabase(unittest.TestCase):
         db.execute('COMMIT')
         self.assertEqual(db.execute('SELECT count(*) FROM grown').fetchone(), (200,))
 
+    def test_a_second_read_shares_the_index_the_first_left(self):
+        self.stopped()
+        for _ in range(2):
+            db = live_database.connect(self.database)
+            self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+            db.close()
+        self.assertTrue(live_database.readonly_uri(self.database).endswith('?mode=ro&readonly_shm=1'))
+        db = live_database.connect(self.database)
+        self.addCleanup(db.close)
+        db.execute('BEGIN')
+        db.execute('SELECT count(*) FROM kept').fetchone()
+        service = sqlite_fixture.RunningService(self.database)  # It starts and writes during that read.
+        self.addCleanup(service.stop)
+        service.write('INSERT INTO kept VALUES (3)')
+        self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (2,))
+        db.execute('COMMIT')
+        self.assertEqual(db.execute('SELECT count(*) FROM kept').fetchone(), (3,))
+
+    def test_an_index_a_starting_service_initialised_is_opened_read_only(self):
+        self.stopped()
+        create, started = live_database._create_side_files, []
+
+        def create_then_start(path):  # The service starts between the reader's create and its open.
+            created = create(path)
+            started.append(sqlite_fixture.RunningService(self.database))
+            self.addCleanup(started[0].stop)
+            return created
+        with self.refusing() as queries, mock.patch.object(live_database, '_create_side_files', side_effect=create_then_start):
+            db = live_database.connect(self.database)
+        db.close()
+        self.assertEqual(queries, ['mode=ro', 'mode=ro&readonly_shm=1'])
+
     def test_a_held_database_never_falls_back(self):
         self.hold('intact')
         with self.refusing(always=True) as queries, self.assertRaisesRegex(sqlite3.OperationalError, 'unable to open'):
