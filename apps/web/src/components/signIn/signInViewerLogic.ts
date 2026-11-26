@@ -75,6 +75,8 @@ export interface SignInSender {
   readonly flush: () => void;
   /** Drops what is buffered without sending; the view is closing. */
   readonly drop: () => void;
+  /** Resolves once everything queued so far has been sent or has failed. */
+  readonly settled: () => Promise<void>;
 }
 
 /**
@@ -142,5 +144,6 @@ export function createSignInSender(options: {
       cancelTimer?.();
       pending = null;
     },
+    settled: () => queue,
   };
 }

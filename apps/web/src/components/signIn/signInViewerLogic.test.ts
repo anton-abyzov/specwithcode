@@ -59,7 +59,8 @@ describe("sign-in viewer sending (1488)", () => {
         return () => {};
       },
     });
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+    // Waits on the sender's own queue, not on the clock: sealing takes longer on a busy machine.
+    const settle = () => sender.settled();
     return { sender, sent, timers, settle };
   };
 
