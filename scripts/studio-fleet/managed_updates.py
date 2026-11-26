@@ -15,13 +15,13 @@ import fcntl
 import json
 import os
 import pathlib
-import sqlite3
 import stat
 import sys
 import urllib.parse
 
 sys.dont_write_bytecode = True
 import installation_descriptor as installation
+import live_database
 import studio_paths
 import update_agent as agent
 
@@ -94,13 +94,10 @@ def fresh_grant(state, home, controller, scopes):
         if path.exists():
             require(path.is_file())
     require(database.is_file(), 'unavailable')
-    # live_database.readonly_uri, inlined so the installed updater needs no new module: with
-    # readonly_shm a reader can never truncate the -shm the running service has mapped.
-    shm = pathlib.Path(str(database) + '-shm')
-    uri = ('file:' + urllib.parse.quote(str(database), safe='/') + '?mode=ro'
-           + ('&readonly_shm=1' if shm.exists() else ''))
-    with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=1)) as connection:
-        connection.execute('PRAGMA query_only=ON')
+    # live_database ships beside this helper (studio-service-updater.ts): it never resets the
+    # -shm a running service has mapped, and reads a stopped service's database on every SQLite
+    # build, Apple's 3.54.0 included.
+    with contextlib.closing(live_database.connect(database, timeout=1)) as connection:
         row = connection.execute('SELECT subject, scopes, issued_at, expires_at, revoked_at '
                                  'FROM auth_sessions WHERE session_id = ?',
                                  (controller['sessionId'],)).fetchone()

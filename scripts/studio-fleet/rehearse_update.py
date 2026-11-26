@@ -53,6 +53,7 @@ import traceback
 
 import additive_migrations
 import disk_room
+import live_database
 import studio_paths
 from update_read import is_projection_table
 
@@ -107,8 +108,9 @@ def clone(source, target):
 
 
 def protected(database, leave_out=()):
-    """{table: [count, sha256]} of each protected table, read only."""
-    db = sqlite3.connect('file:%s?mode=ro' % database, uri=True)
+    """{table: [count, sha256]} of each protected table, read only. A stopped source leaves the
+    clone only its main file, which Apple's SQLite 3.54.0 opens only through live_database."""
+    db = live_database.connect(database)
     try:
         db.execute('BEGIN')
         found = {}
