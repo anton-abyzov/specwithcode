@@ -29,12 +29,12 @@ import json
 import os
 import pathlib
 import shutil
-import sqlite3
 import subprocess
 import tempfile
 import time
 import unittest
 
+import live_database
 from update_read import is_projection_table
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -52,7 +52,7 @@ def node():
 def protected(path):
     """{table: [count, sha256 of every row in a fixed order]} of each non-projection table, read
     only (a running service's WAL is read as it stands)."""
-    db = sqlite3.connect('file:%s?mode=ro' % path, uri=True)
+    db = live_database.connect(path)
     try:
         db.execute('BEGIN')
         tables = [row[0] for row in db.execute(
