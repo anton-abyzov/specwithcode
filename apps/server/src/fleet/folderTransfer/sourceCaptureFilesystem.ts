@@ -3,6 +3,8 @@ import { execFile } from "node:child_process";
 import * as FSP from "node:fs/promises";
 import * as Path from "node:path";
 
+import { windowsPowerShellPath } from "../../process/windowsSystemTools.ts";
+
 /** The source filesystem cannot prove a captured copy; a moving copy falls back to live checks. */
 export class CaptureFilesystemRefused extends Error {}
 const unsupported = () =>
@@ -61,10 +63,14 @@ export async function verifyCaptureFilesystem(
     const script =
       "$ErrorActionPreference='Stop'; $d=[System.IO.DriveInfo]::new($env:SWC_CAPTURE_VOLUME); @{format=$d.DriveFormat; type=$d.DriveType.ToString(); ready=$d.IsReady} | ConvertTo-Json -Compress";
     const answer = JSON.parse(
-      await command("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-        ...process.env,
-        SWC_CAPTURE_VOLUME: drive,
-      }),
+      await command(
+        windowsPowerShellPath(),
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        {
+          ...process.env,
+          SWC_CAPTURE_VOLUME: drive,
+        },
+      ),
     ) as { format?: unknown; type?: unknown; ready?: unknown };
     if (
       answer.ready !== true ||
