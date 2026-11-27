@@ -1891,18 +1891,20 @@ export const makeSweep = Effect.gen(function* () {
               : { messageIds: [messageId], runIds: [RunId.make(previous)] },
           )
           .pipe(
-            Effect.map(Option.some),
+            Effect.map((found) =>
+              Option.some({
+                routine: found.messages.some(
+                  (message) => message.id === messageId && message.scheduledTaskId !== undefined,
+                ),
+                previous: found.runs.find((entry) => entry.id === previous),
+              }),
+            ),
             Effect.catchCause(() => Effect.succeedNone),
           );
         if (Option.isNone(records)) break;
-        if (
-          records.value.messages.some(
-            (message) => message.id === messageId && message.scheduledTaskId !== undefined,
-          )
-        )
-          routine = true;
+        if (records.value.routine) routine = true;
         else if (previous === null) routine = false;
-        else run = records.value.runs.find((entry) => entry.id === previous);
+        else run = records.value.previous;
       }
       // Unreadable or too long a chain: off is the safe side, read again next sweep.
       if (routine === null) return true;

@@ -151,7 +151,10 @@ const continuation = (scheduledTaskId: string | undefined, secondHop = false) =>
         getThreadRecords: (_id, _fields, filter) =>
           Effect.succeed({
             thread,
-            runs: filter?.runIds === undefined ? runs : runs.filter((entry) => filter.runIds!.includes(entry.id)),
+            runs:
+              filter?.runIds === undefined
+                ? runs
+                : runs.filter((entry) => filter.runIds!.includes(entry.id)),
             providerThreads: [
               { appThreadId: thread.id, nativeThreadRef: { nativeId: "existing-session" } },
             ],
