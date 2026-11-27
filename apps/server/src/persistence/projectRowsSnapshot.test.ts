@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite builds the scratch database the copy is made from.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- node:sqlite builds the scratch database; a fixed date stamps the copy.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";

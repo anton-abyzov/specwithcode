@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite is the database driver, as in liveDatabaseSnapshot.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- plain node:sqlite and fs code, as in liveDatabaseSnapshot; the copy stamps its own time.
 /**
  * A copy of one project's rows: for every table of the live database with a
  * `project_id` column, its schema and only that project's rows. The Percy
@@ -57,13 +57,13 @@ const scopedTablesOf = (source: NodeSqlite.DatabaseSync): ReadonlyArray<ScopedTa
     .prepare(
       "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY name",
     )
-    .all() as ReadonlyArray<{ name: string; sql: string }>;
+    .all() as unknown as ReadonlyArray<{ name: string; sql: string }>;
   const scoped: Array<ScopedTable> = [];
   for (const table of tables) {
     // Virtual tables (full-text indexes) cannot be recreated by their CREATE text alone.
     if (/^\s*CREATE\s+VIRTUAL\s+TABLE/i.test(table.sql)) continue;
     const columns = (
-      source.prepare(`PRAGMA table_info(${quoteIdentifier(table.name)})`).all() as ReadonlyArray<{
+      source.prepare(`PRAGMA table_info(${quoteIdentifier(table.name)})`).all() as unknown as ReadonlyArray<{
         name: string;
       }>
     ).map((column) => column.name);
