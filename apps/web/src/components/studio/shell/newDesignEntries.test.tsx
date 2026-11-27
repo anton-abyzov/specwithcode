@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const navigate = vi.fn(async () => undefined);
+const access = vi.hoisted(() => ({ canWrite: true }));
+vi.mock("../../../state/session", () => ({ useEnvironmentScope: () => access.canWrite }));
 vi.mock("@tanstack/react-router", () => ({ useRouter: () => ({ navigate }) }));
 const host = EnvironmentId.make("host");
 vi.mock("../../../state/entities", () => ({
@@ -29,6 +31,7 @@ let container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   navigate.mockClear();
+  access.canWrite = true;
   entries = [];
   container = document.createElement("div");
   document.body.append(container);
@@ -71,6 +74,12 @@ describe("useNewDesignEntries", () => {
     await render({ project: undefined });
     expect(entries).toEqual([]);
     await render({ project: project("/home/user/scratch") });
+    expect(entries).toEqual([]);
+  });
+
+  it("offers nothing in a window that may not change files", async () => {
+    access.canWrite = false;
+    await render({ project: project("/work/atlas") });
     expect(entries).toEqual([]);
   });
 

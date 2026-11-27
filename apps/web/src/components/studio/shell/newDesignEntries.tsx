@@ -6,27 +6,30 @@
  *
  * The Design studio shows this machine's designs only, and a machine's
  * "No project" folder has no board, so a project on another machine or a
- * scratch project gets none of these, as in the project's More menu.
+ * scratch project gets none of these, as in the project's More menu. A window
+ * that may not change files gets none either, as the gallery's New buttons are off there.
  */
-import type { ProjectId } from "@specweave-studio/contracts";
+import { AuthFilesystemWriteScope, type ProjectId } from "@specweave-studio/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { PaletteIcon, PresentationIcon, SwatchBookIcon } from "lucide-react";
 
 import { useServerConfigs } from "../../../state/entities";
+import { useEnvironmentScope } from "../../../state/session";
 import { isScratchMember, type ProjectListMember } from "../../../studio/projectListVisibility";
 import { DESIGN_FEATURES } from "../../design/designFeatures";
 import type { ArtifactNewEntry } from "./ArtifactNewMenu";
 
 export type DesignEntryProject = ProjectListMember & { readonly id: ProjectId };
 
-/** The design entries, or none when `project` is absent (another machine) or scratch. */
+/** The design entries, or none when `project` is absent (another machine), scratch, or read-only here. */
 export function useNewDesignEntries(
   project: DesignEntryProject | undefined,
   features: { readonly slides: boolean; readonly designSystems: boolean } = DESIGN_FEATURES,
 ): ArtifactNewEntry[] {
   const router = useRouter();
   const configs = useServerConfigs();
-  if (project === undefined) return [];
+  const canWrite = useEnvironmentScope(project?.environmentId ?? null, AuthFilesystemWriteScope);
+  if (project === undefined || !canWrite) return [];
   if (isScratchMember(project, (id) => configs.get(id)?.scratchWorkspaceRoot ?? null)) return [];
   const owner = project.id;
   const open = (kind: "design" | "slides") => async () => {
