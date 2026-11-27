@@ -44,6 +44,7 @@ vi.mock("../../files/projectFilesQueryState", () => ({
 }));
 vi.mock("../../office/newSheetEntry", () => ({ useNewSheetEntry: () => runtime.sheetEntry }));
 vi.mock("./newDocumentEntry", () => ({ useNewDocumentEntry: () => null }));
+vi.mock("./newDesignEntries", () => ({ useNewDesignEntries: () => [] }));
 vi.mock("./Tip", () => ({ Tip: ({ children }: { children: unknown }) => children }));
 
 import { artifactPreviewCache, artifactPreviewKey } from "../../../studio/artifactPreview";
@@ -135,10 +136,15 @@ it("shows nothing when the project has no artifacts and nothing can be made here
 });
 
 it("keeps New and Import findable in an empty project, and opens what New made", async () => {
-  const create = vi.fn(async () => ({ path: ".specweave/reports/untitled-sheet.sheet.json", title: "Untitled sheet" }));
+  const create = vi.fn(async () => ({
+    path: ".specweave/reports/untitled-sheet.sheet.json",
+    title: "Untitled sheet",
+  }));
   runtime.sheetEntry = { id: "sheet", label: "Sheet", icon: null, create };
   await render([]);
-  expect(container.querySelector("[data-artifact-empty]")?.textContent).toContain("Nothing here yet");
+  expect(container.querySelector("[data-artifact-empty]")?.textContent).toContain(
+    "Nothing here yet",
+  );
   const trigger = container.querySelector<HTMLButtonElement>("[data-artifact-new]")!;
   expect(trigger).not.toBeNull();
   await act(async () => trigger.click());

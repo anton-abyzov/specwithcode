@@ -73,6 +73,7 @@ import { useNewSheetEntry } from "../../office/newSheetEntry";
 import { useNewWhiteboardEntry } from "../../office/whiteboard/newWhiteboardEntry";
 import { type ArtifactNewEntry, ArtifactNewMenu } from "./ArtifactNewMenu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
+import { type DesignEntryProject, useNewDesignEntries } from "./newDesignEntries";
 import { useNewDocumentEntry } from "./newDocumentEntry";
 import { Tip } from "./Tip";
 
@@ -628,6 +629,8 @@ export function ProjectArtifactShelf(props: {
   readonly onPin: (id: string, on: boolean) => void;
   readonly onViewAll: () => void;
   readonly onOpenThread?: ((threadId: ThreadId, environmentId: EnvironmentId) => void) | undefined;
+  /** The project, when its Design studio works on this machine: New then offers Design, Slides and Design system. */
+  readonly designProject?: DesignEntryProject | undefined;
 }) {
   // The shelf holds what a person would open; logs, code and data stay in View all.
   const artifacts = shelfArtifacts(props.artifacts);
@@ -642,12 +645,23 @@ export function ProjectArtifactShelf(props: {
   const taken = new Set(props.artifacts.flatMap((item) => (item.path === null ? [] : [item.path])));
   // Each kind that can be made here adds its entry to the New menu.
   const newEntries = [
-    useNewSheetEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot, taken }),
-    useNewWhiteboardEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
+    useNewSheetEntry({
+      environmentId: props.environmentId,
+      workspaceRoot: props.workspaceRoot,
+      taken,
+    }),
+    useNewWhiteboardEntry({
+      environmentId: props.environmentId,
+      workspaceRoot: props.workspaceRoot,
+    }),
     useNewDocumentEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
+    ...useNewDesignEntries(props.designProject),
   ].filter((entry): entry is ArtifactNewEntry => entry !== null);
   const newMenu = (
-    <ArtifactNewMenu entries={newEntries} onCreated={(created) => opener.openPath(created.path, created.title)} />
+    <ArtifactNewMenu
+      entries={newEntries}
+      onCreated={(created) => opener.openPath(created.path, created.title)}
+    />
   );
   if (props.artifacts.length === 0) {
     // Nothing yet: the header still offers New and Import, so the editors are findable.

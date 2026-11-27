@@ -1,9 +1,10 @@
 /**
  * "New" and "Import" on the project's Artifacts shelf. Each kind of artifact
- * that can be made here (a sheet, a whiteboard, a document) contributes one
- * entry; the menu lists them, and Import hands a picked file to the entry that
- * takes its extension. An entry writes the file and returns where it is, and
- * the shelf opens it.
+ * that can be made here (a sheet, a whiteboard, a document, and the Design
+ * studio's design, slides and design system) contributes one entry; the menu
+ * lists them, and Import hands a picked file to the entry that takes its
+ * extension. An entry writes the file and returns where it is, and the shelf
+ * opens it; the design entries open the Design studio's New flow and return null.
  */
 import { FileUpIcon, PlusIcon } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
@@ -67,7 +68,11 @@ export function ArtifactNewMenu(props: {
         </MenuTrigger>
         <MenuPopup align="end" side="bottom" className="min-w-40">
           {props.entries.map((entry) => (
-            <MenuItem key={entry.id} onClick={() => run(entry.create)} data-artifact-new-item={entry.id}>
+            <MenuItem
+              key={entry.id}
+              onClick={() => run(entry.create)}
+              data-artifact-new-item={entry.id}
+            >
               {entry.icon}
               {entry.label}
             </MenuItem>
@@ -96,7 +101,9 @@ export function ArtifactNewMenu(props: {
               const file = event.currentTarget.files?.[0];
               event.currentTarget.value = "";
               if (!file) return;
-              const entry = importers.find((item) => item.imports!.extensions.includes(extensionOf(file.name)));
+              const entry = importers.find((item) =>
+                item.imports!.extensions.includes(extensionOf(file.name)),
+              );
               if (entry) run(() => entry.imports!.run(file));
             }}
             data-artifact-import-input

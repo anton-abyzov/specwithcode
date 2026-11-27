@@ -40,11 +40,14 @@ export interface GalleryFilter {
  * once, preselected. The editor route `/design/$designKey` inherits them and
  * ignores them.
  */
+/** What `?new=` opens: the New design or the New slides dialog. */
+export type NewDesignKind = "design" | "slides";
+
 export interface DesignGallerySearch {
   readonly tab?: GalleryTab;
   readonly project?: ProjectId;
   readonly group?: GalleryGrouping;
-  readonly new?: "design";
+  readonly new?: NewDesignKind;
   readonly system?: DesignSystemId;
   /** `playground`, or a ProjectId. */
   readonly owner?: string;
@@ -71,7 +74,7 @@ export function parseDesignGallerySearch(raw: Record<string, unknown>): DesignGa
     ...(tab ? { tab } : {}),
     ...(project ? { project: ProjectId.make(project) } : {}),
     ...(group ? { group } : {}),
-    ...(raw.new === "design" ? { new: "design" as const } : {}),
+    ...(raw.new === "design" || raw.new === "slides" ? { new: raw.new } : {}),
     ...(system && /^[A-Za-z0-9_-]+$/.test(system) ? { system: system as DesignSystemId } : {}),
     ...(owner ? { owner } : {}),
   };
@@ -273,16 +276,22 @@ export function showsSections(
 }
 
 /**
- * The owner and system `?new=design` preselects, or null without that param.
- * An owner this window does not know falls back to the Playground.
+ * The dialog `?new=design` or `?new=slides` opens and the owner and system it
+ * preselects, or null without that param. An owner this window does not know
+ * falls back to the Playground.
  */
 export function newDesignPresetFromSearch(
   search: DesignGallerySearch,
   projects: readonly { readonly id: ProjectId }[],
-): { readonly owner: DesignOwnerInput; readonly systemId: DesignSystemId | null } | null {
-  if (search.new !== "design") return null;
+): {
+  readonly kind: NewDesignKind;
+  readonly owner: DesignOwnerInput;
+  readonly systemId: DesignSystemId | null;
+} | null {
+  if (search.new === undefined) return null;
   const project = projects.find((candidate) => candidate.id === search.owner);
   return {
+    kind: search.new,
     owner: project ? { kind: "project", projectId: project.id } : { kind: "playground" },
     systemId: search.system ?? null,
   };
