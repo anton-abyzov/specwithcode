@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- The card works in this device's local zone, so the assertions read it through Date.
 import { describe, expect, it } from "vite-plus/test";
 
 import {

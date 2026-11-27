@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- A datetime-local input is wall-clock time in this device's zone; only Date reads that zone's offset.
 /**
  * Date and time values for an MCP server's form (1493).
  *

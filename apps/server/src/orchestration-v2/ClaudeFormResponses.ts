@@ -86,7 +86,7 @@ export function beginClosingClaudeForm(requestId: RuntimeRequestId): boolean {
  */
 export function forgetUncommittedFormAnswer(command: {
   readonly type: string;
-  readonly requestId?: RuntimeRequestId;
+  readonly requestId?: string;
 }): void {
   if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
   handedOff.delete(command.requestId);
