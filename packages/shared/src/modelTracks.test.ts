@@ -29,6 +29,7 @@ import {
   trackStartEffort,
   withoutTrackUltracode,
   withTrackEffort,
+  withMatchingTrackRowUltracode,
   withTrackEntryUltracode,
   withTrackUltracode,
 } from "./modelTracks.ts";
@@ -913,6 +914,27 @@ describe("track Ultracode", () => {
     expect(withTrackEntryUltracode(viaCopilot, entry, sources)).toBe(viaCopilot);
     // A row with the switch off adds nothing.
     expect(withTrackEntryUltracode(opus, { options: [medium] }, sources)).toBe(opus);
+  });
+
+  it("reaches a named launch or a move onto the row it matches (1506)", () => {
+    const lanes = launchTrackLanes(
+      { routine: [{ ...opus, options: [medium, on] }], complex: [] },
+      sources,
+    );
+    expect(withMatchingTrackRowUltracode({ ...opus, options: [medium] }, lanes, sources)).toEqual({
+      ...opus,
+      options: [medium, on],
+    });
+    // The caller's own off wins; another model, or a row with it off, adds nothing.
+    const off = { ...opus, options: [{ id: "ultracode", value: false }] };
+    expect(withMatchingTrackRowUltracode(off, lanes, sources)).toBe(off);
+    const haiku = sel("claudeAgent", "claude-haiku-4-5");
+    expect(withMatchingTrackRowUltracode(haiku, lanes, sources)).toBe(haiku);
+    const rowOff = launchTrackLanes({ routine: [], complex: [{ ...opus, options: [medium] }] }, sources);
+    expect(withMatchingTrackRowUltracode(opus, rowOff, sources)).toBe(opus);
+    // A Complex row counts as a Daily one does.
+    const complex = launchTrackLanes({ routine: [], complex: [{ ...opus, options: [on] }] }, sources);
+    expect(trackEntryUltracode(withMatchingTrackRowUltracode(opus, complex, sources))).toBe(true);
   });
 
   it("is dropped from a launch the rows do not apply to, keeping an explicit off", () => {

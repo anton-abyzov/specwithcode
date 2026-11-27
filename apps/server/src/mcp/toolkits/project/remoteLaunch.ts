@@ -32,6 +32,7 @@ import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRul
 import type { Caller } from "../../threadAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
 import { addToMachineHint, type ExistingCopyOutcome, linkExistingCopy } from "./addToMachine.ts";
+import { namedLaunchOnTrackRow } from "../../../project/TrackRowUltracode.ts";
 import { remotePickedModel } from "./remoteLaunchModel.ts";
 import { workGrantOf } from "../../workGrantAccess.ts";
 
@@ -401,6 +402,12 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
             grantAccounts: (yield* workGrantOf(context))?.grant.accounts,
           });
   pickedModels.set(params, { selection: pickedModelSelection });
+  // A named model takes this project's Tracks row Ultracode here, as the app's pick does.
+  const explicitModelSelection = yield* namedLaunchOnTrackRow({
+    project,
+    selection: params.modelSelection,
+    taskClass: params.taskClass,
+  });
   // A helper on a machine without this project still names it there.
   const callerProjectLabel = caller === undefined ? undefined : yield* projectLabelOf(caller);
   const launch = (localProject: Project | undefined = project) =>
@@ -416,7 +423,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         : {}),
       machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
       title: params.title,
-      explicitModelSelection: params.modelSelection,
+      explicitModelSelection,
       // What the caller itself runs on: the model a thread there started on
       // before the project's models picked one, and still the one after them.
       inheritedModelSelection:

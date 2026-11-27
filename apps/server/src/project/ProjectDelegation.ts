@@ -6,7 +6,11 @@ import type {
   ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { isHeldSource } from "@specweave-studio/shared/modelTracks";
+import {
+  isHeldSource,
+  launchTrackLanes,
+  withMatchingTrackRowUltracode,
+} from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { liveQuotaBoosts } from "@specweave-studio/shared/quotaBoost";
 import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
@@ -101,6 +105,23 @@ export function projectUsesTracks(
   return (
     resolveProjectSettings(settings, project.id, project).settings.threadModelMode === "tracks"
   );
+}
+
+/**
+ * A launch on a Tracks project that named its model takes the Ultracode of
+ * the Daily or Complex row it matches, as an unnamed one does; a named
+ * `ultracode` either way wins (1506). Any other project keeps `selection`.
+ */
+export function withProjectTrackRowUltracode(
+  settings: ServerSettings,
+  project: Pick<Project, "id" | "defaultModelSelection">,
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const resolved = resolveProjectSettings(settings, project.id, project).settings;
+  if (resolved.threadModelMode !== "tracks") return selection;
+  const lanes = launchTrackLanes(resolved.modelLanes, providers, resolved.defaultModelProviders);
+  return withMatchingTrackRowUltracode(selection, lanes, providers);
 }
 
 /**

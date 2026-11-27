@@ -1218,6 +1218,7 @@ import {
   withProjectWorkerModel,
   workerModelUnderGrant,
   needsExplicitWorkerTarget,
+  withProjectTrackRowUltracode,
 } from "../project/ProjectDelegation.ts";
 import { type WorkerLaunch, workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
 import {
@@ -2297,6 +2298,25 @@ const make = Effect.gen(function* () {
     );
   };
 
+  /** A named model on a Tracks project takes the Ultracode of the row it matches (1506). */
+  const namedOnTrackRow = (
+    settings: Parameters<typeof withProjectTrackRowUltracode>[0],
+    project: Parameters<typeof withProjectTrackRowUltracode>[1],
+    baseline: ResolvedTarget,
+    providers: ReadonlyArray<ServerProvider>,
+    unrouted: { readonly target: ResolvedTarget; readonly routing: TaskRoutingDecision | null },
+  ) => {
+    const modelSelection = withProjectTrackRowUltracode(
+      settings,
+      project,
+      baseline.modelSelection,
+      providers,
+    );
+    return modelSelection === baseline.modelSelection
+      ? unrouted
+      : { ...unrouted, target: { ...baseline, modelSelection } };
+  };
+
   /**
    * Auto model routing on top of a resolved worker target (see
    * project/TaskRouting.ts): only when nothing named a model and the app
@@ -2348,7 +2368,12 @@ const make = Effect.gen(function* () {
           taskLane: input.taskLane,
         })
       )
-        return unrouted;
+        return settings !== null &&
+          tracks &&
+          targetPinsModel(input.requested) &&
+          input.taskClass !== "review"
+          ? namedOnTrackRow(settings, input.project, input.baseline, input.providers, unrouted)
+          : unrouted;
       const decision = yield* routeWorkerTask({
         project: input.project,
         baseline: input.baseline.modelSelection,
