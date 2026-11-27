@@ -4,6 +4,7 @@ import {
   ARTIFACT_APP_ROUTE,
   ARTIFACT_APP_WINDOW_ARGUMENT,
   artifactAppLaunchUrl,
+  artifactAppLinuxDesktopId,
   artifactAppUserModelId,
   artifactAppWindowUrl,
   findArtifactAppLaunchInArgv,
@@ -150,6 +151,16 @@ describe("artifactAppWindowUrl", () => {
 
   it("throws on a bad id", () => {
     expect(() => artifactAppWindowUrl("studio://app/", "nope")).toThrow();
+  });
+});
+
+describe("artifactAppLinuxDesktopId", () => {
+  it("names the page's desktop entry and window identity after its install id", () => {
+    expect(artifactAppLinuxDesktopId(ID)).toBe(`specwithcode-app-${ID}`);
+  });
+
+  it("refuses anything but an install id", () => {
+    expect(() => artifactAppLinuxDesktopId("../x")).toThrow("Invalid install id.");
   });
 });
 

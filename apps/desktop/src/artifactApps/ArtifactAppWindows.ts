@@ -7,8 +7,10 @@
  * to the one version the window was told to show: any other frame navigation
  * is stopped, so content from elsewhere never stands where the page stood.
  */
+import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
@@ -27,6 +29,7 @@ import { artifactAppVersionUrl } from "./ArtifactAppPowers.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import {
   ARTIFACT_APP_WINDOW_ARGUMENT,
+  artifactAppLinuxDesktopId,
   artifactAppUserModelId,
   artifactAppWindowUrl,
   isArtifactAppInstallId,
@@ -40,6 +43,21 @@ const MACOS_HEADER_HEIGHT = 44;
 const MACOS_WINDOW_BUTTON_RADIUS = 7;
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-artifact-app-windows");
+
+/** Whether a desktop entry's text is an application entry naming this install. */
+export function isArtifactAppLinuxEntry(entry: string, installId: string): boolean {
+  const lines = entry.split("\n");
+  return (
+    lines[0] === "[Desktop Entry]" &&
+    lines.includes("Type=Application") &&
+    lines.some((line) => line.startsWith("Name=") && line.length > "Name=".length) &&
+    lines.some((line) => line.startsWith("Exec=")) &&
+    lines.includes(`X-SpecWithCode-Artifact-App=${installId}`)
+  );
+}
+
+// Entries this app writes are well under a kilobyte.
+const LINUX_ENTRY_MAX_BYTES = 64n * 1024n;
 
 /** Whether one more installed-page window may open while `openCount` are open. */
 export function canOpenAnotherArtifactAppWindow(openCount: number): boolean {
@@ -204,6 +222,7 @@ const make = Effect.gen(function* () {
   const electronShell = yield* ElectronShell.ElectronShell;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const records = yield* ArtifactAppRecords.ArtifactAppRecords;
+  const fileSystem = yield* FileSystem.FileSystem;
   // Optional so tests need not provide it; the app always does.
   const externalBrowsers = yield* Effect.serviceOption(ExternalBrowsers.ExternalBrowsers);
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
@@ -270,6 +289,30 @@ const make = Effect.gen(function* () {
         })
       : electronWindow.reveal(window);
 
+  // On Linux the window reports the page's own desktop id as its Wayland app id and
+  // WM_CLASS, so the dock shows it under its launcher with the page's name and icon,
+  // as the taskbar id does on Windows. Only while that launcher is there and still
+  // reads as this install's entry: an id no entry names would show as an unknown
+  // app, so otherwise (missing, a folder, unreadable, rewritten) it stays SpecWithCode's.
+  // Only a regular file is read: a pipe or device there would never finish reading,
+  // and every page's open waits behind this one.
+  const linuxIdentity = (installId: string) => {
+    if (environment.platform !== "linux") return Effect.succeed(undefined);
+    const linuxDesktopName = `${artifactAppLinuxDesktopId(installId)}.desktop`;
+    const entryPath = environment.path.join(environment.linuxApplicationsDir, linuxDesktopName);
+    return fileSystem.stat(entryPath).pipe(
+      Effect.flatMap((info) =>
+        info.type === "File" && ByteSize.toBigInt(info.size) <= LINUX_ENTRY_MAX_BYTES
+          ? fileSystem
+              .readFileString(entryPath)
+              .pipe(Effect.map((entry) => isArtifactAppLinuxEntry(entry, installId)))
+          : Effect.succeed(false),
+      ),
+      Effect.orElseSucceed(() => false),
+      Effect.map((found) => (found ? { linuxDesktopName } : undefined)),
+    );
+  };
+
   const createWindow = Effect.fn("desktop.artifactAppWindows.create")(function* (
     installId: string,
     title: string,
@@ -278,30 +321,34 @@ const make = Effect.gen(function* () {
     const windowUrl = artifactAppWindowUrl(getDesktopUrl(environment.isDevelopment), installId);
     const iconPaths = yield* assets.iconPaths;
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const window = yield* electronWindow.create({
-      ...DEFAULT_SIZE,
-      minWidth: MINIMUM_SIZE.width,
-      minHeight: MINIMUM_SIZE.height,
-      show: false,
-      autoHideMenuBar: true,
-      title,
-      ...titleBarOptions(environment.platform, shouldUseDarkColors),
-      backgroundColor: shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
-      ...iconOption(iconPaths, environment.platform),
-      ...(appShim === undefined ? {} : { appShim }),
-      webPreferences: {
-        preload: environment.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        // The page itself sits in a sandboxed iframe; this window never hosts a browser tab.
-        webviewTag: false,
-        additionalArguments: [
-          `${DESKTOP_WINDOW_ROLE_ARGUMENT}${ARTIFACT_APP_WINDOW_ROLE}`,
-          `${ARTIFACT_APP_WINDOW_ARGUMENT}${installId}`,
-        ],
+    const identity = yield* linuxIdentity(installId);
+    const window = yield* electronWindow.create(
+      {
+        ...DEFAULT_SIZE,
+        minWidth: MINIMUM_SIZE.width,
+        minHeight: MINIMUM_SIZE.height,
+        show: false,
+        autoHideMenuBar: true,
+        title,
+        ...titleBarOptions(environment.platform, shouldUseDarkColors),
+        backgroundColor: shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+        ...iconOption(iconPaths, environment.platform),
+        ...(appShim === undefined ? {} : { appShim }),
+        webPreferences: {
+          preload: environment.preloadPath,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          // The page itself sits in a sandboxed iframe; this window never hosts a browser tab.
+          webviewTag: false,
+          additionalArguments: [
+            `${DESKTOP_WINDOW_ROLE_ARGUMENT}${ARTIFACT_APP_WINDOW_ROLE}`,
+            `${ARTIFACT_APP_WINDOW_ARGUMENT}${installId}`,
+          ],
+        },
       },
-    });
+      identity,
+    );
     const webContentsId = window.webContents.id;
 
     // Recorded and registered before the first load: IPC only answers registered app

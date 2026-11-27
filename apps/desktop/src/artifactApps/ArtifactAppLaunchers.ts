@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import { sanitizeArtifactAppName } from "./ArtifactAppName.ts";
 import {
   artifactAppLaunchUrl,
+  artifactAppLinuxDesktopId,
   isArtifactAppInstallId,
   isArtifactAppScheme,
 } from "./ArtifactAppUrl.ts";
@@ -228,6 +229,7 @@ export function linuxArtifactAppDesktopEntry(input: {
   assertLaunchUrl(input.installId, input.launchUrl);
   assertName(input.name);
   if (input.iconPath !== null) assertPlainPath(input.iconPath, "icon path");
+  const desktopId = artifactAppLinuxDesktopId(input.installId);
   const contents = [
     "[Desktop Entry]",
     "Type=Application",
@@ -238,10 +240,13 @@ export function linuxArtifactAppDesktopEntry(input: {
     "Terminal=false",
     "Categories=Utility;",
     "StartupNotify=true",
+    // The page's window reports this as its WM_CLASS and Wayland app id, so the
+    // dock groups it under this entry rather than under SpecWithCode.
+    `StartupWMClass=${desktopId}`,
     `X-SpecWithCode-Artifact-App=${input.installId}`,
     "",
   ].join("\n");
-  return { fileName: `specwithcode-app-${input.installId}.desktop`, contents };
+  return { fileName: `${desktopId}.desktop`, contents };
 }
 
 export function windowsArtifactAppShortcut(input: {

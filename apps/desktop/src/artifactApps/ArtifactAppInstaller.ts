@@ -206,10 +206,13 @@ function pathRules(platform: NodeJS.Platform): NodePath.PlatformPath {
   return platform === "win32" ? NodePath.win32 : NodePath.posix;
 }
 
-function withoutIconLine(entry: string): string {
+// Lines left out when an entry on disk is compared with this install's: neither
+// changes what the entry runs. The icon can move between versions, and entries
+// written before page windows had their own identity have no StartupWMClass.
+function withoutVolatileLines(entry: string): string {
   return entry
     .split("\n")
-    .filter((line) => !line.startsWith("Icon="))
+    .filter((line) => !line.startsWith("Icon=") && !line.startsWith("StartupWMClass="))
     .join("\n");
 }
 
@@ -426,10 +429,13 @@ const make = Effect.gen(function* () {
         });
       case "linux-entry": {
         // Exactly the entry this install wrote, so an Exec pointed elsewhere is
-        // not it. The Icon line is left out: the app's icon can move between
-        // versions while the entry stays this install's.
+        // not it. The Icon and StartupWMClass lines are left out (see
+        // withoutVolatileLines) while the entry stays this install's.
         const onDisk = yield* fileSystem.readFileString(path).pipe(readOrMissing(path));
-        return onDisk !== null && withoutIconLine(onDisk) === withoutIconLine(location.contents);
+        return (
+          onDisk !== null &&
+          withoutVolatileLines(onDisk) === withoutVolatileLines(location.contents)
+        );
       }
     }
   });

@@ -79,6 +79,16 @@ export function artifactAppWindowUrl(desktopUrl: string, installId: string): str
 }
 
 /**
+ * The desktop id of an installed page on Linux: its `.desktop` file is named
+ * after it, and its window reports it as the Wayland app id and the X11
+ * WM_CLASS, so the dock shows the page as its own app with its own icon.
+ */
+export function artifactAppLinuxDesktopId(installId: string): string {
+  if (!isArtifactAppInstallId(installId)) throw new Error("Invalid install id.");
+  return `specwithcode-app-${installId}`;
+}
+
+/**
  * A per-install Windows AppUserModelID so the taskbar groups each installed
  * page on its own. Windows caps the id at 128 characters; the base is cut, never
  * the install id, so two installs can never share an identity.

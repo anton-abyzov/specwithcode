@@ -218,6 +218,7 @@ describe("linuxArtifactAppDesktopEntry", () => {
       "Terminal=false",
       "Categories=Utility;",
       "StartupNotify=true",
+      `StartupWMClass=specwithcode-app-${ID}`,
       `X-SpecWithCode-Artifact-App=${ID}`,
       "",
     ]);
@@ -244,7 +245,7 @@ describe("linuxArtifactAppDesktopEntry", () => {
     expect(lines).toContain("Name=50% $HOME `x`");
     expect(lines).toContain("Icon=C:\\\\icons\\\\a.png");
     // Only the keys written above appear; nothing in the name can start a new key.
-    expect(lines.filter((line) => line.includes("="))).toHaveLength(9);
+    expect(lines.filter((line) => line.includes("="))).toHaveLength(10);
   });
 
   it.each(hostileLaunches)("rejects %s", (_label, installId, launchUrl) => {
