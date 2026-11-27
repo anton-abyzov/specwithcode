@@ -31,7 +31,7 @@ vi.mock("~/viewerOverlayStore", () => ({
   useViewerOverlayStore: { getState: () => ({ setThreadCollapsed: () => undefined }) },
 }));
 
-const { HtmlRenderFrame } = await import("./HtmlRenderFrame");
+const { HtmlRenderFrame, useHtmlRenderSrc } = await import("./HtmlRenderFrame");
 
 let root: Root;
 let container: HTMLDivElement;
@@ -183,5 +183,31 @@ describe("HtmlRenderFrame earlier versions", () => {
     expect(container.textContent).toContain("Report");
     expect(container.textContent).not.toContain("Interactive");
     expect(container.textContent).toContain("A preview. Open the report");
+  });
+});
+
+describe("useHtmlRenderSrc", () => {
+  function Probe(props: { readonly enabled: boolean }) {
+    const { src } = useHtmlRenderSrc("env-A" as never, "att-1", "Guide", props.enabled);
+    return <span>{src ?? "none"}</span>;
+  }
+
+  it("asks for a link only while enabled, and a fresh one each time", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    urlRequests.length = 0;
+    await act(async () => root.render(<Probe enabled={false} />));
+    expect(container.textContent).toBe("none");
+    expect(urlRequests.every((environmentId) => environmentId === null)).toBe(true);
+    await act(async () => root.render(<Probe enabled />));
+    expect(container.textContent).toBe(URL_);
+    // Closed again: the old link is dropped, so a later open cannot reuse an expired one.
+    await act(async () => root.render(<Probe enabled={false} />));
+    expect(container.textContent).toBe("none");
+    urlRequests.length = 0;
+    await act(async () => root.render(<Probe enabled />));
+    expect(urlRequests).toContain("env-A");
+    expect(container.textContent).toBe(URL_);
   });
 });

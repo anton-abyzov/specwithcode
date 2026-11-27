@@ -57,6 +57,14 @@ export function useHtmlRenderSrc(
   // At most one mint per mount: expiry is server time and the check uses the
   // client clock, so a skewed clock must not mint again on every update.
   const minting = useRef(false);
+  // Once the page is not needed, its link is let go, so opening it again gets a fresh one.
+  useEffect(() => {
+    if (enabled) return;
+    minting.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Drops the link the closed page used.
+    setSrc(null);
+    setFailed(false);
+  }, [enabled]);
   useEffect(() => {
     if (!enabled || src !== null || minting.current) return;
     if (cacheFailed) {

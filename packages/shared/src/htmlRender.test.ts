@@ -670,6 +670,14 @@ describe("stage pages", () => {
     ).toBe(true);
     // Without a written <body>, the first body tag or text ends the head.
     expect(
+      isHtmlRenderStagePage(
+        '<iframe src="a.html"></iframe><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<textarea></textarea><meta name="specwithcode-page" content="stage">'),
+    ).toBe(false);
+    expect(
       isHtmlRenderStagePage('<main>x</main><meta name="specwithcode-page" content="stage">'),
     ).toBe(false);
     expect(isHtmlRenderStagePage('Hello <meta name="specwithcode-page" content="stage">')).toBe(

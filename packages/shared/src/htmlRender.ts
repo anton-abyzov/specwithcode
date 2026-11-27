@@ -73,7 +73,12 @@ function tagAttributes(tag: string): Map<string, string> {
  * into a stage page with its permissions by quoting the tag.
  */
 export function isHtmlRenderStagePage(html: string): boolean {
-  const scan = blankNonMarkup(html);
+  // Only what a head may hold is blanked with its contents; any other element, an iframe
+  // or a textarea say, stays as a tag and so ends the head.
+  const scan = html.replace(
+    /<!--[\s\S]*?(?:-->|$)|<(script|style|title|noscript|template)\b[\s\S]*?(?:<\/\1\s*>|$)/gi,
+    (match) => " ".repeat(match.length),
+  );
   let at = 0;
   // The head ends where a browser ends it: at `</head>`, at text, or at the first tag that
   // cannot be in a head (`<body>` or `<main>`, written or implied). Quoted values may hold `>`.
@@ -101,7 +106,7 @@ export function isHtmlRenderStagePage(html: string): boolean {
 }
 
 // Start tags that keep a document in its head; script, style, title, noscript and
-// template were blanked with their contents before the walk.
+// template are blanked with their contents before the walk.
 const HEAD_TAGS = new Set(["html", "head", "meta", "link", "base"]);
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */

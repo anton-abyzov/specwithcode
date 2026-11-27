@@ -717,6 +717,24 @@
         return undefined;
       }
     }
+    // #id-N links to beat N of a scene, so a scene named like another's beat link would
+    // make that link open the wrong scene.
+    var ids = scenes.map(function (scene) {
+      return (scene && scene.id) || "";
+    });
+    for (var c = 0; c < ids.length; c++) {
+      var clash = /^(.+)-(\d+)$/.exec(ids[c]);
+      if (clash && ids.indexOf(clash[1]) !== -1)
+        return fail(
+          'Scene id "' +
+            ids[c] +
+            '" is also the link to beat ' +
+            clash[2] +
+            ' of scene "' +
+            clash[1] +
+            '". Rename one of them.',
+        );
+    }
     if (!THREE)
       return fail("This presentation needs three.js: load specwithcode:three before the deck.");
     var gl = canvas.getContext("webgl2", {

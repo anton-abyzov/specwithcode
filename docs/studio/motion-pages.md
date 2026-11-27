@@ -51,7 +51,7 @@ SpecWithCodeDeck.start({
   title: "Shown on the loading screen",
   scenes: [
     {
-      id: "intro", // #intro, #intro-2, #intro-3 link to its beats
+      id: "intro", // #intro, #intro-2, #intro-3 link to its beats; no other scene may be "intro-2"
       beats: [{ dur: 2.4, notes: "Speaker notes for beat 1" }, { dur: 3 }],
       html: "<h1 id='t'>Words</h1>", // a DOM layer above the canvas, shown with the scene
       transition: "iris", // into this scene: "fade", "iris" or "wipe"

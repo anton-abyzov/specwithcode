@@ -177,6 +177,16 @@ describe("motion deck runtime", () => {
     await tab.close();
   });
 
+  it("refuses a scene id that is another scene's beat link", async () => {
+    const clashing = NAMED.replace('id: "intro"', 'id: "scene"');
+    const tab = await open("", true, clashing);
+    await tab.waitForFunction("typeof window.specwithcodeFailed === 'string'", null, {
+      timeout: 10_000,
+    });
+    expect(await tab.evaluate<string>("window.specwithcodeFailed")).toContain('"scene-2"');
+    await tab.close();
+  });
+
   it("opens a scene whose id ends in a number, and leaves Enter to a focused button", async () => {
     const tab = await open("#scene-2", true, NAMED);
     await ready(tab);

@@ -747,10 +747,11 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 /** How long a stage page may take to build its scenes and compile its shaders in the preview. */
 export const STAGE_READY_TIMEOUT_MS = 90_000;
 // Resolves true once the page sets its ready global, false when the wait runs out.
-// "ready", "failed" once the page shows its error (a hidden .swc-error placeholder does not count) (a deck without three.js or WebGL 2
+// "ready", "failed" once the deck reports it failed (`window.specwithcodeFailed`, which
+// a page's own markup cannot set by accident) (a deck without three.js or WebGL 2
 // never becomes ready, so waiting the full timeout would only hold a browser), or "timeout".
 const stageReadyExpression = (global: string, timeoutMs: number) =>
-  `new Promise(function(r){var t=Date.now();(function p(){if(window[${JSON.stringify(global)}]===true)return r("ready");if(typeof window.specwithcodeFailed==="string"||Array.prototype.some.call(document.querySelectorAll(".swc-error"),function(e){return e.getClientRects().length>0;}))return r("failed");if(Date.now()-t>${timeoutMs})return r("timeout");setTimeout(p,250);})();})`;
+  `new Promise(function(r){var t=Date.now();(function p(){if(window[${JSON.stringify(global)}]===true)return r("ready");if(typeof window.specwithcodeFailed==="string")return r("failed");if(Date.now()-t>${timeoutMs})return r("timeout");setTimeout(p,250);})();})`;
 
 const StageReadyState = Schema.Literals(["ready", "failed", "timeout"]);
 
