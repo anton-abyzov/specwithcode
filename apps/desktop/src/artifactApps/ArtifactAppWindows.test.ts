@@ -249,10 +249,21 @@ const setup = (input: {
   readonly known: ReadonlyArray<string>;
   /** Files on disk and their text, for the Linux launcher check. */
   readonly files?: Readonly<Record<string, string>>;
+  /** Paths that are something other than a regular file (a pipe, a folder). */
+  readonly special?: ReadonlyArray<string>;
 }) => {
   const created: Array<FakeWindow> = [];
   const identities: Array<ElectronWindow.ElectronWindowIdentity | undefined> = [];
   const files = new Map(Object.entries(input.files ?? {}));
+  const special = new Set(input.special ?? []);
+  const reads: Array<string> = [];
+  const notFound = (method: string, path: string) =>
+    PlatformError.systemError({
+      _tag: "NotFound",
+      module: "FileSystem",
+      method,
+      pathOrDescriptor: path,
+    });
   const registered: Array<{ window: Electron.BrowserWindow; role: string | undefined }> = [];
   const revealed: Array<Electron.BrowserWindow> = [];
   const external: Array<string> = [];
@@ -313,16 +324,29 @@ const setup = (input: {
         }),
         Layer.mock(ElectronTheme.ElectronTheme)({ shouldUseDarkColors: Effect.succeed(true) }),
         FileSystem.layerNoop({
+          stat: (path) => {
+            const text = files.get(path);
+            if (special.has(path)) {
+              return Effect.succeed({
+                type: "FIFO",
+                size: FileSystem.Size(0),
+              } as FileSystem.File.Info);
+            }
+            return text === undefined
+              ? Effect.fail(notFound("stat", path))
+              : Effect.succeed({
+                  type: "File",
+                  size: FileSystem.Size(text.length),
+                } as FileSystem.File.Info);
+          },
           readFileString: (path) => {
+            reads.push(path);
             const text = files.get(path);
             return text === undefined
-              ? Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "NotFound",
-                    module: "FileSystem",
-                    method: "readFileString",
-                    pathOrDescriptor: path,
-                  }),
+              ? Effect.fail(notFound("readFileString", path))
+              : Effect.succeed(text);
+          },
+        }),
                 )
               : Effect.succeed(text);
           },
@@ -333,7 +357,7 @@ const setup = (input: {
       ),
     ),
   );
-  return { layer, created, identities, registered, revealed, external, messages };
+  return { layer, created, identities, reads, registered, revealed, external, messages };
 };
 
 const emit = (map: Map<string, Array<Listener>>, event: string, ...args: Array<unknown>) => {
@@ -636,13 +660,31 @@ describe("ArtifactAppWindows", () => {
   });
 
   const entryFor = (installId: string) =>
-    `[Desktop Entry]\nType=Application\nName=Board\nX-SpecWithCode-Artifact-App=${installId}\n`;
+    `[Desktop Entry]\nType=Application\nName=Board\nExec=xdg-open "x"\nX-SpecWithCode-Artifact-App=${installId}\n`;
 
   it("recognizes only a desktop entry that names the install", () => {
     assert.isTrue(ArtifactAppWindows.isArtifactAppLinuxEntry(entryFor(ID), ID));
     assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry(entryFor(idFor(1)), ID));
     assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry("", ID));
     assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry(`#!/bin/sh\n${entryFor(ID)}`, ID));
+    // Cut short: no Type, Name or Exec, so the dock would not list it.
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppLinuxEntry(
+        `[Desktop Entry]\nX-SpecWithCode-Artifact-App=${ID}\n`,
+        ID,
+      ),
+    );
+  });
+
+  it.effect("never reads a launcher path that is not a regular file", () => {
+    const pipe = `${LINUX_APPLICATIONS}/specwithcode-app-${ID}.desktop`;
+    const fixture = setup({ platform: "linux", known: [ID], special: [pipe] });
+    return Effect.gen(function* () {
+      const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
+      yield* windows.open(ID);
+      assert.deepEqual(fixture.reads, []);
+      assert.deepEqual(fixture.identities, [undefined]);
+    }).pipe(Effect.provide(fixture.layer));
   });
 
   it.effect("gives a Linux window its launcher's desktop id while the launcher is there", () => {

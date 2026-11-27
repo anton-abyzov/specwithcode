@@ -43,13 +43,20 @@ const MACOS_WINDOW_BUTTON_RADIUS = 7;
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-artifact-app-windows");
 
-/** Whether a desktop entry's text is a desktop entry naming this install. */
+/** Whether a desktop entry's text is an application entry naming this install. */
 export function isArtifactAppLinuxEntry(entry: string, installId: string): boolean {
   const lines = entry.split("\n");
   return (
-    lines[0] === "[Desktop Entry]" && lines.includes(`X-SpecWithCode-Artifact-App=${installId}`)
+    lines[0] === "[Desktop Entry]" &&
+    lines.includes("Type=Application") &&
+    lines.some((line) => line.startsWith("Name=") && line.length > "Name=".length) &&
+    lines.some((line) => line.startsWith("Exec=")) &&
+    lines.includes(`X-SpecWithCode-Artifact-App=${installId}`)
   );
 }
+
+// Entries this app writes are well under a kilobyte.
+const LINUX_ENTRY_MAX_BYTES = 64 * 1024;
 
 /** Whether one more installed-page window may open while `openCount` are open. */
 export function canOpenAnotherArtifactAppWindow(openCount: number): boolean {
@@ -286,16 +293,23 @@ const make = Effect.gen(function* () {
   // as the taskbar id does on Windows. Only while that launcher is there and still
   // reads as this install's entry: an id no entry names would show as an unknown
   // app, so otherwise (missing, a folder, unreadable, rewritten) it stays SpecWithCode's.
+  // Only a regular file is read: a pipe or device there would never finish reading,
+  // and every page's open waits behind this one.
   const linuxIdentity = (installId: string) => {
     if (environment.platform !== "linux") return Effect.succeed(undefined);
     const linuxDesktopName = `${artifactAppLinuxDesktopId(installId)}.desktop`;
-    return fileSystem
-      .readFileString(environment.path.join(environment.linuxApplicationsDir, linuxDesktopName))
-      .pipe(
-        Effect.map((entry) => isArtifactAppLinuxEntry(entry, installId)),
-        Effect.orElseSucceed(() => false),
-        Effect.map((found) => (found ? { linuxDesktopName } : undefined)),
-      );
+    const entryPath = environment.path.join(environment.linuxApplicationsDir, linuxDesktopName);
+    return fileSystem.stat(entryPath).pipe(
+      Effect.flatMap((info) =>
+        info.type === "File" && Number(info.size) <= LINUX_ENTRY_MAX_BYTES
+          ? fileSystem
+              .readFileString(entryPath)
+              .pipe(Effect.map((entry) => isArtifactAppLinuxEntry(entry, installId)))
+          : Effect.succeed(false),
+      ),
+      Effect.orElseSucceed(() => false),
+      Effect.map((found) => (found ? { linuxDesktopName } : undefined)),
+    );
   };
 
   const createWindow = Effect.fn("desktop.artifactAppWindows.create")(function* (
