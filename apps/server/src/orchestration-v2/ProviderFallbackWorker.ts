@@ -2,7 +2,7 @@ import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
 import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
-import { routineOwnThreadIds } from "./routineOwnThreads.ts";
+import { routineThreadIds, skipsRowUltracode } from "./routineThreads.ts";
 import {
   CommandId,
   type ManualCodexCreditIntent,
@@ -560,8 +560,8 @@ function limitStep(
     readonly openWindow?: number;
     /** The thread's chain of limit stops used its hops: no automatic switch (1460). */
     readonly parked?: boolean;
-    /** A routine started this thread as its own (`routineOwnThreadIds`). */
-    readonly routineThread?: boolean;
+    /** A routine runs in this thread (`routineThreadIds`) or it is the coordinator. */
+    readonly noRowUltracode?: boolean;
   },
 ):
   | {
@@ -588,7 +588,7 @@ function limitStep(
       proven: options.proven ?? null,
       limited: options.limited,
       failed: options.failedTargets,
-      rowUltracode: options.routineThread !== true,
+      rowUltracode: options.noRowUltracode !== true,
     });
     return command === null ? null : { type: "switch", command };
   }
@@ -705,7 +705,7 @@ function limitStep(
     options.proven ?? null,
     options.limited,
     options.failedTargets,
-    options.routineThread !== true,
+    options.noRowUltracode !== true,
   );
   return command === null ? null : { type: "switch", command };
 }
@@ -832,7 +832,7 @@ function idlePreswitchCommand(
     readonly openWindow?: number;
     /** Sources a limit stop holds, among others (see `withHeldSources`). */
     readonly failedTargets?: ReadonlySet<string> | undefined;
-    readonly routineThread?: boolean;
+    readonly noRowUltracode?: boolean;
   },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
   const id = idlePreswitchId(thread, providers, rule, nowMs, options.openWindow);
@@ -845,7 +845,7 @@ function idlePreswitchCommand(
     lockedProven(thread.routing, providers, options.proven),
     options.limited,
     options.failedTargets,
-    options.routineThread !== true,
+    options.noRowUltracode !== true,
   );
   return command?.type === "thread.model-selection.set"
     ? (lockedStep(thread, providers, { command: { ...command, commandId: CommandId.make(id) } })
@@ -1876,7 +1876,7 @@ export const makeSweep = Effect.gen(function* () {
     if (!wake && now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
     yield* Ref.set(lastRunAt, now);
     const preferences = yield* settings.getSettings;
-    const routineThreads = yield* routineOwnThreadIds;
+    const routineThreads = yield* routineThreadIds;
     let providers = withSimulatedUsage(yield* registry.getProviders, now, env);
     // The way back does not depend on a rule: a thread the rule moved must
     // not keep spending after the rule is turned off. Nor does the retry of a
@@ -2087,7 +2087,8 @@ export const makeSweep = Effect.gen(function* () {
         limited,
         failedTargets: withHeldSources(triedTargets, heldSources),
         parked: limitChainParked(chainsNow.get(thread.id)),
-        routineThread: routineThreads.has(thread.id),
+        // A routine's thread and the coordinator never take a row's Ultracode (1506).
+        noRowUltracode: skipsRowUltracode(thread.id, routineThreads, project),
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
         stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),
@@ -2160,7 +2161,10 @@ export const makeSweep = Effect.gen(function* () {
               ),
               rule,
               DateTime.toEpochMillis(yield* DateTime.now),
-              options,
+              // Read again under the lock: a routine may have bound it since the sweep began.
+              skipsRowUltracode(current.id, yield* routineThreadIds, currentProject)
+                ? { ...options, noRowUltracode: true }
+                : options,
             );
             const commandOf = (step: NonNullable<typeof next>) => {
               const command = step.type === "redeem-reset" ? step.continuation : step.command;

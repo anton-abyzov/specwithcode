@@ -70,11 +70,11 @@ const stopped = {
   lastErrorClass: "usage_limit" as const,
   usageLimitResetAt: resetsAt,
 };
-const moved = (thread: typeof idle | typeof stopped, routineThread: boolean) => {
+const moved = (thread: typeof idle | typeof stopped, noRowUltracode: boolean) => {
   const step = providerLimitStep(thread, providers, rule, now, {
     resetAttempted: true,
     apiCreditsAttempted: true,
-    routineThread,
+    noRowUltracode,
   });
   expect(step?.type).toBe("switch");
   const command = step!.command as { readonly modelSelection: typeof idle.modelSelection };
@@ -83,12 +83,12 @@ const moved = (thread: typeof idle | typeof stopped, routineThread: boolean) => 
 };
 
 describe("a move onto the same model on another account (1506)", () => {
-  it("gives an idle thread the row's Ultracode, never a routine's own", () => {
+  it("gives an idle thread the row's Ultracode, never a routine's or the coordinator's", () => {
     expect(moved(idle, false)).toContainEqual(on);
     expect(moved(idle, true)).not.toContainEqual(on);
   });
 
-  it("gives a thread stopped on a limit the row's Ultracode, never a routine's own", () => {
+  it("gives a thread stopped on a limit the row's Ultracode, never a routine's or the coordinator's", () => {
     expect(moved(stopped, false)).toContainEqual(on);
     expect(moved(stopped, true)).not.toContainEqual(on);
   });
