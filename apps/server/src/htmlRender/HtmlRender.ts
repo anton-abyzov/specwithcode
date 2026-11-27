@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - page files open without blocking, which FileSystem.open cannot do.
+import * as NodeFS from "node:fs";
+
 import type { ThreadId } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import {
@@ -545,13 +548,9 @@ const make = Effect.gen(function* () {
       Effect.provideContext(services),
     );
 
-  // Device and inode name one file; where the platform reports no inode, size and change time stand in.
-  const sameFileIdentity = (a: FileSystem.File.Info, b: FileSystem.File.Info) =>
-    a.dev === b.dev &&
-    (Option.isSome(a.ino) && Option.isSome(b.ino)
-      ? a.ino.value === b.ino.value
-      : a.size === b.size &&
-        Option.getOrUndefined(a.mtime)?.getTime() === Option.getOrUndefined(b.mtime)?.getTime());
+  // Device and inode name one file.
+  const sameFileIdentity = (a: NodeFS.BigIntStats, b: NodeFS.BigIntStats) =>
+    a.dev === b.dev && a.ino === b.ino;
 
   const readPageFile = Effect.fn("HtmlRender.readPageFile")(
     function* (path: string) {
@@ -564,22 +563,35 @@ const make = Effect.gen(function* () {
       }
       if (!/\.html?$/i.test(path)) return yield* refuse("only .html and .htm files can be shown.");
       const unreadable = () => refuse("the file does not exist or cannot be read.");
-      // Opening a pipe would wait for a writer, so only a plain file is opened.
-      if ((yield* fileSystem.stat(path).pipe(Effect.mapError(unreadable))).type !== "File") {
-        return yield* refuse("it is not a file.");
-      }
       // The file is opened first and everything after is checked against the open file, so
       // a link swapped in between the check and the read never reaches a protected file.
-      const file = yield* fileSystem.open(path, { flag: "r" }).pipe(Effect.mapError(unreadable));
-      const opened = yield* file.stat.pipe(Effect.mapError(unreadable));
-      if (opened.type !== "File") return yield* refuse("it is not a file.");
+      // Opened without blocking: a pipe put in its place would otherwise wait for a writer.
+      const file = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: () =>
+            NodeFS.promises.open(
+              path,
+              NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+            ),
+          catch: unreadable,
+        }),
+        (handle) => Effect.promise(() => handle.close().catch(() => undefined)),
+      );
+      const opened = yield* Effect.tryPromise({
+        try: () => file.stat({ bigint: true }),
+        catch: unreadable,
+      });
+      if (!opened.isFile()) return yield* refuse("it is not a file.");
       const real = yield* fileSystem.realPath(path).pipe(Effect.mapError(unreadable));
       if (!/\.html?$/i.test(real)) return yield* refuse("only .html and .htm files can be shown.");
       // A credential store never reaches the page, also through a link named *.html.
       if ((yield* agentPathGuard.isProtected(path)) || (yield* agentPathGuard.isProtected(real))) {
         return yield* refuse("SpecWithCode keeps this path away from agents.");
       }
-      const checked = yield* fileSystem.stat(real).pipe(Effect.mapError(unreadable));
+      const checked = yield* Effect.tryPromise({
+        try: () => NodeFS.promises.stat(real, { bigint: true }),
+        catch: unreadable,
+      });
       if (!sameFileIdentity(opened, checked)) {
         return yield* refuse("the file changed while it was being opened.");
       }
@@ -592,13 +604,12 @@ const make = Effect.gen(function* () {
       const bytes = new Uint8Array(MAX_PAGE_BYTES + 1);
       let length = 0;
       while (length < bytes.length) {
-        const read = Number(
-          yield* file
-            .read(bytes.subarray(length))
-            .pipe(Effect.mapError(() => refuse("the file cannot be read."))),
-        );
-        if (read === 0) break;
-        length += read;
+        const { bytesRead } = yield* Effect.tryPromise({
+          try: () => file.read(bytes, length, bytes.length - length, null),
+          catch: () => refuse("the file cannot be read."),
+        });
+        if (bytesRead === 0) break;
+        length += bytesRead;
       }
       if (length > MAX_PAGE_BYTES) {
         return yield* refuse(`it grew past ${formatMib(MAX_PAGE_BYTES)} while being read.`);

@@ -938,6 +938,11 @@
       if (notesPanel) renderNotes();
     }
     function parseHash() {
+      // A scene id may itself end in -N (scene-2), so the whole hash is tried as an id first.
+      var whole = location.hash.slice(1);
+      for (var w = 0; w < instances.length; w++) {
+        if (whole !== "" && (instances[w].def.id || "") === whole) return { index: w, beat: 0 };
+      }
       var m = /^#([a-z0-9_-]+?)(?:-(\d+))?$/i.exec(location.hash);
       if (!m) return null;
       for (var i = 0; i < instances.length; i++) {
@@ -1110,6 +1115,16 @@
         target &&
         target.closest &&
         target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")
+      )
+        return;
+      // Enter and Space press a focused button or link in a scene instead of moving on.
+      if (
+        (e.key === "Enter" || e.key === " ") &&
+        target &&
+        target.closest &&
+        target.closest(
+          "button, a[href], summary, [role=button], [role=link], [role=checkbox], [role=tab], [role=menuitem], [role=switch]",
+        )
       )
         return;
       unlock();

@@ -8,8 +8,15 @@ const URL_ = "https://host.test/api/assets/page.html?sig=abc";
 vi.mock("~/hooks/useHtmlRenderTheme", () => ({
   useHtmlRenderTheme: () => ({ appearance: "dark", variables: { "--background": "#111" } }),
 }));
+// Environments a URL was asked for, null while a frame needs none.
+const urlRequests: Array<string | null> = [];
 vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlState: () => ({ _tag: "Success", url: URL_, expiresAt: Date.now() + 3_600_000 }),
+  useAssetUrlState: (environmentId: string | null) => {
+    urlRequests.push(environmentId);
+    return environmentId === null
+      ? { _tag: "Initial" }
+      : { _tag: "Success", url: URL_, expiresAt: Date.now() + 3_600_000 };
+  },
   useAssetUrlRefresh: () => async () => URL_,
 }));
 vi.mock("../artifactApps/InstallAsAppButton", () => ({
@@ -126,6 +133,7 @@ describe("HtmlRenderFrame stage pages", () => {
 
 describe("HtmlRenderFrame earlier versions", () => {
   it("shows a replaced report as a header only, with no install and no page loaded", async () => {
+    urlRequests.length = 0;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -144,6 +152,8 @@ describe("HtmlRenderFrame earlier versions", () => {
     expect(container.querySelector<HTMLElement>(".html-report-preview")?.hidden).toBe(true);
     // Hidden is not enough: a hidden frame still runs, so no frame exists until it is opened.
     expect(document.querySelector("iframe")).toBeNull();
+    // Nor is a link minted, which could expire before the reader opens it.
+    expect(urlRequests.every((environmentId) => environmentId === null)).toBe(true);
     const openButton = [...container.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Open report"),
     );

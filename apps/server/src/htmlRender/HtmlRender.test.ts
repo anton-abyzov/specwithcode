@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain local servers stand in for LAN services.
+import * as NodeChildProcess from "node:child_process";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@specweave-studio/contracts";
@@ -315,6 +317,8 @@ describe("HtmlRender", () => {
       const throughLink = `${hop}/../keys.html`;
       const large = path.join(directory, "large.html");
       yield* fileSystem.writeFile(large, new Uint8Array(25 * 1024 * 1024 + 1));
+      const folder = path.join(directory, "folder.html");
+      yield* fileSystem.makeDirectory(folder);
       const reasons = yield* Effect.forEach(
         [
           "deck.html",
@@ -324,6 +328,7 @@ describe("HtmlRender", () => {
           linked,
           throughLink,
           large,
+          folder,
         ],
         (candidate) =>
           htmlRender.readPageFile(candidate).pipe(
@@ -339,7 +344,15 @@ describe("HtmlRender", () => {
         "SpecWithCode keeps this path away from agents.",
         "the path must not have . or .. parts.",
         "it is 26214401 bytes, over the 25.0 MiB limit.",
+        "it is not a file.",
       ]);
+      // A pipe is refused at once instead of waiting for a writer.
+      if (HostProcessPlatform.defaultValue() !== "win32") {
+        const pipe = path.join(directory, "pipe.html");
+        NodeChildProcess.execFileSync("mkfifo", [pipe]);
+        const error = yield* htmlRender.readPageFile(pipe).pipe(Effect.flip);
+        expect(error.reason).toBe("it is not a file.");
+      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

@@ -59,6 +59,21 @@ SpecWithCodeDeck.start({
   ],
 });`;
 
+// A scene whose id ends in -2, with its own button.
+const NAMED = `
+SpecWithCodeDeck.start({
+  title: "Named deck",
+  scenes: [
+    { id: "intro", beats: [{ dur: 0.2 }],
+      create(ctx) { return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera() }; } },
+    { id: "scene-2", beats: [{ dur: 0.2 }, { dur: 0.2 }],
+      html: '<button id="press" onclick="window.pressed=(window.pressed||0)+1">Press</button>',
+      create(ctx) { return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera() }; } },
+    { id: "end", beats: [{ dur: 0.2 }],
+      create(ctx) { return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera() }; } },
+  ],
+});`;
+
 const page = (hash: string, withThree = true, scenes = SCENES) => ({
   url: `http://deck.test/${hash}`,
   html: `<!doctype html><html><head><meta name="specwithcode-page" content="stage"></head><body>
@@ -159,6 +174,17 @@ describe("motion deck runtime", () => {
     await tab.keyboard.press("Backspace");
     expect(await tab.inputValue("#field")).toBe("a f ");
     expect(await tab.evaluate<string>("location.hash")).toBe("#form");
+    await tab.close();
+  });
+
+  it("opens a scene whose id ends in a number, and leaves Enter to a focused button", async () => {
+    const tab = await open("#scene-2", true, NAMED);
+    await ready(tab);
+    expect(await tab.evaluate<string>("location.hash")).toBe("#scene-2");
+    await tab.focus("#press");
+    await tab.keyboard.press("Enter");
+    expect(await tab.evaluate<number>("window.pressed")).toBe(1);
+    expect(await tab.evaluate<string>("location.hash")).toBe("#scene-2");
     await tab.close();
   });
 });

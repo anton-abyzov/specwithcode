@@ -628,6 +628,10 @@ describe("stage pages", () => {
     expect(htmlRenderPageFragment(`/a/page.html${theme}`)).toBe("");
     expect(htmlRenderPageFragment(`/a/page.html#x${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toBe(
       "#x",
+    ); // A page's own id that starts with studio- is kept.
+    expect(htmlRenderPageFragment(`/a/page.html#studio-overview${theme}`)).toBe("#studio-overview");
+    expect(htmlRenderPageFragment("/a/page.html#studio-contain-scrolling")).toBe(
+      "#studio-contain-scrolling",
     );
   });
 
@@ -658,6 +662,26 @@ describe("stage pages", () => {
     ).toBe(false);
     expect(
       isHtmlRenderStagePage('<META NAME="SpecWithCode-Page" CONTENT=" stage "><body></body>'),
+    ).toBe(true); // A quoted > does not end the tag.
+    expect(
+      isHtmlRenderStagePage(
+        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Deck</title><meta title="Q > A" name="specwithcode-page" content="stage"></head>',
+      ),
+    ).toBe(true);
+    // Without a written <body>, the first body tag or text ends the head.
+    expect(
+      isHtmlRenderStagePage('<main>x</main><meta name="specwithcode-page" content="stage">'),
+    ).toBe(false);
+    expect(isHtmlRenderStagePage('Hello <meta name="specwithcode-page" content="stage">')).toBe(
+      false,
+    );
+    expect(
+      isHtmlRenderStagePage('<head></head><meta name="specwithcode-page" content="stage">'),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(
+        '<link rel="icon" href="a.png"><script>var a="<main>"</script><style>p{}</style><meta name="specwithcode-page" content="stage">',
+      ),
     ).toBe(true);
   });
 

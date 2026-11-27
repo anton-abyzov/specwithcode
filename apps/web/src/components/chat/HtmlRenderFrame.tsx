@@ -33,6 +33,8 @@ export function useHtmlRenderSrc(
   environmentId: EnvironmentId,
   attachmentId: string,
   title: string,
+  /** False until the page is needed: no URL is minted, so none can expire unused. */
+  enabled = true,
 ) {
   const fileName = htmlRenderFileName(title);
   const resource = useMemo(
@@ -47,7 +49,7 @@ export function useHtmlRenderSrc(
   );
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const assetUrl = useAssetUrlState(src === null ? environmentId : null, resource);
+  const assetUrl = useAssetUrlState(src === null && enabled ? environmentId : null, resource);
   const cachedUrl = assetUrl._tag === "Success" ? assetUrl.url : null;
   const cachedExpiresAt = assetUrl._tag === "Success" ? assetUrl.expiresAt : 0;
   const cacheFailed = assetUrl._tag === "Failure";
@@ -56,7 +58,7 @@ export function useHtmlRenderSrc(
   // client clock, so a skewed clock must not mint again on every update.
   const minting = useRef(false);
   useEffect(() => {
-    if (src !== null || minting.current) return;
+    if (!enabled || src !== null || minting.current) return;
     if (cacheFailed) {
       // oxlint-disable-next-line react/set-state-in-effect -- Mirrors the cached URL's failure.
       setFailed(true);
@@ -72,7 +74,7 @@ export function useHtmlRenderSrc(
       (url) => (url === null ? setFailed(true) : setSrc(url)),
       () => setFailed(true),
     );
-  }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
+  }, [cacheFailed, cachedExpiresAt, cachedUrl, enabled, refresh, src]);
 
   return { src, failed };
 }
@@ -322,7 +324,13 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
   // left short would scroll inside the thread and take the reader's scroll.
   const [contentHeight, setContentHeight] = useState<number>();
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
-  const { src, failed } = useHtmlRenderSrc(props.environmentId, attachmentId, title);
+  // An earlier version asks for its page only once it is opened, so the link it opens is fresh.
+  const { src, failed } = useHtmlRenderSrc(
+    props.environmentId,
+    attachmentId,
+    title,
+    expanded || props.replaced !== true,
+  );
 
   const previewHeight = Math.min(height, 360);
   const documentHeight = expanded ? Math.min(50_000, contentHeight ?? height) : height;
@@ -351,7 +359,7 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
             variant="outline"
             size="sm"
             onClick={open}
-            disabled={src === null}
+            disabled={src === null && props.replaced !== true}
           >
             {tx("Open report")} <ArrowUpRightIcon aria-hidden className="size-4" />
           </Button>

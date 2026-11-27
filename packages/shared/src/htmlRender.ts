@@ -74,9 +74,22 @@ function tagAttributes(tag: string): Map<string, string> {
  */
 export function isHtmlRenderStagePage(html: string): boolean {
   const scan = blankNonMarkup(html);
-  const bodyStart = scan.search(/<body[\s>]/i);
-  const head = bodyStart === -1 ? scan : scan.slice(0, bodyStart);
-  for (const match of head.matchAll(/<meta\b[^>]*>/gi)) {
+  let at = 0;
+  // The head ends where a browser ends it: at `</head>`, at text, or at the first tag that
+  // cannot be in a head (`<body>` or `<main>`, written or implied). Quoted values may hold `>`.
+  for (const match of scan.matchAll(
+    /<(\/?)([a-z][a-z0-9-]*)(?:[^>"']|"[^"]*"|'[^']*')*>|<![^>]*>|<\?[^>]*>/gi,
+  )) {
+    if (scan.slice(at, match.index).trim() !== "") return false;
+    at = match.index + match[0].length;
+    const name = match[2]?.toLowerCase();
+    if (name === undefined) continue;
+    if (match[1]) {
+      if (name === "head") return false;
+      continue;
+    }
+    if (!HEAD_TAGS.has(name)) return false;
+    if (name !== "meta") continue;
     const attributes = tagAttributes(match[0]);
     if (
       attributes.get("name")?.trim().toLowerCase() === "specwithcode-page" &&
@@ -86,6 +99,10 @@ export function isHtmlRenderStagePage(html: string): boolean {
   }
   return false;
 }
+
+// Start tags that keep a document in its head; script, style, title, noscript and
+// template were blanked with their contents before the walk.
+const HEAD_TAGS = new Set(["html", "head", "meta", "link", "base"]);
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */
 export const HTML_RENDER_MEASURE_WIDTHS = [320, 375, 430, 520, 640, 728, 860, 1000, 1144] as const;
@@ -610,7 +627,13 @@ const CONTAIN_SCROLL_FRAGMENT_KEY = "studio-contain-scroll";
 export function htmlRenderPageFragment(src: string): string {
   const hashAt = src.indexOf("#");
   if (hashAt === -1) return "";
-  const own = src.slice(hashAt).split(/[#&]studio-/, 1)[0]!;
+  // Only the app's own keys are dropped; a page's `#studio-overview` is the page's.
+  const own = src
+    .slice(hashAt)
+    .split(
+      new RegExp(`[#&](?:${THEME_FRAGMENT_KEY}=|${CONTAIN_SCROLL_FRAGMENT_KEY}(?=[&#]|$))`),
+      1,
+    )[0]!;
   return own.length > 1 ? own : "";
 }
 
