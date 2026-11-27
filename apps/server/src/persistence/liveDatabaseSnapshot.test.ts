@@ -277,23 +277,17 @@ describe("publishWithoutReplacing", () => {
     }
   });
 
-  it("never replaces a copy on a volume without hard links", () => {
+  it("refuses to publish on a volume without hard links and makes no file at the target", () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-publish-"));
     const noHardLinks = () => {
-      throw Object.assign(new Error("cross-device link not permitted"), { code: "EXDEV" });
+      throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
     };
     try {
       const target = NodePath.join(directory, "copy.sqlite");
-      const first = `${target}.partial-1-aaaa`;
-      NodeFS.writeFileSync(first, "first copy");
-      publishWithoutReplacing(first, target, noHardLinks);
-      assert.equal(NodeFS.readFileSync(target, "utf8"), "first copy");
-      assert.isFalse(NodeFS.existsSync(first));
-      const second = `${target}.partial-2-bbbb`;
-      NodeFS.writeFileSync(second, "second copy");
-      assert.throws(() => publishWithoutReplacing(second, target, noHardLinks), /already exists/);
-      assert.equal(NodeFS.readFileSync(target, "utf8"), "first copy");
-      assert.equal(NodeFS.readFileSync(second, "utf8"), "second copy");
+      const partial = `${target}.partial-1-aaaa`;
+      NodeFS.writeFileSync(partial, "finished copy");
+      assert.throws(() => publishWithoutReplacing(partial, target, noHardLinks), /no hard links/);
+      assert.isFalse(NodeFS.existsSync(target));
     } finally {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }

@@ -257,9 +257,10 @@ const alreadyExists = (target: string) =>
  * Publishes a finished copy at `target` only when nothing is there: a hard
  * link fails with EEXIST when another writer (a `db snapshot`, a Percy copy)
  * published first, so its copy is never replaced. The partial is removed
- * after. On a volume without hard links the target is first claimed with an
- * exclusive create (which also fails when anything is there), and the
- * partial is renamed over that empty claim, which no other writer can hold.
+ * after. A volume without hard links refuses the copy rather than risk a
+ * replace: Node has no rename that refuses an existing target, and any
+ * placeholder at `target` could be mistaken for a copy or removed while its
+ * writer still means to rename over it.
  */
 export function publishWithoutReplacing(
   partial: string,
@@ -271,22 +272,12 @@ export function publishWithoutReplacing(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw alreadyExists(target);
-    if (code === undefined || !NO_HARD_LINKS.has(code)) throw error;
-    let claim: number;
-    try {
-      claim = NodeFS.openSync(target, "wx", 0o600);
-    } catch (claimError) {
-      if ((claimError as NodeJS.ErrnoException).code === "EEXIST") throw alreadyExists(target);
-      throw claimError;
+    if (code !== undefined && NO_HARD_LINKS.has(code)) {
+      throw new Error(
+        `The copy cannot be saved at ${target}: that volume has no hard links (${code}), which saving without replacing another copy needs. Choose a folder on a volume that has them.`,
+      );
     }
-    NodeFS.closeSync(claim);
-    try {
-      NodeFS.renameSync(partial, target);
-    } catch (renameError) {
-      NodeFS.rmSync(target, { force: true });
-      throw renameError;
-    }
-    return;
+    throw error;
   }
   NodeFS.rmSync(partial, { force: true });
 }

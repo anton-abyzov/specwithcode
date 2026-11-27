@@ -372,7 +372,7 @@ describe("PersonalLinkSnapshot layerLive", () => {
     ),
   );
 
-  it.effect("never takes an empty claim left by a stopped copy for a safety copy", () =>
+  it.effect("never takes an empty file for a safety copy", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const baseDir = yield* makeScratchBase();
@@ -381,13 +381,13 @@ describe("PersonalLinkSnapshot layerLive", () => {
           yield* openScratchDatabase(config.dbPath, 1);
           const dir = NodePath.join(config.stateDir, "backups", "personal-link");
           NodeFS.mkdirSync(dir, { recursive: true });
-          // What an exclusive-create claim looks like when the copy stopped before its rename.
+          // An empty file passes quick_check; it is still no copy.
           const target = NodePath.join(dir, snapshotFileName("personal-link:op-claim"));
           NodeFS.closeSync(NodeFS.openSync(target, "wx"));
           const error = yield* Effect.flip(
             (yield* PersonalLinkSnapshot).snapshot("personal-link:op-claim", PERCY_ID),
           );
-          assert.match(error.message, /empty file left by a copy that was stopped/);
+          assert.match(error.message, /unusable file/);
           assert.equal(NodeFS.statSync(target).size, 0);
         }).pipe(Effect.provide(liveFor(baseDir)));
       }),

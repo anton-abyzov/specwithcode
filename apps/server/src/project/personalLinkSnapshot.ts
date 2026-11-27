@@ -70,8 +70,7 @@ export const snapshotFileName = (operationId: string) =>
 /**
  * Whether `target` is an earlier complete copy for the same operation: a
  * regular, non-empty file that is a database passing `quick_check`. An empty
- * file (the claim of a copy stopped before it was published) also passes
- * `quick_check`, so it needs pages. Opens only the saved copy, read-only and
+ * file also passes `quick_check`, so it needs pages. Opens only the saved copy, read-only and
  * off the event loop, never the live database.
  */
 const existingCopyIsSound = async (target: string): Promise<boolean> => {
@@ -183,10 +182,7 @@ export const makePersonalLinkSnapshotter = (
       // A retry of the same operation after a restart: reuse its copy only when it is sound.
       if (!(await existingCopyIsSound(target)))
         throw new PersonalLinkSnapshotFailure({
-          message:
-            NodeFS.statSync(target, { throwIfNoEntry: false })?.size === 0
-              ? `An empty file left by a copy that was stopped is in the way of the database copy at ${target}. Remove it and the join tries again.`
-              : `An unusable file is in the way of the database copy at ${target}.`,
+          message: `An unusable file is in the way of the database copy at ${target}.`,
         });
       return target;
     }
