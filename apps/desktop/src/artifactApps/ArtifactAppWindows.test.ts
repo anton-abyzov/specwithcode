@@ -347,10 +347,6 @@ const setup = (input: {
               : Effect.succeed(text);
           },
         }),
-                )
-              : Effect.succeed(text);
-          },
-        }),
         Layer.mock(ArtifactAppRecords.ArtifactAppRecords)({
           get: (installId) => Effect.succeed(Option.fromNullishOr(apps.get(installId))),
         }),
