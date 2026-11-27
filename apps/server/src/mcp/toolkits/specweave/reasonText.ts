@@ -13,7 +13,6 @@
  * SpecWeave 3.2.5, with its flags. With `u` added, `i` would also match `ſ`
  * and the Kelvin sign as letters, and the two would split a reason differently.
  */
-// oxlint-disable-next-line require-unicode-regexp
 const PROTECTED =
   /`[^`]*`|\b[a-z][a-z0-9+.-]*:\/\/\S+|\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:[/?#]\S*)?|\b[^\s()[\]{}"'`,;]*\/[^\s()[\]{}"'`,;]*/gi;
 
