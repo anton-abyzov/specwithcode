@@ -155,6 +155,8 @@ const services = (
     readonly threadIdOverride?: ThreadId;
     /** Other live threads in the same checkout. */
     readonly siblings?: ReadonlyArray<ThreadId>;
+    /** The caller's runtime mode (default full-access). */
+    readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
     /** The path the siblings are registered under (default: the caller's). */
     readonly siblingPath?: string;
     /** The project's thread list cannot be read. */
@@ -187,7 +189,10 @@ const services = (
     Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
-        Effect.succeed({ ...liveThreadShell(id), worktreePath: fixture.worktree }),
+        Effect.succeed({
+          ...liveThreadShell(id, { runtimeMode: options.runtimeMode ?? "full-access" }),
+          worktreePath: fixture.worktree,
+        }),
       listProjectThreads: () =>
         options.listFails
           ? Effect.fail(
@@ -449,6 +454,24 @@ describe("SpecWeave ledger tools (1497)", () => {
         const unknown = yield* refusal(call(asA, "release", "T-04"));
         expect(unknown.message).toContain("cannot tell which of them took it");
         expect(fixture.writes()).toHaveLength(1);
+      }),
+    ),
+  );
+
+  skipOnWindows("writes only for a thread in full-access mode (owner decision D-13)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* scratch;
+        for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
+          const error = yield* refusal(
+            runLedgerCall({ action: "claim", increment: "1497", task: "T-01" }).pipe(
+              Effect.provide(services(fixture, { runtimeMode })),
+            ),
+          );
+          expect(error.code).toBe("capability_denied");
+          expect(error.message).toContain(`full-access mode, and this thread runs in ${runtimeMode}`);
+        }
+        expect(fixture.writes()).toEqual([]);
       }),
     ),
   );

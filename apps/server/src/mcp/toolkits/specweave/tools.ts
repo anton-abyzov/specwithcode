@@ -171,7 +171,7 @@ const ledgerTool = <const Name extends string, P extends Schema.Struct.Fields>(
     .annotate(Tool.OpenWorld, false);
 
 const OWNERSHIP =
-  "Only this thread's own increment (the one it was launched with, linked to, or whose spec it wrote), in its own worktree; anything else is refused with the reason. It changes only the increment's ledger: no commit, push, fetch or command.";
+  "Only for a thread in full-access mode, and only this thread's own increment (the one it was launched with, linked to, or whose spec it wrote), in its own worktree; anything else is refused with the reason. It changes only the increment's ledger: no commit, push, fetch or command.";
 
 const TaskClaimTool = ledgerTool(
   "specweave_task_claim",

@@ -15,6 +15,10 @@
  * live claim wins, Files overlap, unmet dependencies, template tasks) still
  * run on every write.
  *
+ * Only a thread in full-access mode may call them (spec D-13): the CLI follows
+ * links as it opens files, so a sandboxed agent racing its own worktree could
+ * otherwise reach past its sandbox through the server.
+ *
  * Fixed argument lists, always `--no-commit` and `--json`, never `--force`,
  * `--all-mine` or `--run`: the CLI writes the ledger, metadata.json (and on a
  * planned-to-active move spec.md and `.specweave/state/active-increment.json`)
@@ -314,6 +318,15 @@ const callerContext = Effect.gen(function* () {
     .pipe(Effect.orElseSucceed(() => null));
   if (shell === null || shell.deletedAt !== null) {
     return yield* failure("thread_not_found", "The calling thread was not found.");
+  }
+  // Owner decision, November 27, 2026 (spec D-13): the server writes with more
+  // reach than a sandboxed agent has, and the CLI follows links when it opens
+  // files, so only a thread that can already write anywhere gets these tools.
+  if (shell.runtimeMode !== "full-access") {
+    return yield* failure(
+      "capability_denied",
+      `SpecWeave write tools run only for threads in full-access mode, and this thread runs in ${shell.runtimeMode} mode. Use \`specweave task claim|release|block\` in your shell instead, under this thread's own permissions.`,
+    );
   }
   const settings = yield* ServerSettings.ServerSettingsService;
   const instanceId = scope.thread.providerInstanceId;
