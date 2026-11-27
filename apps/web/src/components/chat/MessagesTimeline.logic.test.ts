@@ -4529,6 +4529,41 @@ it.each([true, false])(
   },
 );
 
+it("keeps a delegated task's thread on the fold its wake notice leads", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const source = fixture.visibleTurnItems.find((row) => row.item.type === "user_message")!;
+  if (source.item.type !== "user_message") throw new Error("Expected user message fixture");
+  const childThreadId = ThreadId.make("thread-delegated-child");
+  const notification = {
+    ...source,
+    item: {
+      ...source.item,
+      type: "notification" as const,
+      source: { kind: "delegated_task" as const, childThreadId },
+      outcome: "completed" as const,
+      summary: 'Delegated task "Docs" finished',
+    },
+  } as typeof source;
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: fixture.visibleTurnItems.map((row) =>
+        row === source ? notification : row,
+      ),
+      optimisticMessages: [],
+    }),
+    isWorking: false,
+    runningRunId: fixture.runId,
+    activeTurnStartedAt: fixture.time(0),
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  const fold = rows.find((row) => row.kind === "turn-fold" && row.wake !== undefined);
+  expect(fold?.kind === "turn-fold" ? fold.wake : undefined).toEqual({
+    label: 'Delegated task "Docs" finished',
+    childThreadId,
+  });
+});
+
 it("keeps a failed wake notification on its own row above its run's fold", () => {
   const fixture = makeStreamingTimelineFixture();
   const source = fixture.visibleTurnItems.find((row) => row.item.type === "user_message")!;
