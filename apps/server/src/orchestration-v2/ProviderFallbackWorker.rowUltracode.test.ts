@@ -1,4 +1,9 @@
-import { ProviderInstanceId, RunId, type ServerProvider, ThreadId } from "@specweave-studio/contracts";
+import {
+  ProviderInstanceId,
+  RunId,
+  type ServerProvider,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { provider } from "../studio/fixtures.ts";
