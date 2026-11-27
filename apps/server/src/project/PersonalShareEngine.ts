@@ -157,7 +157,7 @@ const OWN_REFUSAL_DETAIL: Readonly<Record<PersonalShareRefusalReason, string>> =
     "This machine has not confirmed the other one. Run `specwithcode percy on --with <machine>` here.",
   legacy_grant: "The only access between the two machines is an older kind. Pair them again.",
   no_grant:
-    "Neither holds access it may use on the other. Add the other machine to Percy here (Settings > General), or allow work on it in Settings > Machines.",
+    "Neither machine holds access it may use on the other. Press Allow on its row in Settings > General > Use my Percy.",
   other_account: "The other machine is linked to another SpecWithCode Connect account.",
   older_version: "The other machine runs a version without the shared Percy. Update it.",
 };

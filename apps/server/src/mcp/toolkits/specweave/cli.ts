@@ -46,6 +46,11 @@ export interface SpecweaveRunInput {
   readonly specweaveRoot: string;
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Input;
+  /**
+   * A ledger write's identity (1497): the caller's own SpecWeave variables
+   * (identity.ts), in place of the fixed view agent the reads use.
+   */
+  readonly writeAs?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -124,6 +129,24 @@ export const locateSpecweave = Effect.fn("specweaveTools.locate")(function* () {
   return command === null ? null : { command, searchPath };
 });
 
+/**
+ * Whether `command` starts without a shell. On Windows a `.cmd` or `.bat`
+ * (an npm-installed `specweave` is one) runs through cmd.exe.
+ */
+export function commandRunsWithoutShell(command: string, platform: NodeJS.Platform): boolean {
+  return platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(command);
+}
+
+/**
+ * Whether the installed `specweave` starts without a shell (1497): the write
+ * tools run only then. When it is not installed the write reports that itself.
+ */
+export const specweaveRunsWithoutShell = Effect.fn("specweaveTools.runsWithoutShell")(function* () {
+  const platform = yield* HostProcessPlatform;
+  const located = yield* locateSpecweave();
+  return located === null || commandRunsWithoutShell(located.command, platform);
+});
+
 export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: SpecweaveRunInput) {
   const runner = yield* ProcessRunner.ProcessRunner;
   const located = yield* locateSpecweave();
@@ -142,6 +165,21 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
       text: "The specweave command is not installed on this machine. Install it with npm i -g specweave, or set SpecWeave up from the project's Board.",
     } satisfies SpecweaveRunResult;
   }
+  if (
+    input.writeAs !== undefined &&
+    !commandRunsWithoutShell(located.command, yield* HostProcessPlatform)
+  ) {
+    // Checked on the very command this call starts: a ledger call never runs through cmd.exe.
+    return {
+      ok: false,
+      exitCode: null,
+      timedOut: false,
+      command: shown,
+      workspace: input.specweaveRoot,
+      data: null,
+      text: `${located.command} is a .cmd or .bat script, which runs through cmd.exe, and SpecWeave write tools never start a shell. Use \`specweave task claim|release|block\` in your shell instead.`,
+    } satisfies SpecweaveRunResult;
+  }
   const output = yield* runner
     .run({
       command: located.command,
@@ -156,7 +194,9 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
         NO_COLOR: "1",
         FORCE_COLOR: "0",
         CI: "1",
-        SPECWEAVE_AGENT: SPECWEAVE_VIEW_AGENT,
+        // Reads see every claim as someone else's; a write is the caller's own,
+        // so SPECWEAVE_AGENT stays whatever the agents inherit from the server.
+        ...(input.writeAs ?? { SPECWEAVE_AGENT: SPECWEAVE_VIEW_AGENT }),
         // On Windows the npm `.cmd` shim runs through cmd.exe in the worktree; this keeps a
         // bare `node` from resolving to an executable in that folder.
         NoDefaultCurrentDirectoryInExePath: "1",

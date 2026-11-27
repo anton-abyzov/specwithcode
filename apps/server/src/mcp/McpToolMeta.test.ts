@@ -55,13 +55,19 @@ it.effect(
             ALWAYS_LOAD_TOOLS.has(tool.name) ? ["anthropic/alwaysLoad"] : [],
           );
         }
-        // In a SpecWeave worktree the two read-only SpecWeave tools are listed.
+        // In a SpecWeave worktree the two SpecWeave reads and three ledger writes (1497) are listed.
         expect(
           tools
             .map((tool) => tool.name)
             .filter((name) => name.startsWith("specweave_"))
             .sort(),
-        ).toEqual(["specweave_next_task", "specweave_task_status"]);
+        ).toEqual([
+          "specweave_next_task",
+          "specweave_task_block",
+          "specweave_task_claim",
+          "specweave_task_release",
+          "specweave_task_status",
+        ]);
       }),
     ).pipe(Effect.provide(fullLayerTestServices)),
 );

@@ -56,6 +56,12 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { error: unknown }) => result.error,
 }));
+const fleet = vi.hoisted(() => ({
+  allowStudioFleetWorkers: vi.fn(),
+  allowIncomingStudioFleetWorkers: vi.fn(),
+  readStudioFleetMachines: vi.fn(),
+}));
+vi.mock("../../studio/fleet", () => fleet);
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (environmentId: string, label?: string | null) =>
     label ?? environmentId,
@@ -788,6 +794,45 @@ describe("PercySharedSetting", () => {
         input: { enabled: true, machines: ["laptop", "tower", "desktop"] },
       },
     ]);
+  });
+
+  it("allows work with a machine that has no access from its row, then lists it here", async () => {
+    mocks.shared = { enabled: true, machines: [] };
+    mocks.status.mockResolvedValue(
+      success(
+        statusOf({
+          enabled: true,
+          machines: [{ environmentId: "m4", label: "M4", state: "no_grant" }],
+        }),
+      ),
+    );
+    mocks.set.mockResolvedValue(success(statusOf({ enabled: true })));
+    fleet.readStudioFleetMachines.mockResolvedValue([
+      { id: "fleet-m4", environmentId: "m4", label: "M4", workers: { access: "full-access" } },
+    ]);
+    fleet.allowStudioFleetWorkers.mockResolvedValue({
+      id: "fleet-m4",
+      workers: {
+        status: "allowed",
+        access: "full-access",
+        expiresAt: null,
+        renewable: true,
+        problem: null,
+      },
+    });
+    await render();
+    const allow = within(one({ "data-share-machine": "m4" }), { "data-share-allow": true });
+    expect(allow).toHaveLength(1);
+    await click(allow[0]!);
+    expect(fleet.allowStudioFleetWorkers).toHaveBeenCalledWith("studio", {
+      id: "fleet-m4",
+      access: "full-access",
+    });
+    expect(fleet.allowIncomingStudioFleetWorkers).not.toHaveBeenCalled();
+    expect(mocks.set).toHaveBeenCalledWith({
+      environmentId: "studio",
+      input: { enabled: true, machines: ["m4"] },
+    });
   });
 
   it("says the way out when the machine is not signed in to Connect or Percy is off", async () => {

@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/web",
-  "version": "1.0.448",
+  "version": "1.0.449",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -22,7 +22,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@effect/atom-react": "catalog:",
-    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/excalidraw": "0.18.0-dabd83c",
     "@formkit/auto-animate": "^0.9.0",
     "@legendapp/list": "catalog:",
     "@noble/hashes": "catalog:",

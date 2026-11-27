@@ -143,7 +143,9 @@ async function drag(page, from, to, options = {}) {
 
 const activeTool = (frame) =>
   frame
-    .locator('.App-toolbar input[type="radio"]:checked, .App-toolbar [aria-checked="true"]')
+    .locator(
+      '.App-toolbar input[type="radio"]:checked, .App-toolbar [aria-checked="true"], .App-toolbar [aria-pressed="true"]:not([data-testid="toolbar-lock"])',
+    )
     .first()
     .getAttribute("data-testid");
 
@@ -290,7 +292,9 @@ const waitForSaves = async (page, count) => {
   // Zoom keys and Space-drag pan change the view, not the drawing.
   const zoomOf = () =>
     frame
-      .locator(".zoom-actions .reset-zoom-button, [data-testid='reset-zoom']")
+      .locator(
+        ".zoom-actions .reset-zoom-button, [data-testid='zoom-menu-trigger'], [data-testid='reset-zoom']",
+      )
       .first()
       .textContent();
   const zoomBefore = await zoomOf();
@@ -617,6 +621,55 @@ const waitForSaves = async (page, count) => {
   await context.close();
 }
 
+// 5a. Arrows bind as on excalidraw.com ---------------------------------------------------
+// An arrow dragged from the middle of one unfilled shape to the middle of another
+// binds to both, the way excalidraw.com does, and follows when a shape moves.
+{
+  const where = "binding";
+  const { page, context } = await open("file=empty&theme=light");
+  const box = await canvasBox(page);
+  const at = (x, y) => ({ x: box.x + x, y: box.y + y });
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 60);
+  await page.keyboard.press("r");
+  await drag(page, at(300, 300), at(500, 400));
+  await page.keyboard.press("r");
+  await drag(page, at(800, 300), at(1000, 400));
+  await page.keyboard.press("a");
+  await drag(page, at(400, 350), at(900, 350));
+  await page.keyboard.press("Escape");
+  await waitForSaves(page, 1);
+  await page.waitForTimeout(1_200);
+  let scene = await lastSave(page);
+  const [first, second] = live(scene).filter((element) => element.type === "rectangle");
+  const arrow = live(scene).find((element) => element.type === "arrow");
+  check(
+    where,
+    arrow?.startBinding?.elementId === first?.id && arrow?.endBinding?.elementId === second?.id,
+    `a centre-to-centre arrow binds both shapes (start ${arrow?.startBinding?.elementId ?? "none"}, end ${arrow?.endBinding?.elementId ?? "none"})`,
+  );
+  check(
+    where,
+    [first, second].every((shape) =>
+      (shape?.boundElements ?? []).some((bound) => bound.id === arrow?.id),
+    ),
+    "both shapes list the arrow",
+  );
+  await shot(page, "binding-light");
+  // Move the second shape by its top edge: the arrow's end follows it.
+  await page.keyboard.press("v");
+  await drag(page, at(900, 300), at(900, 180));
+  await page.waitForTimeout(1_200);
+  scene = await lastSave(page);
+  const moved = live(scene).find((element) => element.id === arrow?.id);
+  check(
+    where,
+    moved !== undefined && JSON.stringify(moved.points) !== JSON.stringify(arrow?.points),
+    "the arrow follows a moved shape",
+  );
+  await shot(page, "binding-moved-light");
+  await context.close();
+}
+
 // 5b. Mermaid to Excalidraw ------------------------------------------------------------
 // The only path through the Mermaid stack: a flowchart becomes shapes (new element
 // ids from nanoid), a pie chart is parsed by Mermaid's chevrotain grammar (lodash-es)
@@ -627,10 +680,12 @@ const waitForSaves = async (page, count) => {
   const insert = async (source, settle) => {
     await frame.locator(".App-toolbar__extra-tools-trigger").click();
     await frame.getByText("Mermaid to Excalidraw").click();
-    const input = frame.locator(".ttd-dialog-input");
+    // A CodeMirror editor, or a plain textarea when the editor cannot load.
+    const input = frame.locator("textarea.ttd-dialog-input, .cm-content").first();
+    await input.waitFor({ timeout: 15_000 });
     await input.fill(source);
     await frame
-      .locator(".ttd-dialog-output-canvas-container canvas")
+      .locator(".ttd-dialog-output-canvas-container canvas, .ttd-dialog-output-canvas-content > *")
       .first()
       .waitFor({ timeout: 15_000 });
     await page.waitForTimeout(settle);
