@@ -2096,8 +2096,14 @@ export const make = Effect.gen(function* () {
     const readConfig = (key: string) =>
       gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
     const destination =
+      (yield* gitCore
+        .resolvePushDestination(cwd, currentBranch)
+        .pipe(Effect.orElseSucceed(() => null))) ??
+      // A bare `git push` lets git choose: pushRemote, pushDefault, the
+      // branch's remote, then the primary remote.
       (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.pushRemote`)) ??
       (yield* readConfig("remote.pushDefault")) ??
+      (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.remote`)) ??
       (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null))) ??
       "origin";
     const remoteUrl =

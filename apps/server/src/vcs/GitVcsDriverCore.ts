@@ -2766,6 +2766,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  // The same destination choice pushCurrentBranch makes, without pushing.
+  const resolvePushDestination: GitVcsDriver.GitVcsDriver["Service"]["resolvePushDestination"] =
+    Effect.fn("resolvePushDestination")(function* (cwd, fallbackBranch) {
+      const details = yield* statusDetails(cwd);
+      const branch = details.branch ?? fallbackBranch;
+      if (!branch) return null;
+      if (!details.hasUpstream)
+        return yield* resolvePushRemoteName(cwd, branch).pipe(Effect.orElseSucceed(() => null));
+      const currentUpstream = yield* resolveCurrentUpstream(cwd).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (!currentUpstream) return null;
+      const isAliasOfUpstreamHead =
+        branch === currentUpstream.branchName ||
+        (branch.endsWith(`/${currentUpstream.branchName}`) &&
+          currentUpstream.upstreamRef.endsWith(`/${branch}`));
+      if (isAliasOfUpstreamHead) return currentUpstream.remoteName;
+      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      return publishRemoteName ?? currentUpstream.remoteName;
+    });
+
   const pullCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pullCurrentBranch"] = Effect.fn(
     "pullCurrentBranch",
   )(function* (cwd) {
@@ -4747,6 +4770,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
     pushCurrentBranch: (cwd, fallbackBranch, options) =>
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
+    resolvePushDestination,
     pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
     readRangeContext,
     sharesHistoryWithHead,

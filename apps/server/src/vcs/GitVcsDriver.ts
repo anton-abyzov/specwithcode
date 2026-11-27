@@ -395,6 +395,16 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<GitRefreshCheckedOutBranchResult, GitCommandError>;
     readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
     readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+    /**
+     * The destination `pushCurrentBranch` would push to (a remote name, or a
+     * URL or path when config says so), or null when it would run a bare
+     * `git push` and git chooses. The value can carry credentials: never
+     * put it on an error or in a log.
+     */
+    readonly resolvePushDestination: (
+      cwd: string,
+      fallbackBranch: string | null,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly resolveDefaultBranchName: (
       cwd: string,
       remoteName: string,
