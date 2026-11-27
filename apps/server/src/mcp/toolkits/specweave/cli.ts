@@ -141,13 +141,11 @@ export function commandRunsWithoutShell(command: string, platform: NodeJS.Platfo
  * Whether the installed `specweave` starts without a shell (1497): the write
  * tools run only then. When it is not installed the write reports that itself.
  */
-export const specweaveRunsWithoutShell = Effect.fn("specweaveTools.runsWithoutShell")(
-  function* () {
-    const platform = yield* HostProcessPlatform;
-    const located = yield* locateSpecweave();
-    return located === null || commandRunsWithoutShell(located.command, platform);
-  },
-);
+export const specweaveRunsWithoutShell = Effect.fn("specweaveTools.runsWithoutShell")(function* () {
+  const platform = yield* HostProcessPlatform;
+  const located = yield* locateSpecweave();
+  return located === null || commandRunsWithoutShell(located.command, platform);
+});
 
 export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: SpecweaveRunInput) {
   const runner = yield* ProcessRunner.ProcessRunner;
