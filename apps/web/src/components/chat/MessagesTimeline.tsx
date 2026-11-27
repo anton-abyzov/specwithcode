@@ -3248,10 +3248,15 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.runId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex min-w-0 cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <span title={row.activityDetail}>
-          {row.wake ? <span className="text-foreground/80">{row.wake.label} · </span> : null}
+        {row.wake ? (
+          <span className="min-w-0 truncate text-start text-foreground/80" title={row.wake.label}>
+            {row.wake.label}
+          </span>
+        ) : null}
+        {row.wake ? <span aria-hidden>·</span> : null}
+        <span className="shrink-0" title={row.activityDetail}>
           {row.label}
           {row.activitySummary ? (
             <span className="text-muted-foreground"> · {row.activitySummary}</span>
@@ -3259,10 +3264,11 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           {row.activityDetail ? <span className="sr-only">. {row.activityDetail}</span> : null}
         </span>
         <FailureCountChips counts={row} />
-        <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+        <MorphIcon className="size-3.5 shrink-0" icon={row.expanded ? ChevronDown : ChevronRight} />
       </button>
       {row.wake?.childThreadId ? (
         <InlineButton
+          className="ms-auto shrink-0"
           aria-label={tx("Open subagent thread")}
           onClick={() => ctx.onOpenThread(row.wake!.childThreadId!)}
         >
