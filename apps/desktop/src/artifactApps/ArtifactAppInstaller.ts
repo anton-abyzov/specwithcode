@@ -720,6 +720,9 @@ const make = Effect.gen(function* () {
           // alone. A copy a failed Trash left under a private name is found
           // and trashed by the next uninstall, and its record stays until then.
           const prefix = `.${rules.basename(location.path)}.removing-${installId}.`;
+          // Copies only an upgrade makes go first, so a stop part way through never leaves
+          // one behind with nothing at the launcher path for the next start to fill.
+          yield* trashUpgradeLeftovers(location, installId);
           const candidates = [...(yield* pendingRemovals(location, installId))];
           if (yield* owned(location.path)) {
             const claimed = rules.join(location.folder, `${prefix}${newArtifactAppInstallId()}`);
@@ -742,8 +745,6 @@ const make = Effect.gen(function* () {
               yield* host.trashItem(candidate);
             }
           }
-          // Copies only an upgrade makes go with the page, so none is left hidden.
-          yield* trashUpgradeLeftovers(location, installId);
           return;
         }
         case "windows-shortcuts":
@@ -1036,9 +1037,9 @@ const make = Effect.gen(function* () {
   ) {
     const next = locateLauncher(app, context, Option.some(wanted));
     if (next.kind !== "mac-bundle") return Option.none<string>();
-    yield* restoreInterruptedLauncher(next, app.installId);
     const current = yield* locateRecorded(app, context);
     if (Option.isNone(current) || current.value.kind !== "mac-bundle") return Option.none<string>();
+    yield* restoreInterruptedLauncher(current.value, app.installId);
     const ownedNow = yield* launcherPathOwned(current.value, current.value.path, app.installId);
     if (ownedNow && sameShim(current.value.shim, wanted)) {
       // Already current, so any copy under the upgrade name is stale: one left by an
@@ -1137,6 +1138,8 @@ const make = Effect.gen(function* () {
     installId: string,
   ) =>
     Effect.gen(function* () {
+      // Through a linked folder they could be anything; they are left alone.
+      if (yield* isSymbolicLink(location.folder)) return;
       for (const left of yield* upgradeLeftovers(location, installId)) {
         yield* host
           .trashItem(left)
@@ -1149,9 +1152,11 @@ const make = Effect.gen(function* () {
     });
 
   // An upgrade stopped between its two renames leaves the launcher under its upgrade
-  // name and nothing in its place; it goes back before anything else looks at it. An
-  // empty path with an uninstall's copy beside it is an uninstall the Trash refused,
-  // never an upgrade to finish, so nothing is put back then.
+  // name and nothing in its place; it goes back before anything else looks at it. Only
+  // a copy that is exactly the launcher the install's records describe goes back: the
+  // records change only after the swap, so a copy left from before a saved record never
+  // matches them. An empty path with an uninstall's copy beside it is an uninstall the
+  // Trash refused, never an upgrade to finish, so nothing is put back then.
   const restoreInterruptedLauncher = Effect.fn("desktop.artifactApps.restoreInterruptedLauncher")(
     function* (location: Extract<LauncherLocation, { kind: "mac-bundle" }>, installId: string) {
       if (yield* fileSystem.exists(location.path).pipe(Effect.orElseSucceed(() => true))) return;
@@ -1159,7 +1164,16 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed((): ReadonlyArray<string> => ["unknown"]),
       );
       if (removing.length > 0) return;
-      const left = (yield* upgradeLeftovers(location, installId))[0];
+      let left: string | undefined;
+      for (const candidate of yield* upgradeLeftovers(location, installId)) {
+        const matches = yield* launcherPathOwned(location, candidate, installId).pipe(
+          Effect.orElseSucceed(() => false),
+        );
+        if (matches) {
+          left = candidate;
+          break;
+        }
+      }
       if (left === undefined) return;
       yield* fileSystem.rename(left, location.path).pipe(Effect.ignore);
       yield* logInfo("put back a launcher an interrupted upgrade left aside", { installId });

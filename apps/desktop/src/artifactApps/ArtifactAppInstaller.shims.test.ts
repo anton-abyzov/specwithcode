@@ -403,6 +403,72 @@ describe("ArtifactAppInstaller with app shims", () => {
     ),
   );
 
+  it.effect("never puts back a copy older than the saved records", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const before = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const first = yield* before.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        const oldCopy = path.join(home, "old-launcher.app");
+        yield* fileSystem.copy(bundle, oldCopy);
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const after = yield* harness(
+          { platform: "darwin", appShim: shimConfig(loader), fileSystem },
+          home,
+          recordsPath,
+        );
+        yield* after.installer.upgradeLaunchers;
+        // The upgrade saved its record and stopped before trashing the old copy; then an
+        // uninstall trashed the launcher and stopped before its cleanup.
+        yield* fileSystem.rename(
+          oldCopy,
+          path.join(
+            folder,
+            `.Morning dashboard.app.upgrading-${first.app.installId}.${"6".repeat(32)}`,
+          ),
+        );
+        yield* fileSystem.remove(bundle, { recursive: true });
+        yield* after.installer.upgradeLaunchers;
+        assert.isFalse(yield* fileSystem.exists(bundle));
+        assert.isTrue(yield* after.installer.uninstall(first.app.installId));
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.startsWith(".")),
+          [],
+        );
+      }),
+    ),
+  );
+
+  it.effect("leaves upgrade copies alone through a linked apps folder", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const appShim = shimConfig(loader);
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const elsewhere = path.join(home, "backup");
+        yield* fileSystem.rename(folder, elsewhere);
+        const copy = path.join(
+          elsewhere,
+          `.Morning dashboard.app.upgrading-${first.app.installId}.${"7".repeat(32)}`,
+        );
+        yield* fileSystem.makeDirectory(path.join(copy, "Contents"), { recursive: true });
+        yield* fileSystem.symlink(elsewhere, folder);
+        yield* h.installer.uninstall(first.app.installId);
+        yield* h.installer.upgradeLaunchers;
+        assert.isTrue(yield* fileSystem.exists(copy));
+        assert.notInclude(
+          h.calls.trashed.map((trashed) => trashed.split(/[\\/]/).pop()),
+          path.basename(copy),
+        );
+      }),
+    ),
+  );
+
   it.effect("writes script launchers once shims are turned off", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
