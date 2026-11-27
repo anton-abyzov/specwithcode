@@ -217,6 +217,31 @@ describe("decideOwnership: one copy, assigned for real (1497 review)", () => {
   });
 });
 
+describe("decideOwnership: the bound path itself (1497 review round 2)", () => {
+  it.skipIf(isWindows)(
+    "refuses a bound folder that is a link to a same-named increment in a nested root",
+    async () => {
+      const { worktree } = scratch();
+      const nested = NodePath.join(worktree, "repos", "other");
+      const nestedIncrement = NodePath.join(nested, ".specweave", "increments", INCREMENT);
+      NodeFS.mkdirSync(nestedIncrement, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(nested, ".specweave", "config.json"), "{}\n");
+      const pointed = NodePath.join(worktree, "repos", "app");
+      NodeFS.mkdirSync(NodePath.join(pointed, ".specweave", "increments"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(pointed, ".specweave", "config.json"), "{}\n");
+      const bindingPath = NodePath.join(pointed, ".specweave", "increments", INCREMENT);
+      NodeFS.symlinkSync(nestedIncrement, bindingPath);
+      const result = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(bindingPath),
+      });
+      expect(result).toMatchObject({ ok: false, code: "capability_denied" });
+      expect(!result.ok && result.message).toContain("not to increment");
+    },
+  );
+});
+
 describe("ledgerPathsInside: real folders and plain files (1497 review)", () => {
   const check = (worktree: string, incrementId = INCREMENT) =>
     ledgerPathsInside({ workspace: worktree, specweaveRoot: worktree, incrementId });

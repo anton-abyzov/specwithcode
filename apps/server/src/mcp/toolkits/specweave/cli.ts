@@ -129,6 +129,26 @@ export const locateSpecweave = Effect.fn("specweaveTools.locate")(function* () {
   return command === null ? null : { command, searchPath };
 });
 
+/**
+ * Whether `command` starts without a shell. On Windows a `.cmd` or `.bat`
+ * (an npm-installed `specweave` is one) runs through cmd.exe.
+ */
+export function commandRunsWithoutShell(command: string, platform: NodeJS.Platform): boolean {
+  return platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(command);
+}
+
+/**
+ * Whether the installed `specweave` starts without a shell (1497): the write
+ * tools run only then. When it is not installed the write reports that itself.
+ */
+export const specweaveRunsWithoutShell = Effect.fn("specweaveTools.runsWithoutShell")(
+  function* () {
+    const platform = yield* HostProcessPlatform;
+    const located = yield* locateSpecweave();
+    return located === null || commandRunsWithoutShell(located.command, platform);
+  },
+);
+
 export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: SpecweaveRunInput) {
   const runner = yield* ProcessRunner.ProcessRunner;
   const located = yield* locateSpecweave();

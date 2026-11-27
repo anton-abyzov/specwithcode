@@ -23,10 +23,8 @@
  * the write (ownership.ts).
  */
 import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
 
 import { OrchestratorMcpFailure, type ThreadId } from "@specweave-studio/contracts";
-import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
@@ -36,7 +34,7 @@ import { specweaveStudioThreadBindingPath } from "../../../project/ThreadIncreme
 import * as IncrementProgress from "../../../project/ThreadIncrementProgressService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { runSpecweave, type SpecweaveRunResult } from "./cli.ts";
+import { runSpecweave, specweaveRunsWithoutShell, type SpecweaveRunResult } from "./cli.ts";
 import { ledgerWriteEnvironment, specweaveToolForInstance } from "./identity.ts";
 import { decideOwnership, recheckTarget, type LedgerTarget } from "./ownership.ts";
 
@@ -103,16 +101,17 @@ export type LedgerPlan =
 
 const HELD = new Set(["claimed", "blocked"]);
 
-/** A block reason as it is written and compared: one line, single spaces. */
+/** A block reason as it is written: one line, single spaces. */
 export const normalizeReason = (reason: string | undefined) =>
   (reason ?? "").replace(/\s+/gu, " ").trim();
 
 /**
- * Characters cmd.exe acts on. On Windows an npm-installed `specweave` is a
- * `.cmd` file that runs through cmd.exe, where these could start another
- * command, so a reason holding one is refused there.
+ * Whether two block reasons are the same reason. SpecWeave fixes a reason's
+ * spacing as it writes it (3.2 adds a space after `,` and `;`), so reasons
+ * are compared with all whitespace removed.
  */
-const CMD_SPECIAL = /[%!"^&|<>`]/u;
+export const sameReason = (left: string | undefined, right: string | undefined) =>
+  (left ?? "").replace(/\s+/gu, "") === (right ?? "").replace(/\s+/gu, "");
 
 const describeHold = (task: FoldedTask) =>
   `${task.status} by ${task.by ?? "someone"}${task.since === undefined ? "" : ` since ${task.since}`}${task.status === "blocked" && task.note ? ` (${task.note})` : ""}`;
@@ -178,7 +177,7 @@ export function planLedgerCall(input: {
     action === "block" &&
     mine &&
     task.status === "blocked" &&
-    normalizeReason(task.note) === normalizeReason(input.reason)
+    sameReason(task.note, input.reason)
   ) {
     return { kind: "unchanged" };
   }
@@ -366,21 +365,22 @@ const siblingThreadsOf = (input: {
           ),
         ),
       );
-    const base = NodePath.basename(input.workspace);
     const candidates = all.filter(
       (thread) =>
-        thread.id !== input.threadId &&
-        thread.deletedAt === null &&
-        thread.worktreePath !== null &&
-        NodePath.basename(thread.worktreePath) === base,
+        thread.id !== input.threadId && thread.deletedAt === null && thread.worktreePath !== null,
     );
-    const same = yield* Effect.forEach(candidates, (thread) =>
-      thread.worktreePath === input.worktreePath
-        ? Effect.succeed(true)
-        : Effect.promise(() => realPathOrNull(thread.worktreePath!)).pipe(
-            Effect.map((real) => real === input.workspace),
-          ),
+    // Real paths, read once per recorded path: an alias of the checkout counts too.
+    const recorded = [...new Set(candidates.map((thread) => thread.worktreePath!))];
+    const reals = yield* Effect.forEach(
+      recorded,
+      (path) =>
+        path === input.worktreePath
+          ? Effect.succeed(input.workspace)
+          : Effect.promise(() => realPathOrNull(path)),
+      { concurrency: 8 },
     );
+    const sharing = new Set(recorded.filter((_, index) => reals[index] === input.workspace));
+    const same = candidates.map((thread) => sharing.has(thread.worktreePath!));
     return candidates
       .filter((_, index) => same[index])
       .slice(0, SIBLINGS_READ)
@@ -425,14 +425,10 @@ export const runLedgerCall = Effect.fn("specweaveTools.ledger")(function* (input
   );
   if (!owned.ok) return yield* failure(owned.code, owned.message);
   const target = owned.target;
-  if (
-    input.action === "block" &&
-    HostProcessPlatform.defaultValue() === "win32" &&
-    CMD_SPECIAL.test(normalizeReason(input.reason))
-  ) {
+  if (!(yield* specweaveRunsWithoutShell())) {
     return yield* failure(
-      "invalid_request",
-      'On Windows a block reason may not contain % ! " ^ & | < > or `: the SpecWeave command runs through cmd.exe there. Reword the reason without them.',
+      "capability_denied",
+      "The specweave command on this machine is a .cmd or .bat script, which runs through cmd.exe, and SpecWeave write tools never start a shell. Use `specweave task claim|release|block` in your shell instead.",
     );
   }
   const writeAs = ledgerWriteEnvironment({

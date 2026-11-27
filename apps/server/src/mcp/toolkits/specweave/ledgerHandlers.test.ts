@@ -23,11 +23,12 @@ import * as IncrementProgress from "../../../project/ThreadIncrementProgressServ
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
-import { SpecweaveCommandOverride } from "./cli.ts";
+import { commandRunsWithoutShell, SpecweaveCommandOverride } from "./cli.ts";
 import {
   foldedFromList,
   ledgerWriteArgs,
   planLedgerCall,
+  sameReason,
   runLedgerCall,
   holdOwner,
   recordWrittenHold,
@@ -154,6 +155,8 @@ const services = (
     readonly threadIdOverride?: ThreadId;
     /** Other live threads in the same checkout. */
     readonly siblings?: ReadonlyArray<ThreadId>;
+    /** The path the siblings are registered under (default: the caller's). */
+    readonly siblingPath?: string;
     /** The project's thread list cannot be read. */
     readonly listFails?: boolean;
     readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
@@ -197,7 +200,8 @@ const services = (
           : Effect.succeed(
               [threadId, ...(options.siblings ?? [])].map((id) => ({
                 ...liveThreadShell(id),
-                worktreePath: fixture.worktree,
+                worktreePath:
+                  id === caller ? fixture.worktree : (options.siblingPath ?? fixture.worktree),
               })),
             ),
     }),
@@ -507,6 +511,31 @@ describe("SpecWeave ledger tools (1497)", () => {
     ),
   );
 
+  skipOnWindows("counts a sibling registered under another path to the same checkout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* scratch;
+        fixture.setTasks([
+          { id: "T-04", status: "claimed", by: AGENT, since: "2026-11-26T09:00:00.000Z" },
+        ]);
+        const alias = NodePath.join(fixture.root, "alias-with-another-name");
+        NodeFS.symlinkSync(fixture.worktree, alias);
+        const error = yield* refusal(
+          runLedgerCall({ action: "release", increment: "1497", task: "T-04" }).pipe(
+            Effect.provide(
+              services(fixture, {
+                siblings: [ThreadId.make("thread-ledger-alias")],
+                siblingPath: alias,
+              }),
+            ),
+          ),
+        );
+        expect(error.message).toContain("cannot tell which of them took it");
+        expect(fixture.writes()).toEqual([]);
+      }),
+    ),
+  );
+
   skipOnWindows("two claims at once write one event", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -591,6 +620,25 @@ describe("planLedgerCall (1497)", () => {
         owner: { kind: "caller" },
       }).kind,
     ).toBe("write");
+  });
+});
+
+describe("commandRunsWithoutShell (1497 review)", () => {
+  it("refuses a .cmd or .bat on Windows, where it runs through cmd.exe", () => {
+    expect(commandRunsWithoutShell("C:\\npm\\specweave.cmd", "win32")).toBe(false);
+    expect(commandRunsWithoutShell("C:\\npm\\specweave.BAT", "win32")).toBe(false);
+    expect(commandRunsWithoutShell("C:\\tools\\specweave.exe", "win32")).toBe(true);
+    expect(commandRunsWithoutShell("/usr/local/bin/specweave", "darwin")).toBe(true);
+  });
+});
+
+describe("sameReason (1497 review)", () => {
+  it("treats SpecWeave's spacing fixes as the same reason, and other words as another", () => {
+    expect(sameReason("Waiting on QA,then rerun", "Waiting on QA, then rerun")).toBe(true);
+    expect(sameReason("valid;113/148", "valid; 113/148")).toBe(true);
+    expect(sameReason("  waiting\ton review ", "waiting on review")).toBe(true);
+    expect(sameReason("waiting on review", "waiting on QA")).toBe(false);
+    expect(sameReason(undefined, "waiting on QA")).toBe(false);
   });
 });
 
