@@ -205,11 +205,14 @@ describe("removeStalePartials", () => {
         NodeFS.writeFileSync(NodePath.join(directory, name), "x");
       // 222 is a running `db snapshot` into the same file; 111 stopped.
       const removed = removeStalePartials(target, (pid) => pid === 222);
-      assert.deepEqual(removed.toSorted(), [
-        "copy.sqlite.partial-111-abcd1234",
-        `copy.sqlite.partial-${own}`,
-        `copy.sqlite.partial-${own}-abcd1234-journal`,
-      ].toSorted());
+      assert.deepEqual(
+        removed.toSorted(),
+        [
+          "copy.sqlite.partial-111-abcd1234",
+          `copy.sqlite.partial-${own}`,
+          `copy.sqlite.partial-${own}-abcd1234-journal`,
+        ].toSorted(),
+      );
       assert.deepEqual(NodeFS.readdirSync(directory).toSorted(), [
         "copy.sqlite",
         "copy.sqlite.partial-222-abcd1234",
