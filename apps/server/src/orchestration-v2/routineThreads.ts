@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { CONTEXT_COMPACT_MESSAGE_PREFIX, CONTEXT_RETRY_MESSAGE_PREFIX } from "./contextRecoveryIds.ts";
 import {
   LIMIT_FALLBACK_MESSAGE_PREFIX,
   PROVIDER_FALLBACK_MESSAGE_PREFIX,
@@ -45,6 +46,9 @@ const CONTINUATION_PREFIXES = [
   LIMIT_FALLBACK_MESSAGE_PREFIX,
   PROVIDER_FALLBACK_MESSAGE_PREFIX,
   PROVIDER_RETRY_MESSAGE_PREFIX,
+  CONTEXT_RETRY_MESSAGE_PREFIX,
+  CONTEXT_COMPACT_MESSAGE_PREFIX,
+  "limit-return:",
   "limit-reset:",
   "limit-credits:",
   "limit-api:",
@@ -63,4 +67,23 @@ export function continuedRunId(messageId: string, threadId: string): string | nu
     return rest === "" ? null : rest;
   }
   return null;
+}
+
+/**
+ * What a run's start message says about who began the work: a routine (it
+ * carries a routine id), a person or agent (web, mobile, MCP, provider), a
+ * continuation to follow to the run it continues, or unknown. Any other turn
+ * the server started (usage-limit resume, a wake) cannot be traced and is
+ * unknown, which keeps row Ultracode off (1506 D-04).
+ */
+export function messageOrigin(
+  message:
+    | { readonly scheduledTaskId?: string | undefined; readonly creationSource?: string }
+    | undefined,
+  continued: string | null,
+): "routine" | "person" | "follow" | "unknown" {
+  if (message === undefined) return "unknown";
+  if (message.scheduledTaskId !== undefined) return "routine";
+  if (continued !== null) return "follow";
+  return message.creationSource === "server" ? "unknown" : "person";
 }

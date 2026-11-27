@@ -2,7 +2,12 @@ import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
 import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
-import { continuedRunId, routineThreadIds, skipsRowUltracode } from "./routineThreads.ts";
+import {
+  continuedRunId,
+  messageOrigin,
+  routineThreadIds,
+  skipsRowUltracode,
+} from "./routineThreads.ts";
 import {
   CommandId,
   type ManualCodexCreditIntent,
@@ -1895,20 +1900,21 @@ export const makeSweep = Effect.gen(function* () {
           .pipe(
             Effect.map((found) =>
               Option.some({
-                routine: found.messages.some(
-                  (message) => message.id === messageId && message.scheduledTaskId !== undefined,
+                origin: messageOrigin(
+                  found.messages.find((message) => message.id === messageId),
+                  previous,
                 ),
                 previous: found.runs.find((entry) => entry.id === previous),
               }),
             ),
             Effect.catchCause(() => Effect.succeedNone),
           );
-        if (Option.isNone(records)) break;
-        if (records.value.routine) routine = true;
-        else if (previous === null) routine = false;
+        if (Option.isNone(records) || records.value.origin === "unknown") break;
+        if (records.value.origin === "routine") routine = true;
+        else if (records.value.origin === "person") routine = false;
         else run = records.value.previous;
       }
-      // Unreadable or too long a chain: off is the safe side, read again next sweep.
+      // Unreadable, untraceable or too long a chain: off is the safe side.
       if (routine === null) return true;
       routineRuns.set(stopped.id, routine);
       return routine;

@@ -8,7 +8,12 @@ import {
   harness,
   taskInput,
 } from "../scheduledTasks/ScheduledTaskService.coordinatorGate.testkit.ts";
-import { continuedRunId, routineThreadIds, skipsRowUltracode } from "./routineThreads.ts";
+import {
+  continuedRunId,
+  messageOrigin,
+  routineThreadIds,
+  skipsRowUltracode,
+} from "./routineThreads.ts";
 
 it.effect("lists the threads routines run in, their own or a person's (1506)", () =>
   Effect.gen(function* () {
@@ -53,7 +58,19 @@ it("finds the run an automatic continuation continues, and nothing for other mes
   assert.equal(continuedRunId("limit-fallback:t:1:run:t:1:ordinal:2", "t:1"), "run:t:1:ordinal:2");
   assert.equal(continuedRunId("provider-fallback:t1:hop-2:r1", "t1"), "r1");
   assert.equal(continuedRunId("limit-credits:t1:r3", "t1"), "r3");
+  assert.equal(continuedRunId("limit-return:t1:r4", "t1"), "r4");
+  assert.equal(continuedRunId("context-retry:t1:r5", "t1"), "r5");
   assert.isNull(continuedRunId("limit-fallback:other:r1", "t1"));
   assert.isNull(continuedRunId("routine:task-1:t1", "t1"));
   assert.isNull(continuedRunId("m1", "t1"));
+});
+
+it("traces a routine id, follows continuations and keeps untraceable server turns off", () => {
+  assert.equal(messageOrigin({ scheduledTaskId: "task-1", creationSource: "server" }, null), "routine");
+  assert.equal(messageOrigin({ creationSource: "server" }, "r1"), "follow");
+  assert.equal(messageOrigin({ creationSource: "web" }, null), "person");
+  assert.equal(messageOrigin({ creationSource: "mcp" }, null), "person");
+  // A usage-limit resume or a wake: the server started it and names no run to follow.
+  assert.equal(messageOrigin({ creationSource: "server" }, null), "unknown");
+  assert.equal(messageOrigin(undefined, null), "unknown");
 });
