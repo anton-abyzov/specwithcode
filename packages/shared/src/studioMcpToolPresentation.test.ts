@@ -6,6 +6,24 @@ import {
 } from "./studioMcpToolPresentation.ts";
 
 describe("resolveStudioMcpToolPresentation", () => {
+  it("names every computer-use tool, so agents that send only the wire name show a real label", () => {
+    for (const tool of [
+      "computer_screenshot",
+      "computer_click",
+      "computer_move",
+      "computer_drag",
+      "computer_scroll",
+      "computer_type",
+      "computer_key",
+      "computer_open",
+    ]) {
+      expect(STUDIO_MCP_TOOL_NAMES.has(tool)).toBe(true);
+      expect(resolveStudioMcpToolPresentation(`studio-code-${tool}`)?.displayName).toMatch(
+        /screen|pointer|computer|app/,
+      );
+    }
+  });
+
   it("recognizes every SpecWithCode tool across provider prefixes and completion suffixes", () => {
     for (const tool of STUDIO_MCP_TOOL_NAMES) {
       const presentation = resolveStudioMcpToolPresentation(tool);

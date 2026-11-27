@@ -6,6 +6,7 @@ import {
   DelegateTaskTool,
   OrchestratorToolkit,
   ScheduleTaskTool,
+  TASK_STATUS_NO_POLLING_SENTENCE,
   ThreadUpdateTool,
 } from "./tools.ts";
 import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
@@ -24,6 +25,11 @@ describe("orchestrator MCP tool guidance", () => {
     assert.include(
       OrchestratorToolkit.tools.task_status.description ?? "",
       "A project coordinator does not relay: the result stays in the worker's thread.",
+    );
+    // A completion wakes the parent: polling a working child costs model round trips.
+    assert.include(
+      OrchestratorToolkit.tools.task_status.description ?? "",
+      TASK_STATUS_NO_POLLING_SENTENCE,
     );
     // Detailed may include steps, so the fixed tool text must not forbid them.
     assert.notInclude(DelegateTaskTool.description ?? "", "not a replay of steps");

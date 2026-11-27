@@ -2388,6 +2388,8 @@ type ClaudeNativeToolOutput =
     };
 
 const NO_CLAUDE_NATIVE_TOOL_OUTPUT = { type: "none" } satisfies ClaudeNativeToolOutput;
+/** Native subagent tool calls kept across root turns while their result is pending. */
+const MAX_CARRIED_SUBAGENT_TOOL_CALLS = 256;
 
 function claudeNativeToolOutputFromToolResult(
   toolResult: ClaudeToolResultContentBlock,
@@ -4127,6 +4129,10 @@ export function makeClaudeAdapterV2(
         // ended, and its task_notification must both count as wake evidence
         // and hydrate the original subagent node instead of being dropped.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
+        // A native subagent's tool calls can outlive the root turn that saw
+        // their tool_use. Keeping them lets the later tool_result find its
+        // name and input instead of starting a nameless "tool" call.
+        const carriedSubagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         // Subagent frames carry only parent_tool_use_id. Frames that outlive
         // the turn that launched the subagent (wake drain, later turns) resolve
         // their subagent through this index into sessionSubagentsByTaskId.
@@ -5700,6 +5706,13 @@ export function makeClaudeAdapterV2(
           readonly parentToolUseId: string | null;
           readonly presentation?: ClaudeToolPresentation | undefined;
         }) {
+          const carried = carriedSubagentToolCalls.get(input.nativeItemId);
+          if (carried !== undefined) {
+            carriedSubagentToolCalls.delete(input.nativeItemId);
+            if (!input.context.toolCalls.has(input.nativeItemId)) {
+              input.context.toolCalls.set(input.nativeItemId, carried);
+            }
+          }
           const existing = input.context.toolCalls.get(input.nativeItemId);
           if (existing !== undefined) {
             // The permission callback can start a call before its assistant
@@ -5979,7 +5992,15 @@ export function makeClaudeAdapterV2(
           for (const toolCall of input.context.toolCalls.values()) {
             // A completed parent can leave its native child working in this
             // process. Its runless items end with the child, not this turn.
-            if (toolCall.runId === null && input.status === "completed") continue;
+            if (toolCall.runId === null && input.status === "completed") {
+              carriedSubagentToolCalls.set(toolCall.nativeItemId, toolCall);
+              // Calls whose result never comes stay bounded.
+              if (carriedSubagentToolCalls.size > MAX_CARRIED_SUBAGENT_TOOL_CALLS) {
+                const oldest = carriedSubagentToolCalls.keys().next().value;
+                if (oldest !== undefined) carriedSubagentToolCalls.delete(oldest);
+              }
+              continue;
+            }
             const artifacts = buildToolCallArtifacts({
               context: input.context,
               nativeItemId: toolCall.nativeItemId,
