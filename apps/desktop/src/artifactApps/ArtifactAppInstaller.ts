@@ -810,7 +810,12 @@ const make = Effect.gen(function* () {
         Option.isSome(location) &&
         (yield* launcherPathOwned(location.value, location.value.path, existing.installId))
       ) {
-        yield* openInstall(existing.installId, location.value);
+        // A launcher whose signed executable changed is never started; say so.
+        if (!(yield* openInstall(existing.installId, location.value))) {
+          return failed(
+            "This page's app was changed after it was installed, so it was not opened. Uninstall it, then install it again.",
+          );
+        }
         return { status: "already-installed", app: existing } as const;
       }
       // A removal a failed Trash left pending is finished first; when it cannot

@@ -465,6 +465,29 @@ describe("ArtifactAppInstaller with app shims", () => {
     ),
   );
 
+  it.effect("says so when a reinstall finds a changed launcher", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const appShim = shimConfig(loader);
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const bundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Morning dashboard.app",
+        );
+        const opened = h.calls.openedApps.length;
+        h.calls.tampered.add(hostPath(bundle));
+        const again = yield* h.installer.install(input);
+        assert.equal(again.status, "failed");
+        assert.equal(h.calls.openedApps.length, opened);
+      }),
+    ),
+  );
+
   it.effect("leaves upgrade copies alone through a linked apps folder", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
