@@ -218,6 +218,7 @@ describe("linuxArtifactAppDesktopEntry", () => {
       "Terminal=false",
       "Categories=Utility;",
       "StartupNotify=true",
+      `StartupWMClass=specwithcode-app-${ID}`,
       `X-SpecWithCode-Artifact-App=${ID}`,
       "",
     ]);

@@ -9,7 +9,7 @@ A page from a chat can be installed as an app. It gets a launcher in the system'
 | macOS, packaged app      | `~/Applications/SpecWithCode Apps/<Name>.app`, built from Electron's app shim loader | The page runs as its own app: its own Dock icon, app switcher entry, menu bar and Command-Q |
 | macOS, development build | the same folder, a shell script that opens `studio-dev://app/artifact-app/<id>`      | A window of SpecWithCode                                                                    |
 | Windows                  | a Start menu shortcut                                                                | A window of SpecWithCode, grouped under the page's own taskbar id                           |
-| Linux                    | a `.desktop` entry that runs `xdg-open studio://app/artifact-app/<id>`               | A window of SpecWithCode                                                                    |
+| Linux                    | a `.desktop` entry that runs `xdg-open studio://app/artifact-app/<id>`               | A window of SpecWithCode, shown in the dock under the page's own entry                      |
 
 ## macOS: one app per page
 
@@ -56,10 +56,19 @@ If SpecWithCode was updated on disk while it was running, a page's app cannot lo
 
 Windows and Linux windows belong to SpecWithCode. On macOS, a window that is not in a shim (an old launcher, or a development build) catches Command-Q and closes only the page.
 
+### Linux: the page's own dock entry
+
+The entry is `~/.local/share/applications/specwithcode-app-<id>.desktop` (under `$XDG_DATA_HOME` when set). Its `Exec` line opens the launch URL with `xdg-open`, so it keeps working when the app moves, and the `studio` scheme handler (`DesktopLinuxUrlHandler.ts`, or the `.deb`'s own entry) passes it to the running SpecWithCode.
+
+The page's window reports `specwithcode-app-<id>` as its Wayland app id and its X11 `WM_CLASS`, and the entry names the same value in `StartupWMClass`. GNOME, KDE and other docks match a window to the entry with that id, so the page shows as its own app with its own name and icon, as Chrome's installed web apps do. Electron takes both values from `CHROME_DESKTOP` while it constructs a window and has no per-window option, so `LinuxWindowIdentity.ts` points that variable at the page's entry for the one synchronous constructor call and puts SpecWithCode's own value back straight after.
+
+The window takes the page's identity only while the entry is on disk. Without it, the dock would show an unknown app, so the window stays SpecWithCode's. Entries written before this change have no `StartupWMClass` line; they still match by file name, and uninstall still recognizes them, because the comparison leaves out the `Icon` and `StartupWMClass` lines.
+
 ## Code
 
 - `apps/desktop/src/artifactApps/ArtifactAppLaunchers.ts`: launcher file generators.
 - `apps/desktop/src/artifactApps/ArtifactAppInstaller.ts`: install, ownership checks, signing, hash records, upgrade.
 - `apps/desktop/src/artifactApps/ArtifactAppShims.ts`: shim server, verification, page menu, reopen and update message.
 - `apps/desktop/src/artifactApps/ArtifactAppWindows.ts`: page windows, in a shim or not.
+- `apps/desktop/src/electron/LinuxWindowIdentity.ts`: a Linux window's app id and `WM_CLASS`.
 - `apps/desktop/src/artifactApps/ArtifactAppShimRecords.ts`: the private hash and reopen files.

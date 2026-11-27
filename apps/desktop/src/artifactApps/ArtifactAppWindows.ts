@@ -9,6 +9,7 @@
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
@@ -27,6 +28,7 @@ import { artifactAppVersionUrl } from "./ArtifactAppPowers.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import {
   ARTIFACT_APP_WINDOW_ARGUMENT,
+  artifactAppLinuxDesktopId,
   artifactAppUserModelId,
   artifactAppWindowUrl,
   isArtifactAppInstallId,
@@ -204,6 +206,7 @@ const make = Effect.gen(function* () {
   const electronShell = yield* ElectronShell.ElectronShell;
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const records = yield* ArtifactAppRecords.ArtifactAppRecords;
+  const fileSystem = yield* FileSystem.FileSystem;
   // Optional so tests need not provide it; the app always does.
   const externalBrowsers = yield* Effect.serviceOption(ExternalBrowsers.ExternalBrowsers);
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
@@ -270,6 +273,21 @@ const make = Effect.gen(function* () {
         })
       : electronWindow.reveal(window);
 
+  // On Linux the window reports the page's own desktop id as its Wayland app id and
+  // WM_CLASS, so the dock shows it under its launcher with the page's name and icon,
+  // as the taskbar id does on Windows. Only while that launcher is there: an id no
+  // entry names would show as an unknown app, so the window stays SpecWithCode's.
+  const linuxIdentity = (installId: string) => {
+    if (environment.platform !== "linux") return Effect.succeed(undefined);
+    const linuxDesktopName = `${artifactAppLinuxDesktopId(installId)}.desktop`;
+    return fileSystem
+      .exists(environment.path.join(environment.linuxApplicationsDir, linuxDesktopName))
+      .pipe(
+        Effect.orElseSucceed(() => false),
+        Effect.map((found) => (found ? { linuxDesktopName } : undefined)),
+      );
+  };
+
   const createWindow = Effect.fn("desktop.artifactAppWindows.create")(function* (
     installId: string,
     title: string,
@@ -278,7 +296,9 @@ const make = Effect.gen(function* () {
     const windowUrl = artifactAppWindowUrl(getDesktopUrl(environment.isDevelopment), installId);
     const iconPaths = yield* assets.iconPaths;
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-    const window = yield* electronWindow.create({
+    const identity = yield* linuxIdentity(installId);
+    const window = yield* electronWindow.create(
+      {
       ...DEFAULT_SIZE,
       minWidth: MINIMUM_SIZE.width,
       minHeight: MINIMUM_SIZE.height,
@@ -301,7 +321,9 @@ const make = Effect.gen(function* () {
           `${ARTIFACT_APP_WINDOW_ARGUMENT}${installId}`,
         ],
       },
-    });
+    },
+      identity,
+    );
     const webContentsId = window.webContents.id;
 
     // Recorded and registered before the first load: IPC only answers registered app

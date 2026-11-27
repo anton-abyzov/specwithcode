@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 import { createDesktopBrowserWindow, isDesktopOffscreenTest } from "./DesktopOffscreen.ts";
+import { withLinuxDesktopName } from "./LinuxWindowIdentity.ts";
 
 import {
   activateWindowsForeground,
@@ -107,11 +108,21 @@ export class ElectronWindowOperationError extends Schema.TaggedError<ElectronWin
   }
 }
 
+/** Which app a new window belongs to, where the system lets one app's windows differ. */
+export interface ElectronWindowIdentity {
+  /**
+   * Linux: the desktop entry (`<id>.desktop`) whose id the window reports as its
+   * Wayland app id and X11 WM_CLASS. Unset, the window is the app's own.
+   */
+  readonly linuxDesktopName?: string;
+}
+
 export class ElectronWindow extends Context.Service<
   ElectronWindow,
   {
     readonly create: (
       options: Electron.BrowserWindowConstructorOptions,
+      identity?: ElectronWindowIdentity,
     ) => Effect.Effect<Electron.BrowserWindow, ElectronWindowCreateError>;
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
@@ -256,7 +267,7 @@ export const make = Effect.gen(function* () {
   });
 
   return ElectronWindow.of({
-    create: (options) => {
+    create: (options, identity) => {
       const webPreferences = options.webPreferences;
       const diagnosticOptions = {
         title: options.title ?? null,
@@ -282,7 +293,12 @@ export const make = Effect.gen(function* () {
 
       return Effect.try({
         try: () => {
-          const window = createDesktopBrowserWindow(options);
+          const construct = () => createDesktopBrowserWindow(options);
+          const linuxDesktopName = identity?.linuxDesktopName;
+          const window =
+            linuxDesktopName === undefined
+              ? construct()
+              : withLinuxDesktopName(linuxDesktopName, construct);
           createdWindows.add(window);
           return window;
         },

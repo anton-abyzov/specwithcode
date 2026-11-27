@@ -545,6 +545,7 @@ describe("ArtifactAppInstaller on Linux", () => {
         assert.include(entry, "Name=Morning dashboard");
         assert.include(entry, `Exec=xdg-open "studio://app/artifact-app/${result.app.installId}"`);
         assert.include(entry, "Icon=/opt/SpecWithCode/icon.png");
+        assert.include(entry, `StartupWMClass=specwithcode-app-${result.app.installId}`);
         yield* assertMode(fileSystem, entryPath, 0o644);
         assert.deepEqual(h.calls.refreshed, [directory]);
         assert.deepEqual(h.calls.codesigned, []);
@@ -597,6 +598,26 @@ describe("ArtifactAppInstaller on Linux", () => {
           entryPath,
           entry.replace(/^Icon=.*$/m, "Icon=/tmp/old-icon.png"),
         );
+
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.isFalse(yield* fileSystem.exists(entryPath));
+      }),
+    ),
+  );
+
+  it.effect("still removes an entry written before it named a StartupWMClass", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "linux", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail("not installed");
+        const entryPath = path.join(
+          home,
+          ".local/share/applications",
+          `specwithcode-app-${result.app.installId}.desktop`,
+        );
+        const entry = yield* fileSystem.readFileString(entryPath);
+        yield* fileSystem.writeFileString(entryPath, entry.replace(/^StartupWMClass=.*\n/m, ""));
 
         assert.isTrue(yield* h.installer.uninstall(result.app.installId));
         assert.isFalse(yield* fileSystem.exists(entryPath));
