@@ -269,9 +269,11 @@ export function shareConfirmCalls(input: {
 
 /**
  * What a row of the machines table offers: turn it on from here, add it to
- * this machine's list (its own switch is turned on there), or say where to.
+ * this machine's list (its own switch is turned on there), allow work
+ * between the two machines when they have no access to each other, or say
+ * where to.
  */
-export type ShareRowAction = "turn-on" | "add" | "manual" | null;
+export type ShareRowAction = "turn-on" | "add" | "allow" | "manual" | null;
 
 export interface ShareMachineRow {
   readonly environmentId: string;
@@ -297,6 +299,8 @@ export function shareMachineRows(input: {
   /** The machine that runs the link's routines, as the window's project list knows it. */
   readonly runnerEnvironmentId: string | null;
   readonly canTurnOn: (environmentId: string) => boolean;
+  /** This window may allow work between machines here (access management on this machine). */
+  readonly canAllow?: boolean;
   /**
    * The Connect account's other machines, as the window knows them. One this
    * machine's server does not name yet (not confirmed here, say, because it
@@ -330,6 +334,7 @@ export function shareMachineRows(input: {
     .map((machine): ShareMachineRow => {
       const label = input.labelOf(machine.environmentId, machine.label);
       const offered = machine.state === "switch_off" || machine.state === "not_confirmed";
+      const noAccess = machine.state === "no_grant" || machine.state === "legacy_grant";
       return {
         environmentId: machine.environmentId,
         label,
@@ -339,7 +344,13 @@ export function shareMachineRows(input: {
         detail: machine.detail ?? null,
         runsRoutines: machine.state === "joined" && runner === machine.environmentId,
         lastSyncedAt: machine.lastSyncedAt ?? null,
-        action: offered ? (input.canTurnOn(machine.environmentId) ? "turn-on" : "manual") : null,
+        action: offered
+          ? input.canTurnOn(machine.environmentId)
+            ? "turn-on"
+            : "manual"
+          : noAccess && input.canAllow === true
+            ? "allow"
+            : null,
       };
     });
   const named = new Set<string>([

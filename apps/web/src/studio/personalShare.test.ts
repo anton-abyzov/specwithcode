@@ -296,6 +296,28 @@ describe("the machines table", () => {
     ]);
   });
 
+  it("offers Allow on a row with no access only when the window may allow work here", () => {
+    const input = {
+      status: status({
+        machines: [
+          { environmentId: id("m4"), label: "m4", state: "no_grant" as const },
+          { environmentId: id("old"), label: "old", state: "legacy_grant" as const },
+          { environmentId: id("off"), label: "off", state: "offline" as const },
+        ],
+      }),
+      labelOf: (environmentId: string, fallback: string | null) => fallback ?? environmentId,
+      runnerEnvironmentId: null,
+      canTurnOn: () => false,
+    };
+    expect(shareMachineRows({ ...input, canAllow: true }).map((row) => row.action)).toEqual([
+      null,
+      "allow",
+      "allow",
+      null,
+    ]);
+    expect(shareMachineRows(input).map((row) => row.action)).toEqual([null, null, null, null]);
+  });
+
   it("offers no add while this machine's own switch is off", () => {
     const rows = shareMachineRows({
       status: status({ enabled: false, machines: [] }),
