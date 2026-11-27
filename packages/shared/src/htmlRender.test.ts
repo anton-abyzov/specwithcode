@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  HTML_RENDER_DEFAULT_FONTS,
   HTML_RENDER_EXACT_COPY_SCRIPT,
   HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
@@ -8,7 +9,9 @@ import {
   htmlRenderTheme,
   htmlRenderThemeFragment,
   htmlVisualDocument,
+  HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   injectHtmlRenderBootstrap,
+  isHtmlRenderStagePage,
   isHtmlVisualDocument,
   isHtmlVisualSvg,
   htmlRenderThemeMessage,
@@ -563,5 +566,83 @@ describe("injectHtmlRenderBootstrap on unclosed tags", () => {
     );
     expect(bare).toContain('<meta charset="utf-8">');
     expect(bare).toContain('<meta name="viewport"');
+  });
+});
+
+describe("stage pages", () => {
+  // Runs the injected bootstrap with just enough of a top-level window to read its fragment.
+  function bootWithHash(hash: string) {
+    const scripts = /<script>([\s\S]*?)<\/script>/.exec(injectHtmlRenderBootstrap("<p>x</p>"))![1]!;
+    // The bootstrap comes first; the copy and evidence scripts after it need a real DOM.
+    const script = scripts.slice(0, scripts.indexOf(HTML_RENDER_EXACT_COPY_SCRIPT));
+    const replaced: string[] = [];
+    const location = { hash, pathname: "/page.html", search: "?sig=1" };
+    const fakeWindow: Record<string, unknown> = { addEventListener() {}, getSelection: () => null };
+    fakeWindow.parent = fakeWindow;
+    const fakeDocument = {
+      getElementById: (id: string) => (id === "studio-theme" ? { textContent: "" } : null),
+      addEventListener() {},
+      querySelectorAll: () => [],
+      createElement: () => ({ style: {}, setAttribute() {}, appendChild() {} }),
+      head: { appendChild() {} },
+      documentElement: {},
+    };
+    const history = {
+      state: null,
+      replaceState: (_state: unknown, _title: string, url: string) => replaced.push(url),
+    };
+    new Function("window", "document", "location", "history", "navigator", script)(
+      fakeWindow,
+      fakeDocument,
+      location,
+      history,
+      {},
+    );
+    return replaced;
+  }
+  const theme = htmlRenderThemeFragment(
+    htmlRenderTheme(STUDIO_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_DEFAULT_FONTS),
+  );
+
+  it("keeps the page's own fragment after reading the theme", () => {
+    expect(bootWithHash(`#deck-2${theme}`)).toEqual(["/page.html?sig=1#deck-2"]);
+    expect(bootWithHash(`#deck-2${theme}${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toEqual([
+      "/page.html?sig=1#deck-2",
+    ]);
+  });
+
+  it("still leaves no fragment on a page that has none of its own", () => {
+    expect(bootWithHash(theme)).toEqual(["/page.html?sig=1"]);
+    expect(bootWithHash(`${theme}${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toEqual([
+      "/page.html?sig=1",
+    ]);
+  });
+
+  it("detects the stage meta tag only in markup", () => {
+    expect(
+      isHtmlRenderStagePage('<head><meta name="specwithcode-page" content="stage"></head>'),
+    ).toBe(true);
+    expect(isHtmlRenderStagePage("<meta content='stage' name='specwithcode-page'/>")).toBe(true);
+    expect(isHtmlRenderStagePage("<meta name=specwithcode-page content=stage>")).toBe(true);
+    expect(isHtmlRenderStagePage('<meta name="specwithcode-page" content="report">')).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<script>"<meta name=specwithcode-page content=stage>"</script>'),
+    ).toBe(false);
+    expect(isHtmlRenderStagePage("<!-- <meta name=specwithcode-page content=stage> -->")).toBe(
+      false,
+    );
+  });
+
+  it("carries the stage flag through a reference", () => {
+    const stage = { attachmentId: "a-html", title: "Deck", height: 600, stage: true };
+    expect(readHtmlRenderReference(stage)?.stage).toBe(true);
+    expect(readHtmlRenderReference({ ...stage, stage: "yes" })?.stage).toBeUndefined();
+    expect(
+      htmlRenderReferencesEqual(readHtmlRenderReference(stage)!, {
+        attachmentId: "a-html",
+        title: "Deck",
+        height: 600,
+      }),
+    ).toBe(false);
   });
 });

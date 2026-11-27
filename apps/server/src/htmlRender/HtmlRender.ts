@@ -6,9 +6,11 @@ import {
   HTML_RENDER_MAX_TITLE_LENGTH,
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
+  HTML_RENDER_STAGE_READY_GLOBAL,
   htmlRenderTheme,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
+  isHtmlRenderStagePage,
   type HtmlRenderReference,
 } from "@specweave-studio/shared/htmlRender";
 import {
@@ -37,7 +39,7 @@ import { createAttachmentId } from "../attachmentStore.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
-import { rewriteLocalArtifactLibraries } from "./localArtifactLibs.ts";
+import { inlineArtifactLibraries, SPECWITHCODE_ARTIFACT_LIBRARIES } from "./localArtifactLibs.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
@@ -73,6 +75,27 @@ export class HtmlRenderPageTooLargeError extends Schema.TaggedError<HtmlRenderPa
   }
 }
 
+export class HtmlRenderLibraryError extends Schema.TaggedError<HtmlRenderLibraryError>()(
+  "HtmlRenderLibraryError",
+  { unknown: Schema.Array(Schema.String), unavailable: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    const known = SPECWITHCODE_ARTIFACT_LIBRARIES.map((name) => `specwithcode:${name}`).join(", ");
+    return this.unknown.length > 0
+      ? `${this.unknown.map((name) => `specwithcode:${name}`).join(", ")} is not a SpecWithCode library. The libraries are ${known}.`
+      : `This SpecWithCode build does not carry ${this.unavailable.map((name) => `specwithcode:${name}`).join(", ")}; update SpecWithCode or load the library another way.`;
+  }
+}
+
+export class HtmlRenderPageFileError extends Schema.TaggedError<HtmlRenderPageFileError>()(
+  "HtmlRenderPageFileError",
+  { path: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `${this.path} could not be used: ${this.reason}`;
+  }
+}
+
 export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreError>()(
   "HtmlRenderStoreError",
   { cause: Schema.Defect() },
@@ -85,7 +108,8 @@ export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreErro
 export type HtmlRenderPrepareError =
   | HtmlRenderImagesNotFoundError
   | HtmlRenderImageTooLargeError
-  | HtmlRenderPageTooLargeError;
+  | HtmlRenderPageTooLargeError
+  | HtmlRenderLibraryError;
 
 export interface HtmlPreview {
   /** Base64 PNG of the top `capturedHeight` pixels. */
@@ -102,6 +126,12 @@ export interface HtmlPreview {
 export class HtmlRender extends Context.Service<
   HtmlRender,
   {
+    /**
+     * The page in an HTML file the agent names instead of passing it inline: an
+     * absolute path to an existing `.html` or `.htm` file of at most 25 MiB that
+     * the agent may read.
+     */
+    readonly readPageFile: (path: string) => Effect.Effect<string, HtmlRenderPageFileError>;
     /** The self-contained page that gets stored: local images inlined, theme bootstrap injected. */
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
     /**
@@ -392,6 +422,8 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
 
 const MIN_PREVIEW_WIDTH = 240;
 const MAX_PREVIEW_WIDTH = 1_600;
+// A stage page is previewed at a laptop width in 16:9 unless the caller asks otherwise.
+const STAGE_PREVIEW_WIDTH = 1_280;
 // Each preview or measurement runs its own browser; more at once mostly costs memory.
 const MAX_CONCURRENT_BROWSERS = 2;
 // Publishing waits this long at most for heights before returning without them.
@@ -482,15 +514,63 @@ const make = Effect.gen(function* () {
   // The bootstrap goes in first so its head scan never runs over inlined image or library data.
   const inline = (html: string) =>
     inlineLocalImages(injectHtmlRenderBootstrap(html), agentPathGuard).pipe(
-      Effect.map((result) => ({
-        ...result,
-        html: rewriteLocalArtifactLibraries(result.html, {
-          staticDir: config.staticDir,
-          maxPageBytes: MAX_PAGE_BYTES,
-        }),
-      })),
+      Effect.flatMap(
+        (result: {
+          readonly html: string;
+          readonly missing: Array<string>;
+        }): Effect.Effect<
+          { readonly html: string; readonly missing: Array<string> },
+          HtmlRenderLibraryError | HtmlRenderPageTooLargeError
+        > => {
+          const libraries = inlineArtifactLibraries(result.html, {
+            staticDir: config.staticDir,
+            maxPageBytes: MAX_PAGE_BYTES,
+          });
+          if (libraries.unknown.length > 0 || libraries.unavailable.length > 0) {
+            return Effect.fail(
+              new HtmlRenderLibraryError({
+                unknown: libraries.unknown,
+                unavailable: libraries.unavailable,
+              }),
+            );
+          }
+          if (libraries.tooLarge) {
+            return Effect.fail(
+              new HtmlRenderPageTooLargeError({ sizeBytes: libraries.inlinedBytes }),
+            );
+          }
+          return Effect.succeed({ ...result, html: libraries.html });
+        },
+      ),
       Effect.provideContext(services),
     );
+
+  const readPageFile = Effect.fn("HtmlRender.readPageFile")(function* (path: string) {
+    const refuse = (reason: string) => new HtmlRenderPageFileError({ path, reason });
+    if (!pathOps.isAbsolute(path)) return yield* refuse("the path must be absolute.");
+    if (!/\.html?$/i.test(path)) return yield* refuse("only .html and .htm files can be shown.");
+    // A credential store never reaches the page, also through a link named *.html.
+    if (yield* agentPathGuard.isProtected(path)) {
+      return yield* refuse("SpecWithCode keeps this path away from agents.");
+    }
+    const info = yield* fileSystem
+      .stat(path)
+      .pipe(Effect.mapError(() => refuse("the file does not exist or cannot be read.")));
+    if (info.type !== "File") return yield* refuse("it is not a file.");
+    if (Number(info.size) > MAX_PAGE_BYTES) {
+      return yield* refuse(
+        `it is ${formatMib(Number(info.size))}; the limit is ${formatMib(MAX_PAGE_BYTES)}.`,
+      );
+    }
+    const bytes = yield* fileSystem.stream(path, { bytesToRead: MAX_PAGE_BYTES + 1 }).pipe(
+      Stream.mkUint8Array,
+      Effect.mapError(() => refuse("the file cannot be read.")),
+    );
+    if (bytes.byteLength > MAX_PAGE_BYTES) {
+      return yield* refuse(`it grew past ${formatMib(MAX_PAGE_BYTES)} while being read.`);
+    }
+    return new TextDecoder().decode(bytes);
+  });
 
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
     const inlined = yield* inline(html);
@@ -508,6 +588,9 @@ const make = Effect.gen(function* () {
     readonly kind?: HtmlRenderReference["kind"];
   }) {
     const html = yield* prepare(input.html);
+    // A presentation has a fixed stage and is never shown at a content height,
+    // and its warm-up can outlast the measuring browser.
+    const stage = input.kind === undefined && isHtmlRenderStagePage(input.html);
     // The `-html` id suffix makes the asset route serve it as a sandboxed text/html document.
     const attachmentId = createAttachmentId(input.threadId, "html");
     const filePath =
@@ -522,7 +605,7 @@ const make = Effect.gen(function* () {
     }
     const heights = yield* fileSystem.writeFileString(filePath, html).pipe(
       Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
-      Effect.andThen(measure(html)),
+      Effect.andThen(stage ? Effect.succeed(undefined) : measure(html)),
       // Only the returned reference lets thread deletion find the page, so a
       // publish that fails or is interrupted before returning removes it.
       Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)),
@@ -533,6 +616,7 @@ const make = Effect.gen(function* () {
       height: clampHtmlRenderHeight(input.height),
       ...(heights === undefined ? {} : { heights }),
       ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(stage ? { stage: true as const } : {}),
     } satisfies HtmlRenderReference;
   });
 
@@ -541,9 +625,13 @@ const make = Effect.gen(function* () {
     readonly width?: number | undefined;
     readonly appearance?: ThemeAppearance | undefined;
   }) {
+    const stage = isHtmlRenderStagePage(input.html);
     const width = Math.min(
       MAX_PREVIEW_WIDTH,
-      Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
+      Math.max(
+        MIN_PREVIEW_WIDTH,
+        Math.round(input.width ?? (stage ? STAGE_PREVIEW_WIDTH : HTML_RENDER_COLUMN_WIDTH)),
+      ),
     );
     const appearance = input.appearance ?? "dark";
     const inlined = yield* inline(input.html);
@@ -554,13 +642,23 @@ const make = Effect.gen(function* () {
       HTML_RENDER_MEASURE_FONTS,
     );
     const screenshot = yield* launching(executable, (noSandbox) =>
-      HeadlessChrome.captureHtmlScreenshot({
-        executable,
-        noSandbox,
-        html: inlined.html,
-        width,
-        urlFragment: htmlRenderThemeFragment(theme),
-      }).pipe(Effect.provideContext(services)),
+      (stage
+        ? HeadlessChrome.captureStageScreenshot({
+            executable,
+            noSandbox,
+            html: inlined.html,
+            width,
+            urlFragment: htmlRenderThemeFragment(theme),
+            readyGlobal: HTML_RENDER_STAGE_READY_GLOBAL,
+          })
+        : HeadlessChrome.captureHtmlScreenshot({
+            executable,
+            noSandbox,
+            html: inlined.html,
+            width,
+            urlFragment: htmlRenderThemeFragment(theme),
+          })
+      ).pipe(Effect.provideContext(services)),
     );
     return {
       ...screenshot,
@@ -615,7 +713,15 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return HtmlRender.of({ prepare, publish, preview, capture, captureImages, measureTextLines });
+  return HtmlRender.of({
+    readPageFile,
+    prepare,
+    publish,
+    preview,
+    capture,
+    captureImages,
+    measureTextLines,
+  });
 });
 
 export const layer = Layer.effect(HtmlRender, make);

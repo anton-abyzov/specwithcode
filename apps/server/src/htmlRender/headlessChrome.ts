@@ -678,10 +678,14 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     );
 
     /** The value of `expression` in the loaded page. */
-    const evaluate = <A>(expression: string, schema: Schema.Decoder<A>) =>
+    const evaluate = <A>(
+      expression: string,
+      schema: Schema.Decoder<A>,
+      options?: { readonly awaitPromise?: boolean },
+    ) =>
       send(
         "Runtime.evaluate",
-        { expression, returnByValue: true },
+        { expression, returnByValue: true, awaitPromise: options?.awaitPromise === true },
         Schema.Struct({ result: Schema.Struct({ value: schema }) }),
         sessionId,
       ).pipe(Effect.map(({ result }) => result.value));
@@ -735,6 +739,70 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
       Effect.fail(
         new HtmlRenderBrowserError({
           reason: `the page did not finish loading within ${CAPTURE_TIMEOUT}`,
+        }),
+      ),
+  }),
+);
+
+/** How long a stage page may take to build its scenes and compile its shaders in the preview. */
+export const STAGE_READY_TIMEOUT_MS = 90_000;
+// Resolves true once the page sets its ready global, false when the wait runs out.
+const stageReadyExpression = (global: string, timeoutMs: number) =>
+  `new Promise(function(r){var t=Date.now();(function p(){if(window[${JSON.stringify(global)}]===true)return r(true);if(Date.now()-t>${timeoutMs})return r(false);setTimeout(p,250);})();})`;
+
+/**
+ * A stage page (a motion presentation) in a 16:9 viewport at `width`: waits for
+ * the page's ready global, lets one beat of motion play, then captures the stage.
+ * The preview browser has no GPU, so WebGL runs on SwiftShader and is slow.
+ */
+export const captureStageScreenshot = Effect.fn("headlessChrome.captureStageScreenshot")(
+  function* (input: {
+    readonly executable: string;
+    readonly noSandbox: boolean;
+    readonly html: string;
+    readonly width: number;
+    readonly urlFragment: string;
+    readonly readyGlobal: string;
+  }) {
+    const path = yield* Path.Path;
+    const directory = yield* scratchDirectory;
+    const browser = yield* launchBrowser({
+      executable: input.executable,
+      noSandbox: input.noSandbox,
+      profileDirectory: path.join(directory, "profile"),
+    });
+    const height = Math.round((input.width * 9) / 16);
+    const page = yield* browser.openPage(input.width, { height, scale: 1 });
+    yield* page.load(pageBody(input.html), input.urlFragment);
+    const ready = yield* page.evaluate(
+      stageReadyExpression(input.readyGlobal, STAGE_READY_TIMEOUT_MS),
+      Schema.Boolean,
+      { awaitPromise: true },
+    );
+    yield* page.evaluate(
+      "new Promise(function(r){setTimeout(function(){r(true)},1500)})",
+      Schema.Boolean,
+      { awaitPromise: true },
+    );
+    const png = yield* page.screenshot(height);
+    const consoleMessages: ReadonlyArray<ConsoleMessage> = ready
+      ? page.consoleMessages()
+      : [
+          ...page.consoleMessages(),
+          {
+            level: "warning",
+            text: `The stage page never set window.${input.readyGlobal} = true within ${STAGE_READY_TIMEOUT_MS / 1000} seconds; the screenshot may show its loading screen.`,
+          },
+        ];
+    return { png, contentHeight: height, capturedHeight: height, consoleMessages };
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: `${STAGE_READY_TIMEOUT_MS / 1000 + 30} seconds`,
+    orElse: () =>
+      Effect.fail(
+        new HtmlRenderBrowserError({
+          reason: `the stage page did not finish within ${STAGE_READY_TIMEOUT_MS / 1000 + 30} seconds`,
         }),
       ),
   }),

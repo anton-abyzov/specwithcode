@@ -294,21 +294,33 @@ function InstalledPageDocument(props: {
       unsubscribe?.();
     };
   }, [attachmentId]);
-  const height = Math.max(
-    viewport.height,
-    Math.min(
-      50_000,
-      contentHeight ?? htmlRenderFrameHeight(props.page, viewport.width, contentHeight),
-    ),
-  );
+  // A stage page is the window: it fills it exactly, never scrolls, and takes the keys.
+  const stage = props.page.stage === true;
+  const height = stage
+    ? "100%"
+    : Math.max(
+        viewport.height,
+        Math.min(
+          50_000,
+          contentHeight ?? htmlRenderFrameHeight(props.page, viewport.width, contentHeight),
+        ),
+      );
   return (
-    <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto overscroll-contain">
+    <div
+      ref={scrollerRef}
+      className={cn(
+        "min-h-0 flex-1 overscroll-contain",
+        stage ? "overflow-hidden bg-black" : "overflow-auto",
+      )}
+    >
       <div className="w-full" style={{ height }}>
         <HtmlRenderDocument
           src={props.src}
           title={props.name}
           className="block size-full"
-          onContentHeight={setContentHeight}
+          onContentHeight={stage ? undefined : setContentHeight}
+          stage={stage}
+          autoFocus={stage}
         />
       </div>
     </div>

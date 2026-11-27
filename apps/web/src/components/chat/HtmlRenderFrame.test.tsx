@@ -13,8 +13,11 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlRefresh: () => async () => URL_,
 }));
 vi.mock("~/state/filesystem", () => ({ useFilesystemReadAccess: () => ({ canReadFiles: false }) }));
+// The reader's content slot, once a test opens it.
+const overlay: { content: HTMLElement | null } = { content: null };
 vi.mock("~/viewerOverlayStore", () => ({
-  useViewerOverlay: () => null,
+  useViewerOverlay: (options: { open: boolean }) =>
+    options.open && overlay.content ? { content: overlay.content } : null,
   useViewerOverlayStore: { getState: () => ({ setThreadCollapsed: () => undefined }) },
 }));
 
@@ -33,6 +36,8 @@ beforeAll(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  overlay.content?.remove();
+  overlay.content = null;
 });
 
 async function frameSrc(kind: "visual" | undefined) {
@@ -70,5 +75,48 @@ describe("HtmlRenderFrame scroll containment", () => {
     const src = await frameSrc(undefined);
     expect(src.startsWith(`${URL_}#studio-theme=`)).toBe(true);
     expect(src).not.toContain("studio-contain-scroll");
+  });
+});
+
+describe("HtmlRenderFrame stage pages", () => {
+  async function renderStage() {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    overlay.content = document.createElement("div");
+    document.body.appendChild(overlay.content);
+    root = createRoot(container);
+    await act(async () =>
+      root.render(
+        <HtmlRenderFrame
+          environmentId={"env-A" as never}
+          htmlRender={{ attachmentId: "att-1", title: "Deck", height: 300, stage: true }}
+        />,
+      ),
+    );
+  }
+
+  it("shows a card that runs nothing until Play", async () => {
+    await renderStage();
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("[data-html-render-stage]")).not.toBeNull();
+    expect(container.textContent).toContain("Motion presentation");
+  });
+
+  it("plays full size in the reader with sound and fullscreen allowed", async () => {
+    await renderStage();
+    const play = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Play"),
+    );
+    await act(async () => play?.click());
+    const frame = overlay.content?.querySelector<HTMLIFrameElement>("iframe");
+    expect(frame).toBeTruthy();
+    expect(frame?.getAttribute("allow")).toBe("autoplay; fullscreen");
+    expect(frame?.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+    expect(frame?.getAttribute("loading")).toBe("eager");
+  });
+
+  it("never gives an inline report frame sound or fullscreen", async () => {
+    await frameSrc(undefined);
+    expect(document.querySelector("iframe")?.hasAttribute("allow")).toBe(false);
   });
 });

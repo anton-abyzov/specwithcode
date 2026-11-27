@@ -38,6 +38,36 @@ export interface HtmlRenderReference {
    * collapsible "Made a visual" header; absent for a report page.
    */
   readonly kind?: "visual";
+  /**
+   * A presentation that declared itself with {@link HTML_RENDER_STAGE_META}: the
+   * thread shows a card and runs it only when opened, at the full viewer size.
+   */
+  readonly stage?: true;
+}
+
+/** The head tag a page uses to declare itself a stage page (a motion presentation). */
+export const HTML_RENDER_STAGE_META = '<meta name="specwithcode-page" content="stage">';
+/** What a stage page's frame may use: sound before a click, and fullscreen. Reports get none. */
+export const HTML_RENDER_STAGE_ALLOW = "autoplay; fullscreen";
+/** The global a stage page sets once its scenes are built and its shaders compiled. */
+export const HTML_RENDER_STAGE_READY_GLOBAL = "specwithcodeReady";
+
+/**
+ * Whether a page declares itself a stage page: a `<meta name="specwithcode-page"
+ * content="stage">` in its markup, attributes in any order and quoting, outside
+ * scripts, styles and comments.
+ */
+export function isHtmlRenderStagePage(html: string): boolean {
+  const scan = blankNonMarkup(html);
+  for (const match of scan.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    if (
+      /\bname\s*=\s*["']?specwithcode-page["'\s/>]/i.test(tag) &&
+      /\bcontent\s*=\s*["']?stage["'\s/>]/i.test(tag)
+    )
+      return true;
+  }
+  return false;
 }
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */
@@ -73,7 +103,7 @@ function readMeasuredHeights(value: unknown) {
 
 export function readHtmlRenderReference(value: unknown): HtmlRenderReference | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { attachmentId, title, height, heights, kind } = value as Record<string, unknown>;
+  const { attachmentId, title, height, heights, kind, stage } = value as Record<string, unknown>;
   if (
     typeof attachmentId !== "string" ||
     attachmentId.length === 0 ||
@@ -91,6 +121,7 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
     ...(kind === "visual" ? { kind } : {}),
+    ...(stage === true ? { stage } : {}),
   };
 }
 
@@ -101,6 +132,7 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
     left.title === right.title &&
     left.height === right.height &&
     left.kind === right.kind &&
+    left.stage === right.stage &&
     (left.heights ?? []).length === (right.heights ?? []).length &&
     (left.heights ?? []).every(
       ([width, height], index) =>
@@ -667,7 +699,7 @@ function rootRule(theme: HtmlRenderTheme): string {
 // so its client can fit the frame to the page. A framed page whose fragment
 // carries the contain-scroll flag gets the contained `scrollIntoView` first,
 // read before the fragment is dropped.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;if(P&&window.parent!==window)${CONTAINED_SCROLL_INTO_VIEW}var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;if(P&&window.parent!==window)${CONTAINED_SCROLL_INTO_VIEW}var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&#]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));var q=location.hash.replace(/[#&]${THEME_FRAGMENT_KEY}=[^&#]*/,"").replace(/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?=[&#]|$)/,"").replace(/^&/,"#");history.replaceState(history.state,"",location.pathname+location.search+(q.length>1?q:""));}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
 
 // A page's Copy buttons and selections put exactly the text shown on the
 // clipboard: no newline a textarea or <pre> ends with, no trailing spaces, no

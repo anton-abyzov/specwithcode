@@ -3167,6 +3167,10 @@ export const ko: PhraseCatalog = {
   "Made a visual": "시각 자료를 만들었습니다",
   "Loading visual…": "시각 자료를 불러오는 중…",
   "Interactive report": "대화형 보고서",
+  "Motion presentation": "모션 프레젠테이션",
+  Play: "재생",
+  "Plays full size with sound. Press Escape to close.":
+    "소리와 함께 전체 크기로 재생됩니다. Esc 키로 닫습니다.",
   "Open report": "보고서 열기",
   "Open in reader": "리더에서 열기",
   "Loading report…": "보고서를 불러오는 중…",

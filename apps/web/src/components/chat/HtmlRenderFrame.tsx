@@ -6,7 +6,7 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@specweave-studio/shared/htmlRender";
-import { ArrowUpRightIcon, FileTextIcon } from "lucide-react";
+import { ArrowUpRightIcon, FileTextIcon, PlayIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -85,12 +85,85 @@ interface HtmlRenderFrameProps {
   readonly cwd?: string | undefined;
 }
 
-/** A published page in the thread: a `show_visual` diagram in full, or a report preview. */
+/** A published page in the thread: a `show_visual` diagram in full, a stage card, or a report preview. */
 export function HtmlRenderFrame(props: HtmlRenderFrameProps) {
-  return props.htmlRender.kind === "visual" ? (
-    <HtmlVisualFrame {...props} />
-  ) : (
-    <HtmlReportFrame {...props} />
+  if (props.htmlRender.kind === "visual") return <HtmlVisualFrame {...props} />;
+  if (props.htmlRender.stage === true) return <HtmlStageFrame {...props} />;
+  return <HtmlReportFrame {...props} />;
+}
+
+/**
+ * A stage page (a presentation or animation) in the thread: a card that runs
+ * nothing, since a WebGL page with sound must not start in the timeline. Play
+ * opens it full size in the reader, focused, so its keys work at once; closing
+ * the reader unloads it, which stops its sound and frees the GPU.
+ */
+function HtmlStageFrame(props: HtmlRenderFrameProps) {
+  const tx = useTx();
+  const { attachmentId, title } = props.htmlRender;
+  const { threadRef } = props;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const close = () => {
+    setExpanded(false);
+    requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
+  };
+  const slots = useViewerOverlay({
+    open: expanded,
+    title,
+    kind: "Presentation",
+    badge: null,
+    threadRef,
+    onClose: close,
+  });
+  const { src, failed } = useHtmlRenderSrc(props.environmentId, attachmentId, title);
+  const open = () => {
+    useViewerOverlayStore.getState().setThreadCollapsed(true);
+    setExpanded(true);
+  };
+  return (
+    <section className="html-report-card" aria-label={title} data-html-render-stage="true">
+      <header className="html-report-card-head">
+        <PlayIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <h3 className="html-report-card-title">{title}</h3>
+          <p className="html-report-card-kind">{tx("Motion presentation")}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {threadRef ? (
+            <InstallAsAppButton
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+              attachmentId={attachmentId}
+              title={title}
+            />
+          ) : null}
+          <Button ref={triggerRef} size="sm" onClick={open} disabled={src === null}>
+            <PlayIcon aria-hidden className="size-4" /> {tx("Play")}
+          </Button>
+        </div>
+      </header>
+      <p className="html-report-card-foot">
+        {src === null && failed
+          ? `Unable to load ${title}`
+          : tx("Plays full size with sound. Press Escape to close.")}
+      </p>
+      {expanded && src !== null && slots?.content
+        ? createPortal(
+            <div className="html-report-reader" style={{ padding: 0, overflow: "hidden" }}>
+              <HtmlRenderDocument
+                src={src}
+                title={title}
+                className="block size-full bg-black"
+                onEscape={close}
+                stage
+                autoFocus
+              />
+            </div>,
+            slots.content,
+          )
+        : null}
+    </section>
   );
 }
 

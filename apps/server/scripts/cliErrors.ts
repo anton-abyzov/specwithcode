@@ -67,3 +67,12 @@ export class ServerCliUnresolvedImportError extends Schema.TaggedError<ServerCli
     return `Studio bundle retains unresolved workspace imports in ${this.file}: ${this.specifiers.join(", ")}`;
   }
 }
+
+export class ServerCliArtifactLibraryMinifyError extends Schema.TaggedError<ServerCliArtifactLibraryMinifyError>()(
+  "ServerCliArtifactLibraryMinifyError",
+  { library: Schema.String, detail: Schema.String },
+) {
+  override get message(): string {
+    return `artifact-libs/${this.library} did not minify: ${this.detail}`;
+  }
+}

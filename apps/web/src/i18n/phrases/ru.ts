@@ -3191,6 +3191,10 @@ export const ru: PhraseCatalog = {
   "Made a visual": "Создал визуал",
   "Loading visual…": "Загрузка визуала…",
   "Interactive report": "Интерактивный отчёт",
+  "Motion presentation": "Анимированная презентация",
+  Play: "Воспроизвести",
+  "Plays full size with sound. Press Escape to close.":
+    "Открывается во весь размер со звуком. Нажмите Escape, чтобы закрыть.",
   "Open report": "Открыть отчёт",
   "Open in reader": "Открыть в режиме чтения",
   "Loading report…": "Загрузка отчёта…",

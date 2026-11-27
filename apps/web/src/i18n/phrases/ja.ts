@@ -3198,6 +3198,10 @@ export const ja: PhraseCatalog = {
   "Made a visual": "ビジュアルを作成しました",
   "Loading visual…": "ビジュアルを読み込み中…",
   "Interactive report": "インタラクティブレポート",
+  "Motion presentation": "モーションプレゼンテーション",
+  Play: "再生",
+  "Plays full size with sound. Press Escape to close.":
+    "音声付きで全面表示します。Escape キーで閉じます。",
   "Open report": "レポートを開く",
   "Open in reader": "リーダーで開く",
   "Loading report…": "レポートを読み込み中…",

@@ -3202,6 +3202,10 @@ export const pt: PhraseCatalog = {
   "Made a visual": "Criou um visual",
   "Loading visual…": "Carregando visual…",
   "Interactive report": "Relatório interativo",
+  "Motion presentation": "Apresentação animada",
+  Play: "Reproduzir",
+  "Plays full size with sound. Press Escape to close.":
+    "Reproduz em tamanho total com som. Pressione Esc para fechar.",
   "Open report": "Abrir relatório",
   "Open in reader": "Abrir no leitor",
   "Loading report…": "Carregando relatório…",
