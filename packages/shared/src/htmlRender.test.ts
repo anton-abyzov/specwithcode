@@ -728,6 +728,15 @@ describe("stage pages", () => {
     expect(isHtmlRenderStagePage(`<template><svg><style></template>${marker}`)).toBe(false);
     expect(isHtmlRenderStagePage(`<link href="a.css${marker}`)).toBe(false);
     expect(isHtmlRenderStagePage(`<title>x${marker}`)).toBe(false);
+    // A tag left open in a template swallows the rest, the apparent marker with it.
+    expect(isHtmlRenderStagePage(`<head><template><div data-note="</template>${marker}`)).toBe(
+      false,
+    );
+    // Read once, front to back: a page of tags that never close is refused at once.
+    const started = performance.now();
+    expect(isHtmlRenderStagePage(`<template>${"<x ".repeat(200_000)}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<template>${"<".repeat(200_000)}${marker}`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
     // Comments end where a browser ends them.
     expect(isHtmlRenderStagePage(`<!-->${marker}`)).toBe(true);
     expect(isHtmlRenderStagePage(`<!-- a --!>${marker}`)).toBe(true);

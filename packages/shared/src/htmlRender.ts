@@ -82,6 +82,8 @@ export function isHtmlRenderStagePage(html: string): boolean {
       at = html[open + 2] === ">" ? open + 3 : indexAfter(html, ">", open);
     } else {
       const tag = readTag(html, open);
+      // A tag left open swallows the rest of the page, the marker with it.
+      if (tag === "unclosed") return false;
       if (tag === undefined) {
         // A `<` that starts no tag is text.
         if (templates === 0) return false;
@@ -168,9 +170,9 @@ interface ReadTag {
 /**
  * The tag at `at`, read as a browser reads it: a quoted value may hold `>`, an unquoted
  * one runs to whitespace or `>`, and the first of a repeated attribute wins. Undefined
- * when `<` starts no tag there or the tag never closes.
+ * when `<` starts no tag there, and "unclosed" when the tag runs to the end of the page.
  */
-function readTag(html: string, at: number): ReadTag | undefined {
+function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
   const closing = html[at + 1] === "/";
   let index = at + (closing ? 2 : 1);
   if (!ASCII_ALPHA.test(html[index] ?? "")) return undefined;
@@ -198,7 +200,7 @@ function readTag(html: string, at: number): ReadTag | undefined {
       const quote = html[index];
       if (quote === '"' || quote === "'") {
         const close = html.indexOf(quote, index + 1);
-        if (close === -1) return undefined;
+        if (close === -1) return "unclosed";
         value = html.slice(index + 1, close);
         index = close + 1;
       } else {
@@ -209,7 +211,7 @@ function readTag(html: string, at: number): ReadTag | undefined {
     }
     if (!attributes.has(attribute)) attributes.set(attribute, value);
   }
-  return undefined;
+  return "unclosed";
 }
 
 /** Where a raw-text element's own end tag starts and ends, or undefined when it has none. */
@@ -224,7 +226,7 @@ function rawTextEnd(
   const match = endTag.exec(html);
   if (match === null) return undefined;
   const tag = readTag(html, match.index);
-  return tag === undefined ? undefined : { start: match.index, end: tag.end };
+  return tag === undefined || tag === "unclosed" ? undefined : { start: match.index, end: tag.end };
 }
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */
