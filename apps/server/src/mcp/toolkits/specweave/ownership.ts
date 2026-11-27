@@ -306,9 +306,13 @@ export async function decideOwnership(input: {
       isInside(where.workspace, recorded.root) ||
       (input.worktreePath !== null && isInside(input.worktreePath, recorded.root)) ||
       (recordedRoot !== null && isInside(where.workspace, recordedRoot));
-    if (inside && recordedRoot !== specweaveRoot) {
+    const recordedCopy =
+      recordedRoot === null
+        ? null
+        : await realPath(NodePath.join(recordedRoot, ".specweave", "increments", bound.incrementId));
+    if (inside && (recordedCopy === null || recordedRoot !== specweaveRoot)) {
       return denied(
-        `This thread last wrote increment ${bound.incrementId} in ${recorded.root}, and ${recordedRoot === null ? "that copy is gone" : `that is not the copy in ${specweaveRoot}`}. SpecWeave write tools never switch to another copy of the increment; restore that copy, or use \`specweave task claim|release|block\` in your shell.`,
+        `This thread last wrote increment ${bound.incrementId} in ${recorded.root}, and ${recordedCopy === null ? "that copy is gone" : `that is not the copy in ${specweaveRoot}`}. SpecWeave write tools never switch to another copy of the increment; restore that copy, or use \`specweave task claim|release|block\` in your shell.`,
       );
     }
   }
