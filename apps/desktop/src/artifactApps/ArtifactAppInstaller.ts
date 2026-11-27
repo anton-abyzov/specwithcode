@@ -742,6 +742,8 @@ const make = Effect.gen(function* () {
               yield* host.trashItem(candidate);
             }
           }
+          // Copies only an upgrade makes go with the page, so none is left hidden.
+          yield* trashUpgradeLeftovers(location, installId);
           return;
         }
         case "windows-shortcuts":
@@ -1038,7 +1040,13 @@ const make = Effect.gen(function* () {
     const current = yield* locateRecorded(app, context);
     if (Option.isNone(current) || current.value.kind !== "mac-bundle") return Option.none<string>();
     const ownedNow = yield* launcherPathOwned(current.value, current.value.path, app.installId);
-    if (ownedNow && sameShim(current.value.shim, wanted)) return Option.none<string>();
+    if (ownedNow && sameShim(current.value.shim, wanted)) {
+      // Already current, so any copy under the upgrade name is stale: one left by an
+      // upgrade that stopped after its record was saved goes now, before an uninstall
+      // could leave the path empty for the next start to fill with it.
+      yield* trashUpgradeLeftovers(next, app.installId);
+      return Option.none<string>();
+    }
     const from = ownedNow
       ? current.value
       : (yield* launcherPathOwned(next, next.path, app.installId))
@@ -1091,15 +1099,7 @@ const make = Effect.gen(function* () {
       // recognises, so it would hold every later uninstall back.
       // Every copy under the upgrade name goes, including one an earlier upgrade that
       // stopped part way left behind: only an upgrade makes them, and the Trash keeps them.
-      for (const left of yield* upgradeLeftovers(next, app.installId)) {
-        yield* host
-          .trashItem(left)
-          .pipe(
-            Effect.catchCause(() =>
-              fileSystem.remove(left, { recursive: true, force: true }).pipe(Effect.ignore),
-            ),
-          );
-      }
+      yield* trashUpgradeLeftovers(next, app.installId);
       yield* logInfo("upgraded installed page launcher to an app shim", {
         installId: app.installId,
       });
@@ -1132,11 +1132,33 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const trashUpgradeLeftovers = (
+    location: Extract<LauncherLocation, { kind: "mac-bundle" }>,
+    installId: string,
+  ) =>
+    Effect.gen(function* () {
+      for (const left of yield* upgradeLeftovers(location, installId)) {
+        yield* host
+          .trashItem(left)
+          .pipe(
+            Effect.catchCause(() =>
+              fileSystem.remove(left, { recursive: true, force: true }).pipe(Effect.ignore),
+            ),
+          );
+      }
+    });
+
   // An upgrade stopped between its two renames leaves the launcher under its upgrade
-  // name and nothing in its place; it goes back before anything else looks at it.
+  // name and nothing in its place; it goes back before anything else looks at it. An
+  // empty path with an uninstall's copy beside it is an uninstall the Trash refused,
+  // never an upgrade to finish, so nothing is put back then.
   const restoreInterruptedLauncher = Effect.fn("desktop.artifactApps.restoreInterruptedLauncher")(
     function* (location: Extract<LauncherLocation, { kind: "mac-bundle" }>, installId: string) {
       if (yield* fileSystem.exists(location.path).pipe(Effect.orElseSucceed(() => true))) return;
+      const removing = yield* pendingRemovals(location, installId).pipe(
+        Effect.orElseSucceed((): ReadonlyArray<string> => ["unknown"]),
+      );
+      if (removing.length > 0) return;
       const left = (yield* upgradeLeftovers(location, installId))[0];
       if (left === undefined) return;
       yield* fileSystem.rename(left, location.path).pipe(Effect.ignore);

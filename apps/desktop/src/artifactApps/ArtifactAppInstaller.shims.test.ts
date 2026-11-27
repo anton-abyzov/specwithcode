@@ -313,6 +313,67 @@ describe("ArtifactAppInstaller with app shims", () => {
     ),
   );
 
+  it.effect("clears a stale upgrade copy left after the record was saved", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const appShim = shimConfig(loader);
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        // Stopped after the record, before the old copy was trashed: the launcher is current.
+        const stale = path.join(
+          folder,
+          `.Morning dashboard.app.upgrading-${first.app.installId}.${"3".repeat(32)}`,
+        );
+        yield* fileSystem.makeDirectory(path.join(stale, "Contents"), { recursive: true });
+        const signedBefore = h.calls.codesigned.length;
+        yield* h.installer.upgradeLaunchers;
+        assert.equal(h.calls.codesigned.length, signedBefore);
+        assert.include(h.calls.trashed, hostPath(stale));
+        assert.isFalse(yield* fileSystem.exists(stale));
+        assert.isTrue(Option.isSome(yield* h.installer.shimInstallFor(bundle)));
+      }),
+    ),
+  );
+
+  it.effect("leaves an upgrade copy alone while an uninstall's copy is beside it", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const appShim = shimConfig(loader);
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        const stale = path.join(
+          folder,
+          `.Morning dashboard.app.upgrading-${first.app.installId}.${"4".repeat(32)}`,
+        );
+        yield* fileSystem.makeDirectory(path.join(stale, "Contents"), { recursive: true });
+        // An uninstall moved the current launcher aside, then the Trash failed.
+        yield* fileSystem.rename(
+          bundle,
+          path.join(
+            folder,
+            `.Morning dashboard.app.removing-${first.app.installId}.${"5".repeat(32)}`,
+          ),
+        );
+        yield* h.installer.upgradeLaunchers;
+        assert.isFalse(yield* fileSystem.exists(bundle));
+        assert.isTrue(yield* h.installer.uninstall(first.app.installId));
+        assert.isFalse(yield* fileSystem.exists(stale));
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.startsWith(".")),
+          [],
+        );
+      }),
+    ),
+  );
+
   it.effect("never puts back a copy a failed uninstall left aside", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
