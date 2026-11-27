@@ -1091,7 +1091,9 @@ layer("ProviderEventIngestorV2", (it) => {
         const projection = yield* projectionStore.getThreadProjection(threadId);
         for (const fixture of fixtures) {
           const closed =
-            fixture.key === "native" || fixture.key === "unavailable" || fixture.key === "claude-form";
+            fixture.key === "native" ||
+            fixture.key === "unavailable" ||
+            fixture.key === "claude-form";
           const request = projection.runtimeRequests.find(
             (item) => item.id === fixture.request.id,
           )!;
