@@ -994,7 +994,12 @@ export function mergeToolCallState(
 ): AcpToolCallState {
   const nextKind = next.kind ?? (typeof next.data.kind === "string" ? next.data.kind : undefined);
   const kind = nextKind ?? previous?.kind;
-  const title = next.title ?? previous?.title;
+  // A completing update often carries only content: its made-up "Tool" summary
+  // must not replace a title the agent sent earlier for this call.
+  const title =
+    next.data.title === undefined && previous?.data.title !== undefined
+      ? (previous.title ?? next.title)
+      : (next.title ?? previous?.title);
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;

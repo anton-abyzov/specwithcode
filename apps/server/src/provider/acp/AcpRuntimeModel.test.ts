@@ -383,6 +383,41 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("keeps the agent's tool title when a completing update carries only content", () => {
+    const parse = (update: EffectAcpSchema.SessionNotification["update"]) => {
+      const event = parseSessionUpdateEvent({ sessionId: "session-1", update }).events[0];
+      if (event?._tag !== "ToolCallUpdated") throw new Error("Expected a tool call event");
+      return event.toolCall;
+    };
+    const started = parse({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-2",
+      title: "studio-code-computer_screenshot",
+      status: "in_progress",
+      rawInput: {},
+    } as EffectAcpSchema.SessionNotification["update"]);
+    const completed = parse({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tool-2",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "Captured 1440x900" } }],
+    } as EffectAcpSchema.SessionNotification["update"]);
+    // The content-only update would summarize itself as "Tool".
+    expect(completed.title).toBe("Tool");
+    const merged = mergeToolCallState(started, completed);
+    expect(merged.title).toBe(started.title);
+    expect(merged.title).not.toBe("Tool");
+    expect(merged.data.title).toBe("studio-code-computer_screenshot");
+    // An update that sends its own title still replaces it.
+    const retitled = parse({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tool-2",
+      title: "Screenshot computer",
+      status: "completed",
+    } as EffectAcpSchema.SessionNotification["update"]);
+    expect(mergeToolCallState(started, retitled).title).toBe(retitled.title);
+  });
+
   it("clears prior ACP locations when an update explicitly replaces them", () => {
     const toolCall = (locations?: EffectAcpSchema.ToolCallLocation[] | null) => {
       const parsed = parseSessionUpdateEvent({
