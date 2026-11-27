@@ -2332,6 +2332,8 @@ const make = Effect.gen(function* () {
     readonly task: TaskClassificationInput;
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly baseline: ResolvedTarget;
+    /** Review work (`role` or `taskClass`): a named reviewer never takes a row's Ultracode. */
+    readonly review?: boolean;
     readonly options: WorkerRoutingOptions | undefined;
   }) =>
     Effect.gen(function* () {
@@ -2371,7 +2373,8 @@ const make = Effect.gen(function* () {
         return settings !== null &&
           tracks &&
           targetPinsModel(input.requested) &&
-          input.taskClass !== "review"
+          input.taskClass !== "review" &&
+          input.review !== true
           ? namedOnTrackRow(settings, input.project, input.baseline, input.providers, unrouted)
           : unrouted;
       const decision = yield* routeWorkerTask({
@@ -3752,6 +3755,7 @@ const make = Effect.gen(function* () {
                 project,
                 parent,
                 requested: input.target,
+                review: reviewTask,
                 taskClass: input.taskClass,
                 taskLane: input.taskLane,
                 task: { text: input.task, title: input.title },

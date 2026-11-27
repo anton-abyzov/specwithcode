@@ -302,7 +302,6 @@ export function providerFallbackCommand(
     currentModel: thread.modelSelection.model,
     currentOptions: thread.modelSelection.options,
     rule,
-    rowUltracode: true,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent,
     anyReady: true,

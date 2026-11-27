@@ -395,7 +395,7 @@ describe("OrchestratorMcpService task routing", () => {
     const named = (
       target: Record<string, unknown>,
       clientRequestId: string,
-      taskClass?: "review",
+      role?: "review",
     ) =>
       run(tracks, (service, dispatched) =>
         Effect.gen(function* () {
@@ -405,7 +405,7 @@ describe("OrchestratorMcpService task routing", () => {
               target: { providerInstanceId: claude, model: "claude-opus-5-5", ...target },
               mode: "async",
               clientRequestId,
-              ...(taskClass === undefined ? {} : { taskClass }),
+              ...(role === undefined ? {} : { role }),
             }),
           );
           return (yield* delegated(dispatched)).modelSelection?.options ?? [];
@@ -425,6 +425,13 @@ describe("OrchestratorMcpService task routing", () => {
         const options = yield* named({ options: [off] }, "named-row-off");
         assert.deepInclude(options, off);
         assert.notDeepInclude(options, on);
+      }),
+    );
+
+    it.effect("never gives a named reviewer the row's Ultracode, even by role alone", () =>
+      Effect.gen(function* () {
+        const options = yield* named({}, "named-review-role", "review");
+        assert.isFalse(options.some((option) => option.id === "ultracode"));
       }),
     );
 

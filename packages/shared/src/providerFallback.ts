@@ -36,7 +36,11 @@ import {
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { namedReviewSourceKeys, reviewerChain, usageNeverRead } from "./adversarialReview.ts";
-import { isHeldSource, withTrackRowUltracode } from "./modelTracks.ts";
+import {
+  isHeldSource,
+  trackEntryOffersUltracode,
+  withTrackRowUltracode,
+} from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
   denialSparesModel,
@@ -839,17 +843,7 @@ export function resolveProviderFallback(
     resolveProviderFallbackPass({ ...input, verifiedOnly: false, allowLastResort: true });
   if (target === null) return null;
   const moved = withMovedEffort(target, input);
-  // A move onto a Daily or Complex row takes its Ultracode, unless the thread named it (1506).
-  return input.rowUltracode === true &&
-    input.rule.threadModelMode === "tracks" &&
-    input.review !== true
-    ? withTrackRowUltracode(
-        moved,
-        input.rule.modelLanes,
-        input.providers,
-        input.rule.defaultModelProviders,
-      )
-    : moved;
+  return input.rowUltracode === true ? withMovedRowUltracode(moved, input) : moved;
 }
 
 /**
@@ -886,6 +880,31 @@ function withMovedEffort(
   const resolved = kept?.ok === true ? kept : resolveEffort(START_EFFORT, descriptors);
   if (!resolved.ok) return target;
   return { ...target, options: withEffortSelection(target.options, resolved) };
+}
+
+/**
+ * A thread or worker moved onto a Daily or Complex row takes the row's
+ * Ultracode on a Tracks project (1506). An off the thread chose stays off on
+ * any model that offers the switch; a review move takes nothing.
+ */
+function withMovedRowUltracode(
+  target: ModelSelection,
+  input: Pick<ResolveProviderFallbackInput, "providers" | "rule" | "currentOptions" | "review">,
+): ModelSelection {
+  if (input.rule.threadModelMode !== "tracks" || input.review === true) return target;
+  if (
+    input.currentOptions?.some((option) => option.id === "ultracode" && option.value === false)
+  ) {
+    if (!trackEntryOffersUltracode(target, input.providers)) return target;
+    const others = (target.options ?? []).filter((option) => option.id !== "ultracode");
+    return { ...target, options: [...others, { id: "ultracode", value: false }] };
+  }
+  return withTrackRowUltracode(
+    target,
+    input.rule.modelLanes,
+    input.providers,
+    input.rule.defaultModelProviders,
+  );
 }
 
 /** The level a model nobody chose a level for starts at (`TRACK_DEFAULT_EFFORT`). */
@@ -1421,7 +1440,11 @@ export function resolveWorkerLaunchSelection(input: {
         excludedModels: input.rule.providerLimitExcludedModels,
         excludedSelections: held,
       });
-  if (same !== null) return { selection: same, reason: "same-model" };
+  if (same !== null)
+    return {
+      selection: withMovedRowUltracode(same, { ...input, currentOptions: preferred.options }),
+      reason: "same-model",
+    };
   const coordinator = input.coordinator;
   // A worker does regular work: never on a Review-track model the coordinator runs.
   if (

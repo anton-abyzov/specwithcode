@@ -881,10 +881,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* Effect.promise(() =>
             raiseSetupCardBeside(setupTargetOf(project, caller, stateDir)),
           );
-        // A provider named without a model starts on its tier model; an explicit model
-        // wins, with its Tracks row's Ultracode; naming neither keeps the picks below.
+        // A provider named without a model gets its tier model; an explicit one wins, with its
+        // Tracks row's Ultracode (a launch sent from elsewhere has the sender's); else picks below.
         const namedSelection = yield* namedLaunchOnTrackRow({
-          project,
+          project: input.delegation === undefined ? project : undefined,
           taskClass: input.taskClass,
           selection:
             input.modelSelection ??

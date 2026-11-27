@@ -11,7 +11,11 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { type ProviderFallbackRule, resolveProviderFallback } from "./providerFallback.ts";
+import {
+  type ProviderFallbackRule,
+  resolveProviderFallback,
+  resolveWorkerLaunchSelection,
+} from "./providerFallback.ts";
 
 const now = Date.parse("2026-11-27T15:00:00.000Z");
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -170,5 +174,52 @@ describe("falling back onto a track row", () => {
     });
     expect(target?.instanceId).toBe("claudeAgent_work");
     expect(target?.options).toEqual([medium]);
+  });
+
+  it("keeps a thread's own off when it moves to another model with the row on", () => {
+    const SONNET = "claude-sonnet-5-5";
+    const spent = provider("claudeAgent", "claudeAgent", [SONNET], 100, claudeOptions);
+    const second = provider("claudeAgent_work", "claudeAgent", [OPUS], 10, claudeOptions);
+    const off = { id: "ultracode", value: false };
+    const target = resolveProviderFallback({
+      providers: [spent, second, codex],
+      currentInstanceId: id("claudeAgent"),
+      currentModel: SONNET,
+      currentOptions: [medium, off],
+      rule: {
+        ...rule({ instanceId: id("claudeAgent_work"), model: OPUS, options: [medium, ultracodeOn] }),
+        modelLanes: {
+          routine: [
+            { instanceId: id("claudeAgent"), model: SONNET, options: [medium] },
+            { instanceId: id("claudeAgent_work"), model: OPUS, options: [medium, ultracodeOn] },
+          ],
+          complex: [],
+        },
+      },
+      nowMs: now,
+      belowPercent: 100,
+      anyReady: true,
+      lane: "routine",
+      rowUltracode: true,
+    });
+    expect(target?.model).toBe(OPUS);
+    expect(target?.options).toContainEqual(off);
+    expect(target?.options).not.toContainEqual(ultracodeOn);
+  });
+
+  it("gives a worker moved to the same model on another account the row's Ultracode", () => {
+    const spent = provider("claudeAgent", "claudeAgent", [OPUS], 100, claudeOptions);
+    const second = provider("claudeAgent_work", "claudeAgent", [OPUS], 10, claudeOptions);
+    const opusRow = { instanceId: id("claudeAgent"), model: OPUS, options: [medium, ultracodeOn] };
+    const result = resolveWorkerLaunchSelection({
+      preferred: { instanceId: id("claudeAgent"), model: OPUS, options: [medium] },
+      coordinator: null,
+      providers: [spent, second, codex],
+      rule: rule(opusRow),
+      nowMs: now,
+    });
+    expect(result.reason).toBe("same-model");
+    expect(result.selection.instanceId).toBe("claudeAgent_work");
+    expect(result.selection.options).toContainEqual(ultracodeOn);
   });
 });
