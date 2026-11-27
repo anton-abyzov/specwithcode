@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite is the driver under test.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- node:sqlite is the driver under test; a plain timer stands in for the service writing.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
