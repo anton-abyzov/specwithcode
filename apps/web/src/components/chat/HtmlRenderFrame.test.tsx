@@ -12,6 +12,9 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Success", url: URL_, expiresAt: Date.now() + 3_600_000 }),
   useAssetUrlRefresh: () => async () => URL_,
 }));
+vi.mock("../artifactApps/InstallAsAppButton", () => ({
+  InstallAsAppButton: () => <span>install-button</span>,
+}));
 vi.mock("~/state/filesystem", () => ({ useFilesystemReadAccess: () => ({ canReadFiles: false }) }));
 // The reader's content slot, once a test opens it.
 const overlay: { content: HTMLElement | null } = { content: null };
@@ -118,5 +121,50 @@ describe("HtmlRenderFrame stage pages", () => {
   it("never gives an inline report frame sound or fullscreen", async () => {
     await frameSrc(undefined);
     expect(document.querySelector("iframe")?.hasAttribute("allow")).toBe(false);
+  });
+});
+
+describe("HtmlRenderFrame earlier versions", () => {
+  it("shows a replaced report as a header only, with no install and no page loaded", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () =>
+      root.render(
+        <HtmlRenderFrame
+          environmentId={"env-A" as never}
+          htmlRender={{ attachmentId: "att-1", title: "Guide", height: 300 }}
+          threadRef={{ environmentId: "env-A", threadId: "thread-1" } as never}
+          replaced
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("Earlier version. The newest is further down.");
+    expect(container.textContent).not.toContain("install-button");
+    expect(container.querySelector<HTMLElement>(".html-report-preview")?.hidden).toBe(true);
+    expect(container.textContent).toContain("Open report");
+  });
+
+  it("keeps Install as app on the newest version", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () =>
+      root.render(
+        <HtmlRenderFrame
+          environmentId={"env-A" as never}
+          htmlRender={{ attachmentId: "att-1", title: "Guide", height: 300 }}
+          threadRef={{ environmentId: "env-A", threadId: "thread-1" } as never}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("install-button");
+  });
+
+  it("labels a current report plainly and says the thread shows a preview", async () => {
+    await frameSrc(undefined);
+    expect(container.textContent).toContain("Report");
+    expect(container.textContent).not.toContain("Interactive");
+    expect(container.textContent).toContain("A preview. Open the report");
   });
 });

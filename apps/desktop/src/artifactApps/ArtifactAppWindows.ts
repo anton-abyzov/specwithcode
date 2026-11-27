@@ -300,6 +300,14 @@ const make = Effect.gen(function* () {
     }
     // The window keeps the app's name; the client's document title would replace it.
     window.on("page-title-updated", (event) => event.preventDefault());
+    // This window belongs to SpecWithCode, so the menu's quit shortcut would end SpecWithCode
+    // and every window with it. In an installed page it closes the page only, as quitting a
+    // separate app would; Quit in the menu bar still quits SpecWithCode.
+    window.webContents.on("before-input-event", (event, input) => {
+      if (!isArtifactAppQuitShortcut(input, environment.platform)) return;
+      event.preventDefault();
+      window.close();
+    });
     const guardNavigation = (event: { preventDefault: () => void }, url: string) => {
       if (isArtifactAppWindowNavigationAllowed({ windowUrl, targetUrl: url })) return;
       event.preventDefault();
@@ -464,3 +472,13 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ArtifactAppWindows, make);
+
+/** The platform's quit shortcut: Command-Q on macOS, Control-Q elsewhere, with no other modifier. */
+export function isArtifactAppQuitShortcut(
+  input: Pick<Electron.Input, "type" | "key" | "meta" | "control" | "alt" | "shift">,
+  platform: NodeJS.Platform,
+): boolean {
+  if (input.type !== "keyDown" || input.key.toLowerCase() !== "q") return false;
+  if (input.alt || input.shift) return false;
+  return platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
+}

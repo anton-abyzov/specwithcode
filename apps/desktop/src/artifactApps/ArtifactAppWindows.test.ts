@@ -21,6 +21,34 @@ const idFor = (index: number) => index.toString(16).padStart(32, "0");
 const ID = "a".repeat(32);
 const WINDOW_URL = `studio://app/#/artifact-app/${ID}`;
 
+describe("isArtifactAppQuitShortcut", () => {
+  const key = (input: Partial<Electron.Input>) =>
+    ({
+      type: "keyDown",
+      key: "q",
+      meta: false,
+      control: false,
+      alt: false,
+      shift: false,
+      ...input,
+    }) as Electron.Input;
+  it("matches Command-Q on macOS and Control-Q elsewhere, alone", () => {
+    assert.isTrue(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true }), "darwin"));
+    assert.isFalse(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "darwin"));
+    assert.isTrue(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "win32"));
+    assert.isTrue(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "linux"));
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true, shift: true }), "darwin"),
+    );
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true, type: "keyUp" }), "darwin"),
+    );
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true, key: "w" }), "darwin"),
+    );
+  });
+});
+
 describe("canOpenAnotherArtifactAppWindow", () => {
   it("allows up to ten windows", () => {
     assert.isTrue(ArtifactAppWindows.canOpenAnotherArtifactAppWindow(0));
@@ -499,6 +527,25 @@ describe("ArtifactAppWindows", () => {
       assert.deepEqual(yield* windows.windowForInstall(other), Option.none());
       assert.deepEqual(yield* windows.windowForInstall(ID), Option.some(fake.window));
 
+      // The quit shortcut in an installed page closes that page, never the whole app.
+      const press = (input: Record<string, unknown>) => {
+        let prevented = false;
+        emit(
+          fake.contentsListeners,
+          "before-input-event",
+          {
+            preventDefault: () => {
+              prevented = true;
+            },
+          },
+          { type: "keyDown", meta: false, control: false, alt: false, shift: false, ...input },
+        );
+        return prevented;
+      };
+      assert.isFalse(press({ key: "w", meta: true }));
+      assert.isFalse(press({ key: "q", control: true }));
+      assert.equal(fake.closed, 0);
+
       // Closing tells the listeners once and forgets the version.
       const closed: Array<string> = [];
       yield* windows.onClosed(() => {
@@ -506,7 +553,9 @@ describe("ArtifactAppWindows", () => {
       });
       yield* windows.onClosed((installId) => closed.push(installId));
       yield* windows.setVersionUrl(ID, Option.some(VERSION));
-      fake.window.close();
+      // Command-Q closes the page, and the shortcut never reaches the menu's Quit.
+      assert.isTrue(press({ key: "Q", meta: true }));
+      assert.equal(fake.closed, 1);
       assert.deepEqual(closed, [ID]);
       assert.isFalse(yield* windows.isFrameOnVersion(ID));
       assert.isTrue(blocked("will-frame-navigate", VERSION));

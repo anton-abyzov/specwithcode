@@ -3220,7 +3220,9 @@ export const fr: PhraseCatalog = {
     "Les modèles et leurs capacités viennent de ce runtime. Les modèles locaux, par abonnement et API peuvent prendre en charge différemment les outils, les images et la facturation.",
   "Made a visual": "A créé un visuel",
   "Loading visual…": "Chargement du visuel…",
-  "Interactive report": "Rapport interactif",
+  Report: "Rapport",
+  "Earlier version. The newest is further down.":
+    "Version précédente. La plus récente est plus bas.",
   "Motion presentation": "Présentation animée",
   Play: "Lire",
   "Plays full size with sound. Press Escape to close.":
@@ -3228,8 +3230,8 @@ export const fr: PhraseCatalog = {
   "Open report": "Ouvrir le rapport",
   "Open in reader": "Ouvrir dans le lecteur",
   "Loading report…": "Chargement du rapport…",
-  "Open the report to explore its diagrams, details and evidence.":
-    "Ouvrez le rapport pour explorer ses diagrammes, détails et preuves.",
+  "A preview. Open the report to click its links, tabs and evidence files.":
+    "Un aperçu. Ouvrez le rapport pour cliquer sur ses liens, onglets et fichiers de preuve.",
   "Stop command": "Arrêter la commande",
   "Run command": "Exécuter la commande",
   "Stop the command": "Arrêter la commande",

@@ -83,6 +83,8 @@ interface HtmlRenderFrameProps {
   readonly threadRef?: ScopedThreadRef | null;
   /** The thread's folder; with `threadRef` it lets the report's evidence links open files. */
   readonly cwd?: string | undefined;
+  /** A later page in this thread has the same title: show this one as an earlier version. */
+  readonly replaced?: boolean | undefined;
 }
 
 /** A published page in the thread: a `show_visual` diagram in full, a stage card, or a report preview. */
@@ -127,10 +129,14 @@ function HtmlStageFrame(props: HtmlRenderFrameProps) {
         <PlayIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h3 className="html-report-card-title">{title}</h3>
-          <p className="html-report-card-kind">{tx("Motion presentation")}</p>
+          <p className="html-report-card-kind">
+            {props.replaced
+              ? tx("Earlier version. The newest is further down.")
+              : tx("Motion presentation")}
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {threadRef ? (
+          {threadRef && !props.replaced ? (
             <InstallAsAppButton
               environmentId={threadRef.environmentId}
               threadId={threadRef.threadId}
@@ -326,11 +332,13 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
         <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h3 className="html-report-card-title">{title}</h3>
-          <p className="html-report-card-kind">{tx("Interactive report")}</p>
+          <p className="html-report-card-kind">
+            {props.replaced ? tx("Earlier version. The newest is further down.") : tx("Report")}
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* An installed page follows this thread, so it needs the thread to follow. */}
-          {threadRef ? (
+          {threadRef && !props.replaced ? (
             <InstallAsAppButton
               environmentId={threadRef.environmentId}
               threadId={threadRef.threadId}
@@ -349,7 +357,12 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
           </Button>
         </div>
       </header>
-      <div className="html-report-preview" style={{ height: previewHeight }}>
+      {/* An earlier version keeps only its header; its page loads only if it is opened. */}
+      <div
+        className="html-report-preview"
+        style={{ height: previewHeight }}
+        hidden={props.replaced === true}
+      >
         <div ref={inlineRef} />
         {expanded ? <p className="html-report-placeholder">{tx("Open in reader")}</p> : null}
         {!expanded && src !== null ? (
@@ -361,9 +374,11 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
           </p>
         ) : null}
       </div>
-      <p className="html-report-card-foot">
-        {tx("Open the report to explore its diagrams, details and evidence.")}
-      </p>
+      {props.replaced ? null : (
+        <p className="html-report-card-foot">
+          {tx("A preview. Open the report to click its links, tabs and evidence files.")}
+        </p>
+      )}
       {createPortal(
         <div
           ref={readerRef}
