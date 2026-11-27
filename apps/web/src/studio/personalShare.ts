@@ -267,8 +267,11 @@ export function shareConfirmCalls(input: {
   };
 }
 
-/** What a row of the machines table offers: turn it on from here, or say where to. */
-export type ShareRowAction = "turn-on" | "manual" | null;
+/**
+ * What a row of the machines table offers: turn it on from here, add it to
+ * this machine's list (its own switch is turned on there), or say where to.
+ */
+export type ShareRowAction = "turn-on" | "add" | "manual" | null;
 
 export interface ShareMachineRow {
   readonly environmentId: string;
@@ -294,6 +297,15 @@ export function shareMachineRows(input: {
   /** The machine that runs the link's routines, as the window's project list knows it. */
   readonly runnerEnvironmentId: string | null;
   readonly canTurnOn: (environmentId: string) => boolean;
+  /**
+   * The Connect account's other machines, as the window knows them. One this
+   * machine's server does not name yet (not confirmed here, say, because it
+   * was offline when the switch went on) gets a row too, so it can be added.
+   */
+  readonly accountMachines?: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly label: string;
+  }>;
 }): ShareMachineRow[] {
   const { status } = input;
   const runner =
@@ -330,7 +342,28 @@ export function shareMachineRows(input: {
         action: offered ? (input.canTurnOn(machine.environmentId) ? "turn-on" : "manual") : null,
       };
     });
-  return [own, ...others];
+  const named = new Set<string>([
+    status.environmentId,
+    ...status.machines.map((machine) => machine.environmentId),
+  ]);
+  const missing = (input.accountMachines ?? [])
+    .filter((machine) => !named.has(machine.environmentId))
+    .filter(
+      (machine, index, all) =>
+        all.findIndex((other) => other.environmentId === machine.environmentId) === index,
+    )
+    .map((machine): ShareMachineRow => ({
+      environmentId: machine.environmentId,
+      label: machine.label,
+      own: false,
+      state: shareMachineStateText("not_confirmed", machine.label),
+      on: false,
+      detail: null,
+      runsRoutines: false,
+      lastSyncedAt: null,
+      action: !status.enabled ? null : input.canTurnOn(machine.environmentId) ? "turn-on" : "add",
+    }));
+  return [own, ...others, ...missing];
 }
 
 type RestorePoint = PersonalShareStatus["restorePoints"][number];

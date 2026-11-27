@@ -272,6 +272,44 @@ describe("the machines table", () => {
     expect(rows[4]!.detail).toBe("Last seen November 22");
   });
 
+  it("lists an account machine this server does not name yet, so it can be added later", () => {
+    const rows = shareMachineRows({
+      status: status({
+        enabled: true,
+        machines: [{ environmentId: id("laptop"), label: "Laptop", state: "joined" }],
+      }),
+      labelOf: (environmentId, fallback) => fallback ?? environmentId,
+      runnerEnvironmentId: null,
+      canTurnOn: (environmentId) => environmentId === "tower",
+      accountMachines: [
+        { environmentId: "laptop", label: "Laptop" },
+        { environmentId: "win", label: "Win" },
+        { environmentId: "win", label: "Win" },
+        { environmentId: "tower", label: "Tower" },
+      ],
+    });
+    expect(rows.map((row) => [row.label, row.on, row.action, row.state.text])).toEqual([
+      ["Studio", true, null, "On"],
+      ["Laptop", true, null, "On"],
+      ["Win", false, "add", "Not added on this machine yet"],
+      ["Tower", false, "turn-on", "Not added on this machine yet"],
+    ]);
+  });
+
+  it("offers no add while this machine's own switch is off", () => {
+    const rows = shareMachineRows({
+      status: status({ enabled: false, machines: [] }),
+      labelOf: (environmentId, fallback) => fallback ?? environmentId,
+      runnerEnvironmentId: null,
+      canTurnOn: () => true,
+      accountMachines: [{ environmentId: "win", label: "Win" }],
+    });
+    expect(rows.map((row) => [row.label, row.action])).toEqual([
+      ["Studio", null],
+      ["Win", null],
+    ]);
+  });
+
   it("names another machine as the runner when this one is not", () => {
     const rows = shareMachineRows({
       status: status({

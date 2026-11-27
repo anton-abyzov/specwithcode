@@ -96,10 +96,21 @@ export interface ShareGrantFacts {
  * (`renewable`, which needs that pairing now and `ongoingConsent` from the
  * mint): the half of `own` it can see. The other half, the peer's owner
  * marking the holder another person's, only the peer sees; it refuses then.
+ *
+ * The owner's own tick widens it (decided November 26, 2026): a grant this
+ * machine holds on a peer the owner confirmed for Percy here counts while it
+ * is still in date, even when this machine cannot renew it (a grant minted
+ * over Connect from the other machine's side, say). The peer still checks the
+ * grant on every call and refuses one it does not hold as its owner's
+ * (`no_grant`), so the tick only lets this side try; a machine only vouched
+ * for never gets the wider rule.
  */
 export const heldGrantCounts = (
   workers: Pick<StudioFleetWorkers, "status" | "renewable">,
-): boolean => workers.renewable && (workers.status === "allowed" || workers.status === "expired");
+  ownerConfirmed = false,
+): boolean =>
+  (workers.renewable && (workers.status === "allowed" || workers.status === "expired")) ||
+  (ownerConfirmed && (workers.status === "allowed" || workers.status === "expiring"));
 
 /**
  * What the peer said about itself; its own word, so it can only refuse.

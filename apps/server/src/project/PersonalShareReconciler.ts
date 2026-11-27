@@ -31,8 +31,9 @@ export const PERSONAL_SHARE_TICK_MS = 60_000;
 export const PERSONAL_SHARE_SILENT_MS = 2 * PERSONAL_SHARE_TICK_MS;
 
 const WAITING_FOR_PEER = "Waiting for the other machine to call this one.";
+// The state already says there is no access; the detail says what to do.
 const NO_GRANT_DETAIL =
-  "The two machines have no access to each other. Pair them again with your own access.";
+  "Neither holds access it may use on the other. Add the other machine to Percy on one of them (Settings > General), or allow work on it in Settings > Machines.";
 
 export class PersonalShareReconciler extends Context.Service<
   PersonalShareReconciler,

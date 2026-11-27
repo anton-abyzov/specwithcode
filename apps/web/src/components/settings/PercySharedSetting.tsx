@@ -368,6 +368,23 @@ export function PercySharedSetting() {
     await refresh();
   };
 
+  // Adds a machine to this machine's list only; it links once its own switch is on there.
+  const addMachine = async (environmentId: EnvironmentId) => {
+    if (ownId === null) return;
+    const confirmed = (saved?.machines ?? []).filter((id) => id !== environmentId);
+    setBusy(true);
+    const here = await setShared({
+      environmentId: ownId,
+      input: { enabled: checked, machines: [...confirmed, environmentId] },
+    });
+    setBusy(false);
+    if (here._tag === "Success") {
+      setStatus(here.value);
+      setError(null);
+    } else setError(failureText(squashAtomCommandFailure(here)));
+    await refresh();
+  };
+
   const restore = shareRestoreAction(status);
   const undo = async () => {
     if (ownId === null || restore === null) return;
@@ -397,6 +414,10 @@ export function PercySharedSetting() {
         labelOf,
         runnerEnvironmentId: personalRoutineRunnerOf(linkedSeats)?.environmentId ?? null,
         canTurnOn: (environmentId) => writable.has(environmentId),
+        // Only the Connect account's machines: adding one shares Percy's memory with it.
+        accountMachines: [...accountIds]
+          .filter((environmentId) => environmentId !== ownId)
+          .map((environmentId) => ({ environmentId, label: labelOf(environmentId) })),
       })
     : [];
   const anchor = searchableSetting("percy-shared");
@@ -494,6 +515,23 @@ export function PercySharedSetting() {
                             >
                               {tx("Turn on")}
                             </Button>
+                          </span>
+                        ) : row.action === "add" ? (
+                          <span className="grid justify-items-start gap-0.5">
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              disabled={!canChange || busy}
+                              data-share-add
+                              onClick={() => void addMachine(row.environmentId as EnvironmentId)}
+                            >
+                              {tx("Add")}
+                            </Button>
+                            <span className="text-muted-foreground">
+                              {tx("Then turn Percy on in Settings on {machine}", {
+                                machine: row.label,
+                              })}
+                            </span>
                           </span>
                         ) : row.action === "manual" ? (
                           <span className="text-muted-foreground" data-share-manual>

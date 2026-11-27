@@ -8,7 +8,8 @@
  * machine, or a seat this one is linked with vouches for it; an own grant
  * exists in at least one direction (on the callee, the grant the caller
  * signed in with; on the caller, the grant it holds there through its
- * management pairing, `heldGrantCounts`, which the callee checks too); and
+ * management pairing, or any in-date one for a peer the owner confirmed
+ * here, `heldGrantCounts`, which the callee checks too); and
  * the peer reports the same link id and protocol version. The
  * Connect user id a peer sends is its own word: it can only refuse.
  *
@@ -102,7 +103,11 @@ export interface PersonalShareEngineDeps extends ShareLinkServices {
   readonly grants: {
     /** The grant this machine issued to the peer, as `shareGrantKind` reads it. */
     readonly issued: (environmentId: EnvironmentId) => Effect.Effect<ShareGrantKind>;
-    /** Whether this machine holds a grant on the peer it can call with. */
+    /**
+     * Whether this machine holds a grant on the peer it can call with: one it
+     * renews through its management pairing, or any in-date one when the
+     * owner confirmed the peer here (`heldGrantCounts`).
+     */
     readonly held: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
   };
   readonly peers: Pick<HandoffPeers["Service"], "personalShare">;
@@ -151,7 +156,8 @@ const OWN_REFUSAL_DETAIL: Readonly<Record<PersonalShareRefusalReason, string>> =
   not_confirmed:
     "This machine has not confirmed the other one. Run `specwithcode percy on --with <machine>` here.",
   legacy_grant: "The only access between the two machines is an older kind. Pair them again.",
-  no_grant: "The two machines have no access to each other.",
+  no_grant:
+    "Neither holds access it may use on the other. Add the other machine to Percy here (Settings > General), or allow work on it in Settings > Machines.",
   other_account: "The other machine is linked to another SpecWithCode Connect account.",
   older_version: "The other machine runs a version without the shared Percy. Update it.",
 };
@@ -749,13 +755,18 @@ export const make = Effect.gen(function* () {
     snapshot,
     grants: {
       issued: (peer) => issuedGrant(grants, peer),
-      // Only a grant held through this machine's management pairing there counts (D-13).
+      // A grant held through this machine's management pairing there counts (D-13);
+      // any in-date one counts for a machine the owner confirmed here.
       held: (peer) =>
-        peers.target(peer).pipe(
-          Effect.flatMap((target) => workers.status(target.machineId)),
-          Effect.map(heldGrantCounts),
-          Effect.orElseSucceed(() => false),
-        ),
+        Effect.gen(function* () {
+          const target = yield* peers.target(peer);
+          const status = yield* workers.status(target.machineId);
+          const confirmed = yield* settings.getSettings.pipe(
+            Effect.map((current) => current.personalAssistantShared.machines.includes(peer)),
+            Effect.orElseSucceed(() => false),
+          );
+          return heldGrantCounts(status, confirmed);
+        }).pipe(Effect.orElseSucceed(() => false)),
     },
     peers,
     states,
