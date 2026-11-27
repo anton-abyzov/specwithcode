@@ -87,28 +87,38 @@ export const layerLive = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const dir = NodePath.join(config.stateDir, "backups", "personal-link");
     const done = new Map<string, string>();
+    // A pass that asks while a copy is still being written waits for that copy:
+    // starting another would delete the half-written file and begin again.
+    const running = new Map<string, Promise<string>>();
+    const copy = async (target: string) => {
+      if (NodeFS.existsSync(target)) {
+        // A retry of the same operation after a restart: reuse its copy only when it is sound.
+        if (!existingCopyIsSound(target))
+          throw new PersonalLinkSnapshotFailure({
+            message: `An unusable file is in the way of the database copy at ${target}.`,
+          });
+      } else {
+        const written = await snapshotLiveDatabase(config.dbPath, target);
+        if (written.quickCheck !== "ok")
+          throw new PersonalLinkSnapshotFailure({
+            message: `The copy failed its check (${written.quickCheck}).`,
+          });
+      }
+      done.set(target, target);
+      return target;
+    };
     return {
       snapshot: (operationId: string) =>
         Effect.tryPromise({
-          try: async () => {
+          try: () => {
             const target = NodePath.join(dir, snapshotFileName(operationId));
             const known = done.get(target);
-            if (known !== undefined) return known;
-            if (NodeFS.existsSync(target)) {
-              // A retry of the same operation after a restart: reuse its copy only when it is sound.
-              if (!existingCopyIsSound(target))
-                throw new PersonalLinkSnapshotFailure({
-                  message: `An unusable file is in the way of the database copy at ${target}.`,
-                });
-            } else {
-              const written = await snapshotLiveDatabase(config.dbPath, target);
-              if (written.quickCheck !== "ok")
-                throw new PersonalLinkSnapshotFailure({
-                  message: `The copy failed its check (${written.quickCheck}).`,
-                });
-            }
-            done.set(target, target);
-            return target;
+            if (known !== undefined) return Promise.resolve(known);
+            const inFlight = running.get(target);
+            if (inFlight !== undefined) return inFlight;
+            const started = copy(target).finally(() => running.delete(target));
+            running.set(target, started);
+            return started;
           },
           catch: (error) =>
             error instanceof PersonalLinkSnapshotFailure

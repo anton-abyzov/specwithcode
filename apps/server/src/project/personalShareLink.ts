@@ -64,7 +64,12 @@ export class PersonalShareLinkError extends Schema.TaggedError<PersonalShareLink
       case "read":
         return "Could not read this machine's Percy.";
       case "snapshot":
-        return "Could not save a copy of the database before linking; nothing was linked.";
+        // The cause says what to fix, such as the free disk space the copy needs.
+        return `Could not save a copy of the database before linking; nothing was linked.${
+          this.cause instanceof Error && this.cause.message !== ""
+            ? ` ${this.cause.message.slice(0, 300)}`
+            : ""
+        }`;
       case "restore_point":
         return "Could not save a restore point before linking; nothing was linked.";
       case "merge":

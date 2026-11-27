@@ -93,6 +93,36 @@ const sameFile = (left: string, right: string): boolean => {
   return a.dev === b.dev && a.ino === b.ino;
 };
 
+/** Room left free beyond the copy itself, so a snapshot never fills the disk. */
+export const SNAPSHOT_FREE_MARGIN_BYTES = 1024 ** 3;
+
+const gigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+
+/**
+ * Why a copy of `neededBytes` does not fit in the `freeBytes` free in
+ * `directory`, or null when it fits with `SNAPSHOT_FREE_MARGIN_BYTES` to spare.
+ */
+export const snapshotSpaceShortfall = (
+  neededBytes: number,
+  freeBytes: number,
+  directory: string,
+): string | null =>
+  freeBytes >= neededBytes + SNAPSHOT_FREE_MARGIN_BYTES
+    ? null
+    : `Not enough free disk space for the database copy: it needs about ${gigabytes(
+        neededBytes + SNAPSHOT_FREE_MARGIN_BYTES,
+      )} and ${directory} has ${gigabytes(freeBytes)} free.`;
+
+/** Bytes a non-root process may still write in `directory`, or undefined when unknown. */
+const freeBytesAt = (directory: string): number | undefined => {
+  try {
+    const stats = NodeFS.statfsSync(directory, { bigint: true });
+    return Number(stats.bavail * stats.bsize);
+  } catch {
+    return undefined;
+  }
+};
+
 export interface LiveDatabaseSnapshot {
   readonly path: string;
   readonly bytes: number;
@@ -104,7 +134,8 @@ export interface LiveDatabaseSnapshot {
  * Copies the live database into `outputPath` with SQLite's online backup,
  * through a connection opened by `openLiveDatabaseReadOnly`. The copy is a
  * self-contained rollback-journal database, checked with `quick_check`, and
- * published only once complete.
+ * published only once complete. Refuses before writing when the folder lacks
+ * the room for it.
  */
 export async function snapshotLiveDatabase(
   dbPath: string,
@@ -120,12 +151,23 @@ export async function snapshotLiveDatabase(
     throw new Error(`${target} already exists; choose a new file for the snapshot.`);
   }
   NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true, mode: 0o700 });
+  // The copy holds every page of the database; refuse before writing rather than fill the disk.
+  const neededBytes = Number((statOf(dbPath)?.size ?? 0n) + (statOf(`${dbPath}-wal`)?.size ?? 0n));
+  const freeBytes = freeBytesAt(NodePath.dirname(target));
+  const shortfall =
+    freeBytes === undefined
+      ? null
+      : snapshotSpaceShortfall(neededBytes, freeBytes, NodePath.dirname(target));
+  if (shortfall !== null) throw new Error(shortfall);
   const partial = `${target}.partial-${process.pid}`;
   NodeFS.rmSync(partial, { force: true });
   try {
     const source = openLiveDatabaseReadOnly(dbPath);
     try {
-      await NodeSqlite.backup(source, partial);
+      // One step, one read transaction. SQLite restarts a backup made of several
+      // steps whenever another connection writes to the source, so on a busy
+      // service with a large database a stepped copy never finished.
+      await NodeSqlite.backup(source, partial, { rate: -1 });
     } finally {
       source.close();
     }

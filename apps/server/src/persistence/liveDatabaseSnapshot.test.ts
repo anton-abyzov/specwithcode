@@ -7,9 +7,11 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  SNAPSHOT_FREE_MARGIN_BYTES,
   liveDatabaseReadOnlyUri,
   openLiveDatabaseReadOnly,
   snapshotLiveDatabase,
+  snapshotSpaceShortfall,
 } from "./liveDatabaseSnapshot.ts";
 
 const withHeldDatabase = async (run: (dbPath: string, directory: string) => Promise<void>) => {
@@ -92,5 +94,21 @@ describe("snapshotLiveDatabase", () => {
         [],
       );
     });
+  });
+});
+
+describe("snapshotSpaceShortfall", () => {
+  const gb = 1024 ** 3;
+  it("refuses a copy that would leave less than the margin free", () => {
+    // m4 on November 27, 2026: a 20.2 GB database and 12 GB free.
+    assert.equal(
+      snapshotSpaceShortfall(20.2 * gb, 12 * gb, "/state/backups/personal-link"),
+      "Not enough free disk space for the database copy: it needs about 21.2 GB and /state/backups/personal-link has 12.0 GB free.",
+    );
+    assert.isString(snapshotSpaceShortfall(gb, gb + SNAPSHOT_FREE_MARGIN_BYTES - 1, "/d"));
+  });
+
+  it("allows a copy that fits with the margin to spare", () => {
+    assert.isNull(snapshotSpaceShortfall(gb, gb + SNAPSHOT_FREE_MARGIN_BYTES, "/d"));
   });
 });

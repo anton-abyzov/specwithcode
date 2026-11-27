@@ -12,11 +12,13 @@ import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
 import {
   PersonalLinkSnapshot,
+  PersonalLinkSnapshotFailure,
   layerLive,
   memoryDigestBeforeRenames,
   personalMemoryDigest,
   snapshotFileName,
 } from "./personalLinkSnapshot.ts";
+import { PersonalShareLinkError } from "./personalShareLink.ts";
 
 const files = [
   { name: "notes.md", sha256: "a".repeat(64) },
@@ -205,6 +207,31 @@ describe("PersonalLinkSnapshot layerLive", () => {
     ),
   );
 
+  it.effect("lets a pass that asks during a copy wait for it instead of starting over", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const baseDir = yield* makeScratchBase();
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          yield* openScratchDatabase(config.dbPath, 2_000);
+          const snapshotter = yield* PersonalLinkSnapshot;
+          const [first, second] = yield* Effect.all(
+            [
+              snapshotter.snapshot("personal-link:op-4"),
+              snapshotter.snapshot("personal-link:op-4"),
+            ],
+            { concurrency: "unbounded" },
+          );
+          assert.strictEqual(second, first);
+          assert.strictEqual(countRows(first), 2_000);
+          assert.deepStrictEqual(NodeFS.readdirSync(NodePath.dirname(first)), [
+            snapshotFileName("personal-link:op-4"),
+          ]);
+        }).pipe(Effect.provide(liveFor(baseDir)));
+      }),
+    ),
+  );
+
   it.effect("reuses an existing copy for the same operation after a restart", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -332,4 +359,23 @@ describe("PersonalLinkSnapshot layerLive", () => {
       }),
     ),
   );
+});
+
+describe("PersonalShareLinkError", () => {
+  it("names what stopped the database copy, so the owner knows what to fix", () => {
+    const error = new PersonalShareLinkError({
+      stage: "snapshot",
+      cause: new PersonalLinkSnapshotFailure({
+        message: "Not enough free disk space for the database copy.",
+      }),
+    });
+    assert.strictEqual(
+      error.message,
+      "Could not save a copy of the database before linking; nothing was linked. Not enough free disk space for the database copy.",
+    );
+    assert.strictEqual(
+      new PersonalShareLinkError({ stage: "snapshot" }).message,
+      "Could not save a copy of the database before linking; nothing was linked.",
+    );
+  });
 });
