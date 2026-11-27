@@ -683,12 +683,18 @@ describe("stage pages", () => {
         '<template><template></template><meta name="specwithcode-page" content="stage"></template>',
       ),
     ).toBe(false);
-    // Elements a browser keeps in the head do not end it.
+    // Elements a browser keeps in the head do not end it; a template before the marker
+    // makes the page a report, as its content is parsed in modes of its own.
+    expect(
+      isHtmlRenderStagePage(
+        '<noframes>x</noframes><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(true);
     expect(
       isHtmlRenderStagePage(
         '<noframes>x</noframes><template><p>y</p></template><meta name="specwithcode-page" content="stage">',
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isHtmlRenderStagePage('<main>x</main><meta name="specwithcode-page" content="stage">'),
     ).toBe(false);
@@ -709,10 +715,24 @@ describe("stage pages", () => {
     const marker = '<meta name="specwithcode-page" content="stage">';
     // Text before a template still ends the head.
     expect(isHtmlRenderStagePage(`Intro<template></template>${marker}`)).toBe(false);
-    // A <template> written in a textarea inside a template is text, not a nested template.
+    // However a template's content would be read, one before the marker makes a report.
     expect(
       isHtmlRenderStagePage(`<head><template><textarea><template></textarea></template>${marker}`),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(
+        `<head><template><col><textarea><template></textarea></template>${marker}`,
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(`<head><template><svg><use href="#i"/></svg></template>${marker}`),
+    ).toBe(false);
+    // Trimming a long run of inner spaces stays linear.
+    const trimStarted = performance.now();
+    expect(
+      isHtmlRenderStagePage(`<meta name="specwithcode-page" content="x${" ".repeat(200_000)}x">`),
+    ).toBe(false);
+    expect(performance.now() - trimStarted).toBeLessThan(500);
     // A raw-text tag name inside a quoted attribute is part of the value.
     expect(isHtmlRenderStagePage(`<head data-note="<noframes>">${marker}`)).toBe(true);
     expect(isHtmlRenderStagePage(`<head data-note="</head>">${marker}`)).toBe(true);

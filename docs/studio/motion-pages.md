@@ -12,7 +12,7 @@ A page opts in with one tag in its head:
 <meta name="specwithcode-page" content="stage" />
 ```
 
-Put it early in the head, before any text or body element. SpecWithCode reads the head the way a browser does, and a page it cannot read with certainty, such as one with a script containing `<!--` before the tag, is shown as a report.
+Put it early in the head, before any text or body element. SpecWithCode reads the head the way a browser does, and a page it cannot read with certainty, such as one with a `<template>` or a script containing `<!--` before the tag, is shown as a report.
 
 Then:
 

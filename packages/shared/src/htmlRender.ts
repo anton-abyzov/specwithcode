@@ -61,17 +61,16 @@ export const HTML_RENDER_STAGE_READY_GLOBAL = "specwithcodeReady";
  *
  * The page is read once, front to back, the way a browser tokenizes it, until the
  * marker or the end of the head. Anything this reading does not follow exactly
- * (a script holding `<!--`, SVG or MathML in a template, a tag left open) makes
+ * (a template before the marker, a script holding `<!--`, a tag left open) makes
  * the page a report, the side without the stage's permissions.
  */
 export function isHtmlRenderStagePage(html: string): boolean {
-  let at = html.startsWith("﻿") ? 1 : 0;
-  let templates = 0;
+  let at = html.startsWith("\uFEFF") ? 1 : 0;
   while (at < html.length) {
     const open = html.indexOf("<", at);
     const text = html.slice(at, open === -1 ? html.length : open);
-    // Text ends the head, but inside a template it is the template's own content.
-    if (templates === 0 && !HTML_WHITESPACE_ONLY.test(text)) return false;
+    // Text ends the head.
+    if (!HTML_WHITESPACE_ONLY.test(text)) return false;
     if (open === -1) return false;
     if (html.startsWith("<!--", open)) {
       at = commentEnd(html, open + 4);
@@ -82,37 +81,25 @@ export function isHtmlRenderStagePage(html: string): boolean {
       at = html[open + 2] === ">" ? open + 3 : indexAfter(html, ">", open);
     } else {
       const tag = readTag(html, open);
-      // A tag left open swallows the rest of the page, the marker with it.
-      if (tag === "unclosed") return false;
-      if (tag === undefined) {
-        // A `<` that starts no tag is text.
-        if (templates === 0) return false;
-        at = open + 1;
-        continue;
-      }
+      // A tag left open swallows the rest of the page, the marker with it, and a `<`
+      // that starts no tag is text.
+      if (tag === "unclosed" || tag === undefined) return false;
       at = tag.end;
       if (tag.closing) {
-        if (tag.name === "template") templates = Math.max(0, templates - 1);
-        else if (templates === 0 && HEAD_ENDING_END_TAGS.has(tag.name)) return false;
+        // Other end tags are dropped in a head.
+        if (HEAD_ENDING_END_TAGS.has(tag.name)) return false;
         continue;
       }
-      if (RAW_TEXT_TAGS.has(tag.name)) {
-        // Its contents are text up to its own end tag, a `<template>` written there too.
-        if (templates === 0 && !HEAD_RAW_TEXT_TAGS.has(tag.name)) return false;
+      if (HEAD_RAW_TEXT_TAGS.has(tag.name)) {
+        // Its contents are text up to its own end tag.
         const close = rawTextEnd(html, at, tag.name);
         if (close === undefined) return false;
         if (tag.name === "script" && html.slice(at, close.start).includes("<!--")) return false;
         at = close.end;
         continue;
       }
-      if (tag.name === "template") {
-        templates += 1;
-        continue;
-      }
-      if (templates > 0) {
-        if (tag.name === "svg" || tag.name === "math") return false;
-        continue;
-      }
+      // Anything else, a template too (its content is parsed in modes of its own), ends
+      // the reading before the marker.
       if (!HEAD_TAGS.has(tag.name)) return false;
       if (
         tag.name === "meta" &&
@@ -128,17 +115,9 @@ export function isHtmlRenderStagePage(html: string): boolean {
 
 // Start tags a browser keeps in the head without contents of their own.
 const HEAD_TAGS = new Set(["html", "head", "meta", "link", "base", "basefont", "bgsound"]);
-// Elements whose contents are text; the first five may be in a head (noscript as it is
-// read with scripting on), the others end it.
+// Elements a head may hold whose contents are text (noscript as it is read with
+// scripting on).
 const HEAD_RAW_TEXT_TAGS = new Set(["script", "style", "title", "noscript", "noframes"]);
-const RAW_TEXT_TAGS = new Set([
-  ...HEAD_RAW_TEXT_TAGS,
-  "textarea",
-  "xmp",
-  "iframe",
-  "noembed",
-  "plaintext",
-]);
 const HEAD_ENDING_END_TAGS = new Set(["head", "body", "html", "br"]);
 const HTML_WHITESPACE_ONLY = /^[\t\n\f\r ]*$/;
 const HTML_WHITESPACE = /[\t\n\f\r ]/;
@@ -154,9 +133,13 @@ function asciiLowerCase(text: string): string {
 
 /** An attribute value as the marker compares it: HTML whitespace trimmed, ASCII folded. */
 function markerValue(value: string | undefined): string | undefined {
-  return value === undefined
-    ? undefined
-    : asciiLowerCase(value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, ""));
+  if (value === undefined) return undefined;
+  // By index, not a regular expression: a long run of inner spaces stays linear.
+  let start = 0;
+  let end = value.length;
+  while (start < end && HTML_WHITESPACE.test(value[start]!)) start += 1;
+  while (end > start && HTML_WHITESPACE.test(value[end - 1]!)) end -= 1;
+  return asciiLowerCase(value.slice(start, end));
 }
 
 /** The index just after the next `char` from `from`, or -1 when there is none. */
@@ -235,7 +218,6 @@ function rawTextEnd(
   from: number,
   name: string,
 ): { readonly start: number; readonly end: number } | undefined {
-  if (name === "plaintext") return undefined;
   const endTag = new RegExp(`</${name}[\\t\\n\\f\\r />]`, "gi");
   endTag.lastIndex = from;
   const match = endTag.exec(html);
