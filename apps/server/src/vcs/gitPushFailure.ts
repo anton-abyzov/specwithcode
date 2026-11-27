@@ -75,6 +75,8 @@ function isRemoteName(value: string): boolean {
     !value.includes("\\") &&
     !value.includes("?") &&
     !value.includes("#") &&
+    !value.includes("<") &&
+    !value.includes(">") &&
     !/\s/.test(value)
   );
 }
