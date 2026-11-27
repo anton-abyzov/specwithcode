@@ -33,10 +33,8 @@ it.effect("lists the threads routines run in, their own or a person's (1506)", (
       threadId: ThreadId.make("routine-thread"),
       updatedAt: "2026-11-27T12:00:00.000Z",
     });
-    assert.deepEqual([...(yield* routineThreadIds)].toSorted(), [
-      "person-thread",
-      "routine-thread",
-    ]);
+    const found = yield* routineThreadIds(yield* Effect.serviceOption(SqlClient.SqlClient));
+    assert.deepEqual([...(found ?? [])].toSorted(), ["person-thread", "routine-thread"]);
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
