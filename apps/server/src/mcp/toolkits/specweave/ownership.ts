@@ -80,6 +80,25 @@ const realPath = (path: string) => NodeFSP.realpath(path).catch(() => null);
 const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 
 /**
+ * Where `path` sits below the real `workspace`: the rest of the path after its
+ * highest folder that is the workspace itself (same real path, so another
+ * spelling on a disk that ignores case, or a registered worktree path that is
+ * a link, still counts). Taking the highest one means a link further down that
+ * leads back to the workspace is still part of the rest and gets checked.
+ */
+async function placeBelow(workspace: string, path: string): Promise<string | null> {
+  const resolved = NodePath.resolve(path);
+  const { root } = NodePath.parse(resolved);
+  const parts = resolved.slice(root.length).split(NodePath.sep).filter((part) => part !== "");
+  for (let index = 0; index <= parts.length; index++) {
+    if ((await realPath(NodePath.join(root, ...parts.slice(0, index)))) === workspace) {
+      return parts.slice(index).join(NodePath.sep);
+    }
+  }
+  return null;
+}
+
+/**
  * Whether any folder from `workspace` down to `workspace/below` is a link (or
  * missing). Each step is read as it stands, so a link put in place of a folder
  * is seen, while another spelling of the same folder on a case-insensitive
@@ -319,11 +338,7 @@ export async function decideOwnership(input: {
   ) {
     const recordedRoot = await realPath(recorded.root);
     // The recorded root's place below the real worktree, from its path alone.
-    const below = isInside(where.workspace, recorded.root)
-      ? NodePath.relative(where.workspace, recorded.root)
-      : input.worktreePath !== null && isInside(input.worktreePath, recorded.root)
-        ? NodePath.relative(input.worktreePath, recorded.root)
-        : null;
+    const below = await placeBelow(where.workspace, recorded.root);
     const inside =
       below !== null || (recordedRoot !== null && isInside(where.workspace, recordedRoot));
     const recordedCopy =

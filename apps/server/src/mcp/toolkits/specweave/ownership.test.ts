@@ -440,6 +440,15 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
         recorded: { root: respelled, incrementId: INCREMENT },
       });
       expect(sameFolder).toMatchObject({ ok: true });
+      // The worktree's own folder in another spelling, too.
+      const respelledWorktree = NodePath.join(NodePath.dirname(worktree), "WORKTREE");
+      const sameWorktree = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(nestedIncrement, "claim"),
+        recorded: { root: NodePath.join(respelledWorktree, "packages", "app"), incrementId: INCREMENT },
+      });
+      expect(sameWorktree).toMatchObject({ ok: true });
     }
     // The record of the chosen copy, a record of another increment, and one
     // outside the worktree (the shared project folder) change nothing.
