@@ -9014,6 +9014,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a subagent tool's name when its result lands after the root turn ended", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-carried-tool";
+        const TOOL_USE_ID = "toolu-carried-agent";
+        const BASH_ID = "toolu-carried-bash";
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-carried-tool-1"),
+            text: "Audit in the background.",
+            attachments: [],
+          }),
+        );
+        // The subagent asks for Bash while the root turn is still open.
+        for (const frame of [
+          makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000391",
+          }),
+          ...makeSubagentAssistantFrames({
+            parentToolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000392",
+            text: "Checking history.",
+            bashToolUseId: BASH_ID,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000393",
+            result: "Auditing in the background.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        // Its result arrives during the next root turn.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-carried-tool-2"),
+            text: "Anything new?",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        for (const frame of [
+          makeSubagentToolResultFrame({
+            parentToolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000394",
+            toolUseId: BASH_ID,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000395",
+            result: "Still auditing.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
+
+        const bashItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === BASH_ID
+            ? [event.turnItem]
+            : [],
+        );
+        const last = bashItems.at(-1);
+        assert.isDefined(last);
+        assert.notEqual(last?.status, "running");
+        // The command keeps its type and command line, not a nameless "tool" call.
+        assert.equal(last?.type, "command_execution");
+        assert.notProperty(last ?? {}, "toolName");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("releases held frames before the notification that first names the tool use", () =>
     Effect.scoped(
       Effect.gen(function* () {
