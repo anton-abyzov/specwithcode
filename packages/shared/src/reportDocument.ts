@@ -7,6 +7,9 @@
  * tested and shared.
  */
 
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+
 import { formatStudioThreadLink, studioThreadLinkLabel } from "./studioThreadLinks.ts";
 import {
   FRONTMATTER,
@@ -217,28 +220,32 @@ export function readableFrontmatterDate(
   options: FrontmatterPropertyOptions = {},
 ): string {
   const trimmed = value.trim();
-  const day = ISO_DATE.exec(trimmed);
+  const isTimestamp = ISO_TIMESTAMP.test(trimmed);
+  if (!ISO_DATE.test(trimmed) && !isTimestamp) return value;
+  // Engines can roll an impossible day (February 31) forward; such a value stays as written.
+  const day = trimmed.slice(0, 10);
+  const midnight = DateTime.make(`${day}T00:00:00.000Z`);
+  if (Option.isNone(midnight)) return value;
+  const parts = DateTime.toPartsUtc(midnight.value);
+  if (parts.month !== Number(day.slice(5, 7)) || parts.day !== Number(day.slice(8, 10))) {
+    return value;
+  }
   try {
-    if (day) {
-      const date = new Date(Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3])));
-      if (date.getUTCDate() !== Number(day[3])) return value;
+    if (!isTimestamp) {
       return new Intl.DateTimeFormat(options.locale, { dateStyle: "long", timeZone: "UTC" }).format(
-        date,
+        DateTime.toEpochMillis(midnight.value),
       );
     }
-    if (ISO_TIMESTAMP.test(trimmed)) {
-      const date = new Date(trimmed.replace(" ", "T"));
-      if (Number.isNaN(date.getTime())) return value;
-      return new Intl.DateTimeFormat(options.locale, {
-        dateStyle: "long",
-        timeStyle: "short",
-        ...(options.timeZone ? { timeZone: options.timeZone } : {}),
-      }).format(date);
-    }
+    const millis = Date.parse(trimmed.replace(" ", "T"));
+    if (Number.isNaN(millis)) return value;
+    return new Intl.DateTimeFormat(options.locale, {
+      dateStyle: "long",
+      timeStyle: "short",
+      ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+    }).format(millis);
   } catch {
     return value;
   }
-  return value;
 }
 
 /**
