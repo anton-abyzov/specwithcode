@@ -1864,6 +1864,35 @@ export const makeSweep = Effect.gen(function* () {
     );
   });
   const holdRuns = new Map<string, OrchestrationV2Run>();
+  // Whether a stopped run began as a routine's message, read once per run: a
+  // routine moved or deleted mid-turn leaves no binding to go by (1506 D-04).
+  const routineRuns = new Map<string, boolean>();
+  const startedByRoutine = (
+    thread: Pick<OrchestrationV2ThreadShell, "id" | "status">,
+    run: OrchestrationV2Run | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if (run === undefined || thread.status !== "failed") return false;
+      const known = routineRuns.get(run.id);
+      if (known !== undefined) return known;
+      const messageId = orchestrationV2RunStartMessageId(run);
+      const read = yield* projections
+        .getThreadRecords(thread.id, ["messages"], { messageIds: [messageId] })
+        .pipe(
+          Effect.map((records) =>
+            Option.some(
+              records.messages.some(
+                (message) => message.id === messageId && message.scheduledTaskId !== undefined,
+              ),
+            ),
+          ),
+          Effect.catchCause(() => Effect.succeedNone),
+        );
+      // Unreadable: off is the safe side, and the next sweep reads it again.
+      if (Option.isNone(read)) return true;
+      routineRuns.set(run.id, read.value);
+      return read.value;
+    });
   // A model a person picked since the latest run, as opposed to one a
   // pre-switch moved the thread to (its way back is still owed, 1075).
   const pickedSinceRun = (
@@ -1937,6 +1966,7 @@ export const makeSweep = Effect.gen(function* () {
       if (evidence !== null) holdThreads.push(evidence);
     }
     for (const runId of holdRuns.keys()) if (!retainedHoldRuns.has(runId)) holdRuns.delete(runId);
+    for (const runId of routineRuns.keys()) if (!holdRuns.has(runId)) routineRuns.delete(runId);
     const outlivedHolds = new Set<string>();
     for (const thread of holdThreads)
       if (yield* planLimitOutlived(thread, providers)) outlivedHolds.add(thread.id);
@@ -2088,7 +2118,12 @@ export const makeSweep = Effect.gen(function* () {
         failedTargets: withHeldSources(triedTargets, heldSources),
         parked: limitChainParked(chainsNow.get(thread.id)),
         // A routine's thread and the coordinator never take a row's Ultracode (1506).
-        noRowUltracode: skipsRowUltracode(thread.id, routineThreads, project),
+        noRowUltracode:
+          skipsRowUltracode(thread.id, routineThreads, project) ||
+          (yield* startedByRoutine(
+            thread,
+            thread.latestRunId === null ? undefined : holdRuns.get(thread.latestRunId),
+          )),
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
         stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),
