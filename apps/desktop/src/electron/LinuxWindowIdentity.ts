@@ -8,6 +8,11 @@
  * entry is constructed with the variable pointing at that entry and the
  * app's own value put back straight after. Construction is synchronous, so no
  * other window can be made in between.
+ *
+ * Known residue: the variable is process-wide, so a child process Chromium
+ * forks outside the zygote on its launcher thread in that moment (a utility
+ * process, for example audio) would keep the page's name, which PulseAudio may
+ * show on its streams. Renderers come from the zygote and are not affected.
  */
 
 const DESKTOP_NAME_PATTERN = /^[A-Za-z0-9._-]{1,200}\.desktop$/;

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
@@ -246,12 +247,12 @@ const LINUX_APPLICATIONS = "/home/me/.local/share/applications";
 const setup = (input: {
   readonly platform?: NodeJS.Platform;
   readonly known: ReadonlyArray<string>;
-  /** Paths that exist, for the Linux launcher check. */
-  readonly files?: ReadonlyArray<string>;
+  /** Files on disk and their text, for the Linux launcher check. */
+  readonly files?: Readonly<Record<string, string>>;
 }) => {
   const created: Array<FakeWindow> = [];
   const identities: Array<ElectronWindow.ElectronWindowIdentity | undefined> = [];
-  const files = new Set(input.files ?? []);
+  const files = new Map(Object.entries(input.files ?? {}));
   const registered: Array<{ window: Electron.BrowserWindow; role: string | undefined }> = [];
   const revealed: Array<Electron.BrowserWindow> = [];
   const external: Array<string> = [];
@@ -311,7 +312,21 @@ const setup = (input: {
             }),
         }),
         Layer.mock(ElectronTheme.ElectronTheme)({ shouldUseDarkColors: Effect.succeed(true) }),
-        FileSystem.layerNoop({ exists: (path) => Effect.succeed(files.has(path)) }),
+        FileSystem.layerNoop({
+          readFileString: (path) => {
+            const text = files.get(path);
+            return text === undefined
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFileString",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : Effect.succeed(text);
+          },
+        }),
         Layer.mock(ArtifactAppRecords.ArtifactAppRecords)({
           get: (installId) => Effect.succeed(Option.fromNullishOr(apps.get(installId))),
         }),
@@ -620,19 +635,38 @@ describe("ArtifactAppWindows", () => {
     }).pipe(Effect.provide(fixture.layer));
   });
 
+  const entryFor = (installId: string) =>
+    `[Desktop Entry]\nType=Application\nName=Board\nX-SpecWithCode-Artifact-App=${installId}\n`;
+
+  it("recognizes only a desktop entry that names the install", () => {
+    assert.isTrue(ArtifactAppWindows.isArtifactAppLinuxEntry(entryFor(ID), ID));
+    assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry(entryFor(idFor(1)), ID));
+    assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry("", ID));
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppLinuxEntry(`#!/bin/sh\n${entryFor(ID)}`, ID),
+    );
+  });
+
   it.effect("gives a Linux window its launcher's desktop id while the launcher is there", () => {
     const fixture = setup({
       platform: "linux",
-      known: [ID, idFor(1)],
-      files: [`${LINUX_APPLICATIONS}/specwithcode-app-${ID}.desktop`],
+      known: [ID, idFor(1), idFor(2)],
+      files: {
+        [`${LINUX_APPLICATIONS}/specwithcode-app-${ID}.desktop`]: entryFor(ID),
+        // Something else took the launcher's name.
+        [`${LINUX_APPLICATIONS}/specwithcode-app-${idFor(2)}.desktop`]: "[Desktop Entry]\n",
+      },
     });
     return Effect.gen(function* () {
       const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
       yield* windows.open(ID);
-      // No launcher on disk: the window stays SpecWithCode's rather than an unknown app.
+      // No launcher, or not this install's: the window stays SpecWithCode's rather
+      // than an unknown app.
       yield* windows.open(idFor(1));
+      yield* windows.open(idFor(2));
       assert.deepEqual(fixture.identities, [
         { linuxDesktopName: `specwithcode-app-${ID}.desktop` },
+        undefined,
         undefined,
       ]);
       assert.deepEqual(fixture.created[0]?.appDetails, []);
@@ -643,7 +677,7 @@ describe("ArtifactAppWindows", () => {
     const fixture = setup({
       platform: "win32",
       known: [ID],
-      files: [`${LINUX_APPLICATIONS}/specwithcode-app-${ID}.desktop`],
+      files: { [`${LINUX_APPLICATIONS}/specwithcode-app-${ID}.desktop`]: entryFor(ID) },
     });
     return Effect.gen(function* () {
       const windows = yield* ArtifactAppWindows.ArtifactAppWindows;

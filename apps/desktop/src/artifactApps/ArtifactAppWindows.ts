@@ -43,6 +43,14 @@ const MACOS_WINDOW_BUTTON_RADIUS = 7;
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-artifact-app-windows");
 
+/** Whether a desktop entry's text is a desktop entry naming this install. */
+export function isArtifactAppLinuxEntry(entry: string, installId: string): boolean {
+  const lines = entry.split("\n");
+  return (
+    lines[0] === "[Desktop Entry]" && lines.includes(`X-SpecWithCode-Artifact-App=${installId}`)
+  );
+}
+
 /** Whether one more installed-page window may open while `openCount` are open. */
 export function canOpenAnotherArtifactAppWindow(openCount: number): boolean {
   return openCount < ARTIFACT_APP_WINDOW_LIMIT;
@@ -275,14 +283,16 @@ const make = Effect.gen(function* () {
 
   // On Linux the window reports the page's own desktop id as its Wayland app id and
   // WM_CLASS, so the dock shows it under its launcher with the page's name and icon,
-  // as the taskbar id does on Windows. Only while that launcher is there: an id no
-  // entry names would show as an unknown app, so the window stays SpecWithCode's.
+  // as the taskbar id does on Windows. Only while that launcher is there and still
+  // reads as this install's entry: an id no entry names would show as an unknown
+  // app, so otherwise (missing, a folder, unreadable, rewritten) it stays SpecWithCode's.
   const linuxIdentity = (installId: string) => {
     if (environment.platform !== "linux") return Effect.succeed(undefined);
     const linuxDesktopName = `${artifactAppLinuxDesktopId(installId)}.desktop`;
     return fileSystem
-      .exists(environment.path.join(environment.linuxApplicationsDir, linuxDesktopName))
+      .readFileString(environment.path.join(environment.linuxApplicationsDir, linuxDesktopName))
       .pipe(
+        Effect.map((entry) => isArtifactAppLinuxEntry(entry, installId)),
         Effect.orElseSucceed(() => false),
         Effect.map((found) => (found ? { linuxDesktopName } : undefined)),
       );
