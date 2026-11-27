@@ -71,7 +71,6 @@ import * as Redacted from "effect/Redacted";
 
 import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
 import { gitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
-import { pushCommandRemote } from "../vcs/gitPushFailure.ts";
 import {
   hasGitHubCredentialHelper,
   ownerLogin,
@@ -2091,14 +2090,21 @@ export const make = Effect.gen(function* () {
     if (error.reason !== "authentication_failed" || Option.isNone(gitHubCredentials))
       return yield* Effect.fail(error);
     const credentials = gitHubCredentials.value;
-    const remoteName = pushCommandRemote(error.command) ?? "origin";
+    // The destination git pushed to, in the driver's own resolution order.
+    // It is read from config, never from the error's command text, and never
+    // printed: it can be a URL or a path instead of a remote name.
+    const readConfig = (key: string) =>
+      gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
+    const destination =
+      (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.pushRemote`)) ??
+      (yield* readConfig("remote.pushDefault")) ??
+      (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.remote`)) ??
+      "origin";
     const remoteUrl =
-      (yield* gitCore
-        .readConfigValue(cwd, `remote.${remoteName}.pushurl`)
-        .pipe(Effect.orElseSucceed(() => null))) ??
-      (yield* gitCore
-        .readConfigValue(cwd, `remote.${remoteName}.url`)
-        .pipe(Effect.orElseSucceed(() => null)));
+      parseGitHubHttpsRemote(destination) !== null
+        ? destination
+        : ((yield* readConfig(`remote.${destination}.pushurl`)) ??
+          (yield* readConfig(`remote.${destination}.url`)));
     const parsed = parseGitHubHttpsRemote(remoteUrl);
     if (parsed === null) return yield* Effect.fail(error);
     const logins = yield* credentials.logins(parsed.host);

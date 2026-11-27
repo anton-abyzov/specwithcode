@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   isArchivedRepositoryRefusal,
-  pushCommandRemote,
   pushCommandText,
   pushFailureFields,
   pushRejection,
@@ -89,10 +88,12 @@ describe("pushFailureFields", () => {
 });
 
 describe("push command text", () => {
-  it("round-trips the remote the app named", () => {
-    assert.equal(pushCommandRemote(pushCommandText(["push", "fork", "HEAD:refs/heads/x"])), "fork");
-    assert.isNull(pushCommandRemote(pushCommandText(["push"])));
-    assert.isNull(pushCommandRemote("git"));
+  it("shows the plain remote name the app used", () => {
+    assert.equal(
+      pushCommandText(["push", "fork", "HEAD:refs/heads/x"]),
+      "git push fork HEAD:refs/heads/x",
+    );
+    assert.equal(pushCommandText(["push"]), "git push");
   });
 
   it("hides a URL or path used as the push destination", () => {
@@ -103,7 +104,6 @@ describe("push command text", () => {
     ]);
     assert.equal(text, "git push <remote> HEAD:refs/heads/x");
     assert.notInclude(text, "tok3n");
-    assert.isNull(pushCommandRemote(text));
     assert.equal(
       pushCommandText(["push", "/srv/r.git", "HEAD:refs/heads/x"]),
       "git push <remote> HEAD:refs/heads/x",
@@ -112,11 +112,14 @@ describe("push command text", () => {
       pushCommandText(["push", "git@github.com:acme/r.git", "HEAD:refs/heads/x"]),
       "git push <remote> HEAD:refs/heads/x",
     );
-  });
-
-  it("keeps a remote name that contains a slash", () => {
-    const text = pushCommandText(["push", "foo/bar", "HEAD:refs/heads/x"]);
-    assert.equal(text, "git push foo/bar HEAD:refs/heads/x");
-    assert.equal(pushCommandRemote(text), "foo/bar");
+    // A slashed value is hidden too: its shape cannot be told from a path.
+    assert.equal(
+      pushCommandText(["push", "secrets/token123/repo.git", "HEAD:refs/heads/x"]),
+      "git push <remote> HEAD:refs/heads/x",
+    );
+    assert.equal(
+      pushCommandText(["push", "foo/bar", "HEAD:refs/heads/x"]),
+      "git push <remote> HEAD:refs/heads/x",
+    );
   });
 });

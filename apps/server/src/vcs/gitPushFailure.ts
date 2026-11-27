@@ -57,42 +57,22 @@ export function isArchivedRepositoryRefusal(stderr: string): boolean {
 }
 
 /**
- * Whether a push destination is a plain remote name. Git also accepts a URL
- * or a path there (from `branch.<name>.pushRemote` or `remote.pushDefault`),
- * which can carry credentials and must never reach an error.
+ * Whether a push destination can be shown. Git also accepts a URL or a path
+ * there (from `branch.<name>.pushRemote` or `remote.pushDefault`), which can
+ * carry credentials and must never reach an error. Shape alone cannot tell a
+ * remote name with a slash from a relative path, so only a plain name is
+ * shown; callers that need the real destination read git config instead.
  */
-function isRemoteName(value: string): boolean {
-  // Remote names may contain slashes (`foo/bar`). URLs and paths are told
-  // apart by their credential and path shapes, not by the slash.
-  return (
-    value !== "" &&
-    !value.startsWith("/") &&
-    !value.startsWith(".") &&
-    !value.startsWith("~") &&
-    !value.includes("://") &&
-    !value.includes("@") &&
-    !value.includes(":") &&
-    !value.includes("\\") &&
-    !value.includes("?") &&
-    !value.includes("#") &&
-    !value.includes("<") &&
-    !value.includes(">") &&
-    !/\s/.test(value)
-  );
+function isShowableRemoteName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
 /** `git push origin HEAD:refs/heads/x`: the arguments the app built, never a URL or a token. */
 export function pushCommandText(args: ReadonlyArray<string>): string {
   const shown = args.map((arg, index) =>
-    index === 1 && args[0] === "push" && !isRemoteName(arg) ? "<remote>" : arg,
+    index === 1 && args[0] === "push" && !isShowableRemoteName(arg) ? "<remote>" : arg,
   );
   return ["git", ...shown].join(" ");
-}
-
-/** The remote a push command named, or null for a bare `git push` or a hidden destination. */
-export function pushCommandRemote(command: string): string | null {
-  const [git, push, remote] = command.split(" ");
-  return git === "git" && push === "push" && remote && isRemoteName(remote) ? remote : null;
 }
 
 /**
