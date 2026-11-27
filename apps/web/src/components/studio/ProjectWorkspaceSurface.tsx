@@ -2484,6 +2484,9 @@ export function ProjectWorkspaceSurface({
                       now={Date.now()}
                       onPin={projectArtifacts.setPinned}
                       onOpenThread={openThread}
+                      designProject={
+                        project.environmentId === primaryEnvironmentId ? project : undefined
+                      }
                       onViewAll={() => {
                         setLibrarySection("artifacts");
                         setPaneTab("library");

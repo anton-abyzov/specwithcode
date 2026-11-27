@@ -150,7 +150,9 @@ export function DesignGalleryPage({
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="expanded">
             {environmentId === null ? (
-              <p className="text-muted-foreground text-sm">Connect to this machine to see designs.</p>
+              <p className="text-muted-foreground text-sm">
+                Connect to this machine to see designs.
+              </p>
             ) : !canRead ? (
               <p className="text-muted-foreground text-sm">This window may not read designs.</p>
             ) : (
@@ -275,7 +277,8 @@ function ConnectedGallery({
   const systems = systemList.data?.systems ?? [];
   const systemsReady = systemList.data !== undefined || Boolean(systemList.error);
   const [dialog, setDialog] = useState<CreationKind | null>(null);
-  // `?new=design` from Settings ("Use in a new design") opens New design once, preselected.
+  // `?new=design` (Settings' "Use in a new design", the Artifacts New menu) or `?new=slides`
+  // opens that New dialog once, preselected.
   const [preset, setPreset] = useState<{
     owner: DesignOwnerInput;
     systemId: DesignSystemId | null;
@@ -284,14 +287,15 @@ function ConnectedGallery({
     search.owner !== undefined && search.owner !== "playground" && galleryProjects.length === 0;
   const presetTaken = useRef(false);
   useEffect(() => {
-    if (search.new !== "design") {
+    const next = newDesignPresetFromSearch(search, galleryProjects);
+    if (next === null) {
       presetTaken.current = false;
       return;
     }
     if (presetTaken.current || waitingForProjects) return;
     presetTaken.current = true;
-    setPreset(newDesignPresetFromSearch(search, galleryProjects));
-    setDialog("design");
+    setPreset({ owner: next.owner, systemId: next.systemId });
+    setDialog(next.kind);
     onSearchChange(withoutNewDesignSearch(search));
   }, [galleryProjects, onSearchChange, search, waitingForProjects]);
   const workerModel = useCallback(

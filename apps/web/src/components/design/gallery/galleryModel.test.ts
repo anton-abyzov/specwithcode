@@ -185,7 +185,7 @@ describe("the /design URL filter", () => {
       parseDesignGallerySearch({
         tab: "nope",
         project: 3,
-        new: "slides",
+        new: "nope",
         system: "../x",
         owner: "",
       }),
@@ -230,14 +230,32 @@ describe("the /design URL filter", () => {
   it("?new=design preselects a known owner and the system, once", () => {
     const search = { new: "design", owner: "api", system: "weave", tab: "projects" } as const;
     expect(newDesignPresetFromSearch(search as never, projects)).toEqual({
+      kind: "design",
       owner: { kind: "project", projectId: "api" },
       systemId: "weave",
     });
     expect(newDesignPresetFromSearch({ new: "design", owner: "gone" }, projects)).toEqual({
+      kind: "design",
       owner: { kind: "playground" },
       systemId: null,
     });
     expect(newDesignPresetFromSearch({ owner: "api" }, projects)).toBeNull();
     expect(withoutNewDesignSearch(search as never)).toEqual({ tab: "projects" });
+  });
+
+  it("?new=slides opens New slides for the owner, and other values open nothing", () => {
+    expect(parseDesignGallerySearch({ new: "slides", owner: "api" })).toEqual({
+      new: "slides",
+      owner: "api",
+    });
+    expect(newDesignPresetFromSearch({ new: "slides", owner: "api" }, projects)).toEqual({
+      kind: "slides",
+      owner: { kind: "project", projectId: "api" },
+      systemId: null,
+    });
+    expect(parseDesignGallerySearch({ new: "deck", owner: "api" })).toEqual({ owner: "api" });
+    expect(withoutNewDesignSearch({ new: "slides", owner: "api", tab: "all" })).toEqual({
+      tab: "all",
+    });
   });
 });
