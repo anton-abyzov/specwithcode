@@ -25,6 +25,11 @@ describe("orchestrator MCP tool guidance", () => {
       OrchestratorToolkit.tools.task_status.description ?? "",
       "A project coordinator does not relay: the result stays in the worker's thread.",
     );
+    // A completion wakes the parent: polling a working child costs model round trips.
+    assert.include(
+      OrchestratorToolkit.tools.task_status.description ?? "",
+      "A child's completion wakes this thread, so do not call this repeatedly while the child is working: end your turn, or use delegate_task mode=wait when this turn needs the result. Reading the result after that wake is the expected use.",
+    );
     // Detailed may include steps, so the fixed tool text must not forbid them.
     assert.notInclude(DelegateTaskTool.description ?? "", "not a replay of steps");
   });
