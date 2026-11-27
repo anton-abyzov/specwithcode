@@ -10,14 +10,19 @@ vi.mock("~/hooks/useHtmlRenderTheme", () => ({
 }));
 // Environments a URL was asked for, null while a frame needs none.
 const urlRequests: Array<string | null> = [];
+// How long a cached link has left, and what minting a new one returns.
+const asset = {
+  life: 3_600_000,
+  refresh: async (): Promise<string | null> => URL_,
+};
 vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: (environmentId: string | null) => {
     urlRequests.push(environmentId);
     return environmentId === null
       ? { _tag: "Initial" }
-      : { _tag: "Success", url: URL_, expiresAt: Date.now() + 3_600_000 };
+      : { _tag: "Success", url: URL_, expiresAt: Date.now() + asset.life };
   },
-  useAssetUrlRefresh: () => async () => URL_,
+  useAssetUrlRefresh: () => () => asset.refresh(),
 }));
 vi.mock("../artifactApps/InstallAsAppButton", () => ({
   InstallAsAppButton: () => <span>install-button</span>,
@@ -209,5 +214,26 @@ describe("useHtmlRenderSrc", () => {
     await act(async () => root.render(<Probe enabled />));
     expect(urlRequests).toContain("env-A");
     expect(container.textContent).toBe(URL_);
+  });
+
+  it("drops a link that arrives after the page was let go", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    asset.life = 0;
+    let finish: (url: string) => void = () => undefined;
+    asset.refresh = () => new Promise<string>((resolve) => (finish = resolve));
+    try {
+      await act(async () => root.render(<Probe enabled />));
+      await act(async () => root.render(<Probe enabled={false} />));
+      await act(async () => finish(URL_));
+      expect(container.textContent).toBe("none");
+      asset.refresh = async () => "https://host.test/fresh.html";
+      await act(async () => root.render(<Probe enabled />));
+      expect(container.textContent).toBe("https://host.test/fresh.html");
+    } finally {
+      asset.life = 3_600_000;
+      asset.refresh = async () => URL_;
+    }
   });
 });

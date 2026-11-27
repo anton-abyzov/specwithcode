@@ -677,6 +677,18 @@ describe("stage pages", () => {
     expect(
       isHtmlRenderStagePage('<textarea></textarea><meta name="specwithcode-page" content="stage">'),
     ).toBe(false);
+    // A marker inside a template, even after a nested one, is not the page's.
+    expect(
+      isHtmlRenderStagePage(
+        '<template><template></template><meta name="specwithcode-page" content="stage"></template>',
+      ),
+    ).toBe(false);
+    // Elements a browser keeps in the head do not end it.
+    expect(
+      isHtmlRenderStagePage(
+        '<noframes>x</noframes><template><p>y</p></template><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(true);
     expect(
       isHtmlRenderStagePage('<main>x</main><meta name="specwithcode-page" content="stage">'),
     ).toBe(false);
