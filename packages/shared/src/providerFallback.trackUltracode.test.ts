@@ -127,4 +127,28 @@ describe("falling back onto a track row", () => {
     expect(target?.model).toBe(OPUS);
     expect(target?.options?.some((option) => option.id === "ultracode")).toBe(false);
   });
+
+  it("gives a thread that set none the row's Ultracode on the same model elsewhere", () => {
+    const spent = provider("claudeAgent", "claudeAgent", [OPUS], 100, claudeOptions);
+    const second = provider("claudeAgent_work", "claudeAgent", [OPUS], 10, claudeOptions);
+    const opusRow = { instanceId: id("claudeAgent"), model: OPUS, options: [medium, ultracodeOn] };
+    const move = (currentOptions: ModelSelection["options"]) =>
+      resolveProviderFallback({
+        providers: [spent, second, codex],
+        currentInstanceId: id("claudeAgent"),
+        currentModel: OPUS,
+        currentOptions,
+        rule: rule(opusRow),
+        nowMs: now,
+        belowPercent: 100,
+        anyReady: true,
+        lane: "routine",
+      });
+    const target = move([medium]);
+    expect(target?.instanceId).toBe("claudeAgent_work");
+    expect(target?.options).toContainEqual(ultracodeOn);
+    // A thread that turned it off keeps it off.
+    const off = { id: "ultracode", value: false };
+    expect(move([medium, off])?.options).toContainEqual(off);
+  });
 });

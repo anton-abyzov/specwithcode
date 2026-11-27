@@ -1460,3 +1460,53 @@ it.effect("picks an unnamed remote thread's model as a thread started here would
     expect(two.providerReads.count).toBe(one.providerReads.count);
   });
 });
+
+it.effect("sends a named model with this project's Tracks row Ultracode (1506)", () => {
+  const providers = [
+    {
+      instanceId: providerInstanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "test",
+      status: "ready",
+      auth: { status: "authenticated", type: "chatgpt" },
+      checkedAt: "2026-11-18T00:00:00.000Z",
+      models: [
+        {
+          slug: "gpt-5.5",
+          name: "gpt-5.5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [{ id: "ultracode", label: "Ultracode", type: "boolean" }],
+          },
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+    } as unknown as ServerProvider,
+  ];
+  const on = { id: "ultracode", value: true };
+  const row = { instanceId: providerInstanceId, model: "gpt-5.5", options: [on] };
+  const tracks = setup({
+    workerCaller: true,
+    projectSettings: {
+      overrides: { threadModelMode: "tracks", modelLanes: { complex: [], routine: [row] } },
+      providers,
+    },
+  });
+  return Effect.gen(function* () {
+    const named = { instanceId: providerInstanceId, model: "gpt-5.5" };
+    yield* tracks.launch({ title: "Check", message: "Check it", machine: "M1", modelSelection: named });
+    expect(tracks.remoteLaunches[0]?.explicitModelSelection).toEqual({ ...named, options: [on] });
+    // A review launch takes only its model.
+    yield* tracks.launch({
+      title: "Review",
+      message: "Review it",
+      machine: "M1",
+      modelSelection: named,
+      taskClass: "review",
+    });
+    expect(tracks.remoteLaunches[1]?.explicitModelSelection).toEqual(named);
+  });
+});

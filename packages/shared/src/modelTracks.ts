@@ -448,6 +448,20 @@ export function withMatchingTrackRowUltracode<S extends ModelSelection>(
   return row === undefined ? selection : withTrackEntryUltracode(selection, row, providers);
 }
 
+/** `withMatchingTrackRowUltracode` on a project's saved tracks, fitted as a launch reads them. */
+export function withTrackRowUltracode<S extends ModelSelection>(
+  selection: S,
+  lanes: ModelLanes | null | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
+): S {
+  return withMatchingTrackRowUltracode(
+    selection,
+    launchTrackLanes(lanes, providers, order),
+    providers,
+  );
+}
+
 /**
  * A track entry as it launches: its Ultracode stays only where the model it
  * runs on offers the switch. An entry fitted to another release or source

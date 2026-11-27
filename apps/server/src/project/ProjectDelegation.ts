@@ -6,11 +6,7 @@ import type {
   ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
-import {
-  isHeldSource,
-  launchTrackLanes,
-  withMatchingTrackRowUltracode,
-} from "@specweave-studio/shared/modelTracks";
+import { isHeldSource, withTrackRowUltracode } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { liveQuotaBoosts } from "@specweave-studio/shared/quotaBoost";
 import { limitAccountKey } from "@specweave-studio/shared/usageLimits";
@@ -120,8 +116,12 @@ export function withProjectTrackRowUltracode(
 ): ModelSelection {
   const resolved = resolveProjectSettings(settings, project.id, project).settings;
   if (resolved.threadModelMode !== "tracks") return selection;
-  const lanes = launchTrackLanes(resolved.modelLanes, providers, resolved.defaultModelProviders);
-  return withMatchingTrackRowUltracode(selection, lanes, providers);
+  return withTrackRowUltracode(
+    selection,
+    resolved.modelLanes,
+    providers,
+    resolved.defaultModelProviders,
+  );
 }
 
 /**

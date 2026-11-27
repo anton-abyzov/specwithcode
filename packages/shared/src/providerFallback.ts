@@ -36,7 +36,7 @@ import {
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { namedReviewSourceKeys, reviewerChain, usageNeverRead } from "./adversarialReview.ts";
-import { isHeldSource } from "./modelTracks.ts";
+import { isHeldSource, withTrackRowUltracode } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
   denialSparesModel,
@@ -837,7 +837,12 @@ export function resolveProviderFallback(
   const target =
     resolveProviderFallbackPass({ ...input, verifiedOnly: true }) ??
     resolveProviderFallbackPass({ ...input, verifiedOnly: false, allowLastResort: true });
-  return target === null ? null : withMovedEffort(target, input);
+  if (target === null) return null;
+  const moved = withMovedEffort(target, input);
+  // A move onto a Daily or Complex row takes its Ultracode, unless the thread named it (1506).
+  return input.rule.threadModelMode === "tracks" && input.review !== true
+    ? withTrackRowUltracode(moved, input.rule.modelLanes, input.providers, input.rule.defaultModelProviders)
+    : moved;
 }
 
 /**

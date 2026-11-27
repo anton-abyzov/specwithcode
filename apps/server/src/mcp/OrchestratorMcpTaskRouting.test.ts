@@ -160,6 +160,8 @@ interface Harness {
   readonly parentModel?: typeof opus;
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly modelLanes?: ModelLanes;
+  /** The project starts threads from its tracks. */
+  readonly tracks?: boolean;
   readonly learnedModelPreferences?: ReadonlyArray<LearnedModelPreference>;
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** The project's own model; lanes and Auto apply only without one. */
@@ -173,7 +175,11 @@ interface Harness {
 
 type Dispatched = {
   readonly type: string;
-  readonly modelSelection?: { readonly instanceId: string; readonly model: string };
+  readonly modelSelection?: {
+    readonly instanceId: string;
+    readonly model: string;
+    readonly options?: ReadonlyArray<{ readonly id: string; readonly value: unknown }>;
+  };
   readonly routing?: TaskRoutingDecision;
   readonly task?: string;
   readonly text?: string;
@@ -193,6 +199,7 @@ const run = <A, E>(
       ...DEFAULT_SERVER_SETTINGS,
       taskRouting: { ...DEFAULT_TASK_ROUTING_SETTINGS, ...harness.policy },
       ...(harness.modelLanes !== undefined ? { modelLanes: harness.modelLanes } : {}),
+      ...(harness.tracks === true ? { threadModelMode: "tracks" as const } : {}),
       ...(harness.learnedModelPreferences !== undefined
         ? { learnedModelPreferences: harness.learnedModelPreferences }
         : {}),
@@ -362,6 +369,72 @@ describe("OrchestratorMcpService task routing", () => {
       }),
     ),
   );
+
+  describe("a named model on a Tracks project (1506)", () => {
+    const ultracode = { id: "ultracode", label: "Ultracode", type: "boolean" as const };
+    const withSwitch = providers.map((entry) =>
+      entry.instanceId !== claude
+        ? entry
+        : {
+            ...entry,
+            models: entry.models.map((model) => ({
+              ...model,
+              capabilities: { optionDescriptors: [effort, ultracode] },
+            })),
+          },
+    );
+    const on = { id: "ultracode", value: true };
+    const tracks = {
+      tracks: true,
+      providers: withSwitch,
+      modelLanes: {
+        routine: [{ ...opus, options: [{ id: "effort", value: "high" }, on] }],
+        complex: [],
+      },
+    } as const;
+    const named = (
+      target: Record<string, unknown>,
+      clientRequestId: string,
+      taskClass?: "review",
+    ) =>
+      run(tracks, (service, dispatched) =>
+        Effect.gen(function* () {
+          launchedOrThrow(
+            yield* service.delegateTask(scope, {
+              task: "Fix the flaky login test.",
+              target: { providerInstanceId: claude, model: "claude-opus-5-5", ...target },
+              mode: "async",
+              clientRequestId,
+              ...(taskClass === undefined ? {} : { taskClass }),
+            }),
+          );
+          return (yield* delegated(dispatched)).modelSelection?.options ?? [];
+        }),
+      );
+
+    it.effect("takes the Ultracode of the row it matches", () =>
+      Effect.gen(function* () {
+        const options = yield* named({ effort: "high" }, "named-row-on");
+        assert.deepInclude(options, on);
+      }),
+    );
+
+    it.effect("keeps a caller's own off", () =>
+      Effect.gen(function* () {
+        const off = { id: "ultracode", value: false };
+        const options = yield* named({ options: [off] }, "named-row-off");
+        assert.deepInclude(options, off);
+        assert.notDeepInclude(options, on);
+      }),
+    );
+
+    it.effect("leaves another model alone", () =>
+      Effect.gen(function* () {
+        const options = yield* named({ model: "claude-sonnet-5-5" }, "named-other-model");
+        assert.isFalse(options.some((option) => option.id === "ultracode"));
+      }),
+    );
+  });
 
   it.effect("keeps code and review work on the baseline and says so", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>

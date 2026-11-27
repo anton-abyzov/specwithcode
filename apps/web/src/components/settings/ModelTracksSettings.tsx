@@ -328,16 +328,19 @@ export function TrackUltracodeToggle(props: {
             disabled={props.disabled}
             className={cn(
               "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-(--disabled-opacity)",
+              // Off is dashed and says so: a plain outlined pill read as a label that was on (1506).
               on
                 ? "border-primary/45 bg-primary/12 text-foreground"
-                : "border-border text-muted-foreground hover:text-foreground",
+                : "border-dashed border-border text-muted-foreground hover:text-foreground",
             )}
             onClick={() => props.onChange(withTrackUltracode(selection, !on))}
             data-track-ultracode={on ? "on" : "off"}
           >
             <Code2Icon className="size-3" aria-hidden />
             {/* A phone-width row keeps the model's name readable: the icon alone, tinted when on. */}
-            <span className="max-sm:sr-only">Ultracode</span>
+            <span className="max-sm:sr-only">
+              {on ? tx("Ultracode on") : tx("Ultracode off")}
+            </span>
           </button>
         }
       />
