@@ -311,9 +311,7 @@ const setup = (input: {
             }),
         }),
         Layer.mock(ElectronTheme.ElectronTheme)({ shouldUseDarkColors: Effect.succeed(true) }),
-        Layer.mock(FileSystem.FileSystem)({
-          exists: (path) => Effect.succeed(files.has(path)),
-        }),
+        FileSystem.layerNoop({ exists: (path) => Effect.succeed(files.has(path)) }),
         Layer.mock(ArtifactAppRecords.ArtifactAppRecords)({
           get: (installId) => Effect.succeed(Option.fromNullishOr(apps.get(installId))),
         }),
