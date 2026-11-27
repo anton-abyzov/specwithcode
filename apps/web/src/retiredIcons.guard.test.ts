@@ -106,6 +106,9 @@ const ALLOWED: ReadonlyArray<{ readonly file: string; readonly text: string }> =
   { file: "apps/ios/SWCKit/Sources/Weave/Components/ProjectAvatar.swift", text: '"brain"' },
   { file: "apps/ios/SWCKit/Sources/Weave/Components/ProjectAvatar.swift", text: '"brain-circuit"' },
   { file: "apps/ios/SWCKit/Sources/Weave/Components/ProjectAvatar.swift", text: '"lock"' },
+  // Mermaid's vendored build: its own keyword and state strings, never drawn as icons.
+  { file: "apps/ios/SWCKit/Sources/Weave/Resources/Mermaid/mermaid.min.js", text: '"lock"' },
+  { file: "apps/ios/SWCKit/Sources/Weave/Resources/Mermaid/mermaid.min.js", text: '"unlock"' },
 ];
 
 const isTestFile = (file: string) =>
