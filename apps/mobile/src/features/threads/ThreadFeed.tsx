@@ -1577,9 +1577,10 @@ function renderFeedEntry(
       >
         <Text
           key={props.workRowSizing.textSizeKey}
-          className="font-studio-medium text-sm tabular-nums text-foreground-muted"
+          numberOfLines={1}
+          className="shrink font-studio-medium text-sm tabular-nums text-foreground-muted"
         >
-          {entry.label}
+          {entry.wakeLabel ? `${entry.wakeLabel} · ${entry.label}` : entry.label}
         </Text>
         <ThreadDisclosureChevron
           expanded={entry.expanded}

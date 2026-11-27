@@ -3250,6 +3250,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span title={row.activityDetail}>
+          {row.wake ? <span className="text-foreground/80">{row.wake.label} · </span> : null}
           {row.label}
           {row.activitySummary ? (
             <span className="text-muted-foreground"> · {row.activitySummary}</span>

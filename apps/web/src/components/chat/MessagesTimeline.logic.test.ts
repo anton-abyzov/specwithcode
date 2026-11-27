@@ -4515,13 +4515,17 @@ it.each([true, false])(
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     });
+    // The settled run's notice leads its collapsed fold instead of taking a row of its own.
+    expect(
+      rows.some((row) => row.kind === "turn-fold" && row.wake?.label === "Delegated task finished"),
+    ).toBe(true);
     expect(
       rows.some(
         (row) =>
           row.kind === "work" &&
           row.groupedEntries.some((entry) => entry.label === "Delegated task finished"),
       ),
-    ).toBe(true);
+    ).toBe(false);
   },
 );
 

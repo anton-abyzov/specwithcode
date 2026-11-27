@@ -2198,6 +2198,39 @@ it("renders automatic completion as a neutral activity while retaining its detai
   expect(activity.detail).toBeNull();
   expect(activity.status).toBeNull();
   expect(activity.getFullDetail()).toContain(item.detail);
+  const latestRun = {
+    runId,
+    status: "completed" as const,
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:03.000Z",
+  };
+  const isNotice = (entry: ThreadFeedEntry) =>
+    entry.type === "activity-group" &&
+    entry.activities.some((activity) => activity.summary === "Monitor reported an update");
+  // Folded: the notice leads its run's fold instead of taking a row of its own.
+  const presented = deriveThreadFeedPresentation(feed, latestRun, new Set());
+  expect(presented[0]).toMatchObject({ type: "run-fold", wakeLabel: "Monitor reported an update" });
+  expect(presented.some(isNotice)).toBe(false);
+  // Open: the fold keeps its lead and shows the notice as its first row.
+  const opened = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
+  expect(opened[0]).toMatchObject({ type: "run-fold", wakeLabel: "Monitor reported an update" });
+  expect(isNotice(opened[1]!)).toBe(true);
+  expect(buildThreadFeed([projected(userMessage(), 0)])[0]?.type).toBe("message");
+});
+
+it.each(["failed", "cancelled"] as const)("keeps a %s wake notice on its own row", (outcome) => {
+  const item = {
+    ...base("notification", "2026-06-20T00:00:01.000Z", 0),
+    type: "notification" as const,
+    source: { kind: "background_task" as const },
+    outcome,
+    summary: "Delegated task stopped",
+  };
+  const feed = buildThreadFeed([
+    projected(item, 0),
+    projected(command(), 1),
+    projected(assistantMessage(), 2),
+  ]);
   const presented = deriveThreadFeedPresentation(
     feed,
     {
@@ -2208,14 +2241,8 @@ it("renders automatic completion as a neutral activity while retaining its detai
     },
     new Set(),
   );
-  expect(
-    presented.some(
-      (entry) =>
-        entry.type === "activity-group" &&
-        entry.activities.some((activity) => activity.summary === "Monitor reported an update"),
-    ),
-  ).toBe(true);
-  expect(buildThreadFeed([projected(userMessage(), 0)])[0]?.type).toBe("message");
+  expect(presented[0]?.type).toBe("activity-group");
+  expect(presented.find((entry) => entry.type === "run-fold")).not.toHaveProperty("wakeLabel");
 });
 
 it("uses a compact reasoning preview and a short expanded heading", () => {
