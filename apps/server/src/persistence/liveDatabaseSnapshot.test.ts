@@ -11,10 +11,14 @@ import {
   LiveDatabaseSpaceError,
   liveDatabaseReadOnlyUri,
   openLiveDatabaseReadOnly,
+  publishWithoutReplacing,
   removeStalePartials,
   snapshotHeadroom,
   snapshotLiveDatabase,
 } from "./liveDatabaseSnapshot.ts";
+
+/** Tests not about space never depend on the free space of the machine they run on. */
+const ample = { freeBytes: () => Number.MAX_SAFE_INTEGER };
 
 const withHeldDatabase = async (run: (dbPath: string, directory: string) => Promise<void>) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-live-db-snapshot-"));
@@ -73,7 +77,7 @@ describe("snapshotLiveDatabase", () => {
   it("writes a checked, self-contained copy and never overwrites", async () => {
     await withHeldDatabase(async (dbPath, directory) => {
       const output = NodePath.join(directory, "copies", "copy.sqlite");
-      const snapshot = await snapshotLiveDatabase(dbPath, output);
+      const snapshot = await snapshotLiveDatabase(dbPath, output, ample);
       assert.equal(snapshot.path, output);
       assert.equal(snapshot.quickCheck, "ok");
       assert.isFalse(NodeFS.existsSync(`${output}-wal`));
@@ -85,7 +89,7 @@ describe("snapshotLiveDatabase", () => {
         copy.close();
       }
       const failure = (target: string) =>
-        snapshotLiveDatabase(dbPath, target).then(
+        snapshotLiveDatabase(dbPath, target, ample).then(
           () => "",
           (error: Error) => error.message,
         );
@@ -119,7 +123,7 @@ describe("snapshotLiveDatabase", () => {
           // Let the writer start first, so the copy begins while the database is busy.
           while (writes < 3) await new Promise((resolve) => setTimeout(resolve, 2));
           const before = writes;
-          const snapshot = await snapshotLiveDatabase(dbPath, output);
+          const snapshot = await snapshotLiveDatabase(dbPath, output, ample);
           writesDuringCopy = writes - before;
           assert.equal(snapshot.quickCheck, "ok");
           assert.isAtLeast(snapshot.pages, 3000);
@@ -231,7 +235,7 @@ describe("checkDatabaseCopy", () => {
   it("checks a copy in a worker and rejects a file that is not a database", async () => {
     await withHeldDatabase(async (dbPath, directory) => {
       const output = NodePath.join(directory, "checked.sqlite");
-      await snapshotLiveDatabase(dbPath, output);
+      await snapshotLiveDatabase(dbPath, output, ample);
       let ticks = 0;
       const ticking = setInterval(() => (ticks += 1), 0);
       try {
@@ -248,6 +252,64 @@ describe("checkDatabaseCopy", () => {
       await checkDatabaseCopy(junk).then(
         () => assert.fail("a file that is not a database must not pass"),
         (error: Error) => assert.match(error.message, /not a database|malformed/i),
+      );
+    });
+  });
+});
+
+describe("publishWithoutReplacing", () => {
+  it("publishes a finished copy, and never replaces one another writer saved first", () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-publish-"));
+    try {
+      const target = NodePath.join(directory, "copy.sqlite");
+      const first = `${target}.partial-1-aaaa`;
+      NodeFS.writeFileSync(first, "first copy");
+      publishWithoutReplacing(first, target);
+      assert.equal(NodeFS.readFileSync(target, "utf8"), "first copy");
+      assert.isFalse(NodeFS.existsSync(first));
+      // A second writer that passed its own existence check before the first published.
+      const second = `${target}.partial-2-bbbb`;
+      NodeFS.writeFileSync(second, "second copy");
+      assert.throws(() => publishWithoutReplacing(second, target), /already exists/);
+      assert.equal(NodeFS.readFileSync(target, "utf8"), "first copy");
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to publish on a volume without hard links and makes no file at the target", () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-publish-"));
+    const noHardLinks = () => {
+      throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
+    };
+    try {
+      const target = NodePath.join(directory, "copy.sqlite");
+      const partial = `${target}.partial-1-aaaa`;
+      NodeFS.writeFileSync(partial, "finished copy");
+      assert.throws(() => publishWithoutReplacing(partial, target, noHardLinks), /no hard links/);
+      assert.isFalse(NodeFS.existsSync(target));
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the first copy when two snapshots race for one absent file", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const output = NodePath.join(directory, "raced.sqlite");
+      // Both pass the existence check before either publishes.
+      const results = await Promise.allSettled([
+        snapshotLiveDatabase(dbPath, output, ample),
+        snapshotLiveDatabase(dbPath, output, ample),
+      ]);
+      assert.deepEqual(results.map((result) => result.status).toSorted(), [
+        "fulfilled",
+        "rejected",
+      ]);
+      const rejected = results.find((result) => result.status === "rejected");
+      assert.match(String((rejected as PromiseRejectedResult).reason), /already exists/);
+      assert.deepEqual(
+        NodeFS.readdirSync(directory).filter((name) => name.startsWith("raced.sqlite")),
+        ["raced.sqlite"],
       );
     });
   });

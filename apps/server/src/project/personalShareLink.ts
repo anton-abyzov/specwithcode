@@ -190,8 +190,8 @@ const reload = (services: ShareLinkServices, project: Project) =>
   );
 
 /**
- * The copies of one join series, saved once (D-16, AC-13): the whole
- * database, then the Percy restore point. Skipped when a before-link point
+ * The copies of one join series, saved once (D-16, AC-13): the Percy
+ * project's database rows (1505), then the Percy restore point. Skipped when a before-link point
  * was saved since the series began, so a peer that fails every minute never
  * makes a copy every minute and a retry never shadows the pristine point. The
  * database copy is keyed by the series, so a retry after the copy and before
@@ -216,7 +216,7 @@ export const ensureSeriesCopies = (
     if (seriesPointOf(project, points, switchedOnAt) !== undefined)
       return { saved: false as const };
     const databaseCopy = yield* services.snapshot
-      .snapshot(`percy-join-${project.id}-${since ?? "first"}`)
+      .snapshot(`percy-join-${project.id}-${since ?? "first"}`, project.id)
       .pipe(Effect.mapError(failed("snapshot")));
     const point = yield* services.restorePoints
       .capture(project.id, "before-link")

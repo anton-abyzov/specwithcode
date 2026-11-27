@@ -24,6 +24,8 @@ import {
   snapshotFileName,
 } from "./personalLinkSnapshot.ts";
 
+const PERCY_ID = "percy-project";
+
 const files = [
   { name: "notes.md", sha256: "a".repeat(64) },
   { name: "people.md", sha256: "b".repeat(64) },
@@ -110,7 +112,7 @@ describe("PersonalLinkSnapshot default", () => {
   it.effect("fails every snapshot without the live layer (fail closed)", () =>
     Effect.gen(function* () {
       const snapshotter = yield* PersonalLinkSnapshot;
-      const error = yield* Effect.flip(snapshotter.snapshot("personal-link:op-1"));
+      const error = yield* Effect.flip(snapshotter.snapshot("personal-link:op-1", PERCY_ID));
       assert.instanceOf(error, Error);
       assert.match(error.message, /cannot save a database copy/);
     }),
@@ -132,11 +134,17 @@ const openScratchDatabase = (dbPath: string, rows: number) =>
     Effect.sync(() => {
       const holder = new NodeSqlite.DatabaseSync(dbPath);
       holder.exec("PRAGMA journal_mode=WAL;");
-      holder.exec("CREATE TABLE IF NOT EXISTS project_memory(name TEXT PRIMARY KEY, body TEXT)");
-      const insert = holder.prepare(
-        "INSERT OR IGNORE INTO project_memory(name, body) VALUES (?, ?)",
+      holder.exec(
+        "CREATE TABLE IF NOT EXISTS project_memory(project_id TEXT NOT NULL, name TEXT NOT NULL, body TEXT, PRIMARY KEY (project_id, name))",
       );
-      for (let i = 0; i < rows; i++) insert.run(`file-${i}.md`, `body ${i}`);
+      const insert = holder.prepare(
+        "INSERT OR IGNORE INTO project_memory(project_id, name, body) VALUES (?, ?, ?)",
+      );
+      for (let i = 0; i < rows; i++) {
+        insert.run(PERCY_ID, `file-${i}.md`, `body ${i}`);
+        // Another project's rows never reach Percy's copy.
+        insert.run("another-project", `file-${i}.md`, `other ${i}`);
+      }
       return holder;
     }),
     (holder) => Effect.sync(() => holder.close()),
@@ -146,7 +154,10 @@ const countRows = (path: string) => {
   const copy = new NodeSqlite.DatabaseSync(path, { readOnly: true });
   try {
     return Number(
-      Object.values(copy.prepare("SELECT count(*) FROM project_memory").get() ?? {})[0],
+      Object.values(
+        copy.prepare("SELECT count(*) FROM project_memory WHERE project_id = ?").get(PERCY_ID) ??
+          {},
+      )[0],
     );
   } finally {
     copy.close();
@@ -169,7 +180,7 @@ describe("PersonalLinkSnapshot layerLive", () => {
           assert.isTrue(config.dbPath.startsWith(baseDir));
           yield* openScratchDatabase(config.dbPath, 5);
           const snapshotter = yield* PersonalLinkSnapshot;
-          const path = yield* snapshotter.snapshot("personal-link:op/1");
+          const path = yield* snapshotter.snapshot("personal-link:op/1", PERCY_ID);
           assert.strictEqual(
             path,
             NodePath.join(
@@ -181,6 +192,22 @@ describe("PersonalLinkSnapshot layerLive", () => {
           );
           assert.isTrue(NodeFS.existsSync(path));
           assert.strictEqual(countRows(path), 5);
+          // Only Percy's rows: the other project's five are not in the copy.
+          const copy = new NodeSqlite.DatabaseSync(path, { readOnly: true });
+          try {
+            assert.strictEqual(
+              Number(
+                Object.values(copy.prepare("SELECT count(*) FROM project_memory").get() ?? {})[0],
+              ),
+              5,
+            );
+            assert.strictEqual(
+              copy.prepare("SELECT project_id FROM swc_copy_info").get()?.project_id,
+              PERCY_ID,
+            );
+          } finally {
+            copy.close();
+          }
         }).pipe(Effect.provide(liveFor(baseDir)));
       }),
     ),
@@ -194,11 +221,13 @@ describe("PersonalLinkSnapshot layerLive", () => {
           const config = yield* ServerConfig.ServerConfig;
           const holder = yield* openScratchDatabase(config.dbPath, 3);
           const snapshotter = yield* PersonalLinkSnapshot;
-          const first = yield* snapshotter.snapshot("personal-link:op-2");
+          const first = yield* snapshotter.snapshot("personal-link:op-2", PERCY_ID);
           const firstMtime = NodeFS.statSync(first).mtimeMs;
           // The database moves on; the retry must keep the pre-merge copy.
-          holder.prepare("INSERT INTO project_memory(name, body) VALUES (?, ?)").run("late", "x");
-          const second = yield* snapshotter.snapshot("personal-link:op-2");
+          holder
+            .prepare("INSERT INTO project_memory(project_id, name, body) VALUES (?, ?, ?)")
+            .run(PERCY_ID, "late", "x");
+          const second = yield* snapshotter.snapshot("personal-link:op-2", PERCY_ID);
           assert.strictEqual(second, first);
           assert.strictEqual(countRows(second), 3);
           assert.strictEqual(NodeFS.statSync(second).mtimeMs, firstMtime);
@@ -218,13 +247,13 @@ describe("PersonalLinkSnapshot layerLive", () => {
         const first = yield* Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           yield* openScratchDatabase(config.dbPath, 2);
-          return yield* (yield* PersonalLinkSnapshot).snapshot("personal-link:op-3");
+          return yield* (yield* PersonalLinkSnapshot).snapshot("personal-link:op-3", PERCY_ID);
         }).pipe(Effect.scoped, Effect.provide(liveFor(baseDir)));
         // A fresh layer has no memory of the first run, as after a server restart.
         const second = yield* Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           yield* openScratchDatabase(config.dbPath, 4);
-          return yield* (yield* PersonalLinkSnapshot).snapshot("personal-link:op-3");
+          return yield* (yield* PersonalLinkSnapshot).snapshot("personal-link:op-3", PERCY_ID);
         }).pipe(Effect.scoped, Effect.provide(liveFor(baseDir)));
         assert.strictEqual(second, first);
         assert.strictEqual(countRows(second), 2);
@@ -240,9 +269,11 @@ describe("PersonalLinkSnapshot layerLive", () => {
           const config = yield* ServerConfig.ServerConfig;
           const holder = yield* openScratchDatabase(config.dbPath, 1);
           const snapshotter = yield* PersonalLinkSnapshot;
-          const first = yield* snapshotter.snapshot("personal-link:op-a");
-          holder.prepare("INSERT INTO project_memory(name, body) VALUES (?, ?)").run("b", "x");
-          const second = yield* snapshotter.snapshot("personal-link:op-b");
+          const first = yield* snapshotter.snapshot("personal-link:op-a", PERCY_ID);
+          holder
+            .prepare("INSERT INTO project_memory(project_id, name, body) VALUES (?, ?, ?)")
+            .run(PERCY_ID, "b", "x");
+          const second = yield* snapshotter.snapshot("personal-link:op-b", PERCY_ID);
           assert.notStrictEqual(second, first);
           assert.strictEqual(countRows(first), 1);
           assert.strictEqual(countRows(second), 2);
@@ -258,7 +289,7 @@ describe("PersonalLinkSnapshot layerLive", () => {
         yield* Effect.gen(function* () {
           const config = yield* ServerConfig.ServerConfig;
           const error = yield* Effect.flip(
-            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-missing"),
+            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-missing", PERCY_ID),
           );
           assert.match(error.message, /No SpecWithCode database/);
           const dir = NodePath.join(config.stateDir, "backups", "personal-link");
@@ -279,9 +310,11 @@ describe("PersonalLinkSnapshot layerLive", () => {
           const config = yield* ServerConfig.ServerConfig;
           const holder = yield* openScratchDatabase(config.dbPath, 1);
           const snapshotter = yield* PersonalLinkSnapshot;
-          const first = yield* snapshotter.snapshot("personal-link:op-c");
-          holder.prepare("INSERT INTO project_memory(name, body) VALUES (?, ?)").run("c", "x");
-          const second = yield* snapshotter.snapshot("personal-link_op-c");
+          const first = yield* snapshotter.snapshot("personal-link:op-c", PERCY_ID);
+          holder
+            .prepare("INSERT INTO project_memory(project_id, name, body) VALUES (?, ?, ?)")
+            .run(PERCY_ID, "c", "x");
+          const second = yield* snapshotter.snapshot("personal-link_op-c", PERCY_ID);
           assert.notStrictEqual(second, first);
           assert.strictEqual(countRows(second), 2);
         }).pipe(Effect.provide(liveFor(baseDir)));
@@ -309,7 +342,7 @@ describe("PersonalLinkSnapshot layerLive", () => {
           // A file where the personal-link folder should be: mkdir fails with EEXIST.
           NodeFS.writeFileSync(NodePath.join(config.stateDir, "backups", "personal-link"), "x");
           const error = yield* Effect.flip(
-            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-eexist"),
+            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-eexist", PERCY_ID),
           );
           assert.instanceOf(error, Error);
         }).pipe(Effect.provide(liveFor(baseDir)));
@@ -331,9 +364,31 @@ describe("PersonalLinkSnapshot layerLive", () => {
             "not a database",
           );
           const error = yield* Effect.flip(
-            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-junk"),
+            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-junk", PERCY_ID),
           );
           assert.match(error.message, /unusable file/);
+        }).pipe(Effect.provide(liveFor(baseDir)));
+      }),
+    ),
+  );
+
+  it.effect("never takes an empty file for a safety copy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const baseDir = yield* makeScratchBase();
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          yield* openScratchDatabase(config.dbPath, 1);
+          const dir = NodePath.join(config.stateDir, "backups", "personal-link");
+          NodeFS.mkdirSync(dir, { recursive: true });
+          // An empty file passes quick_check; it is still no copy.
+          const target = NodePath.join(dir, snapshotFileName("personal-link:op-claim"));
+          NodeFS.closeSync(NodeFS.openSync(target, "wx"));
+          const error = yield* Effect.flip(
+            (yield* PersonalLinkSnapshot).snapshot("personal-link:op-claim", PERCY_ID),
+          );
+          assert.match(error.message, /unusable file/);
+          assert.equal(NodeFS.statSync(target).size, 0);
         }).pipe(Effect.provide(liveFor(baseDir)));
       }),
     ),
@@ -347,7 +402,7 @@ const manualCopy = () => {
   const calls: Array<string> = [];
   let finish: (result: { readonly quickCheck: string }) => void = () => {};
   let fail: (error: Error) => void = () => {};
-  const copy = (_dbPath: string, target: string) => {
+  const copy = (_dbPath: string, target: string, _projectId: string) => {
     calls.push(target);
     return new Promise<{ readonly quickCheck: string }>((resolve, reject) => {
       finish = (result) => {
@@ -382,12 +437,12 @@ describe("makePersonalLinkSnapshotter", () => {
         // The layer is provided twice in the runtime: two snapshotters share the process state.
         const first = makePersonalLinkSnapshotter(deps);
         const second = makePersonalLinkSnapshotter(deps);
-        const interrupted = yield* Effect.forkChild(first.snapshot("percy-join-op"));
+        const interrupted = yield* Effect.forkChild(first.snapshot("percy-join-op", PERCY_ID));
         yield* waitFor(() => manual.calls.length === 1);
         // A peer's call timed out: its handler is interrupted while the copy goes on.
         yield* Fiber.interrupt(interrupted);
-        const waiting = yield* Effect.forkChild(second.snapshot("percy-join-op"));
-        const alsoWaiting = yield* Effect.forkChild(first.snapshot("percy-join-op"));
+        const waiting = yield* Effect.forkChild(second.snapshot("percy-join-op", PERCY_ID));
+        const alsoWaiting = yield* Effect.forkChild(first.snapshot("percy-join-op", PERCY_ID));
         yield* Effect.yieldNow;
         assert.strictEqual(manual.calls.length, 1);
         manual.finish();
@@ -410,17 +465,17 @@ describe("makePersonalLinkSnapshotter", () => {
         const snapshotter = makePersonalLinkSnapshotter({
           dir,
           dbPath: "/scratch/none.sqlite",
-          copy: async (dbPath, path) => {
+          copy: async (dbPath, path, projectId) => {
             assert.isFalse(NodeFS.existsSync(`${target}.partial-${process.pid}`));
             // The running copy's own partial.
             NodeFS.writeFileSync(`${path}.partial-${process.pid}-aaaa`, "running");
-            return manual.copy(dbPath, path);
+            return manual.copy(dbPath, path, projectId);
           },
           state: makeSnapshotState(),
         });
-        const running = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale"));
+        const running = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale", PERCY_ID));
         yield* waitFor(() => manual.calls.length === 1);
-        const joining = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale"));
+        const joining = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale", PERCY_ID));
         yield* Effect.yieldNow;
         assert.isTrue(NodeFS.existsSync(`${target}.partial-${process.pid}-aaaa`));
         manual.finish();
@@ -442,15 +497,19 @@ describe("makePersonalLinkSnapshotter", () => {
           state: makeSnapshotState(),
         });
         // A timed-out call left the first series' copy running; the switch went off and on.
-        const first = yield* Effect.forkChild(snapshotter.snapshot("percy-join-p-series-1"));
+        const first = yield* Effect.forkChild(
+          snapshotter.snapshot("percy-join-p-series-1", PERCY_ID),
+        );
         yield* waitFor(() => manual.calls.length === 1);
-        const refused = yield* Effect.flip(snapshotter.snapshot("percy-join-p-series-2"));
+        const refused = yield* Effect.flip(snapshotter.snapshot("percy-join-p-series-2", PERCY_ID));
         assert.match(refused.message, /Another copy of the database is still being saved/);
         assert.strictEqual(manual.calls.length, 1);
         manual.finish();
         yield* Fiber.join(first);
         // Once it ends, the new series copies at once: the refusal left no wait behind.
-        const second = yield* Effect.forkChild(snapshotter.snapshot("percy-join-p-series-2"));
+        const second = yield* Effect.forkChild(
+          snapshotter.snapshot("percy-join-p-series-2", PERCY_ID),
+        );
         yield* waitFor(() => manual.calls.length === 2);
         manual.finish();
         yield* Fiber.join(second);
@@ -487,7 +546,7 @@ describe("makePersonalLinkSnapshotter", () => {
         },
         state: makeSnapshotState(),
       });
-      const attempt = () => Effect.flip(snapshotter.snapshot("percy-join-backoff"));
+      const attempt = () => Effect.flip(snapshotter.snapshot("percy-join-backoff", PERCY_ID));
       assert.match((yield* attempt()).message, /disk is full/);
       assert.strictEqual(calls, 1);
       clock += 30_000;
@@ -531,14 +590,14 @@ describe("makePersonalLinkSnapshotter", () => {
         },
         state: makeSnapshotState(),
       });
-      const first = yield* Effect.flip(snapshotter.snapshot("percy-join-space"));
+      const first = yield* Effect.flip(snapshotter.snapshot("percy-join-space", PERCY_ID));
       assert.match(first.message, /Not enough free disk space.*1\.0 GB is free/);
       free = 10 * GIB;
-      const stillShort = yield* Effect.flip(snapshotter.snapshot("percy-join-space"));
+      const stillShort = yield* Effect.flip(snapshotter.snapshot("percy-join-space", PERCY_ID));
       assert.match(stillShort.message, /It tries again in about a minute/);
       assert.strictEqual(calls, 1);
       free = 30 * GIB;
-      yield* Effect.flip(snapshotter.snapshot("percy-join-space"));
+      yield* Effect.flip(snapshotter.snapshot("percy-join-space", PERCY_ID));
       assert.strictEqual(calls, 2);
     }),
   );
