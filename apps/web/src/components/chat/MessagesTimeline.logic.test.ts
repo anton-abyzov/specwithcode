@@ -4539,7 +4539,7 @@ it("keeps a delegated task's thread on the fold its wake notice leads", () => {
     item: {
       ...source.item,
       type: "notification" as const,
-      source: { kind: "delegated_task" as const, childThreadId },
+      source: { kind: "delegated_task" as const, taskIds: [], childThreadId },
       outcome: "completed" as const,
       summary: 'Delegated task "Docs" finished',
     },
