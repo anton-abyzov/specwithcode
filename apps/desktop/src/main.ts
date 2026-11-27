@@ -83,6 +83,8 @@ import * as ArtifactAppPowerService from "./artifactApps/ArtifactAppPowerService
 import * as ArtifactAppPowersHost from "./artifactApps/ArtifactAppPowersHost.ts";
 import * as ArtifactAppRecords from "./artifactApps/ArtifactAppRecords.ts";
 import * as ArtifactAppRouting from "./artifactApps/ArtifactAppRouting.ts";
+import * as ArtifactAppShimRecords from "./artifactApps/ArtifactAppShimRecords.ts";
+import * as ArtifactAppShims from "./artifactApps/ArtifactAppShims.ts";
 import * as ArtifactAppWindows from "./artifactApps/ArtifactAppWindows.ts";
 
 import { configureDesktopOffscreenTest } from "./electron/DesktopOffscreen.ts";
@@ -265,15 +267,26 @@ const layerArtifactAppGrants = Layer.unwrap(
   }),
 );
 
+// What the shell keeps about macOS shim launchers (their code hashes) and the pages to reopen.
+const layerArtifactAppShimRecords = Layer.unwrap(
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    return ArtifactAppShimRecords.layer(environment.stateDir);
+  }),
+);
+
 const layerArtifactApps = Layer.mergeAll(
-  ArtifactAppInstaller.layer,
+  ArtifactAppShims.layer.pipe(Layer.provide(ArtifactAppShims.layerElectronShimServer)),
   ArtifactAppPowerService.layer.pipe(Layer.provide(ArtifactAppPowersHost.layerElectron)),
   ArtifactAppRouting.layer(earlyArtifactAppLaunches),
 ).pipe(
-  // One host for both: the consent dialog uses the install confirmation's dialog seam.
+  // One installer: the shim server checks shims against the launchers it wrote.
+  Layer.provideMerge(ArtifactAppInstaller.layer),
+  // One host for all: the consent dialog uses the install confirmation's dialog seam.
   Layer.provide(ArtifactAppInstaller.layerElectronHost),
   Layer.provideMerge(ArtifactAppWindows.layer),
   Layer.provideMerge(layerArtifactAppGrants),
+  Layer.provideMerge(layerArtifactAppShimRecords),
   Layer.provideMerge(layerArtifactAppRecords),
 );
 

@@ -107,11 +107,24 @@ export function artifactAppExternalUrl(rawUrl: string): string | null {
 
 export type ArtifactAppWindowOpenResult = "opened" | "focused" | "unknown" | "limit" | "failed";
 
+export interface ArtifactAppWindowOpenOptions {
+  /**
+   * The macOS app shim the window belongs to, so the Dock, app switcher and menu bar
+   * show the page. A window open outside it is replaced.
+   */
+  readonly appShim?: Electron.AppShimHost;
+}
+
 export class ArtifactAppWindows extends Context.Service<
   ArtifactAppWindows,
   {
     /** Opens the install's window, or brings the open one forward. */
-    readonly open: (installId: string) => Effect.Effect<ArtifactAppWindowOpenResult>;
+    readonly open: (
+      installId: string,
+      options?: ArtifactAppWindowOpenOptions,
+    ) => Effect.Effect<ArtifactAppWindowOpenResult>;
+    /** Installs whose window is open in a connected app shim, to reopen after a restart. */
+    readonly shimInstallIds: Effect.Effect<ReadonlyArray<string>>;
     /** The install an installed-page window's renderer shows. */
     readonly installIdForWebContents: (
       webContentsId: number,
@@ -197,6 +210,8 @@ const make = Effect.gen(function* () {
   // One open at a time, so two launches of one install cannot make two windows or pass the cap.
   const openLock = yield* Semaphore.make(1);
   const windows = new Map<string, Electron.BrowserWindow>();
+  // The shim each window was created in; a window's shim never changes.
+  const shims = new Map<string, Electron.AppShimHost>();
   const installIdsByWebContents = new Map<number, string>();
   // The address each window's page frame may be at, without its fragment.
   const versionUrls = new Map<string, string>();
@@ -245,9 +260,20 @@ const make = Effect.gen(function* () {
     })
     .pipe(Effect.ignoreCause({ log: true }));
 
+  // A window in a shim is brought forward by the shim; app.focus would bring SpecWithCode.
+  const revealWindow = (window: Electron.BrowserWindow, inShim: boolean) =>
+    inShim
+      ? Effect.sync(() => {
+          if (window.isDestroyed()) return;
+          window.show();
+          window.focus();
+        })
+      : electronWindow.reveal(window);
+
   const createWindow = Effect.fn("desktop.artifactAppWindows.create")(function* (
     installId: string,
     title: string,
+    appShim: Electron.AppShimHost | undefined,
   ) {
     const windowUrl = artifactAppWindowUrl(getDesktopUrl(environment.isDevelopment), installId);
     const iconPaths = yield* assets.iconPaths;
@@ -262,6 +288,7 @@ const make = Effect.gen(function* () {
       ...titleBarOptions(environment.platform, shouldUseDarkColors),
       backgroundColor: shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
       ...iconOption(iconPaths, environment.platform),
+      ...(appShim === undefined ? {} : { appShim }),
       webPreferences: {
         preload: environment.preloadPath,
         contextIsolation: true,
@@ -280,10 +307,18 @@ const make = Effect.gen(function* () {
     // Recorded and registered before the first load: IPC only answers registered app
     // windows, and the preload calls into the main process while the page loads.
     windows.set(installId, window);
+    if (appShim === undefined) shims.delete(installId);
+    else shims.set(installId, appShim);
     installIdsByWebContents.set(webContentsId, installId);
     window.once("closed", () => {
+      // The page is the shim's only window, so the shim goes with it: no Dock icon is
+      // left behind with nothing to show.
+      if (appShim !== undefined && appShim.isConnected()) appShim.quit();
       const current = windows.get(installId) === window;
-      if (current) windows.delete(installId);
+      if (current) {
+        windows.delete(installId);
+        shims.delete(installId);
+      }
       installIdsByWebContents.delete(webContentsId);
       if (!current) return;
       versionUrls.delete(installId);
@@ -300,14 +335,17 @@ const make = Effect.gen(function* () {
     }
     // The window keeps the app's name; the client's document title would replace it.
     window.on("page-title-updated", (event) => event.preventDefault());
-    // This window belongs to SpecWithCode, so the menu's quit shortcut would end SpecWithCode
-    // and every window with it. In an installed page it closes the page only, as quitting a
-    // separate app would; Quit in the menu bar still quits SpecWithCode.
-    window.webContents.on("before-input-event", (event, input) => {
-      if (!isArtifactAppQuitShortcut(input, environment.platform)) return;
-      event.preventDefault();
-      window.close();
-    });
+    // A window outside a shim belongs to SpecWithCode, so the menu's quit shortcut would end
+    // SpecWithCode and every window with it. There it closes the page only, as quitting a
+    // separate app would; Quit in the menu bar still quits SpecWithCode. In a shim, the
+    // shim's own menu owns Command-Q and quits only the page.
+    if (appShim === undefined) {
+      window.webContents.on("before-input-event", (event, input) => {
+        if (!isArtifactAppQuitShortcut(input, environment.platform)) return;
+        event.preventDefault();
+        window.close();
+      });
+    }
     const guardNavigation = (event: { preventDefault: () => void }, url: string) => {
       if (isArtifactAppWindowNavigationAllowed({ windowUrl, targetUrl: url })) return;
       event.preventDefault();
@@ -371,7 +409,7 @@ const make = Effect.gen(function* () {
     const show = () => {
       if (shown || window.isDestroyed()) return;
       shown = true;
-      runFork(electronWindow.reveal(window));
+      runFork(revealWindow(window, appShim !== undefined));
     };
     window.once("ready-to-show", show);
     // A window whose page failed to load still shows, so the person sees the failure.
@@ -383,13 +421,29 @@ const make = Effect.gen(function* () {
     return window;
   });
 
+  // Takes a window out of service at once, as its close would, so its replacement can open.
+  const retire = (installId: string, window: Electron.BrowserWindow) => {
+    windows.delete(installId);
+    shims.delete(installId);
+    versionUrls.delete(installId);
+    strayedFrames.delete(installId);
+    tell(closedListeners, installId);
+    if (!window.isDestroyed()) window.close();
+  };
+
   const open = Effect.fn("desktop.artifactAppWindows.open")(
-    function* (installId: string) {
+    function* (installId: string, options?: ArtifactAppWindowOpenOptions) {
       if (!isArtifactAppInstallId(installId)) return "unknown" as const;
+      const appShim = options?.appShim;
       const existing = liveWindow(installId);
       if (existing !== undefined) {
-        yield* electronWindow.reveal(existing);
-        return "focused" as const;
+        const existingShim = shims.get(installId);
+        if (appShim === undefined || existingShim === appShim) {
+          yield* revealWindow(existing, existingShim !== undefined);
+          return "focused" as const;
+        }
+        // A window's shim is fixed when it is made, so a window outside this shim is replaced.
+        retire(installId, existing);
       }
       const app = yield* records.get(installId);
       if (Option.isNone(app)) {
@@ -403,7 +457,7 @@ const make = Effect.gen(function* () {
         runFork(showLimitMessage);
         return "limit" as const;
       }
-      return yield* createWindow(installId, app.value.name).pipe(
+      return yield* createWindow(installId, app.value.name, appShim).pipe(
         Effect.as("opened" as const),
         Effect.catchTags({
           ElectronWindowCreateError: (error) =>
@@ -426,6 +480,11 @@ const make = Effect.gen(function* () {
 
   return ArtifactAppWindows.of({
     open,
+    shimInstallIds: Effect.sync(() =>
+      [...shims.entries()]
+        .filter(([installId, shim]) => liveWindow(installId) !== undefined && shim.isConnected())
+        .map(([installId]) => installId),
+    ),
     installIdForWebContents: (webContentsId) =>
       Effect.sync(() => {
         const installId = installIdsByWebContents.get(webContentsId);

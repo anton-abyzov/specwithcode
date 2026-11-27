@@ -132,6 +132,73 @@ describe("macArtifactAppBundle", () => {
   });
 });
 
+describe("macArtifactAppBundle with an app shim", () => {
+  const shim = {
+    hostAppPath: "/Applications/SpecWithCode.app",
+    hostBundleId: "com.specweave.studio",
+    serverName: "com.specweave.studio.artifact-apps",
+  };
+  const bundle = macArtifactAppBundle({
+    installId: ID,
+    name: "Morning dashboard",
+    launchUrl: URL,
+    bundleIdPrefix: "com.specweave.studio",
+    minimumSystemVersion: "13.0",
+    shim,
+  });
+
+  it("runs Electron's shim loader instead of a script", () => {
+    expect(bundle.files.map((file) => [file.relativePath, file.kind])).toEqual([
+      ["Contents/Info.plist", "text"],
+      ["Contents/MacOS/page", "shim-loader"],
+      ["Contents/Resources/AppIcon.icns", "app-icon"],
+      ["Contents/PkgInfo", "text"],
+    ]);
+  });
+
+  it("points the shim at the running app and its server", () => {
+    const plist = textFile(bundle.files, "Contents/Info.plist").contents;
+    expect(plist).toContain("<key>CFBundleExecutable</key>\n\t<string>page</string>");
+    expect(plist).toContain(
+      "<key>ElectronAppShimHostPath</key>\n\t<string>/Applications/SpecWithCode.app</string>",
+    );
+    expect(plist).toContain(
+      "<key>ElectronAppShimHostBundleIdentifier</key>\n\t<string>com.specweave.studio</string>",
+    );
+    expect(plist).toContain(
+      "<key>ElectronAppShimServerName</key>\n\t<string>com.specweave.studio.artifact-apps</string>",
+    );
+    expect(plist).toContain(
+      "<key>ElectronAppShimHostArguments</key>\n\t<array>\n\t\t<string>--specwithcode-artifact-app-launch</string>\n\t</array>",
+    );
+    expect(plist).toContain(
+      `<key>SpecWithCodeArtifactAppInstallId</key>\n\t<string>${ID}</string>`,
+    );
+    expect(plist).toContain("<key>LSMinimumSystemVersion</key>\n\t<string>13.0</string>");
+    // The shim bundle has no script, so the launch URL appears nowhere in it.
+    expect(plist).not.toContain(URL);
+  });
+
+  it.each([
+    ["a relative host path", { hostAppPath: "SpecWithCode.app" }],
+    ["a host that is not an app", { hostAppPath: "/usr/bin" }],
+    ["a host path with a newline", { hostAppPath: "/Applications/A\nB.app" }],
+    ["a bad host bundle id", { hostBundleId: "com specweave" }],
+    ["a bad server name", { serverName: "apps/../x" }],
+    ["an empty server name", { serverName: "" }],
+  ])("rejects %s", (_label, override) => {
+    expect(() =>
+      macArtifactAppBundle({
+        installId: ID,
+        name: "Board",
+        launchUrl: URL,
+        bundleIdPrefix: "com.specweave.studio",
+        shim: { ...shim, ...override },
+      }),
+    ).toThrow();
+  });
+});
+
 describe("linuxArtifactAppDesktopEntry", () => {
   it("writes a desktop entry that opens the launch URL", () => {
     const entry = linuxArtifactAppDesktopEntry({
