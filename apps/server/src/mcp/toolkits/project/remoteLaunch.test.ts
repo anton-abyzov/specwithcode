@@ -1497,7 +1497,12 @@ it.effect("sends a named model with this project's Tracks row Ultracode (1506)",
   });
   return Effect.gen(function* () {
     const named = { instanceId: providerInstanceId, model: "gpt-5.5" };
-    yield* tracks.launch({ title: "Check", message: "Check it", machine: "M1", modelSelection: named });
+    yield* tracks.launch({
+      title: "Check",
+      message: "Check it",
+      machine: "M1",
+      modelSelection: named,
+    });
     expect(tracks.remoteLaunches[0]?.explicitModelSelection).toEqual({ ...named, options: [on] });
     // A review launch takes only its model.
     yield* tracks.launch({

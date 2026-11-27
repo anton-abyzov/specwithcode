@@ -55,7 +55,10 @@ const settingsWith = (
   projectSettingsOverrides: {
     [projectId]: {
       threadModelMode: mode,
-      modelLanes: { routine: [{ instanceId: claude, model: OPUS, options: [...row] }], complex: [] },
+      modelLanes: {
+        routine: [{ instanceId: claude, model: OPUS, options: [...row] }],
+        complex: [],
+      },
     },
   },
 });
@@ -93,7 +96,9 @@ describe("a named launch on a Tracks row (1506)", () => {
           Layer.mock(ServerSettings.ServerSettingsService)({
             getSettings: Effect.succeed(settingsWith("tracks", [medium, on])),
           }),
-          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed(providers),
+          }),
         ),
       ),
     );

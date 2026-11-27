@@ -176,30 +176,28 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
         getProviders: Effect.succeed([
           {
             ...provider(instanceId, "codex"),
-            models: [modelSelection.model, trackSelection.model].map(
-              (slug) => ({
-                slug,
-                name: slug,
-                isCustom: false,
-                capabilities: {
-                  optionDescriptors: [
-                    {
-                      id: "reasoning_effort",
-                      label: "Reasoning effort",
-                      type: "select" as const,
-                      options: [
-                        { id: "medium", label: "Medium" },
-                        { id: "high", label: "High", isDefault: true },
-                      ],
-                    },
-                    // The track model offers the Ultracode switch (1506).
-                    ...(slug === trackSelection.model
-                      ? [{ id: "ultracode", label: "Ultracode", type: "boolean" as const }]
-                      : []),
-                  ],
-                },
-              }),
-            ),
+            models: [modelSelection.model, trackSelection.model].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "reasoning_effort",
+                    label: "Reasoning effort",
+                    type: "select" as const,
+                    options: [
+                      { id: "medium", label: "Medium" },
+                      { id: "high", label: "High", isDefault: true },
+                    ],
+                  },
+                  // The track model offers the Ultracode switch (1506).
+                  ...(slug === trackSelection.model
+                    ? [{ id: "ultracode", label: "Ultracode", type: "boolean" as const }]
+                    : []),
+                ],
+              },
+            })),
           },
         ]),
       }),

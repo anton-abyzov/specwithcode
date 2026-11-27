@@ -930,10 +930,16 @@ describe("track Ultracode", () => {
     expect(withMatchingTrackRowUltracode(off, lanes, sources)).toBe(off);
     const haiku = sel("claudeAgent", "claude-haiku-4-5");
     expect(withMatchingTrackRowUltracode(haiku, lanes, sources)).toBe(haiku);
-    const rowOff = launchTrackLanes({ routine: [], complex: [{ ...opus, options: [medium] }] }, sources);
+    const rowOff = launchTrackLanes(
+      { routine: [], complex: [{ ...opus, options: [medium] }] },
+      sources,
+    );
     expect(withMatchingTrackRowUltracode(opus, rowOff, sources)).toBe(opus);
     // A Complex row counts as a Daily one does.
-    const complex = launchTrackLanes({ routine: [], complex: [{ ...opus, options: [on] }] }, sources);
+    const complex = launchTrackLanes(
+      { routine: [], complex: [{ ...opus, options: [on] }] },
+      sources,
+    );
     expect(trackEntryUltracode(withMatchingTrackRowUltracode(opus, complex, sources))).toBe(true);
   });
 

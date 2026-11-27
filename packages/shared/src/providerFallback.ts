@@ -841,7 +841,12 @@ export function resolveProviderFallback(
   const moved = withMovedEffort(target, input);
   // A move onto a Daily or Complex row takes its Ultracode, unless the thread named it (1506).
   return input.rule.threadModelMode === "tracks" && input.review !== true
-    ? withTrackRowUltracode(moved, input.rule.modelLanes, input.providers, input.rule.defaultModelProviders)
+    ? withTrackRowUltracode(
+        moved,
+        input.rule.modelLanes,
+        input.providers,
+        input.rule.defaultModelProviders,
+      )
     : moved;
 }
 
