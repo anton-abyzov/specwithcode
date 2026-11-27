@@ -141,6 +141,8 @@ export function hostPreviewMimeTypeFromExtension(extension: string): string | nu
 
 const HOST_TEXT_PREVIEW_EXTENSIONS = new Set([
   ".csv",
+  // Whiteboard scenes are JSON; phones draw them natively.
+  ".excalidraw",
   ".json",
   ".jsonl",
   ".log",

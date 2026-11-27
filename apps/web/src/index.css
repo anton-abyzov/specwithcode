@@ -1613,10 +1613,13 @@ video.artifact-viewer-media {
   outline-offset: -1px;
 }
 
+/* Table text is set in the interface face a step below the prose, as a
+   document viewer sets data, so a review table's columns fit the column. */
 .report-document .chat-markdown table {
   min-width: 100%;
-  font-size: 0.9375rem;
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.5;
 }
 
 .report-document .chat-markdown thead th {
@@ -1627,7 +1630,7 @@ video.artifact-viewer-media {
 
 .report-document .chat-markdown th,
 .report-document .chat-markdown td {
-  padding: 0.625rem 0.875rem;
+  padding: 0.5rem 0.75rem;
   vertical-align: top;
 }
 
@@ -1660,44 +1663,31 @@ video.artifact-viewer-media {
   white-space: nowrap;
 }
 
-/* A cell's text keeps a readable width: long text never narrows below 14rem
-   (30% of a narrow reader) and wraps by 28rem, so a column of reasons beside
-   wide file chips stays a line or two tall instead of a word per line. A file
-   chip or token longer than 28rem keeps its whole width. */
+/* A cell's text keeps a readable width: long text never narrows below 9rem
+   (30% of a narrow reader) and wraps by 22rem, so a column of reasons beside
+   wide file chips stays a few lines tall instead of a word per line, and a
+   six-column review table still fits the text column. A file chip or token
+   longer than 22rem keeps its whole width. */
 .report-document .chat-markdown .chat-markdown-cell {
   display: block;
-  min-width: calc-size(max-content, min(size, 14rem, 30cqi));
-  max-width: calc-size(min-content, max(size, 28rem));
+  min-width: calc-size(max-content, min(size, 9rem, 30cqi));
+  max-width: calc-size(min-content, max(size, 22rem));
 }
 
-/* A table spreads across the reader while prose keeps its measure: its frame
-   takes the room beside the outline, up to 72rem, and stays centered on the
-   page. A table whose natural width is wider still grows to the whole room,
-   and only what cannot fit the room scrolls inside the frame. The cell box
-   above bounds every line, so a wide table never turns into long lines. */
+/* A table stays in the text column, as a document viewer sets it: its frame
+   is the column's width, and only what cannot fit scrolls inside the frame,
+   so the page never grows a second, wider edge. */
 .report-reader-body,
 [data-report-file-pane] {
   container: report-reader / inline-size;
 }
 
-.report-reader-body:has(> .report-outline) {
-  --report-outline-room: 3rem;
+.report-document .chat-markdown > .chat-markdown-table-container {
+  max-width: 100%;
 }
 
-@container report-reader (width > 0) {
-  .report-document .chat-markdown > .chat-markdown-table-container {
-    --report-table-room: calc(
-      100cqi - var(--report-outline-room, 0rem) - 2 * var(--report-page-inline)
-    );
-    display: grid;
-    grid-template-columns: max-content;
-    justify-content: center;
-  }
-
-  .report-document .chat-markdown > .chat-markdown-table-container > :first-child {
-    min-width: min(72rem, var(--report-table-room));
-    max-width: var(--report-table-room);
-  }
+.report-document .chat-markdown > .chat-markdown-table-container > :first-child {
+  max-width: 100%;
 }
 
 /* A Markdown file in the side panel reads at 56rem while its tables take the

@@ -1,0 +1,202 @@
+import Foundation
+import Testing
+@testable import Weave
+
+/// Vectors ported from `markdownDocument` in packages/shared/src/reportDocument.test.ts,
+/// so a report reads the same on the phone as on the desktop.
+@Suite("Markdown files as documents")
+struct MarkdownDocumentTests {
+  static let research = [
+    "---",
+    "title: Project joining, folder handoff and machine pairing",
+    "date: October 19, 2026",
+    "source: anton-abyzov/specwithcode origin/main 8358add5d9 (read-only checkout ~/Projects/github/studio-live-activity-base)",
+    "installed: M4 1.0.54, M3 1.0.53",
+    "status: research and design only, nothing implemented",
+    "---",
+    "",
+    "# Project joining, folder handoff and machine pairing",
+    "",
+    "**Verdict.** Build three things.",
+    "",
+    "## 1. The session",
+    "",
+    "| Field | Value |",
+    "|---|---|",
+    "| App | Claude desktop |",
+  ].joined(separator: "\n")
+
+  @Test("Frontmatter becomes the title and properties; the body stays as written")
+  func research() {
+    let document = MarkdownDocument.parse(Self.research)
+    #expect(document.title == "Project joining, folder handoff and machine pairing")
+    #expect(document.properties == [
+      .init(label: "Date", value: .text("October 19, 2026")),
+      .init(label: "Source", value: .text("anton-abyzov/specwithcode origin/main 8358add5d9 (read-only checkout ~/Projects/github/studio-live-activity-base)")),
+      .init(label: "Installed", value: .text("M4 1.0.54, M3 1.0.53")),
+      .init(label: "Status", value: .text("research and design only, nothing implemented")),
+    ])
+    #expect(document.body == "**Verdict.** Build three things.\n\n## 1. The session\n\n| Field | Value |\n|---|---|\n| App | Claude desktop |")
+  }
+
+  @Test("A saved report's quoted values, lists and keys read as properties")
+  func savedReport() {
+    let document = MarkdownDocument.parse("""
+    ---
+    title: "Review of PR 877, Suggestion clipboard fix"
+    threadTitle: "Review PR 877"
+    savedAt: "2026-11-24T16:16:00.739Z"
+    head: afa860030f
+    areas: [Mermaid, "Reports"]
+    owners:
+      - Ada
+      - 'Percy'
+    verdict: ship once the PR Gate runs for real (undraft); no code fix required
+    ---
+
+    # PR 877 review at `afa86003`
+
+    ## Verdict
+    """)
+    #expect(document.title == "Review of PR 877, Suggestion clipboard fix")
+    #expect(document.properties.map(\.label) == ["Thread title", "Saved at", "Head", "Areas", "Owners", "Verdict"])
+    #expect(document.properties[3].value == .chips(["Mermaid", "Reports"]))
+    #expect(document.properties[4].value == .chips(["Ada", "Percy"]))
+    // The opening heading differs from the title, so it stays in the body.
+    #expect(document.body.hasPrefix("# PR 877 review at `afa86003`"))
+  }
+
+  @Test("The opening heading names the page; one that differs from the title stays")
+  func openingHeading() {
+    let notes = MarkdownDocument.parse("---\ndate: today\n---\n\n# Notes\n\nBody.")
+    #expect(notes.title == "Notes")
+    #expect(notes.body == "Body.")
+    let differs = MarkdownDocument.parse("---\ntitle: A\n---\n\n# B\n\nBody.")
+    #expect(differs.title == "A")
+    #expect(differs.properties.isEmpty)
+    #expect(differs.body == "# B\n\nBody.")
+  }
+
+  @Test("Frontmatter too rich for a table shows as YAML, never as a rule and a heading")
+  func richFrontmatter() {
+    let document = MarkdownDocument.parse("---\nmeta:\n  nested: 1\n---\n\nBody.")
+    #expect(document == MarkdownDocument(title: nil, properties: [], body: "~~~~yaml\nmeta:\n  nested: 1\n~~~~\n\nBody."))
+  }
+
+  @Test("A title keeps its own characters and a closing hash run only after a space")
+  func titleCharacters() {
+    #expect(MarkdownDocument.parse("---\ndate: x\n---\n\n# The my_module API for Vec<T>\n\nBody.").title == "The my_module API for Vec<T>")
+    #expect(MarkdownDocument.parse("---\ndate: x\n---\n\n# Learn C#\n\nBody.").title == "Learn C#")
+    #expect(MarkdownDocument.parse("---\ndate: x\n---\n\n# Closed ##\n\nBody.").title == "Closed")
+    let styled = MarkdownDocument.parse("---\ntitle: snake_case_name\n---\n\n# **The** `snake_case_name`\n\nBody.")
+    #expect(styled.title == "snake_case_name")
+    #expect(styled.body == "# **The** `snake_case_name`\n\nBody.")
+    #expect(MarkdownDocument.parse("---\ntitle: \"`snake_case_name`\"\n---\n\nBody.").title == "snake_case_name")
+  }
+
+  @Test("An indented code block that opens the body keeps its indentation")
+  func indentedCode() {
+    #expect(MarkdownDocument.parse("---\ndate: x\n---\n\n    indented code\n    more\n").body == "    indented code\n    more")
+  }
+
+  @Test("Rules around prose and files without frontmatter come back as written")
+  func asWritten() {
+    for text in [
+      "---\n\nNote: draft only\n\n---\n\n# Real\n\nText",
+      "---\n\nJust an intro\n\n---",
+      "---\nJust an intro\n---\n",
+      "# Title\n\n---\n\nBody.\n",
+    ] {
+      #expect(MarkdownDocument.parse(text) == MarkdownDocument(title: nil, properties: [], body: text))
+    }
+  }
+
+  @Test("Keys read as words")
+  func labels() {
+    #expect(MarkdownDocument.humanized("threadTitle") == "Thread title")
+    #expect(MarkdownDocument.humanized("saved_at") == "Saved at")
+    #expect(MarkdownDocument.humanized("head-sha") == "Head sha")
+    #expect(MarkdownDocument.humanized("URL") == "URL")
+    #expect(MarkdownDocument.humanized("status") == "Status")
+  }
+
+  @Test("A reply that opens with frontmatter shows a title and a property card, not one big heading")
+  func replyFrontmatter() {
+    let blocks = MarkdownParser.parse("---\ntitle: Status\nverdict: ship\n---\n\nAll green.")
+    #expect(blocks == [
+      .heading(level: 1, text: "Status"),
+      .properties([.init(label: "Verdict", value: .text("ship"))]),
+      .paragraph("All green."),
+    ])
+  }
+  @Test("A thread ID and its title become one link; ISO dates read as words")
+  func threadLinkAndDates() throws {
+    let fields = [
+      MarkdownProperty(label: "Thread", value: .text("thread:delegated-task:command%3Amcp%3Aa1")),
+      MarkdownProperty(label: "Thread title", value: .text("Review PR 877")),
+      MarkdownProperty(label: "Saved at", value: .text("2026-11-24T16:16:00.739Z")),
+      MarkdownProperty(label: "Date", value: .text("2026-11-24")),
+      MarkdownProperty(label: "Head", value: .text("afa860030f")),
+    ]
+    let shaped = MarkdownDocument.shaped(fields, locale: Locale(identifier: "en_US"), timeZone: TimeZone(identifier: "UTC")!)
+    #expect(shaped.map(\.label) == ["Thread", "Saved at", "Date", "Head"])
+    guard case let .text(link) = shaped[0].value else { Issue.record("not text"); return }
+    #expect(link.hasPrefix("[Review PR 877](studio://thread/"))
+    let url = try #require(URL(string: String(link.drop(while: { $0 != "(" }).dropFirst().dropLast())))
+    #expect(MarkdownThreadLink.route(url)?.threadIds.contains("thread:delegated-task:command%3Amcp%3Aa1") == true)
+    // Foundation puts a narrow no-break space before PM.
+    #expect(shaped[1].value == .text("November 24, 2026 at 4:16\u{202F}PM"))
+    #expect(shaped[2].value == .text("November 24, 2026"))
+    #expect(shaped[3].value == .text("afa860030f"))
+  }
+
+  @Test("Values that only look like dates or IDs stay as written")
+  func shapedLeavesOthers() {
+    #expect(MarkdownDocument.readableDate("2026-02-31") == "2026-02-31")
+    #expect(MarkdownDocument.readableDate("2026-11-24 release") == "2026-11-24 release")
+    let prose = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text("the review one"))])
+    #expect(prose == [MarkdownProperty(label: "Thread", value: .text("the review one"))])
+    let uuid = "0f9c2b9e-5a51-4c55-9d1e-7b2f1d1e2a3b"
+    let bare = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text(uuid))])
+    #expect(bare == [MarkdownProperty(label: "Thread", value: .text("[Open thread](studio://thread/\(uuid))"))])
+    for value in ["general-discussion", "1498-iphone-rendering", "https://example.com/t/1"] {
+      #expect(MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text(value))]) == [MarkdownProperty(label: "Thread", value: .text(value))])
+    }
+    // A link whose title has no spaces is still a link, not an identifier in mono.
+    #expect(!MarkdownPropertiesView.isIdentifier("[ReviewPR877clipboardfix](studio://thread/thread%3Aabc)"))
+    #expect(MarkdownPropertiesView.isIdentifier("afa860030f4789c75f5319252ee4aac1d4f2357a"))
+  }
+
+  @Test("A report's relative links open the files beside it")
+  func relativeLinks() {
+    let report = "/Users/me/work/.specweave/reports/review.md"
+    let text = """
+    See [notes](notes.md), [spec](../increments/0042/spec.md#scope), [site](https://example.com), [top](#verdict), [abs](/tmp/a.md) and [img](./pic.png).
+    ```
+    [inside](notes.md)
+    ```
+    [above root](../../../../../../x.md) and [folder](My%20Notes/plan.md)
+    """
+    let resolved = HostFileLink.resolvingRelativeLinks(text, from: report)
+    #expect(resolved.contains("[notes](/Users/me/work/.specweave/reports/notes.md)"))
+    #expect(resolved.contains("[spec](/Users/me/work/.specweave/increments/0042/spec.md#scope)"))
+    #expect(resolved.contains("[site](https://example.com)"))
+    #expect(resolved.contains("[top](#verdict)"))
+    #expect(resolved.contains("[abs](/tmp/a.md)"))
+    #expect(resolved.contains("[img](/Users/me/work/.specweave/reports/pic.png)"))
+    #expect(resolved.contains("```\n[inside](notes.md)\n```"))
+    #expect(resolved.contains("[above root](../../../../../../x.md)"))
+    #expect(resolved.contains("[folder](/Users/me/work/.specweave/reports/My%20Notes/plan.md)"))
+    #expect(HostFileLink.hostPath("/Users/me/work/.specweave/reports/My%20Notes/plan.md") == "/Users/me/work/.specweave/reports/My Notes/plan.md")
+  }
+  @Test("A file with no frontmatter takes its opening heading as the page title")
+  func pageTitle() {
+    let notes = MarkdownDocument.page("# Notes\n\nShort notes.\n\n---\n\nMore.")
+    #expect(notes.title == "Notes")
+    #expect(notes.body == "Short notes.\n\n---\n\nMore.")
+    let plain = MarkdownDocument.page("Just text.\n\n# Later")
+    #expect(plain.title == nil)
+    #expect(plain.body == "Just text.\n\n# Later")
+    #expect(MarkdownDocument.page("---\ntitle: A\n---\n\nBody.").title == "A")
+  }
+}

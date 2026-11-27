@@ -177,6 +177,10 @@ struct MarkdownBlockView: View, Equatable {
     case .rule:
       WeaveDivider()
         .padding(.vertical, WeaveSpacing.s1)
+    case let .properties(items):
+      MarkdownPropertiesView(properties: items)
+    case let .diagram(source):
+      MermaidDiagramView(source: source)
     }
   }
 }
@@ -278,30 +282,40 @@ struct MarkdownCodeBlock: View {
 struct MarkdownTableView: View {
   let header: [String]
   let rows: [[String]]
-  @ScaledMetric(relativeTo: .callout) private var columnWidth: CGFloat = 154
+  @ScaledMetric(relativeTo: .callout) private var minColumn: CGFloat = 72
+  @ScaledMetric(relativeTo: .callout) private var maxColumn: CGFloat = 240
+  /// About how wide one character of callout text sets, before Dynamic Type.
+  @ScaledMetric(relativeTo: .callout) private var characterWidth: CGFloat = 7.6
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
-    ScrollView(.horizontal, showsIndicators: true) {
+    let widths = columnWidths
+    ScrollView(.horizontal, showsIndicators: false) {
       Grid(alignment: .leading, horizontalSpacing: WeaveSpacing.s4, verticalSpacing: WeaveSpacing.s2) {
         GridRow {
           ForEach(header.indices, id: \.self) { column in
             Text(MarkdownInline.render(header[column], dynamicTypeSize: dynamicTypeSize))
               .font(.weave(.callout, weight: .semibold))
               .foregroundStyle(Color.weave.ink)
-              .frame(width: columnWidth, alignment: .leading)
+              .frame(width: widths[column], alignment: .leading)
               .fixedSize(horizontal: false, vertical: true)
           }
         }
         WeaveDivider().gridCellUnsizedAxes(.horizontal)
         ForEach(rows.indices, id: \.self) { row in
+          if row > 0 {
+            Rectangle()
+              .fill(Color.weave.line.opacity(0.5))
+              .frame(height: WeaveSize.hairline)
+              .gridCellUnsizedAxes(.horizontal)
+          }
           GridRow {
             ForEach(rows[row].indices, id: \.self) { column in
               Text(MarkdownInline.render(rows[row][column], dynamicTypeSize: dynamicTypeSize))
                 .font(.weave(.callout))
                 .foregroundStyle(Color.weave.ink)
-                .frame(width: columnWidth, alignment: .leading)
+                .frame(width: column < widths.count ? widths[column] : minColumn, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
             }
           }
@@ -309,8 +323,27 @@ struct MarkdownTableView: View {
       }
       .padding(WeaveSpacing.s3)
     }
+    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
     .background(Color.weave.panel, in: RoundedRectangle(cornerRadius: WeaveRadius.md, style: .continuous))
     .overlay(RoundedRectangle(cornerRadius: WeaveRadius.md, style: .continuous).strokeBorder(Color.weave.line, lineWidth: WeaveSize.hairline))
+  }
+
+  /// Each column as wide as its longest cell's text, between `minColumn` and
+  /// `maxColumn`: short tables fit the phone, long cells wrap instead of
+  /// pushing every column off screen.
+  private var columnWidths: [CGFloat] {
+    header.indices.map { column in
+      let cells = [header[column]] + rows.map { column < $0.count ? $0[column] : "" }
+      let longest = cells.map { Self.visibleLength($0) }.max() ?? 0
+      return min(maxColumn, max(minColumn, CGFloat(longest) * characterWidth + 4))
+    }
+  }
+
+  /// Characters a reader sees: link targets, backticks and emphasis marks drop out.
+  static func visibleLength(_ markdown: String) -> Int {
+    var text = markdown.replacingOccurrences(of: #"\]\([^)]*\)"#, with: "]", options: .regularExpression)
+    text.removeAll { "[]`*_".contains($0) }
+    return text.count
   }
 }
 
@@ -473,8 +506,10 @@ public nonisolated enum MarkdownCollapse {
     case let .quote(blocks): blocks.reduce(0) { $0 + length($1) }
     case let .table(header, rows): (header + rows.flatMap { $0 }).reduce(0) { $0 + $1.count }
     case .rule: 1
+    case let .properties(items): items.reduce(0) { $0 + $1.label.count + MarkdownPropertiesView.plain($1.value).count }
     // A picture takes about a third of a collapsed reply.
     case .image: 500
+    case .diagram: 700
     }
   }
 
@@ -486,6 +521,8 @@ public nonisolated enum MarkdownCollapse {
     case let .table(header, rows): ([header] + rows).map { $0.joined(separator: " | ") }.joined(separator: "\n")
     case .rule: ""
     case let .image(alt, _): alt
+    case let .diagram(source): source
+    case let .properties(items): items.map { "\($0.label): \(MarkdownPropertiesView.plain($0.value))" }.joined(separator: "\n")
     }
   }
 

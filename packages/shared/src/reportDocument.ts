@@ -7,7 +7,16 @@
  * tested and shared.
  */
 
-import { FRONTMATTER, reportBodyAfterTitle, reportFrontmatter } from "./threadReport.ts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+
+import { formatStudioThreadLink, studioThreadLinkLabel } from "./studioThreadLinks.ts";
+import {
+  FRONTMATTER,
+  type ReportFrontmatterField,
+  reportBodyAfterTitle,
+  reportFrontmatter,
+} from "./threadReport.ts";
 
 export interface ReportDocumentPart {
   readonly label: string;
@@ -170,13 +179,9 @@ export function reportDocument(text: string): ReportDocument | null {
   if (parts.length === 0 && frontmatter.fields.length === 0) return null;
 
   let lead = leadBlocks.length > 0 ? leadBlocks.join("\n\n") : null;
-  const properties: ReportDocumentPart[] = frontmatter.fields
-    .filter((field) => field.label !== "Title")
-    .map((field) =>
-      typeof field.value === "string"
-        ? { label: field.label, markdown: field.value }
-        : { label: field.label, markdown: "", chips: field.value },
-    );
+  const properties: ReportDocumentPart[] = [
+    ...frontmatterProperties(frontmatter.fields.filter((field) => field.label !== "Title")),
+  ];
   const sections: ReportDocumentPart[] = [];
   parts.forEach((part, index) => {
     const body = part.body.join("\n\n").trim();
@@ -191,6 +196,104 @@ export function reportDocument(text: string): ReportDocument | null {
     sections.push({ label: part.label, markdown: asList(body) });
   });
   return { lead, properties, sections };
+}
+
+/** How dates read in a property table; the reader's locale and zone by default. */
+export interface FrontmatterPropertyOptions {
+  readonly locale?: string;
+  readonly timeZone?: string;
+}
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+/**
+ * A thread ID this app mints: `thread:…` (delegated and fleet threads) or one
+ * holding a UUID (`project-coordinator-<uuid>`, a bare UUID). A slug, a URL or
+ * a forum thread's name stays text.
+ */
+const THREAD_ID_TOKEN = /^[^\s[\]()<>`*/]{6,}$/;
+const THREAD_ID_SHAPE = /^thread:|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * An ISO date or timestamp as a person reads it, `November 24, 2026` or
+ * `November 24, 2026 at 4:16 PM`; anything else comes back unchanged. A bare
+ * date names a day, so no zone moves it.
+ */
+export function readableFrontmatterDate(
+  value: string,
+  options: FrontmatterPropertyOptions = {},
+): string {
+  const trimmed = value.trim();
+  const isTimestamp = ISO_TIMESTAMP.test(trimmed);
+  if (!ISO_DATE.test(trimmed) && !isTimestamp) return value;
+  // Engines can roll an impossible day (February 31) forward; such a value stays as written.
+  const day = trimmed.slice(0, 10);
+  const midnight = DateTime.make(`${day}T00:00:00.000Z`);
+  if (Option.isNone(midnight)) return value;
+  const parts = DateTime.toPartsUtc(midnight.value);
+  if (parts.month !== Number(day.slice(5, 7)) || parts.day !== Number(day.slice(8, 10))) {
+    return value;
+  }
+  try {
+    if (!isTimestamp) {
+      return new Intl.DateTimeFormat(options.locale, { dateStyle: "long", timeZone: "UTC" }).format(
+        DateTime.toEpochMillis(midnight.value),
+      );
+    }
+    const millis = Date.parse(trimmed.replace(" ", "T"));
+    if (Number.isNaN(millis)) return value;
+    return new Intl.DateTimeFormat(options.locale, {
+      dateStyle: "long",
+      timeStyle: "short",
+      ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+    }).format(millis);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Frontmatter fields as the property table shows them: lists as chips, ISO
+ * dates as words, and a thread ID with its title as one link to the thread
+ * (`thread` + `threadTitle` from a saved report) instead of a raw ID row and
+ * a title row.
+ */
+export function frontmatterProperties(
+  fields: ReadonlyArray<ReportFrontmatterField>,
+  options: FrontmatterPropertyOptions = {},
+): ReportDocumentPart[] {
+  const threadField = fields.find(
+    (field) =>
+      field.label === "Thread" &&
+      typeof field.value === "string" &&
+      THREAD_ID_TOKEN.test(field.value.trim()) &&
+      THREAD_ID_SHAPE.test(field.value.trim()),
+  );
+  const titleField = threadField
+    ? fields.find((field) => field.label === "Thread title" && typeof field.value === "string")
+    : undefined;
+  const parts: ReportDocumentPart[] = [];
+  for (const field of fields) {
+    if (field === titleField) continue;
+    if (field === threadField) {
+      const title = typeof titleField?.value === "string" ? titleField.value : "";
+      parts.push({
+        label: field.label,
+        markdown: formatStudioThreadLink(
+          (field.value as string).trim(),
+          studioThreadLinkLabel(title, "Open thread"),
+        ),
+      });
+      continue;
+    }
+    parts.push(
+      typeof field.value === "string"
+        ? { label: field.label, markdown: readableFrontmatterDate(field.value, options) }
+        : { label: field.label, markdown: "", chips: field.value },
+    );
+  }
+  return parts;
 }
 
 /** A Markdown file laid out as a page: its title, its facts, then its body as written. */
@@ -278,13 +381,9 @@ export function markdownDocument(text: string): MarkdownDocument {
       body = withoutLeadingBlankLines(body.slice(opening[0].length));
     }
   }
-  const properties: ReportDocumentPart[] = fields
-    .filter((field) => field.label !== "Title" || typeof field.value !== "string")
-    .map((field) =>
-      typeof field.value === "string"
-        ? { label: field.label, markdown: field.value }
-        : { label: field.label, markdown: "", chips: field.value },
-    );
+  const properties = frontmatterProperties(
+    fields.filter((field) => field.label !== "Title" || typeof field.value !== "string"),
+  );
   return { title, properties, body };
 }
 
