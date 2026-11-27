@@ -2969,6 +2969,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.activitySummary === bf.activitySummary &&
         a.activityDetail === bf.activityDetail &&
         a.wake?.label === bf.wake?.label &&
+        a.wake?.childThreadId === bf.wake?.childThreadId &&
         a.expanded === bf.expanded &&
         sameToolFailureCounts(a, bf)
       );

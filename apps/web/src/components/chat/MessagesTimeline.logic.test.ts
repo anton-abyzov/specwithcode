@@ -4486,7 +4486,7 @@ describe("linked timeline resources", () => {
 });
 
 it.each([true, false])(
-  "keeps a wake notification visible outside folded work, working=%s",
+  "keeps a settled wake notification's text on its run's fold, working=%s",
   (isWorking) => {
     const fixture = makeStreamingTimelineFixture();
     const source = fixture.visibleTurnItems.find((row) => row.item.type === "user_message")!;
@@ -4528,6 +4528,43 @@ it.each([true, false])(
     ).toBe(false);
   },
 );
+
+it("keeps a failed wake notification on its own row above its run's fold", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const source = fixture.visibleTurnItems.find((row) => row.item.type === "user_message")!;
+  if (source.item.type !== "user_message") throw new Error("Expected user message fixture");
+  const notification = {
+    ...source,
+    item: {
+      ...source.item,
+      type: "notification" as const,
+      source: { kind: "background_task" as const },
+      outcome: "failed" as const,
+      summary: "Delegated task failed",
+    },
+  };
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: fixture.visibleTurnItems.map((row) =>
+        row === source ? notification : row,
+      ),
+      optimisticMessages: [],
+    }),
+    isWorking: false,
+    runningRunId: fixture.runId,
+    activeTurnStartedAt: fixture.time(0),
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  const noticeIndex = rows.findIndex(
+    (row) =>
+      row.kind === "work" &&
+      row.groupedEntries.some((entry) => entry.label === "Delegated task failed"),
+  );
+  expect(noticeIndex).toBeGreaterThanOrEqual(0);
+  expect(rows[noticeIndex + 1]?.kind).toBe("turn-fold");
+  expect(rows.some((row) => row.kind === "turn-fold" && row.wake !== undefined)).toBe(false);
+});
 
 it.each([true, false])(
   "keeps completed responses folded across notification wakes, working=%s",
@@ -4586,11 +4623,22 @@ it.each([true, false])(
     expect(ids).toContain("turn-fold:initial");
     expect(ids).not.toContain("launch-tools");
     expect(ids).toContain("turn-fold:wake-a");
-    expect(ids.indexOf("notification-a")).toBeLessThan(ids.indexOf("turn-fold:wake-a"));
+    // The settled wake's notice leads its fold instead of taking a row above it.
+    expect(ids).not.toContain("notification-a");
+    const foldA = rows.find((row) => row.id === "turn-fold:wake-a");
+    expect(foldA?.kind === "turn-fold" ? foldA.wake?.label : undefined).toBe("notification-a");
     expect(ids.indexOf("turn-fold:wake-a")).toBeLessThan(ids.indexOf("ack-a"));
     const boundary = isWorking ? "working-indicator-row" : "turn-fold:wake-b";
     expect(ids).toContain(boundary);
-    expect(ids.indexOf("notification-b")).toBeLessThan(ids.indexOf(boundary));
+    if (isWorking) {
+      // A running turn has no fold yet: its notice keeps its own row above the turn.
+      expect(ids).toContain("notification-b");
+      expect(ids.indexOf("notification-b")).toBeLessThan(ids.indexOf(boundary));
+    } else {
+      expect(ids).not.toContain("notification-b");
+      const foldB = rows.find((row) => row.id === boundary);
+      expect(foldB?.kind === "turn-fold" ? foldB.wake?.label : undefined).toBe("notification-b");
+    }
     if (isWorking) expect(rows.find((row) => row.id === boundary)?.createdAt).toBe(time(40));
   },
 );

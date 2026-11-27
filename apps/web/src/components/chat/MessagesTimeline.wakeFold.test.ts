@@ -1,4 +1,4 @@
-import { RunId } from "@specweave-studio/contracts";
+import { RunId, ThreadId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { mergeWakeNoticesIntoTurnFolds } from "./MessagesTimeline.wakeFold";
@@ -6,7 +6,11 @@ import { mergeWakeNoticesIntoTurnFolds } from "./MessagesTimeline.wakeFold";
 const run = RunId.make("run-1");
 const createdAt = "2026-11-27T00:00:00.000Z";
 
-function notice(outcome: string, runId: RunId | null = run): MessagesTimelineRow {
+function notice(
+  outcome: string,
+  runId: RunId | null = run,
+  source: object = { kind: "background_task" },
+): MessagesTimelineRow {
   return {
     kind: "work",
     id: `notice-${outcome}`,
@@ -20,7 +24,7 @@ function notice(outcome: string, runId: RunId | null = run): MessagesTimelineRow
         label: 'Delegated task "Docs" finished',
         tone: "info",
         itemType: "notification",
-        structuredPayload: { type: "notification", outcome } as never,
+        structuredPayload: { type: "notification", outcome, source } as never,
       },
     ],
   } as MessagesTimelineRow;
@@ -50,11 +54,23 @@ describe("mergeWakeNoticesIntoTurnFolds", () => {
     ]);
   });
 
-  it("shows the notice as the first row of an open fold", () => {
+  it("leaves the notice on its own row above an open fold", () => {
     expect(shape(mergeWakeNoticesIntoTurnFolds([notice("updated"), fold(true)]))).toEqual([
-      'fold+Delegated task "Docs" finished',
       "work",
+      "fold",
     ]);
+  });
+
+  it("keeps the delegated task's thread one click away on the fold", () => {
+    const child = ThreadId.make("child-thread");
+    const [merged] = mergeWakeNoticesIntoTurnFolds([
+      notice("completed", run, { kind: "delegated_task", childThreadId: child }),
+      fold(false),
+    ]);
+    expect(merged?.kind === "turn-fold" ? merged.wake : undefined).toEqual({
+      label: 'Delegated task "Docs" finished',
+      childThreadId: child,
+    });
   });
 
   it.each(["failed", "cancelled"])("keeps a %s notice on its own row", (outcome) => {

@@ -3239,6 +3239,7 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const tx = useTx();
 
   return (
     <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
@@ -3260,6 +3261,14 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         <FailureCountChips counts={row} />
         <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
       </button>
+      {row.wake?.childThreadId ? (
+        <InlineButton
+          aria-label={tx("Open subagent thread")}
+          onClick={() => ctx.onOpenThread(row.wake!.childThreadId!)}
+        >
+          {tx("Open subagent")}
+        </InlineButton>
+      ) : null}
       <TimelineRowTimestamp
         createdAt={row.createdAt}
         timestampFormat={ctx.timestampFormat}

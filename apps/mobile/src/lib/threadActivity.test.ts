@@ -2211,10 +2211,11 @@ it("renders automatic completion as a neutral activity while retaining its detai
   const presented = deriveThreadFeedPresentation(feed, latestRun, new Set());
   expect(presented[0]).toMatchObject({ type: "run-fold", wakeLabel: "Monitor reported an update" });
   expect(presented.some(isNotice)).toBe(false);
-  // Open: the fold keeps its lead and shows the notice as its first row.
+  // Open: the notice keeps its own row above a plain fold.
   const opened = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
-  expect(opened[0]).toMatchObject({ type: "run-fold", wakeLabel: "Monitor reported an update" });
-  expect(isNotice(opened[1]!)).toBe(true);
+  expect(isNotice(opened[0]!)).toBe(true);
+  expect(opened[1]?.type).toBe("run-fold");
+  expect(opened[1]).not.toHaveProperty("wakeLabel");
   expect(buildThreadFeed([projected(userMessage(), 0)])[0]?.type).toBe("message");
 });
 

@@ -1575,12 +1575,21 @@ function renderFeedEntry(
           minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
         }}
       >
+        {entry.wakeLabel ? (
+          <Text
+            key={`wake:${props.workRowSizing.textSizeKey}`}
+            numberOfLines={1}
+            className="shrink font-studio-medium text-sm text-foreground-muted"
+          >
+            {`${entry.wakeLabel} ·`}
+          </Text>
+        ) : null}
         <Text
           key={props.workRowSizing.textSizeKey}
           numberOfLines={1}
-          className="shrink font-studio-medium text-sm tabular-nums text-foreground-muted"
+          className="shrink-0 font-studio-medium text-sm tabular-nums text-foreground-muted"
         >
-          {entry.wakeLabel ? `${entry.wakeLabel} · ${entry.label}` : entry.label}
+          {entry.label}
         </Text>
         <ThreadDisclosureChevron
           expanded={entry.expanded}

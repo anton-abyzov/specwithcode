@@ -8,16 +8,16 @@ function wakeNoticeOf(row: ThreadFeedEntry | undefined) {
   if (item?.type !== "notification" || item.runId == null) return null;
   // A failed or cancelled wake reports something that needs attention: it keeps its row.
   if (item.outcome === "failed" || item.outcome === "cancelled") return null;
-  return { row, runId: item.runId, label: item.summary };
+  return { runId: item.runId, label: item.summary };
 }
 
 const mergedFolds = new WeakMap<RunFoldRow, RunFoldRow>();
 
 /**
- * Merges each wake notice into the "Worked for …" fold of the run it started,
- * when that fold sits right under it: one row instead of two. A folded turn
- * hides the notice behind its fold; an open one shows the notice as its first
- * row. Notices of running turns (which have no fold yet) keep their own row.
+ * Merges each wake notice into the collapsed "Worked for …" fold of the run it
+ * started, when that fold sits right under it: one row instead of two. An open
+ * fold, a running turn (no fold yet) and a failed or cancelled notice leave
+ * the notice on its own row.
  */
 export function mergeWakeNoticesIntoRunFolds(
   rows: ReadonlyArray<ThreadFeedEntry>,
@@ -27,7 +27,12 @@ export function mergeWakeNoticesIntoRunFolds(
     const row = rows[index]!;
     const notice = wakeNoticeOf(row);
     const next = rows[index + 1];
-    if (notice === null || next?.type !== "run-fold" || next.runId !== notice.runId) {
+    if (
+      notice === null ||
+      next?.type !== "run-fold" ||
+      next.expanded ||
+      next.runId !== notice.runId
+    ) {
       out.push(row);
       continue;
     }
@@ -37,7 +42,6 @@ export function mergeWakeNoticesIntoRunFolds(
       mergedFolds.set(next, fold);
     }
     out.push(fold);
-    if (fold.expanded) out.push(notice.row);
     index += 1;
   }
   return out;
