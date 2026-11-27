@@ -7,6 +7,7 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  checkDatabaseCopy,
   LiveDatabaseSpaceError,
   liveDatabaseReadOnlyUri,
   openLiveDatabaseReadOnly,
@@ -225,3 +226,30 @@ describe("removeStalePartials", () => {
     }
   });
 });
+
+describe("checkDatabaseCopy", () => {
+  it("checks a copy in a worker and rejects a file that is not a database", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const output = NodePath.join(directory, "checked.sqlite");
+      await snapshotLiveDatabase(dbPath, output);
+      let ticks = 0;
+      const ticking = setInterval(() => (ticks += 1), 0);
+      try {
+        const checked = await checkDatabaseCopy(output);
+        assert.equal(checked.quickCheck, "ok");
+        assert.isAbove(checked.pages, 0);
+      } finally {
+        clearInterval(ticking);
+      }
+      // The event loop ran while the worker checked.
+      assert.isAbove(ticks, 0);
+      const junk = NodePath.join(directory, "junk.sqlite");
+      NodeFS.writeFileSync(junk, "not a database, long enough to have a header: ".repeat(20));
+      await checkDatabaseCopy(junk).then(
+        () => assert.fail("a file that is not a database must not pass"),
+        (error: Error) => assert.match(error.message, /not a database|malformed/i),
+      );
+    });
+  });
+});
+
