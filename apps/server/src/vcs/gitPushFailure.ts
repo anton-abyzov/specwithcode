@@ -56,15 +56,27 @@ export function isArchivedRepositoryRefusal(stderr: string): boolean {
   return ARCHIVED_NOTICE.test(stderr) && HTTP_FORBIDDEN.test(stderr);
 }
 
-/** `git push origin HEAD:refs/heads/x`: the arguments the app built, never a URL or a token. */
-export function pushCommandText(args: ReadonlyArray<string>): string {
-  return ["git", ...args].join(" ");
+/**
+ * Whether a push destination is a plain remote name. Git also accepts a URL
+ * or a path there (from `branch.<name>.pushRemote` or `remote.pushDefault`),
+ * which can carry credentials and must never reach an error.
+ */
+function isRemoteName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
 }
 
-/** The remote a push command named, or null for a bare `git push`. */
+/** `git push origin HEAD:refs/heads/x`: the arguments the app built, never a URL or a token. */
+export function pushCommandText(args: ReadonlyArray<string>): string {
+  const shown = args.map((arg, index) =>
+    index === 1 && args[0] === "push" && !isRemoteName(arg) ? "<remote>" : arg,
+  );
+  return ["git", ...shown].join(" ");
+}
+
+/** The remote a push command named, or null for a bare `git push` or a hidden destination. */
 export function pushCommandRemote(command: string): string | null {
   const [git, push, remote] = command.split(" ");
-  return git === "git" && push === "push" && remote ? remote : null;
+  return git === "git" && push === "push" && remote && isRemoteName(remote) ? remote : null;
 }
 
 /**

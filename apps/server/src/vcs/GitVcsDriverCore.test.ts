@@ -199,6 +199,15 @@ describe("lastGitFatalLine", () => {
     );
     assert.isNull(lastGitFatalLine("warning: nothing fatal here\n"));
   });
+
+  it("removes credentials carried in a URL query or fragment", () => {
+    assert.equal(
+      lastGitFatalLine(
+        "fatal: unable to access 'https://example.invalid/r.git?token=tok3n&x=1': error: 403\n",
+      ),
+      "fatal: unable to access 'https://example.invalid/r.git': error: 403",
+    );
+  });
 });
 
 it.effect("bounds Git bursts across drivers without timing out queued commands", () =>

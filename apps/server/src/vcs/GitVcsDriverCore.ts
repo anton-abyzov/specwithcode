@@ -502,7 +502,12 @@ export function lastGitFatalLine(stderr: string): string | null {
     .map((entry) => entry.trim())
     .filter((entry) => /^fatal:/.test(entry))
     .at(-1);
-  return line ? line.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1") : null;
+  // URL credentials sit in userinfo or in the query and fragment; both go.
+  return line
+    ? line
+        .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1")
+        .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s'"?#]+)[?#][^\s'"]*/gi, "$1")
+    : null;
 }
 
 function classifyGitFailure(stderr: string): GitCommandFailureReason | null {

@@ -94,4 +94,19 @@ describe("push command text", () => {
     assert.isNull(pushCommandRemote(pushCommandText(["push"])));
     assert.isNull(pushCommandRemote("git"));
   });
+
+  it("hides a URL or path used as the push destination", () => {
+    const text = pushCommandText([
+      "push",
+      "https://user:tok3n@example.invalid/r.git",
+      "HEAD:refs/heads/x",
+    ]);
+    assert.equal(text, "git push <remote> HEAD:refs/heads/x");
+    assert.notInclude(text, "tok3n");
+    assert.isNull(pushCommandRemote(text));
+    assert.equal(
+      pushCommandText(["push", "/srv/r.git", "HEAD:refs/heads/x"]),
+      "git push <remote> HEAD:refs/heads/x",
+    );
+  });
 });
