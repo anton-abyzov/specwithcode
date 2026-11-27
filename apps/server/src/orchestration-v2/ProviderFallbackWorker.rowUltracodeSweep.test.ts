@@ -103,14 +103,23 @@ const settings = {
   modelLanes: { routine: [{ instanceId: home, model: OPUS, options: [medium, on] }], complex: [] },
 };
 
-const continuation = (scheduledTaskId: string | undefined) =>
+// The first hop's run, started by the fallback's own message (no routine id).
+const origin = { ...run, id: RunId.make("r0"), userMessageId: MessageId.make("m0") };
+const hopped = {
+  ...run,
+  userMessageId: MessageId.make(`limit-fallback:${thread.id}:${origin.id}`),
+};
+
+const continuation = (scheduledTaskId: string | undefined, secondHop = false) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(at + 1_000);
     const dispatched: OrchestrationV2ServerCommand[] = [];
-    const message = {
-      id: run.userMessageId,
-      ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }),
-    };
+    const first = secondHop ? origin : run;
+    const runs = secondHop ? [hopped, origin] : [run];
+    const messages = [
+      { id: first.userMessageId, ...(scheduledTaskId === undefined ? {} : { scheduledTaskId }) },
+      ...(secondHop ? [{ id: hopped.userMessageId }] : []),
+    ];
     const deps = Layer.mergeAll(
       Layer.mock(Projects.ProjectService)({
         getById: () =>
@@ -142,12 +151,12 @@ const continuation = (scheduledTaskId: string | undefined) =>
         getThreadRecords: (_id, _fields, filter) =>
           Effect.succeed({
             thread,
-            runs: [run],
+            runs: filter?.runIds === undefined ? runs : runs.filter((entry) => filter.runIds!.includes(entry.id)),
             providerThreads: [
               { appThreadId: thread.id, nativeThreadRef: { nativeId: "existing-session" } },
             ],
             turnItems: [],
-            messages: filter?.messageIds?.includes(run.userMessageId) ? [message] : [],
+            messages: messages.filter((message) => filter?.messageIds?.includes(message.id)),
           } as never),
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -178,6 +187,13 @@ describe("a stopped run's origin in the sweep (1506 D-04)", () => {
   it.effect("keeps a routine's stopped turn off, with no binding left to go by", () =>
     Effect.gen(function* () {
       expect(yield* continuation("routine-1")).not.toContainEqual(on);
+    }),
+  );
+
+  it.effect("keeps it off on a second hop, following the continuation back to the routine", () =>
+    Effect.gen(function* () {
+      expect(yield* continuation("routine-1", true)).not.toContainEqual(on);
+      expect(yield* continuation(undefined, true)).toContainEqual(on);
     }),
   );
 });

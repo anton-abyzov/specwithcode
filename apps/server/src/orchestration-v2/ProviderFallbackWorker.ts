@@ -2,7 +2,7 @@ import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
 import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
-import { routineThreadIds, skipsRowUltracode } from "./routineThreads.ts";
+import { continuedRunId, routineThreadIds, skipsRowUltracode } from "./routineThreads.ts";
 import {
   CommandId,
   type ManualCodexCreditIntent,
@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
+  RunId,
   type ServerProvider,
   type ServerSettings as ServerSettingsValue,
   ThreadId,
@@ -1864,34 +1865,49 @@ export const makeSweep = Effect.gen(function* () {
     );
   });
   const holdRuns = new Map<string, OrchestrationV2Run>();
-  // Whether a stopped run began as a routine's message, read once per run: a
-  // routine moved or deleted mid-turn leaves no binding to go by (1506 D-04).
+  // Whether a stopped run began as a routine's message, read once per run and
+  // followed back through automatic continuations: a routine moved or deleted
+  // mid-turn leaves no binding to go by (1506 D-04).
   const routineRuns = new Map<string, boolean>();
   const startedByRoutine = (
     thread: Pick<OrchestrationV2ThreadShell, "id" | "status">,
-    run: OrchestrationV2Run | undefined,
+    stopped: OrchestrationV2Run | undefined,
   ) =>
     Effect.gen(function* () {
-      if (run === undefined || thread.status !== "failed") return false;
-      const known = routineRuns.get(run.id);
+      if (stopped === undefined || thread.status !== "failed") return false;
+      const known = routineRuns.get(stopped.id);
       if (known !== undefined) return known;
-      const messageId = orchestrationV2RunStartMessageId(run);
-      const read = yield* projections
-        .getThreadRecords(thread.id, ["messages"], { messageIds: [messageId] })
-        .pipe(
-          Effect.map((records) =>
-            Option.some(
-              records.messages.some(
-                (message) => message.id === messageId && message.scheduledTaskId !== undefined,
-              ),
-            ),
-          ),
-          Effect.catchCause(() => Effect.succeedNone),
-        );
-      // Unreadable: off is the safe side, and the next sweep reads it again.
-      if (Option.isNone(read)) return true;
-      routineRuns.set(run.id, read.value);
-      return read.value;
+      let run: OrchestrationV2Run | undefined = stopped;
+      let routine: boolean | null = null;
+      for (let hop = 0; hop < 16 && routine === null && run !== undefined; hop++) {
+        const messageId = orchestrationV2RunStartMessageId(run);
+        const previous = continuedRunId(messageId, thread.id);
+        const records = yield* projections
+          .getThreadRecords(
+            thread.id,
+            ["messages", "runs"],
+            previous === null
+              ? { messageIds: [messageId] }
+              : { messageIds: [messageId], runIds: [RunId.make(previous)] },
+          )
+          .pipe(
+            Effect.map(Option.some),
+            Effect.catchCause(() => Effect.succeedNone),
+          );
+        if (Option.isNone(records)) break;
+        if (
+          records.value.messages.some(
+            (message) => message.id === messageId && message.scheduledTaskId !== undefined,
+          )
+        )
+          routine = true;
+        else if (previous === null) routine = false;
+        else run = records.value.runs.find((entry) => entry.id === previous);
+      }
+      // Unreadable or too long a chain: off is the safe side, read again next sweep.
+      if (routine === null) return true;
+      routineRuns.set(stopped.id, routine);
+      return routine;
     });
   // A model a person picked since the latest run, as opposed to one a
   // pre-switch moved the thread to (its way back is still owed, 1075).

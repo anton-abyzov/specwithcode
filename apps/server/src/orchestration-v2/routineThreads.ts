@@ -2,6 +2,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import {
+  LIMIT_FALLBACK_MESSAGE_PREFIX,
+  PROVIDER_FALLBACK_MESSAGE_PREFIX,
+} from "./providerOpenFailure.ts";
+import { PROVIDER_RETRY_MESSAGE_PREFIX } from "./unopenableFallback.ts";
+
 /**
  * Threads a routine runs in: its own thread, or an existing thread it posts
  * into. A fallback never gives such a thread a track row's Ultracode, since a
@@ -33,3 +39,28 @@ export const skipsRowUltracode = (
   },
 ): boolean =>
   routineThreads.has(threadId) || threadId === project.workspaceSettings?.coordinatorThreadId;
+
+// Messages an automatic continuation starts with: `<prefix><thread>:[hop-N:]<run>`.
+const CONTINUATION_PREFIXES = [
+  LIMIT_FALLBACK_MESSAGE_PREFIX,
+  PROVIDER_FALLBACK_MESSAGE_PREFIX,
+  PROVIDER_RETRY_MESSAGE_PREFIX,
+  "limit-reset:",
+  "limit-credits:",
+  "limit-api:",
+  "limit-billing:",
+];
+
+/**
+ * The run an automatic continuation message continues, or null for any other
+ * message. Lets a routine's origin survive a second fallback hop (1506 D-04).
+ */
+export function continuedRunId(messageId: string, threadId: string): string | null {
+  for (const prefix of CONTINUATION_PREFIXES) {
+    const head = `${prefix}${threadId}:`;
+    if (!messageId.startsWith(head)) continue;
+    const rest = messageId.slice(head.length).replace(/^hop-\d+:/, "");
+    return rest === "" ? null : rest;
+  }
+  return null;
+}
