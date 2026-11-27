@@ -4543,7 +4543,7 @@ it("keeps a delegated task's thread on the fold its wake notice leads", () => {
       outcome: "completed" as const,
       summary: 'Delegated task "Docs" finished',
     },
-  } as typeof source;
+  };
   const rows = deriveMessagesTimelineRows({
     timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: fixture.visibleTurnItems.map((row) =>
