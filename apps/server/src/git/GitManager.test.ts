@@ -41,7 +41,9 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Redacted from "effect/Redacted";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
@@ -687,6 +689,10 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
+  wrapVcsDriver?: (
+    service: GitVcsDriver.GitVcsDriver["Service"],
+  ) => GitVcsDriver.GitVcsDriver["Service"];
+  gitHubCredentials?: GitHubCredentials.GitHubCredentials["Service"];
   /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
     void,
@@ -702,30 +708,32 @@ function makeManager(input?: {
 
   const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
-  const layerVcsDriver = input?.gitConfigReads
-    ? Layer.effect(
-        GitVcsDriver.GitVcsDriver,
-        GitVcsDriver.make.pipe(
-          Effect.map((service) =>
-            GitVcsDriver.GitVcsDriver.of({
-              ...service,
-              readConfigValue: (cwd, key) =>
-                Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
-                  Effect.andThen(service.readConfigValue(cwd, key)),
-                ),
+  const layerVcsDriver =
+    input?.gitConfigReads || input?.wrapVcsDriver
+      ? Layer.effect(
+          GitVcsDriver.GitVcsDriver,
+          GitVcsDriver.make.pipe(
+            Effect.map((service) => {
+              const recorded = GitVcsDriver.GitVcsDriver.of({
+                ...service,
+                readConfigValue: (cwd, key) =>
+                  Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
+                    Effect.andThen(service.readConfigValue(cwd, key)),
+                  ),
+              });
+              return input.wrapVcsDriver ? input.wrapVcsDriver(recorded) : recorded;
             }),
           ),
-        ),
-      ).pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(layerServerConfig),
-      )
-    : GitVcsDriver.layer.pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(layerServerConfig),
-      );
+        ).pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(layerServerConfig),
+        )
+      : GitVcsDriver.layer.pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(layerServerConfig),
+        );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     (input?.sourceControlProvider === undefined
@@ -774,10 +782,15 @@ function makeManager(input?: {
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
-    const manager = yield* GitManager.make.pipe(
+    const makeEffect = GitManager.make.pipe(
       Effect.provide(layerManager),
       Effect.provideContext(stores),
     );
+    const manager = yield* input?.gitHubCredentials
+      ? makeEffect.pipe(
+          Effect.provideService(GitHubCredentials.GitHubCredentials, input.gitHubCredentials),
+        )
+      : makeEffect;
     return { manager, ghCalls };
   });
 }
@@ -3647,6 +3660,129 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           Effect.map((output) => output.stdout.trim()),
         ),
       ).toBe("origin/feature/push-only");
+    }),
+  );
+
+  it.effect("retries a credential-refused push with the repository owner's gh login", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/owner-retry"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "owner-retry.txt"), "owner retry\n");
+      yield* runGit(repoDir, ["add", "owner-retry.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Owner retry branch"]);
+
+      const pushEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+      const refused = new GitCommandError({
+        operation: "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
+        command: "git push origin HEAD:refs/heads/feature/owner-retry",
+        cwd: repoDir,
+        detail:
+          "Git command exited with a non-zero status: fatal: unable to access 'https://github.com/acme/repo.git/': The requested URL returned error: 403",
+        exitCode: 128,
+        reason: "authentication_failed",
+      });
+      const { manager } = yield* makeManager({
+        wrapVcsDriver: (service) =>
+          GitVcsDriver.GitVcsDriver.of({
+            ...service,
+            readConfigValue: (cwd, key) =>
+              key === "remote.origin.url"
+                ? Effect.succeed("https://github.com/acme/repo.git")
+                : key === "credential.helper"
+                  ? Effect.succeed("!gh auth git-credential")
+                  : service.readConfigValue(cwd, key),
+            pushCurrentBranch: (cwd, branch, options) =>
+              Effect.sync(() => pushEnvs.push(options?.env)).pipe(
+                Effect.andThen(
+                  options?.env === undefined
+                    ? Effect.fail(refused)
+                    : service.pushCurrentBranch(cwd, branch, options),
+                ),
+              ),
+          }),
+        gitHubCredentials: GitHubCredentials.GitHubCredentials.of({
+          get: (host) =>
+            Effect.succeed({
+              host,
+              token: Redacted.make("owner-token"),
+              source: "gh" as const,
+              fingerprint: "test",
+              account: "acme",
+            }),
+          invalidate: () => Effect.void,
+          logins: () =>
+            Effect.succeed([
+              { login: "other", active: true },
+              { login: "acme", active: false },
+            ]),
+        }),
+      });
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "push" });
+
+      expect(result.push.status).toBe("pushed");
+      expect(pushEnvs).toHaveLength(2);
+      expect(pushEnvs[0]).toBeUndefined();
+      expect(pushEnvs[1]?.GH_TOKEN).toBe("owner-token");
+    }),
+  );
+
+  it.effect("a refused push with no owner login held says how to fix it", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/no-owner-login"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "no-owner.txt"), "no owner\n");
+      yield* runGit(repoDir, ["add", "no-owner.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "No owner login branch"]);
+
+      const refused = new GitCommandError({
+        operation: "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
+        command: "git push origin HEAD:refs/heads/feature/no-owner-login",
+        cwd: repoDir,
+        detail: "Git command exited with a non-zero status.",
+        exitCode: 128,
+        reason: "authentication_failed",
+      });
+      const { manager } = yield* makeManager({
+        wrapVcsDriver: (service) =>
+          GitVcsDriver.GitVcsDriver.of({
+            ...service,
+            readConfigValue: (cwd, key) =>
+              key === "remote.origin.url"
+                ? Effect.succeed("https://github.com/acme/repo.git")
+                : key.startsWith("credential.")
+                  ? Effect.succeed(null)
+                  : service.readConfigValue(cwd, key),
+            pushCurrentBranch: () => Effect.fail(refused),
+          }),
+        gitHubCredentials: GitHubCredentials.GitHubCredentials.of({
+          get: (host) =>
+            Effect.succeed({
+              host,
+              token: Redacted.make("active-token"),
+              source: "gh" as const,
+              fingerprint: "test",
+            }),
+          invalidate: () => Effect.void,
+          logins: () => Effect.succeed([{ login: "other", active: true }]),
+        }),
+      });
+      const failure = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+      }).pipe(Effect.flip);
+
+      expect(failure._tag).toBe("GitCommandError");
+      const detail = failure._tag === "GitCommandError" ? failure.detail : "";
+      expect(detail).toContain('gh login "other"');
+      expect(detail).toContain("gh auth login");
+      expect(detail).toContain("gh auth setup-git");
+      expect(detail).not.toContain("owner-token");
     }),
   );
 

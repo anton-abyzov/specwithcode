@@ -79,6 +79,7 @@ import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubCredentials from "./sourceControl/GitHubCredentials.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as SkillAuthoringService from "./project/SkillAuthoringService.ts";
@@ -487,6 +488,8 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 );
 
 const layerGitManager = GitManager.layer.pipe(
+  // A refused push retries with the gh login named like the repository owner.
+  Layer.provide(GitHubCredentials.layer),
   // Per-project git settings resolve the acting thread's project.
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),

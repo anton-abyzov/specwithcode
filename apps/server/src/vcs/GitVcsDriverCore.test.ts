@@ -199,6 +199,15 @@ describe("lastGitFatalLine", () => {
     );
     assert.isNull(lastGitFatalLine("warning: nothing fatal here\n"));
   });
+
+  it("removes credentials carried in a URL query or fragment", () => {
+    assert.equal(
+      lastGitFatalLine(
+        "fatal: unable to access 'https://example.invalid/r.git?token=tok3n&x=1': error: 403\n",
+      ),
+      "fatal: unable to access 'https://example.invalid/r.git': error: 403",
+    );
+  });
 });
 
 it.effect("bounds Git bursts across drivers without timing out queued commands", () =>
@@ -1210,6 +1219,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         expectedText: "(authentication_failed)",
       },
       {
+        label: "a login GitHub refuses over ssh",
+        sshMessage: "ERROR: Permission to owner/repo.git denied to someone.",
+        expectedReason: "authentication_failed" as const,
+        expectedText: "(authentication_failed)",
+      },
+      {
         label: "an untrusted host key",
         sshMessage: "Host key verification failed.",
         expectedReason: "host_key_unverified" as const,
@@ -1352,6 +1367,103 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.notProperty(error, "reason");
         assert.notInclude(error.message, "(authentication_failed)");
+      }),
+    );
+
+    // A pre-push hook stands in for the transport: git prints the same lines when a host
+    // refuses the push, and the classifier cannot tell the two apart.
+    const pushRefusedWith = (lines: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const remote = pathService.join(parent, "origin.git");
+        const cwd = pathService.join(parent, "work");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* fileSystem.makeDirectory(cwd);
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["init", "--bare", remote]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        // A user's global core.hooksPath would bypass the repository's own hooks.
+        yield* git(cwd, ["config", "core.hooksPath", pathService.join(cwd, ".git", "hooks")]);
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/pre-push",
+          `#!/bin/sh\n${lines.map((line) => `echo "${line}" >&2`).join("\n")}\nexit 1\n`,
+        );
+        yield* fileSystem.chmod(pathService.join(cwd, ".git/hooks/pre-push"), 0o755);
+        const error = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        return { error, initialBranch };
+      });
+
+    it.effect.each([{ status: 401 }, { status: 403 }])(
+      "names a push the host refused with HTTP $status and keeps git's fatal line",
+      ({ status }) =>
+        Effect.gen(function* () {
+          const { error, initialBranch } = yield* pushRefusedWith([
+            "remote: Permission to owner/repo.git denied to someone.",
+            `fatal: unable to access 'https://x-access-token:s3cret@github.com/owner/repo.git/': The requested URL returned error: ${status}`,
+          ]);
+
+          assert.equal(error.reason, "authentication_failed");
+          assert.isTrue(
+            error.detail.endsWith(
+              `fatal: unable to access 'https://github.com/owner/repo.git/': The requested URL returned error: ${status}`,
+            ),
+            error.detail,
+          );
+          assert.notInclude(error.message, "s3cret");
+          assert.equal(error.command, `git push origin HEAD:refs/heads/${initialBranch}`);
+          assert.equal(error.operation, "GitVcsDriver.pushCurrentBranch.pushWithUpstream");
+        }),
+    );
+
+    it.effect("calls an archived repository read-only, not a refused login", () =>
+      Effect.gen(function* () {
+        const { error } = yield* pushRefusedWith([
+          "remote: This repository was archived so it is read-only.",
+          "fatal: unable to access 'https://github.com/owner/repo.git/': The requested URL returned error: 403",
+        ]);
+
+        assert.notProperty(error, "reason");
+        assert.equal(
+          error.detail,
+          "The repository is archived (read-only), so it cannot be pushed to: fatal: unable to access 'https://github.com/owner/repo.git/': The requested URL returned error: 403",
+        );
+      }),
+    );
+
+    it.effect("says why the remote rejected a pushed ref", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const pathService = yield* Path.Path;
+        const remote = pathService.join(parent, "origin.git");
+        const cwd = pathService.join(parent, "work");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* fileSystem.makeDirectory(cwd);
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["init", "--bare", remote]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* writeTextFile(cwd, "a.txt", "one\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "published"]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        // The branch is rewritten after it was published, so the push is not a fast-forward.
+        yield* git(cwd, ["reset", "--hard", "HEAD~1"]);
+        yield* writeTextFile(cwd, "b.txt", "two\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "rewritten"]);
+
+        const error = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+
+        assert.notProperty(error, "reason");
+        assert.equal(
+          error.detail,
+          "Git push was rejected: non-fast-forward; pull or rebase first.",
+        );
+        assert.equal(error.command, `git push origin HEAD:refs/heads/${initialBranch}`);
+        assert.equal(error.exitCode, 1);
       }),
     );
 

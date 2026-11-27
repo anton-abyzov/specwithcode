@@ -67,6 +67,16 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as Redacted from "effect/Redacted";
+
+import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
+import { gitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
+import {
+  hasGitHubCredentialHelper,
+  ownerLogin,
+  parseGitHubHttpsRemote,
+  pushAuthFixHint,
+} from "./gitHubPushAccount.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -714,6 +724,7 @@ function toPullRequestHeadRemoteInfo(pr: {
 
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
+  const gitHubCredentials = yield* Effect.serviceOption(GitHubCredentials.GitHubCredentials);
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -2062,6 +2073,89 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /**
+   * Push, and when GitHub refused the login git used, retry once with the
+   * gh login named like the repository owner. A credential saved in
+   * Settings or set in the environment is never overridden: the retry only
+   * runs when the token came from that owner-named gh login. A push that
+   * still fails says which login was refused and how to fix it.
+   */
+  const pushWithOwnerRetry = Effect.fn("pushWithOwnerRetry")(function* (
+    cwd: string,
+    currentBranch: string | null,
+  ) {
+    const first = yield* gitCore.pushCurrentBranch(cwd, currentBranch).pipe(Effect.result);
+    if (first._tag === "Success") return first.success;
+    const error = first.failure;
+    if (error.reason !== "authentication_failed" || Option.isNone(gitHubCredentials))
+      return yield* Effect.fail(error);
+    const credentials = gitHubCredentials.value;
+    // The destination git pushed to, in the driver's own resolution order.
+    // It is read from config, never from the error's command text, and never
+    // printed: it can be a URL or a path instead of a remote name.
+    const readConfig = (key: string) =>
+      gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
+    const destination =
+      (yield* gitCore
+        .resolvePushDestination(cwd, currentBranch)
+        .pipe(Effect.orElseSucceed(() => null))) ??
+      // A bare `git push` lets git choose: pushRemote, pushDefault, the
+      // branch's remote, then the primary remote.
+      (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.pushRemote`)) ??
+      (yield* readConfig("remote.pushDefault")) ??
+      (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.remote`)) ??
+      (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null))) ??
+      "origin";
+    const remoteUrl =
+      parseGitHubHttpsRemote(destination) !== null
+        ? destination
+        : ((yield* readConfig(`remote.${destination}.pushurl`)) ??
+          (yield* readConfig(`remote.${destination}.url`)));
+    const parsed = parseGitHubHttpsRemote(remoteUrl);
+    if (parsed === null) return yield* Effect.fail(error);
+    const logins = yield* credentials.logins(parsed.host);
+    const withHint = (failed: GitCommandError) =>
+      Effect.gen(function* () {
+        const helpers = yield* Effect.forEach(
+          ["credential.helper", "credential.https://github.com.helper"],
+          (key) => gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null)),
+        );
+        const hint = pushAuthFixHint({
+          owner: parsed.owner,
+          logins,
+          hasCredentialHelper: hasGitHubCredentialHelper(helpers),
+        });
+        return yield* Effect.fail(
+          new GitCommandError({
+            operation: failed.operation,
+            command: failed.command,
+            cwd: failed.cwd,
+            detail: `${failed.detail} ${hint}`,
+            ...(failed.argumentCount === undefined ? {} : { argumentCount: failed.argumentCount }),
+            ...(failed.exitCode === undefined ? {} : { exitCode: failed.exitCode }),
+            ...(failed.stdoutLength === undefined ? {} : { stdoutLength: failed.stdoutLength }),
+            ...(failed.stderrLength === undefined ? {} : { stderrLength: failed.stderrLength }),
+            ...(failed.reason === undefined ? {} : { reason: failed.reason }),
+          }),
+        );
+      });
+    const named = ownerLogin(logins, parsed.owner);
+    const active = logins.find((entry) => entry.active);
+    if (named === undefined || named.login === active?.login) return yield* withHint(error);
+    const credential = yield* credentials
+      .get(parsed.host, { owner: parsed.owner })
+      .pipe(Effect.option);
+    if (
+      Option.isNone(credential) ||
+      credential.value.source !== "gh" ||
+      credential.value.account?.toLowerCase() !== parsed.owner.toLowerCase()
+    )
+      return yield* withHint(error);
+    const env = gitHubSpawnEnvironment({}, Redacted.value(credential.value.token));
+    const retry = yield* gitCore.pushCurrentBranch(cwd, currentBranch, { env }).pipe(Effect.result);
+    return retry._tag === "Success" ? retry.success : yield* withHint(retry.failure);
+  });
+
   const runPrStep = Effect.fn("runPrStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
@@ -2881,7 +2975,7 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => gitCore.pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() => pushWithOwnerRetry(input.cwd, currentBranch)),
               )
           : { status: "skipped_not_requested" as const };
 

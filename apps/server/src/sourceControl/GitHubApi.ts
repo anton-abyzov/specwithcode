@@ -154,9 +154,13 @@ export class GitHubApi extends Context.Service<
     /** The raw JSON body of a successful GraphQL answer, with `rateLimit` recorded. */
     readonly graphql: (input: GitHubGraphQlInput) => Effect.Effect<string, GitHubApiError>;
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
-    /** The credential a request to `host` would carry right now. */
+    /**
+     * The credential a request to `host` would carry right now; with `owner`, the one a request
+     * about that owner's repository would carry.
+     */
     readonly credential: (
       host: string,
+      options?: GitHubCredentials.GitHubCredentialOptions,
     ) => Effect.Effect<
       { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
       GitHubApiError
@@ -166,6 +170,20 @@ export class GitHubApi extends Context.Service<
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
+}
+
+/**
+ * The owner in a repository path (`repos/<owner>/<name>/...`), or undefined for any other path.
+ * A login named like the owner is the one most likely allowed to write there.
+ */
+export function repositoryOwnerOfPath(path: string): string | undefined {
+  const match = /^\/*repos\/([^/?#]+)\/[^/?#]+(?:[/?#]|$)/.exec(path);
+  if (match === null) return undefined;
+  try {
+    return decodeURIComponent(match[1] ?? "") || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -359,7 +377,7 @@ export const make = Effect.gen(function* () {
   const gate = yield* Semaphore.make(CONCURRENCY);
 
   const credential: GitHubApi["Service"]["credential"] = Effect.fn("GitHubApi.credential")(
-    function* (host) {
+    function* (host, options) {
       const normalized = normalizeHost(host);
       // The request URL is built from this text, so a host that is not a bare host[:port]
       // never gets a token.
@@ -380,7 +398,7 @@ export const make = Effect.gen(function* () {
         }
         return { token: pinned.token, fingerprint: pinned.credentialFingerprint };
       }
-      const held = yield* credentials.get(normalized);
+      const held = yield* credentials.get(normalized, options);
       return { token: held.token, fingerprint: held.fingerprint };
     },
   );
@@ -399,6 +417,8 @@ export const make = Effect.gen(function* () {
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
+    /** The owner of the repository a REST path names. */
+    readonly owner?: string | undefined;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
@@ -409,7 +429,10 @@ export const make = Effect.gen(function* () {
       "http.request.method": input.request.method,
       "url.path": new URL(input.request.url).pathname,
     });
-    const { token, fingerprint } = yield* credential(host);
+    const { token, fingerprint } = yield* credential(
+      host,
+      input.owner === undefined ? undefined : { owner: input.owner },
+    );
     const scope = yield* SourceControlRateLimit.CredentialScope;
     const key = { provider: "github" as const, host };
     const run = Effect.gen(function* () {
@@ -543,6 +566,7 @@ export const make = Effect.gen(function* () {
           timeout: input.timeout,
           allowReserve: input.allowReserve ?? interactive,
           acceptNotModified: input.ifNoneMatch !== undefined,
+          owner: repositoryOwnerOfPath(input.path),
         }),
       ),
     );

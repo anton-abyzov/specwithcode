@@ -163,6 +163,34 @@ export function checkoutSignature(
   ].join("\0");
 }
 
+interface ReportedFailure {
+  readonly checkout: string;
+  readonly detail: string;
+  readonly at: number;
+}
+
+/** A failure already reported for this checkout state, inside the retry window. */
+export function failureAlreadyReported(
+  previous: ReportedFailure | undefined,
+  checkout: string,
+  now: number,
+): boolean {
+  return (
+    previous !== undefined &&
+    previous.checkout === checkout &&
+    now - previous.at < FAILURE_RETRY_AFTER_MS
+  );
+}
+
+/** Whether this failure text is new for the checkout state and so gets a notice. */
+export function failureNoticeDue(
+  previous: ReportedFailure | undefined,
+  checkout: string,
+  detail: string,
+): boolean {
+  return previous?.checkout !== checkout || previous.detail !== detail;
+}
+
 export type MergeStep =
   | { readonly type: "done"; readonly notice: FinishNoticeKind; readonly message: string }
   | { readonly type: "merge" }
@@ -466,6 +494,7 @@ export const make = Effect.gen(function* () {
   }) {
     const { thread, path } = input;
     const ready: Array<{ readonly label: string; readonly cwd: string }> = [];
+    const signatures: string[] = [];
     for (const member of input.members) {
       const cwd = worktreeSetMemberPath(input.folder, member, path);
       if (
@@ -476,12 +505,19 @@ export const make = Effect.gen(function* () {
       const status = yield* git.status({ cwd }).pipe(Effect.option);
       if (Option.isNone(status) || !branchReadyForPullRequest(status.value, thread.branch))
         continue;
+      signatures.push(checkoutSignature(cwd, status.value));
       ready.push({
         label: member.id ?? (member.relativePath || path.basename(member.repository)),
         cwd,
       });
     }
     if (ready.length === 0) return;
+    // The same failure is reported once per checkout state of the set, as
+    // the single-repository path does.
+    const checkout = signatures.join("\n");
+    const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
+    const previous = reported.get(thread.id);
+    if (failureAlreadyReported(previous, checkout, startedAt)) return;
     const incrementId = Option.isNone(increments)
       ? null
       : yield* increments.value.read({ projectId: thread.projectId, threadIds: [thread.id] }).pipe(
@@ -559,12 +595,12 @@ export const make = Effect.gen(function* () {
         "opened",
         `Opened ${opened.map((pr) => `${pr.label} #${pr.number}`).join(", ")}; each merges on its own checks`,
       );
-    if (problems.length > 0)
-      yield* notice(
-        thread.id,
-        "blocked",
-        `Could not open every pull request: ${problems.join("; ")}`,
-      );
+    if (problems.length > 0) {
+      const detail = problems.join("; ");
+      reported.set(thread.id, { checkout, detail, at: startedAt });
+      if (failureNoticeDue(previous, checkout, detail))
+        yield* notice(thread.id, "blocked", `Could not open every pull request: ${detail}`);
+    } else reported.delete(thread.id);
   });
 
   const finish = Effect.fn("ThreadFinishActionService.finish")(function* (threadId: ThreadId) {

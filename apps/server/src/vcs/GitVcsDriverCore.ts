@@ -41,6 +41,7 @@ import { decodeJsonResult } from "@specweave-studio/shared/schemaJson";
 import { parseStudioProjectFile } from "@specweave-studio/shared/studioProjectFile";
 import { resolveProjectFileBackedSetting } from "@specweave-studio/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
+import { pushFailureFields } from "./gitPushFailure.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { isRegisteredWorktree, isSameOrInside } from "./worktreeRegistration.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
@@ -456,6 +457,12 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /(?:authentication failed|could not read Username|could not read Password|permission denied \([a-z-]+(?:,[a-z-]+)*\)|permission denied, please try again)/i,
     "authentication_failed",
   ],
+  // HTTPS hosts answer a login they refuse with 401 or 403, and git reports only the status.
+  // GitHub over ssh names the refused login on its own `ERROR:` line.
+  [
+    /fatal: unable to access .+: The requested URL returned error: 40[13]\b|^ERROR: Permission to \S+ denied to \S+/m,
+    "authentication_failed",
+  ],
   // Distinct from a credential failure: the remote answered and the key it
   // presented is untrusted, so pointing the user at credentials would misdirect.
   [/host key verification failed/i, "host_key_unverified"],
@@ -481,7 +488,7 @@ const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 // leave that generic one to be read as an unreachable remote when the real
 // cause is credentials, so these specific refusals are classified too.
 const SSH_TRANSPORT_REFUSAL_PATTERN =
-  /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
+  /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed|^ERROR: Permission to \S+ denied to \S+/i;
 
 /** git's last `fatal:` line, with URL credentials removed; null when there is none. */
 function withFatalLine(detail: string, stderr: string): string {
@@ -495,7 +502,12 @@ export function lastGitFatalLine(stderr: string): string | null {
     .map((entry) => entry.trim())
     .filter((entry) => /^fatal:/.test(entry))
     .at(-1);
-  return line ? line.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1") : null;
+  // URL credentials sit in userinfo or in the query and fragment; both go.
+  return line
+    ? line
+        .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1")
+        .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s'"?#]+)[?#][^\s'"]*/gi, "$1")
+    : null;
 }
 
 function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
@@ -1271,6 +1283,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options: ExecuteGitOptions = {},
   ): Effect.Effect<void, GitCommandError> =>
     executeGit(operation, cwd, args, options).pipe(Effect.asVoid);
+
+  // A failed push carries the command the app built and what git said about it.
+  const runPush = (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    env: NodeJS.ProcessEnv | undefined,
+  ): Effect.Effect<void, GitCommandError> =>
+    executeGit(operation, cwd, args, {
+      timeoutMs: null,
+      allowNonZeroExit: true,
+      ...(env === undefined ? {} : { env }),
+    }).pipe(
+      Effect.flatMap((result) =>
+        result.exitCode === 0
+          ? Effect.void
+          : Effect.fail(
+              new GitCommandError({
+                ...gitCommandContext({ operation, cwd, args }),
+                ...pushFailureFields({
+                  args,
+                  stderr: result.stderr,
+                  classified: classifyGitFailure(result.stderr),
+                  fatal: lastGitFatalLine(result.stderr),
+                }),
+                ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+                stdoutLength: result.stdout.length,
+                stderrLength: result.stderr.length,
+              }),
+            ),
+      ),
+    );
 
   const runGitStdout = (
     operation: string,
@@ -2567,11 +2611,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit(
+      yield* runPush(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
         ["push", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        options?.env,
       );
       return {
         status: "pushed" as const,
@@ -2632,11 +2676,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit(
+      yield* runPush(
         "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
         ["push", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
-        { timeoutMs: null },
+        options?.env,
       );
       return {
         status: "pushed" as const,
@@ -2685,11 +2729,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             value: currentUpstream.branchName,
           });
         }
-        yield* runGit(
+        yield* runPush(
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
           cwd,
           ["push", remoteName, `HEAD:refs/heads/${publishBranch}`],
-          { timeoutMs: null },
+          options?.env,
         );
         return {
           status: "pushed" as const,
@@ -2699,11 +2743,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
       }
 
-      yield* runGit(
+      yield* runPush(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
         ["push", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
-        { timeoutMs: null },
+        options?.env,
       );
       return {
         status: "pushed" as const,
@@ -2713,7 +2757,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
+    yield* runPush("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], options?.env);
     return {
       status: "pushed" as const,
       branch,
@@ -2721,6 +2765,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       setUpstream: false,
     };
   });
+
+  // The same destination choice pushCurrentBranch makes, without pushing.
+  const resolvePushDestination: GitVcsDriver.GitVcsDriver["Service"]["resolvePushDestination"] =
+    Effect.fn("resolvePushDestination")(function* (cwd, fallbackBranch) {
+      const details = yield* statusDetails(cwd);
+      const branch = details.branch ?? fallbackBranch;
+      if (!branch) return null;
+      if (!details.hasUpstream)
+        return yield* resolvePushRemoteName(cwd, branch).pipe(Effect.orElseSucceed(() => null));
+      const currentUpstream = yield* resolveCurrentUpstream(cwd).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (!currentUpstream) return null;
+      const isAliasOfUpstreamHead =
+        branch === currentUpstream.branchName ||
+        (branch.endsWith(`/${currentUpstream.branchName}`) &&
+          currentUpstream.upstreamRef.endsWith(`/${branch}`));
+      if (isAliasOfUpstreamHead) return currentUpstream.remoteName;
+      const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      return publishRemoteName ?? currentUpstream.remoteName;
+    });
 
   const pullCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pullCurrentBranch"] = Effect.fn(
     "pullCurrentBranch",
@@ -4703,6 +4770,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
     pushCurrentBranch: (cwd, fallbackBranch, options) =>
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
+    resolvePushDestination,
     pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
     readRangeContext,
     sharesHistoryWithHead,

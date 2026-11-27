@@ -45,16 +45,21 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
+  const owners: Array<string | undefined> = [];
   const credentials = Layer.succeed(
     GitHubCredentials.GitHubCredentials,
     GitHubCredentials.GitHubCredentials.of({
-      get: (host) =>
-        Effect.sync(() => ({
-          host,
-          token: Redacted.make(tokens[0]!),
-          source: "gh" as const,
-          fingerprint: `${host}:${tokens[0]}`,
-        })),
+      get: (host, options) =>
+        Effect.sync(() => {
+          owners.push(options?.owner);
+          return {
+            host,
+            token: Redacted.make(tokens[0]!),
+            source: "gh" as const,
+            fingerprint: `${host}:${tokens[0]}`,
+          };
+        }),
+      logins: () => Effect.succeed([]),
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;
@@ -74,7 +79,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     Layer.provideMerge(GitHubGraphQlBudget.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
-  return { layer, requests, invalidations: () => invalidations };
+  return { layer, requests, owners, invalidations: () => invalidations };
 }
 
 const json = (body: unknown, init?: ResponseInit) =>
@@ -118,7 +123,43 @@ describe("environmentToken", () => {
   });
 });
 
+describe("repositoryOwnerOfPath", () => {
+  it("reads the owner of a repository path only", () => {
+    expect(GitHubApi.repositoryOwnerOfPath("repos/acme/web/pulls")).toBe("acme");
+    expect(GitHubApi.repositoryOwnerOfPath("/repos/Acme%2DInc/web")).toBe("Acme-Inc");
+    expect(GitHubApi.repositoryOwnerOfPath("repos/acme/web?per_page=1")).toBe("acme");
+    expect(GitHubApi.repositoryOwnerOfPath("user")).toBeUndefined();
+    expect(GitHubApi.repositoryOwnerOfPath("orgs/acme/repos")).toBeUndefined();
+    expect(GitHubApi.repositoryOwnerOfPath("repos/acme")).toBeUndefined();
+    expect(GitHubApi.repositoryOwnerOfPath("search/issues?q=repos/acme/web")).toBeUndefined();
+    expect(GitHubApi.repositoryOwnerOfPath("repos/%E0%A4%A/web")).toBeUndefined();
+  });
+});
+
 describe("GitHubApi", () => {
+  it.effect("asks for the repository owner's credential on repository REST paths only", () => {
+    const { layer, owners } = harness(() => json({ ok: true }));
+    return Effect.gen(function* () {
+      const api = yield* GitHubApi.GitHubApi;
+      yield* api.rest({
+        host: "github.com",
+        operation: "createPullRequest",
+        method: "POST",
+        path: "repos/acme/web/pulls",
+        body: { title: "t" },
+      });
+      yield* api.rest({ host: "github.com", operation: "getViewer", path: "user" });
+      yield* api.graphql({
+        host: "github.com",
+        operation: "q",
+        query: "query { viewer { login } }",
+      });
+      // GraphQL names no repository in its path, so it never asks for an owner.
+      expect(owners.slice(0, 2)).toEqual(["acme", undefined]);
+      expect(owners.slice(2).every((owner) => owner === undefined)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("sends GraphQL with the token and records the reported budget", () => {
     const { layer, requests } = harness(() =>
       json({

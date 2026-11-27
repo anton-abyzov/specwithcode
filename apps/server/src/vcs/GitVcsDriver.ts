@@ -349,7 +349,11 @@ export class GitVcsDriver extends Context.Service<
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
-      options?: { readonly remoteName?: string | null },
+      options?: {
+        readonly remoteName?: string | null;
+        /** Added to the push's environment only, e.g. another GitHub login's token. */
+        readonly env?: NodeJS.ProcessEnv;
+      },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,
@@ -391,6 +395,16 @@ export class GitVcsDriver extends Context.Service<
     ) => Effect.Effect<GitRefreshCheckedOutBranchResult, GitCommandError>;
     readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
     readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+    /**
+     * The destination `pushCurrentBranch` would push to (a remote name, or a
+     * URL or path when config says so), or null when it would run a bare
+     * `git push` and git chooses. The value can carry credentials: never
+     * put it on an error or in a log.
+     */
+    readonly resolvePushDestination: (
+      cwd: string,
+      fallbackBranch: string | null,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly resolveDefaultBranchName: (
       cwd: string,
       remoteName: string,
@@ -1414,7 +1428,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
       // The recorded entry that is or contains this path, if any.
       const preservedEntry = (fullName: string) => {
-        for (let slash = fullName.indexOf("/"); slash !== -1; ) {
+        for (let slash = fullName.indexOf("/"); slash !== -1;) {
           const directory = fullName.slice(0, slash + 1);
           if (preservedSet.has(directory)) return directory;
           slash = fullName.indexOf("/", slash + 1);
@@ -1478,9 +1492,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             args: ["hash-object", "-t", "blob", "--stdin"],
             stdin: "",
           })).stdout.replace(/\n$/, "");
-          const candidates = names.filter((name) =>
-            entries.get(name)?.split(" ")[1] === emptyBlob,
-          );
+          const candidates = names.filter((name) => entries.get(name)?.split(" ")[1] === emptyBlob);
           if (candidates.length === 0) return new Set<string>();
           const staged = yield* execute({
             operation,
