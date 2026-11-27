@@ -19,6 +19,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
+import * as NodeWorker from "node:worker_threads";
 
 import { randomBytes } from "../nodeCrypto.ts";
 import { LIVE_DATABASE_SUFFIXES } from "./liveDatabaseGuard.ts";
@@ -202,6 +203,51 @@ export function removeStalePartials(
   return removed;
 }
 
+// Runs in a worker as plain CommonJS: it opens only the copy, never the live database.
+const CHECK_COPY_WORKER = `
+const { parentPort, workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+const first = (row) => Object.values(row ?? {})[0];
+const db = new DatabaseSync(workerData.path, workerData.makeSelfContained ? {} : { readOnly: true });
+try {
+  if (workerData.makeSelfContained) db.exec("PRAGMA journal_mode = DELETE;");
+  parentPort.postMessage({
+    quickCheck: String(first(db.prepare("PRAGMA quick_check").get())),
+    pages: Number(first(db.prepare("PRAGMA page_count").get())),
+  });
+} finally {
+  db.close();
+}
+`;
+
+/**
+ * Runs `PRAGMA quick_check` on a saved copy in a worker thread: it reads the
+ * whole file, several seconds per ten gigabytes, which would stall the
+ * service's event loop. With `makeSelfContained` the copy is first switched
+ * to a rollback journal; otherwise it is opened read-only. Rejects when the
+ * file cannot be opened as a database.
+ */
+export function checkDatabaseCopy(
+  path: string,
+  options: { readonly makeSelfContained?: boolean } = {},
+): Promise<{ readonly quickCheck: string; readonly pages: number }> {
+  return new Promise((resolve, reject) => {
+    let answer: { readonly quickCheck: string; readonly pages: number } | undefined;
+    const worker = new NodeWorker.Worker(CHECK_COPY_WORKER, {
+      eval: true,
+      workerData: { path, makeSelfContained: options.makeSelfContained === true },
+    });
+    worker.once("message", (message: { quickCheck: string; pages: number }) => {
+      answer = message;
+    });
+    worker.once("error", reject);
+    worker.once("exit", (code) => {
+      if (answer !== undefined) resolve(answer);
+      else reject(new Error(`Checking the database copy stopped early (exit code ${code}).`));
+    });
+  });
+}
+
 export interface SnapshotLiveDatabaseOptions {
   /** Free bytes where the copy is saved; `freeBytesAt` unless a test supplies its own. */
   readonly freeBytes?: (dir: string) => number;
@@ -247,16 +293,7 @@ export async function snapshotLiveDatabase(
     const partial = `${target}${PARTIAL_MARK}${process.pid}-${randomBytes(4).toString("hex")}`;
     try {
       await (options.backup ?? NodeSqlite.backup)(source, partial, { rate: -1 });
-      const copy = new NodeSqlite.DatabaseSync(partial);
-      let quickCheck: string;
-      let pages: number;
-      try {
-        copy.exec("PRAGMA journal_mode = DELETE;");
-        quickCheck = String(Object.values(copy.prepare("PRAGMA quick_check").get() ?? {})[0]);
-        pages = Number(Object.values(copy.prepare("PRAGMA page_count").get() ?? {})[0]);
-      } finally {
-        copy.close();
-      }
+      const { quickCheck, pages } = await checkDatabaseCopy(partial, { makeSelfContained: true });
       if (quickCheck !== "ok") {
         throw new Error(`The snapshot failed PRAGMA quick_check: ${quickCheck}`);
       }

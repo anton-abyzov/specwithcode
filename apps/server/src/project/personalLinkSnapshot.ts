@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite checks a saved copy (never the live database).
+// @effect-diagnostics nodeBuiltinImport:off -- node:fs reads the backups folder (never the live database).
 /**
  * The database copy a machine saves before its personal assistant first
  * links (1448 AC-13), and the memory digest the owner's approval is bound to.
@@ -7,7 +7,6 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeSqlite from "node:sqlite";
 
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -17,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import {
+  checkDatabaseCopy,
   freeBytesAt,
   LiveDatabaseSpaceError,
   removeStalePartials,
@@ -64,18 +64,13 @@ export const snapshotFileName = (operationId: string) =>
 /**
  * Whether `target` is an earlier complete copy for the same operation: a
  * regular file that is a database passing `quick_check`. Opens only the saved
- * copy, read-only, never the live database.
+ * copy, read-only and off the event loop, never the live database.
  */
-const existingCopyIsSound = (target: string): boolean => {
+const existingCopyIsSound = async (target: string): Promise<boolean> => {
   const stat = NodeFS.lstatSync(target, { throwIfNoEntry: false });
   if (stat === undefined || !stat.isFile()) return false;
   try {
-    const copy = new NodeSqlite.DatabaseSync(target, { readOnly: true });
-    try {
-      return String(Object.values(copy.prepare("PRAGMA quick_check").get() ?? {})[0]) === "ok";
-    } finally {
-      copy.close();
-    }
+    return (await checkDatabaseCopy(target)).quickCheck === "ok";
   } catch {
     return false;
   }
@@ -171,7 +166,7 @@ export const makePersonalLinkSnapshotter = (
   const attempt = async (target: string): Promise<string> => {
     if (NodeFS.existsSync(target)) {
       // A retry of the same operation after a restart: reuse its copy only when it is sound.
-      if (!existingCopyIsSound(target))
+      if (!(await existingCopyIsSound(target)))
         throw new PersonalLinkSnapshotFailure({
           message: `An unusable file is in the way of the database copy at ${target}.`,
         });
