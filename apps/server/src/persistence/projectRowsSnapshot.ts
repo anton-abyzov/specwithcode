@@ -128,28 +128,40 @@ export async function snapshotProjectRows(
       const userVersion = Number(
         Object.values(source.prepare("PRAGMA user_version").get() ?? {})[0] ?? 0,
       );
+      const encoding = String(
+        Object.values(source.prepare("PRAGMA encoding").get() ?? {})[0] ?? "UTF-8",
+      );
       NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
       // References to tables left out of the copy must not refuse its rows.
       const copy = new NodeSqlite.DatabaseSync(partial, { enableForeignKeyConstraints: false });
       try {
+        // Same text encoding as the source, so text bytes copy unchanged.
+        copy.exec(`PRAGMA encoding = '${encoding.replaceAll("'", "''")}'`);
         copy.exec("PRAGMA journal_mode = DELETE; BEGIN");
         for (const table of tables) {
           copy.exec(table.sql);
           const names = table.columns.map(quoteIdentifier).join(", ");
+          // Text crosses as its raw bytes and is cast back to text on insert:
+          // a JS string would cut it at an embedded NUL.
           const insert = copy.prepare(
             `INSERT INTO ${quoteIdentifier(table.name)} (${names}) VALUES (${table.columns
-              .map(() => "?")
+              .map((_, index) => `CASE ?${2 * index + 2} WHEN 'text' THEN CAST(?${2 * index + 1} AS TEXT) ELSE ?${2 * index + 1} END`)
               .join(", ")})`,
           );
           const select = source.prepare(
-            `SELECT ${names} FROM ${quoteIdentifier(table.name)} WHERE project_id = ?`,
+            `SELECT ${table.columns
+              .map((column) => {
+                const name = quoteIdentifier(column);
+                return `CASE typeof(${name}) WHEN 'text' THEN CAST(${name} AS BLOB) ELSE ${name} END, typeof(${name})`;
+              })
+              .join(", ")} FROM ${quoteIdentifier(table.name)} WHERE project_id = ?`,
           );
           // Exact integers: ids and counters can pass 2^53.
           select.setReadBigInts(true);
+          select.setReturnArrays(true);
           let count = 0;
           for (const row of select.iterate(projectId)) {
-            const values = row as Record<string, NodeSqlite.SQLInputValue>;
-            insert.run(...table.columns.map((column) => values[column] ?? null));
+            insert.run(...(row as unknown as ReadonlyArray<NodeSqlite.SQLInputValue>));
             count += 1;
           }
           if (count > 0) rows[table.name] = count;

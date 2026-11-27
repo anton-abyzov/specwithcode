@@ -250,26 +250,42 @@ export function checkDatabaseCopy(
 
 const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK", "ENOSYS"]);
 
+const alreadyExists = (target: string) =>
+  new Error(`${target} already exists; another copy was saved there first.`);
+
 /**
  * Publishes a finished copy at `target` only when nothing is there: a hard
  * link fails with EEXIST when another writer (a `db snapshot`, a Percy copy)
  * published first, so its copy is never replaced. The partial is removed
- * after. A volume without hard links falls back to a rename after a fresh
- * existence check, which narrows the race to that instant.
+ * after. On a volume without hard links the target is first claimed with an
+ * exclusive create (which also fails when anything is there), and the
+ * partial is renamed over that empty claim, which no other writer can hold.
  */
-export function publishWithoutReplacing(partial: string, target: string): void {
+export function publishWithoutReplacing(
+  partial: string,
+  target: string,
+  link: (existingPath: string, newPath: string) => void = NodeFS.linkSync,
+): void {
   try {
-    NodeFS.linkSync(partial, target);
+    link(partial, target);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EEXIST") {
-      throw new Error(`${target} already exists; another copy was saved there first.`);
-    }
+    if (code === "EEXIST") throw alreadyExists(target);
     if (code === undefined || !NO_HARD_LINKS.has(code)) throw error;
-    if (NodeFS.existsSync(target)) {
-      throw new Error(`${target} already exists; another copy was saved there first.`);
+    let claim: number;
+    try {
+      claim = NodeFS.openSync(target, "wx", 0o600);
+    } catch (claimError) {
+      if ((claimError as NodeJS.ErrnoException).code === "EEXIST") throw alreadyExists(target);
+      throw claimError;
     }
-    NodeFS.renameSync(partial, target);
+    NodeFS.closeSync(claim);
+    try {
+      NodeFS.renameSync(partial, target);
+    } catch (renameError) {
+      NodeFS.rmSync(target, { force: true });
+      throw renameError;
+    }
     return;
   }
   NodeFS.rmSync(partial, { force: true });

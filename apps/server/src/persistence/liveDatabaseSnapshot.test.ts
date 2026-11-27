@@ -277,6 +277,28 @@ describe("publishWithoutReplacing", () => {
     }
   });
 
+  it("never replaces a copy on a volume without hard links", () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-publish-"));
+    const noHardLinks = () => {
+      throw Object.assign(new Error("cross-device link not permitted"), { code: "EXDEV" });
+    };
+    try {
+      const target = NodePath.join(directory, "copy.sqlite");
+      const first = `${target}.partial-1-aaaa`;
+      NodeFS.writeFileSync(first, "first copy");
+      publishWithoutReplacing(first, target, noHardLinks);
+      assert.equal(NodeFS.readFileSync(target, "utf8"), "first copy");
+      assert.isFalse(NodeFS.existsSync(first));
+      const second = `${target}.partial-2-bbbb`;
+      NodeFS.writeFileSync(second, "second copy");
+      assert.throws(() => publishWithoutReplacing(second, target, noHardLinks), /already exists/);
+      assert.equal(NodeFS.readFileSync(target, "utf8"), "first copy");
+      assert.equal(NodeFS.readFileSync(second, "utf8"), "second copy");
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the first copy when two snapshots race for one absent file", async () => {
     await withHeldDatabase(async (dbPath, directory) => {
       const output = NodePath.join(directory, "raced.sqlite");

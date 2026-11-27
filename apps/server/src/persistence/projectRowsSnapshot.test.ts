@@ -35,6 +35,8 @@ const withHeldDatabase = async (run: (dbPath: string, directory: string) => Prom
     const memory = holder.prepare("INSERT INTO project_memory VALUES (?, ?, ?)");
     memory.run(PERCY, "people.md", "Elena");
     memory.run(PERCY, "MEMORY.md", "# index");
+    // Text with an embedded NUL must survive byte for byte.
+    memory.run(PERCY, "nul.md", "before\u0000after");
     holder.exec("BEGIN");
     // Plenty of another project's data, so the database is far larger than Percy's rows.
     for (let i = 0; i < 2000; i++) memory.run("work", `file-${i}.md`, "x".repeat(2000));
@@ -66,14 +68,31 @@ describe("snapshotProjectRows", () => {
       });
       assert.equal(snapshot.quickCheck, "ok");
       assert.deepEqual(snapshot.rows, {
-        project_memory: 2,
+        project_memory: 3,
         projection_projects: 1,
         scheduled_tasks: 1,
       });
       assert.isBelow(snapshot.bytes, NodeFS.statSync(dbPath).size / 10);
       const copy = new NodeSqlite.DatabaseSync(output, { readOnly: true });
       try {
-        assert.equal(count(copy, "SELECT count(*) FROM project_memory"), 2);
+        assert.equal(count(copy, "SELECT count(*) FROM project_memory"), 3);
+        const sourceRows = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+        const bytesOf = (db: NodeSqlite.DatabaseSync) =>
+          db
+            .prepare(
+              "SELECT name, typeof(content) AS type, hex(content) AS content FROM project_memory WHERE project_id = ? ORDER BY name",
+            )
+            .all(PERCY);
+        try {
+          assert.deepEqual(bytesOf(copy), bytesOf(sourceRows));
+        } finally {
+          sourceRows.close();
+        }
+        assert.equal(
+          copy.prepare("SELECT hex(content) AS h FROM project_memory WHERE name = 'nul.md'").get()
+            ?.h,
+          Buffer.from("before\u0000after").toString("hex").toUpperCase(),
+        );
         assert.equal(count(copy, "SELECT count(*) FROM projection_projects"), 1);
         assert.equal(
           copy.prepare("SELECT workspace_settings_json AS s FROM projection_projects").get()?.s,
