@@ -429,6 +429,17 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
       NodeFS.rmSync(nested);
       NodeFS.mkdirSync(nestedIncrement, { recursive: true });
     }
+    // Another spelling of the same folder is that folder where the disk ignores case.
+    const respelled = NodePath.join(worktree, "packages", "APP");
+    if (NodeFS.existsSync(respelled)) {
+      const sameFolder = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(nestedIncrement, "claim"),
+        recorded: { root: respelled, incrementId: INCREMENT },
+      });
+      expect(sameFolder.ok).toBe(true);
+    }
     // The record of the chosen copy, a record of another increment, and one
     // outside the worktree (the shared project folder) change nothing.
     for (const fine of [

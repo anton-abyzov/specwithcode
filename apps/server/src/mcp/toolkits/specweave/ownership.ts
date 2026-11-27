@@ -79,6 +79,22 @@ const realPath = (path: string) => NodeFSP.realpath(path).catch(() => null);
 
 const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 
+/**
+ * Whether any folder from `workspace` down to `workspace/below` is a link (or
+ * missing). Each step is read as it stands, so a link put in place of a folder
+ * is seen, while another spelling of the same folder on a case-insensitive
+ * disk is not a link.
+ */
+async function linkOnTheWay(workspace: string, below: string): Promise<boolean> {
+  let path = workspace;
+  for (const part of below.split(NodePath.sep).filter((step) => step !== "" && step !== ".")) {
+    path = NodePath.join(path, part);
+    const stat = await lstatOrNull(path);
+    if (stat === null || stat.isSymbolicLink() || !stat.isDirectory()) return true;
+  }
+  return false;
+}
+
 type PathCheck = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
 const OUTSIDE = (path: string, workspace: string) =>
@@ -302,15 +318,14 @@ export async function decideOwnership(input: {
     recorded.incrementId === bound.incrementId
   ) {
     const recordedRoot = await realPath(recorded.root);
-    // Where the recorded root sits in the real worktree, read from its path
-    // alone: a link put in its place must not move it to another copy.
-    const lexical = isInside(where.workspace, recorded.root)
-      ? NodePath.resolve(recorded.root)
+    // The recorded root's place below the real worktree, from its path alone.
+    const below = isInside(where.workspace, recorded.root)
+      ? NodePath.relative(where.workspace, recorded.root)
       : input.worktreePath !== null && isInside(input.worktreePath, recorded.root)
-        ? NodePath.join(where.workspace, NodePath.relative(input.worktreePath, recorded.root))
+        ? NodePath.relative(input.worktreePath, recorded.root)
         : null;
     const inside =
-      lexical !== null || (recordedRoot !== null && isInside(where.workspace, recordedRoot));
+      below !== null || (recordedRoot !== null && isInside(where.workspace, recordedRoot));
     const recordedCopy =
       recordedRoot === null
         ? null
@@ -320,8 +335,8 @@ export async function decideOwnership(input: {
     const problem =
       recordedCopy === null
         ? "that copy is gone"
-        : recordedRoot !== lexical
-          ? `${recorded.root} now leads to ${recordedRoot}`
+        : below === null || (await linkOnTheWay(where.workspace, below))
+          ? `${recorded.root} now leads to ${recordedRoot} through a link`
           : recordedRoot !== specweaveRoot
             ? `that is not the copy in ${specweaveRoot}`
             : null;
