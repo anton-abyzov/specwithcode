@@ -33,14 +33,14 @@ import {
   ShapesIcon,
   TableIcon,
 } from "lucide-react";
-import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type Ref, use, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { stepOutOfViewerOverlay } from "~/lib/openInFront";
+import { openFileInFront, stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { readLocalApi } from "~/localApi";
 import {
   ARTIFACT_KIND_LABEL,
@@ -1082,12 +1082,20 @@ function ArtifactBody(props: {
   }
   if (host === "workbook" && hostPath !== null) {
     return (
-      <HostWorkbookPreview environmentId={props.environmentId} path={hostPath} name={artifact.name} />
+      <HostWorkbookPreview
+        environmentId={props.environmentId}
+        path={hostPath}
+        name={artifact.name}
+      />
     );
   }
   if (host === "document" && hostPath !== null) {
     return (
-      <HostDocumentPreview environmentId={props.environmentId} path={hostPath} name={artifact.name} />
+      <HostDocumentPreview
+        environmentId={props.environmentId}
+        path={hostPath}
+        name={artifact.name}
+      />
     );
   }
   if (host === "card") {
@@ -1174,14 +1182,7 @@ function ArtifactBody(props: {
         />
       );
     case "pdf":
-      return (
-        <BrowserDocumentFrame
-          src={url}
-          title={artifact.name}
-          pdf
-          htmlRender={false}
-        />
-      );
+      return <BrowserDocumentFrame src={url} title={artifact.name} pdf htmlRender={false} />;
     default:
       return notice(`${artifact.name} has no preview.`);
   }
@@ -1311,8 +1312,25 @@ export function ArtifactCards(props: {
     isViewableArtifact,
   );
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // Under a report in the overlay, a viewer of its own would take the overlay
+  // and close the report with it; the file opens in the report's place instead,
+  // with Back to the report.
+  const inViewerOverlay = use(InViewerOverlay);
   if (cards.length === 0 || props.threadRef === null) return null;
   const threadRef = props.threadRef;
+  const open = (card: ViewableArtifact) => {
+    if (inViewerOverlay && "meta" in card) {
+      openFileInFront({
+        environmentId: threadRef.environmentId,
+        threadRef,
+        cwd: props.cwd ?? "",
+        path: card.meta.filePath,
+        line: card.meta.line,
+      });
+      return;
+    }
+    setOpenKey(card.key);
+  };
   return (
     <>
       <ul className="artifact-cards" aria-label={tx("Attachments")}>
@@ -1322,7 +1340,7 @@ export function ArtifactCards(props: {
               type="button"
               className="artifact-card"
               data-artifact-card={card.kind}
-              onClick={() => setOpenKey(card.key)}
+              onClick={() => open(card)}
             >
               <ArtifactThumbnail threadRef={threadRef} artifact={card} />
               <span className="artifact-card-label">
