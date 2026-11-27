@@ -7,6 +7,7 @@
  * to the one version the window was told to show: any other frame navigation
  * is stopped, so content from elsewhere never stands where the page stood.
  */
+import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -56,7 +57,7 @@ export function isArtifactAppLinuxEntry(entry: string, installId: string): boole
 }
 
 // Entries this app writes are well under a kilobyte.
-const LINUX_ENTRY_MAX_BYTES = 64 * 1024;
+const LINUX_ENTRY_MAX_BYTES = 64n * 1024n;
 
 /** Whether one more installed-page window may open while `openCount` are open. */
 export function canOpenAnotherArtifactAppWindow(openCount: number): boolean {
@@ -301,7 +302,7 @@ const make = Effect.gen(function* () {
     const entryPath = environment.path.join(environment.linuxApplicationsDir, linuxDesktopName);
     return fileSystem.stat(entryPath).pipe(
       Effect.flatMap((info) =>
-        info.type === "File" && Number(info.size) <= LINUX_ENTRY_MAX_BYTES
+        info.type === "File" && ByteSize.toBigInt(info.size) <= LINUX_ENTRY_MAX_BYTES
           ? fileSystem
               .readFileString(entryPath)
               .pipe(Effect.map((entry) => isArtifactAppLinuxEntry(entry, installId)))

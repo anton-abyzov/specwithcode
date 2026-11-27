@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { DesktopArtifactApp } from "@specweave-studio/contracts";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -329,14 +330,14 @@ const setup = (input: {
             if (special.has(path)) {
               return Effect.succeed({
                 type: "FIFO",
-                size: FileSystem.Size(0),
+                size: ByteSize.bytes(0),
               } as FileSystem.File.Info);
             }
             return text === undefined
               ? Effect.fail(notFound("stat", path))
               : Effect.succeed({
                   type: "File",
-                  size: FileSystem.Size(text.length),
+                  size: ByteSize.bytes(text.length),
                 } as FileSystem.File.Info);
           },
           readFileString: (path) => {
