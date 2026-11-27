@@ -332,7 +332,7 @@ const make = Effect.gen(function* () {
       // One copy per approved plan: a retry of this plan reuses it, while a later
       // join that reuses the link's operation id (a new machine, a relink) saves its own.
       const snapshotKey = `${operationId}@r${input.approval.expectedSettingsRevision}-${input.approval.memoryDigest.slice(0, 16)}`;
-      const snapshotPath = yield* snapshotter.snapshot(snapshotKey).pipe(
+      const snapshotPath = yield* snapshotter.snapshot(snapshotKey, project.id).pipe(
         Effect.mapError(
           (error) =>
             new PersonalLinkError({

@@ -248,6 +248,33 @@ export function checkDatabaseCopy(
   });
 }
 
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EMLINK", "ENOSYS"]);
+
+/**
+ * Publishes a finished copy at `target` only when nothing is there: a hard
+ * link fails with EEXIST when another writer (a `db snapshot`, a Percy copy)
+ * published first, so its copy is never replaced. The partial is removed
+ * after. A volume without hard links falls back to a rename after a fresh
+ * existence check, which narrows the race to that instant.
+ */
+export function publishWithoutReplacing(partial: string, target: string): void {
+  try {
+    NodeFS.linkSync(partial, target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      throw new Error(`${target} already exists; another copy was saved there first.`);
+    }
+    if (code === undefined || !NO_HARD_LINKS.has(code)) throw error;
+    if (NodeFS.existsSync(target)) {
+      throw new Error(`${target} already exists; another copy was saved there first.`);
+    }
+    NodeFS.renameSync(partial, target);
+    return;
+  }
+  NodeFS.rmSync(partial, { force: true });
+}
+
 export interface SnapshotLiveDatabaseOptions {
   /** Free bytes where the copy is saved; `freeBytesAt` unless a test supplies its own. */
   readonly freeBytes?: (dir: string) => number;
@@ -298,7 +325,7 @@ export async function snapshotLiveDatabase(
         throw new Error(`The snapshot failed PRAGMA quick_check: ${quickCheck}`);
       }
       NodeFS.chmodSync(partial, 0o600);
-      NodeFS.renameSync(partial, target);
+      publishWithoutReplacing(partial, target);
       return { path: target, bytes: NodeFS.statSync(target).size, pages, quickCheck };
     } finally {
       // After the rename the partial is gone; after a failure this removes it and its journal.

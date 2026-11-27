@@ -20,8 +20,8 @@ import {
   freeBytesAt,
   LiveDatabaseSpaceError,
   removeStalePartials,
-  snapshotLiveDatabase,
 } from "../persistence/liveDatabaseSnapshot.ts";
+import { snapshotProjectRows } from "../persistence/projectRowsSnapshot.ts";
 
 /** Why this machine could not save its database copy; the join stops before any write. */
 export class PersonalLinkSnapshotFailure extends Data.TaggedError("PersonalLinkSnapshotFailure")<{
@@ -29,8 +29,14 @@ export class PersonalLinkSnapshotFailure extends Data.TaggedError("PersonalLinkS
 }> {}
 
 export interface PersonalLinkSnapshotter {
-  /** Saves a copy for `operationId` and returns its path; the same operation reuses its copy. */
-  readonly snapshot: (operationId: string) => Effect.Effect<string, PersonalLinkSnapshotFailure>;
+  /**
+   * Saves a copy of `projectId`'s rows for `operationId` and returns its path;
+   * the same operation reuses its copy.
+   */
+  readonly snapshot: (
+    operationId: string,
+    projectId: string,
+  ) => Effect.Effect<string, PersonalLinkSnapshotFailure>;
 }
 
 /**
@@ -124,17 +130,22 @@ export interface PersonalLinkSnapshotterDeps {
   readonly dir: string;
   readonly dbPath: string;
   readonly now?: () => number;
-  /** Writes the copy; `snapshotLiveDatabase` unless a test supplies its own. */
-  readonly copy?: (dbPath: string, target: string) => Promise<{ readonly quickCheck: string }>;
+  /** Writes the copy; `snapshotProjectRows` unless a test supplies its own. */
+  readonly copy?: (
+    dbPath: string,
+    target: string,
+    projectId: string,
+  ) => Promise<{ readonly quickCheck: string }>;
   /** Free bytes in `dir`, read to learn whether space freed since a copy failed for it. */
   readonly freeBytes?: (dir: string) => number;
   readonly state?: PersonalLinkSnapshotState;
 }
 
 /**
- * Copies the live database with SQLite's online backup into
- * `<state>/backups/personal-link/<operation>.sqlite`, beside the database and
- * outside every project folder. Never opens the live files through `node:fs`.
+ * Copies the Percy project's rows of the live database (1505 D-01: never the
+ * whole database) into `<state>/backups/personal-link/<operation>.sqlite`,
+ * beside the database and outside every project folder. Never opens the live
+ * files through `node:fs`.
  *
  * One copy runs at a time in the process: a caller for the same target that
  * comes while it runs waits for it, even when the caller that started it was
@@ -152,7 +163,8 @@ export const makePersonalLinkSnapshotter = (
   const freeBytes = deps.freeBytes ?? freeBytesAt;
   const copy =
     deps.copy ??
-    ((dbPath: string, target: string) => snapshotLiveDatabase(dbPath, target, { freeBytes }));
+    ((dbPath: string, target: string, projectId: string) =>
+      snapshotProjectRows(dbPath, target, projectId, { freeBytes }));
 
   const spaceIsBack = (failure: SnapshotFailureRecord) => {
     if (failure.neededBytes === undefined) return false;
@@ -163,7 +175,7 @@ export const makePersonalLinkSnapshotter = (
     }
   };
 
-  const attempt = async (target: string): Promise<string> => {
+  const attempt = async (target: string, projectId: string): Promise<string> => {
     if (NodeFS.existsSync(target)) {
       // A retry of the same operation after a restart: reuse its copy only when it is sound.
       if (!(await existingCopyIsSound(target)))
@@ -174,7 +186,7 @@ export const makePersonalLinkSnapshotter = (
     }
     // No copy into `target` runs now, so partials beside it are leftovers of a stopped process.
     removeStalePartials(target);
-    const written = await copy(deps.dbPath, target);
+    const written = await copy(deps.dbPath, target, projectId);
     if (written.quickCheck !== "ok")
       throw new PersonalLinkSnapshotFailure({
         message: `The copy failed its check (${written.quickCheck}).`,
@@ -182,7 +194,7 @@ export const makePersonalLinkSnapshotter = (
     return target;
   };
 
-  const start = (target: string): Promise<string> => {
+  const start = (target: string, projectId: string): Promise<string> => {
     const known = state.done.get(target);
     if (known !== undefined) return Promise.resolve(known);
     const running = state.running.get(target);
@@ -204,7 +216,7 @@ export const makePersonalLinkSnapshotter = (
             "Another copy of the database is still being saved; it tries again once that copy ends.",
         }),
       );
-    const run = attempt(target);
+    const run = attempt(target, projectId);
     state.running.set(target, run);
     // Settles the shared state even when every caller was interrupted, and handles the rejection.
     run.then(
@@ -228,9 +240,9 @@ export const makePersonalLinkSnapshotter = (
   };
 
   return {
-    snapshot: (operationId: string) =>
+    snapshot: (operationId: string, projectId: string) =>
       Effect.tryPromise({
-        try: () => start(NodePath.resolve(deps.dir, snapshotFileName(operationId))),
+        try: () => start(NodePath.resolve(deps.dir, snapshotFileName(operationId)), projectId),
         catch: (error) =>
           error instanceof PersonalLinkSnapshotFailure
             ? error
