@@ -1134,9 +1134,9 @@ layer("ProviderEventIngestorV2", (it) => {
       }),
   );
 
-  it.effect(
-    "preserves an answer committed after terminal normalization reads a pending question",
-    () =>
+  it.effect.each(["question", "claude-form"] as const)(
+    "preserves an answer committed after terminal normalization reads a pending %s",
+    (shape) =>
       Effect.scoped(
         Effect.gen(function* () {
           const eventSink = yield* EventSink.EventSinkV2;
@@ -1163,8 +1163,16 @@ layer("ProviderEventIngestorV2", (it) => {
             id: RuntimeRequestId.make(`${threadId}:question`),
             nodeId,
             providerTurnId,
-            nativeRequestRef: null,
-            kind: "user_input",
+            // A Claude MCP form is swept at turn end too, so it is guarded alike (1493).
+            nativeRequestRef:
+              shape === "claude-form"
+                ? {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    nativeId: `mcp-elicitation:github:${threadId}`,
+                    strength: "strong",
+                  }
+                : null,
+            kind: shape === "claude-form" ? "mcp-elicitation" : "user_input",
             status: "pending",
             responseCapability: { type: "live", providerSessionId },
             createdAt: now,
@@ -1176,7 +1184,7 @@ layer("ProviderEventIngestorV2", (it) => {
             runId: null,
             parentNodeId: null,
             rootNodeId: nodeId,
-            kind: "user_input_request",
+            kind: shape === "claude-form" ? "approval_request" : "user_input_request",
             status: "waiting",
             countsForRun: false,
             providerThreadId,
@@ -1202,9 +1210,13 @@ layer("ProviderEventIngestorV2", (it) => {
             startedAt: now,
             completedAt: null,
             updatedAt: now,
-            type: "user_input_request",
-            requestId: request.id,
-            questions: [],
+            ...(shape === "claude-form"
+              ? {
+                  type: "approval_request" as const,
+                  requestId: request.id,
+                  requestKind: "mcp-elicitation" as const,
+                }
+              : { type: "user_input_request" as const, requestId: request.id, questions: [] }),
           };
           const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
           for (const payload of [

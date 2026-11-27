@@ -9254,7 +9254,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       if (providerSessionId === null) return;
-      if (!ClaudeForms.handOffClaudeFormAnswers(command.requestId, form)) {
+      if (!ClaudeForms.handOffClaudeFormAnswers(command.requestId, form, command.commandId)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

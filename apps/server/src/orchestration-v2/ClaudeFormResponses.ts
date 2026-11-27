@@ -49,6 +49,8 @@ const closing = new Set<string>();
 const CLOSING_KEPT = 200;
 // Answered forms whose commit finished; one not here is still committing.
 const committed = new Set<string>();
+// The command whose dispatch made each hand-off; only its exit settles it (1493).
+const owners = new Map<string, string>();
 // A call waiting, after Stop or the timer, for its answer's commit (1493).
 const outcomeWaiters = new Map<string, (outcome: ClaudeFormCommitOutcome) => void>();
 
@@ -71,10 +73,12 @@ function markClosing(requestId: string): void {
 export function handOffClaudeFormAnswers(
   requestId: RuntimeRequestId,
   check: ClaudeFormResponseCheck | undefined,
+  commandId?: string,
 ): boolean {
   if (check === undefined) return true;
   if (closing.has(requestId)) return false;
   answered.add(requestId);
+  if (commandId !== undefined) owners.set(requestId, commandId);
   if (check.handOff !== undefined) handedOff.set(requestId, check.handOff);
   return true;
 }
@@ -152,12 +156,18 @@ export function forgetUncommittedFormAnswer(command: {
  * waits on a commit that will not come (1493).
  */
 export function settleFormAnswerDispatch(
-  command: { readonly type: string; readonly requestId?: string },
+  command: { readonly type: string; readonly commandId: string; readonly requestId?: string },
   succeeded: boolean,
 ): Effect.Effect<void> {
-  return Effect.sync(() =>
-    succeeded ? markClaudeFormAnswerCommitted(command) : forgetUncommittedFormAnswer(command),
-  );
+  return Effect.sync(() => {
+    if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
+    // A refused second answer, or any dispatch that made no hand-off, never
+    // touches the one another dispatch made; a committed answer stays.
+    if (owners.get(command.requestId) !== command.commandId) return;
+    owners.delete(command.requestId);
+    if (succeeded) markClaudeFormAnswerCommitted(command);
+    else if (!committed.has(command.requestId)) forgetUncommittedFormAnswer(command);
+  });
 }
 
 /** The app has recorded an answer to this form that may not have arrived yet. */
@@ -176,6 +186,7 @@ export function takeClaudeFormAnswers(
 
 /** Forgets a closed card's answers that nothing took. */
 export function dropClaudeFormAnswers(requestId: RuntimeRequestId): void {
+  owners.delete(requestId);
   handedOff.delete(requestId);
   answered.delete(requestId);
   committed.delete(requestId);

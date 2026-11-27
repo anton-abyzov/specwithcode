@@ -382,21 +382,43 @@ it("lets exactly one of the hand-off and the close win (1493)", () => {
 
 it.effect("settles a hand-off however its dispatch ends (1493)", () =>
   Effect.gen(function* () {
+    const respond = (requestId: RuntimeRequestId, commandId: string) => ({
+      type: "runtime-request.respond",
+      commandId,
+      requestId,
+    });
     const failed = RuntimeRequestId.make("request:dispatch-failed");
-    handOffClaudeFormAnswers(failed, { handOff: { confirm: "x" } });
+    handOffClaudeFormAnswers(failed, { handOff: { confirm: "x" } }, "command:a");
     assert.equal(claudeFormCommitOutcome(failed), "pending");
-    // Any unsuccessful exit, planning and interruption included.
-    yield* settleFormAnswerDispatch({ type: "runtime-request.respond", requestId: failed }, false);
+    // Another dispatch's exit never touches this hand-off.
+    yield* settleFormAnswerDispatch(respond(failed, "command:other"), false);
+    assert.equal(claudeFormCommitOutcome(failed), "pending");
+    // Its own unsuccessful exit does, planning and interruption included.
+    yield* settleFormAnswerDispatch(respond(failed, "command:a"), false);
     assert.equal(claudeFormCommitOutcome(failed), "failed");
     assert.isUndefined(takeClaudeFormAnswers(failed));
     const succeeded = RuntimeRequestId.make("request:dispatch-succeeded");
-    handOffClaudeFormAnswers(succeeded, { handOff: { confirm: "x" } });
-    yield* settleFormAnswerDispatch(
-      { type: "runtime-request.respond", requestId: succeeded },
-      true,
-    );
+    handOffClaudeFormAnswers(succeeded, { handOff: { confirm: "x" } }, "command:b");
+    yield* settleFormAnswerDispatch(respond(succeeded, "command:b"), true);
     assert.equal(claudeFormCommitOutcome(succeeded), "committed");
   }),
+);
+
+it.effect("keeps the first answer's hand-off when a later answer is refused (1493)", () =>
+  Effect.gen(function* () {
+    const { respond, status, requestId } = yield* card("second-refused", confirmForm);
+    // The effect worker is off, so the first answer is still on its way.
+    yield* respond("person", { decision: "accept", answers: { confirm: "octo/repo" } });
+    assert.include(
+      yield* refusal(respond("again", { decision: "accept", answers: { confirm: "other" } })),
+      FORM_ALREADY_ANSWERED,
+    );
+    assert.include(yield* refusal(respond("decline", { decision: "decline" })), FORM_ALREADY_ANSWERED);
+    assert.equal((yield* status)?.status, "resolved");
+    assert.equal(claudeFormCommitOutcome(requestId), "committed");
+    assert.isFalse(beginClosingClaudeForm(requestId));
+    assert.deepEqual(takeClaudeFormAnswers(requestId), { confirm: "octo/repo" });
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it("forgets an answer whose commit failed, so the card can close (1493)", () => {
