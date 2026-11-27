@@ -260,4 +260,3 @@ it("shows the copy's own reason when the database copy fails", () => {
     "Could not save a copy of the database before linking; nothing was linked.",
   );
 });
-

@@ -431,21 +431,18 @@ describe("makePersonalLinkSnapshotter", () => {
   );
 
   it("waits a minute after a failure, doubling, at most an hour", () => {
-    assert.deepStrictEqual(
-      [1, 2, 3, 4, 5, 6, 7, 8, 20, 400].map(snapshotRetryDelayMs),
-      [
-        60_000,
-        120_000,
-        240_000,
-        480_000,
-        960_000,
-        1_920_000,
-        3_600_000,
-        3_600_000,
-        3_600_000,
-        SNAPSHOT_RETRY_MAX_MS,
-      ],
-    );
+    assert.deepStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 20, 400].map(snapshotRetryDelayMs), [
+      60_000,
+      120_000,
+      240_000,
+      480_000,
+      960_000,
+      1_920_000,
+      3_600_000,
+      3_600_000,
+      3_600_000,
+      SNAPSHOT_RETRY_MAX_MS,
+    ]);
   });
 
   it.effect("fails at once with the last reason until the wait is over, then tries again", () =>
@@ -518,4 +515,3 @@ describe("makePersonalLinkSnapshotter", () => {
     }),
   );
 });
-

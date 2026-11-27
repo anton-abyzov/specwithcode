@@ -112,7 +112,9 @@ export const snapshotHeadroom = (bytes: number): number => Math.max(GIB, Math.ce
 
 /** Bytes as people read them on a disk ("18.8 GB"); binary units, as Finder's rounding is close enough. */
 export const formatBytes = (bytes: number): string =>
-  bytes >= GIB ? `${(bytes / GIB).toFixed(1)} GB` : `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
+  bytes >= GIB
+    ? `${(bytes / GIB).toFixed(1)} GB`
+    : `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
 
 /** Bytes an unprivileged process may still write in the folder `dir` (or its nearest existing parent). */
 export const freeBytesAt = (dir: string): number => {
@@ -131,7 +133,11 @@ export class LiveDatabaseSpaceError extends Error {
   readonly needed: number;
   readonly free: number;
   readonly databaseBytes: number;
-  constructor(input: { readonly databaseBytes: number; readonly free: number; readonly dir: string }) {
+  constructor(input: {
+    readonly databaseBytes: number;
+    readonly free: number;
+    readonly dir: string;
+  }) {
     const needed = input.databaseBytes + snapshotHeadroom(input.databaseBytes);
     super(
       `Not enough free disk space for the database copy: it needs ${formatBytes(needed)} ` +

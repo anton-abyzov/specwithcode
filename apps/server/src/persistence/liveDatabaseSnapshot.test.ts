@@ -138,7 +138,10 @@ describe("snapshotLiveDatabase", () => {
       assert.instanceOf(error, LiveDatabaseSpaceError);
       assert.equal(asked, NodePath.dirname(output));
       assert.match((error as Error).message, /Not enough free disk space.*needs .* GB.*is free/);
-      assert.isAbove((error as LiveDatabaseSpaceError).needed, (error as LiveDatabaseSpaceError).free);
+      assert.isAbove(
+        (error as LiveDatabaseSpaceError).needed,
+        (error as LiveDatabaseSpaceError).free,
+      );
       assert.isFalse(NodeFS.existsSync(NodePath.dirname(output)));
     });
   });

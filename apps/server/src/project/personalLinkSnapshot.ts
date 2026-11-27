@@ -116,7 +116,8 @@ export const SNAPSHOT_RETRY_MAX_MS = 3_600_000;
 export const snapshotRetryDelayMs = (failures: number): number =>
   Math.min(SNAPSHOT_RETRY_MAX_MS, SNAPSHOT_RETRY_FIRST_MS * 2 ** Math.max(0, failures - 1));
 
-const withFullStop = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
+const withFullStop = (text: string) =>
+  /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
 
 const inMinutes = (ms: number) => {
   const minutes = Math.max(1, Math.ceil(ms / 60_000));
