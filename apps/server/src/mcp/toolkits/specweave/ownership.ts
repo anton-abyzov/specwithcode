@@ -80,13 +80,22 @@ const realPath = (path: string) => NodeFSP.realpath(path).catch(() => null);
 const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 
 /**
- * Where `path` sits below the real `workspace`: the rest of the path after its
- * highest folder that is the workspace itself (same real path, so another
- * spelling on a disk that ignores case, or a registered worktree path that is
- * a link, still counts). Taking the highest one means a link further down that
- * leads back to the workspace is still part of the rest and gets checked.
+ * Where `path` sits below the worktree: the rest of the path after its highest
+ * folder that is the worktree's own folder entry, the real one or the
+ * registered one (the same entry on disk, so another spelling on a disk that
+ * ignores case counts, and so does a registered worktree path that is itself a
+ * link). Any other link that leads to the worktree is not the worktree: it is
+ * part of the rest, or makes the path not sit below it at all. Taking the
+ * highest one means a link further down that leads back is still checked.
  */
-async function placeBelow(workspace: string, path: string): Promise<string | null> {
+async function placeBelow(
+  workspace: string,
+  registered: string | null,
+  path: string,
+): Promise<string | null> {
+  const entries = (
+    await Promise.all([workspace, registered].map((own) => (own === null ? null : lstatOrNull(own))))
+  ).filter((stat) => stat !== null);
   const resolved = NodePath.resolve(path);
   const { root } = NodePath.parse(resolved);
   const parts = resolved
@@ -94,7 +103,13 @@ async function placeBelow(workspace: string, path: string): Promise<string | nul
     .split(NodePath.sep)
     .filter((part) => part !== "");
   for (let index = 0; index <= parts.length; index++) {
-    if ((await realPath(NodePath.join(root, ...parts.slice(0, index)))) === workspace) {
+    const folder = NodePath.join(root, ...parts.slice(0, index));
+    const stat = await lstatOrNull(folder);
+    if (
+      stat !== null &&
+      entries.some((own) => own.dev === stat.dev && own.ino === stat.ino) &&
+      (await realPath(folder)) === workspace
+    ) {
       return parts.slice(index).join(NodePath.sep);
     }
   }
@@ -341,7 +356,7 @@ export async function decideOwnership(input: {
   ) {
     const recordedRoot = await realPath(recorded.root);
     // The recorded root's place below the real worktree, from its path alone.
-    const below = await placeBelow(where.workspace, recorded.root);
+    const below = await placeBelow(where.workspace, input.worktreePath, recorded.root);
     const inside =
       below !== null || (recordedRoot !== null && isInside(where.workspace, recordedRoot));
     const recordedCopy =

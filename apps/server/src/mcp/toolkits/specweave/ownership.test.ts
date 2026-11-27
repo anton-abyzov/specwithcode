@@ -453,6 +453,30 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
       });
       expect(sameWorktree).toMatchObject({ ok: true });
     }
+    if (!isWindows) {
+      // A recorded folder outside the worktree, later swapped for a link to it, is not the worktree.
+      const project = NodePath.join(root, "project");
+      NodeFS.symlinkSync(worktree, project);
+      const swapped = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(increment, "manual"),
+        recorded: { root: project, incrementId: INCREMENT },
+      });
+      expect(swapped).toMatchObject({ ok: false, code: "capability_denied" });
+      expect(!swapped.ok && swapped.message).toContain("through a link");
+      NodeFS.rmSync(project);
+      // A registered worktree path that is a link still counts as the worktree.
+      const registered = NodePath.join(root, "registered");
+      NodeFS.symlinkSync(worktree, registered);
+      const viaLink = await decideOwnership({
+        worktreePath: registered,
+        requested: "1497",
+        bound: bound(increment, "manual"),
+        recorded: { root: registered, incrementId: INCREMENT },
+      });
+      expect(viaLink).toMatchObject({ ok: true });
+    }
     // The record of the chosen copy, a record of another increment, and one
     // outside the worktree (the shared project folder) change nothing.
     for (const fine of [
