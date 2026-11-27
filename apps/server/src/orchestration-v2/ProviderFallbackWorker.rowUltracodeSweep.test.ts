@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Projects from "../project/ProjectService.ts";
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
@@ -110,7 +111,7 @@ const hopped = {
   userMessageId: MessageId.make(`limit-fallback:${thread.id}:${origin.id}`),
 };
 
-const continuation = (scheduledTaskId: string | undefined, secondHop = false) =>
+const continuation = (scheduledTaskId: string | undefined, secondHop = false, database = true) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(at + 1_000);
     const dispatched: OrchestrationV2ServerCommand[] = [];
@@ -173,7 +174,10 @@ const continuation = (scheduledTaskId: string | undefined, secondHop = false) =>
     yield* Effect.gen(function* () {
       const sweep = yield* makeSweep;
       yield* sweep();
-    }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+    }).pipe(
+      Effect.provide(database ? Layer.merge(deps, Sqlite.layerMemory) : deps),
+      Effect.provideService(ProviderFallbackEnv, {}),
+    );
     const sent = dispatched.find((command) => command.type === "message.dispatch");
     if (sent?.type !== "message.dispatch") throw new Error("expected a continuation");
     expect(sent.modelSelection?.instanceId).toBe(work);
@@ -190,6 +194,12 @@ describe("a stopped run's origin in the sweep (1506 D-04)", () => {
   it.effect("keeps a routine's stopped turn off, with no binding left to go by", () =>
     Effect.gen(function* () {
       expect(yield* continuation("routine-1")).not.toContainEqual(on);
+    }),
+  );
+
+  it.effect("gives nothing when the routines cannot be read", () =>
+    Effect.gen(function* () {
+      expect(yield* continuation(undefined, false, false)).not.toContainEqual(on);
     }),
   );
 

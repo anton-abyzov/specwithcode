@@ -18,23 +18,25 @@ import { PROVIDER_RETRY_MESSAGE_PREFIX } from "./unopenableFallback.ts";
  * routine runs unattended and repeatedly (1441, 1506 D-04). A person's turns
  * in a thread a routine posts into lose it too: the stop does not say which
  * kind of turn it ended, and off is the safe side.
- * Empty without a database or on any read error.
+ * Null when the database is missing or the read fails: no thread then takes a
+ * row's Ultracode in a fallback that sweep.
  */
-export const routineThreadIds = Effect.gen(function* () {
-  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
-  if (Option.isNone(sql)) return new Set<string>();
-  return yield* sql.value<{ readonly thread_id: string }>`
-    SELECT thread_id FROM scheduled_tasks WHERE thread_id IS NOT NULL
-  `.pipe(
-    Effect.map((rows) => new Set(rows.map((row) => row.thread_id))),
-    Effect.orElseSucceed(() => new Set<string>()),
-  );
-});
+export const routineThreadIds = (
+  sql: Option.Option<SqlClient.SqlClient>,
+): Effect.Effect<ReadonlySet<string> | null> =>
+  Option.isNone(sql)
+    ? Effect.succeed(null)
+    : sql.value<{ readonly thread_id: string }>`
+        SELECT thread_id FROM scheduled_tasks WHERE thread_id IS NOT NULL
+      `.pipe(
+        Effect.map((rows): ReadonlySet<string> | null => new Set(rows.map((row) => row.thread_id))),
+        Effect.orElseSucceed(() => null),
+      );
 
-/** True for a thread a fallback must not give a row's Ultracode: a routine's or the coordinator. */
+/** True for a thread a fallback must not give a row's Ultracode: a routine's, the coordinator, or any when the routines could not be read. */
 export const skipsRowUltracode = (
   threadId: string,
-  routineThreads: ReadonlySet<string>,
+  routineThreads: ReadonlySet<string> | null,
   project: {
     readonly workspaceSettings?:
       | { readonly coordinatorThreadId?: string | null | undefined }
@@ -42,7 +44,9 @@ export const skipsRowUltracode = (
       | undefined;
   },
 ): boolean =>
-  routineThreads.has(threadId) || threadId === project.workspaceSettings?.coordinatorThreadId;
+  routineThreads === null ||
+  routineThreads.has(threadId) ||
+  threadId === project.workspaceSettings?.coordinatorThreadId;
 
 // Messages an automatic continuation starts with: `<prefix><thread>:[hop-N:]<run>`.
 const CONTINUATION_PREFIXES = [

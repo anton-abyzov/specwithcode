@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { type ScheduledTask, ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Sqlite from "../persistence/Sqlite.ts";
 import { bindOwnThread } from "../scheduledTasks/ScheduledTaskOwnThread.ts";
@@ -39,9 +40,10 @@ it.effect("lists the threads routines run in, their own or a person's (1506)", (
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
-it.effect("is empty without a database", () =>
+it.effect("is null without a database, so no thread takes the row", () =>
   Effect.gen(function* () {
-    assert.equal((yield* routineThreadIds).size, 0);
+    assert.isNull(yield* routineThreadIds(yield* Effect.serviceOption(SqlClient.SqlClient)));
+    assert.isTrue(skipsRowUltracode("worker", null, { workspaceSettings: null }));
   }),
 );
 

@@ -56,6 +56,7 @@ import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -884,6 +885,8 @@ export const makeSweep = Effect.gen(function* () {
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const instances = yield* ProviderInstances.ProviderInstanceRegistry;
   const projects = yield* Projects.ProjectService;
+  // Read at construction: the scheduler's fiber may not carry the database.
+  const routineSql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const env = yield* ProviderFallbackEnv;
   const machineHandoff = yield* MachineLimitHandoff;
@@ -1875,16 +1878,26 @@ export const makeSweep = Effect.gen(function* () {
   // mid-turn leaves no binding to go by (1506 D-04).
   const routineRuns = new Map<string, boolean>();
   const startedByRoutine = (
-    thread: Pick<OrchestrationV2ThreadShell, "id" | "status">,
+    thread: Pick<OrchestrationV2ThreadShell, "id" | "status" | "latestRunId">,
     stopped: OrchestrationV2Run | undefined,
   ) =>
     Effect.gen(function* () {
-      if (stopped === undefined || thread.status !== "failed") return false;
-      const known = routineRuns.get(stopped.id);
+      if (thread.status !== "failed" || thread.latestRunId === null) return false;
+      const known = routineRuns.get(thread.latestRunId);
       if (known !== undefined) return known;
       let run: OrchestrationV2Run | undefined = stopped;
+      let runId: string = thread.latestRunId;
       let routine: boolean | null = null;
-      for (let hop = 0; hop < 16 && routine === null && run !== undefined; hop++) {
+      for (let hop = 0; hop < 16 && routine === null; hop++) {
+        // A run the hold read did not load (another kind of stop) is read here.
+        if (run === undefined)
+          run = yield* projections
+            .getThreadRecords(thread.id, ["runs"], { runIds: [RunId.make(runId)] })
+            .pipe(
+              Effect.map((records) => records.runs.find((entry) => entry.id === runId)),
+              Effect.catchCause(() => Effect.succeed(undefined)),
+            );
+        if (run === undefined) break;
         const messageId = orchestrationV2RunStartMessageId(run);
         // A run with no start message cannot be traced: treated as a routine's.
         if (typeof messageId !== "string") break;
@@ -1912,11 +1925,14 @@ export const makeSweep = Effect.gen(function* () {
         if (Option.isNone(records) || records.value.origin === "unknown") break;
         if (records.value.origin === "routine") routine = true;
         else if (records.value.origin === "person") routine = false;
-        else run = records.value.previous;
+        else {
+          runId = previous ?? "";
+          run = records.value.previous;
+        }
       }
       // Unreadable, untraceable or too long a chain: off is the safe side.
       if (routine === null) return true;
-      routineRuns.set(stopped.id, routine);
+      routineRuns.set(thread.latestRunId, routine);
       return routine;
     });
   // A model a person picked since the latest run, as opposed to one a
@@ -1931,7 +1947,7 @@ export const makeSweep = Effect.gen(function* () {
     if (!wake && now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
     yield* Ref.set(lastRunAt, now);
     const preferences = yield* settings.getSettings;
-    const routineThreads = yield* routineThreadIds;
+    const routineThreads = yield* routineThreadIds(routineSql);
     let providers = withSimulatedUsage(yield* registry.getProviders, now, env);
     // The way back does not depend on a rule: a thread the rule moved must
     // not keep spending after the rule is turned off. Nor does the retry of a
@@ -2223,7 +2239,7 @@ export const makeSweep = Effect.gen(function* () {
               rule,
               DateTime.toEpochMillis(yield* DateTime.now),
               // Read again under the lock: a routine may have bound it since the sweep began.
-              skipsRowUltracode(current.id, yield* routineThreadIds, currentProject)
+              skipsRowUltracode(current.id, yield* routineThreadIds(routineSql), currentProject)
                 ? { ...options, noRowUltracode: true }
                 : options,
             );
