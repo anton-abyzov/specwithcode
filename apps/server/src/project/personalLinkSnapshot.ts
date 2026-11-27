@@ -81,7 +81,9 @@ const existingCopyIsSound = async (target: string, projectId: string): Promise<b
   if (stat === undefined || !stat.isFile() || stat.size === 0) return false;
   try {
     const checked = await checkDatabaseCopy(target);
-    return checked.quickCheck === "ok" && checked.pages > 0 && copiedProjectOf(target) === projectId;
+    return (
+      checked.quickCheck === "ok" && checked.pages > 0 && copiedProjectOf(target) === projectId
+    );
   } catch {
     return false;
   }
