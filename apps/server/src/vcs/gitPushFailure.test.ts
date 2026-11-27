@@ -108,5 +108,15 @@ describe("push command text", () => {
       pushCommandText(["push", "/srv/r.git", "HEAD:refs/heads/x"]),
       "git push <remote> HEAD:refs/heads/x",
     );
+    assert.equal(
+      pushCommandText(["push", "git@github.com:acme/r.git", "HEAD:refs/heads/x"]),
+      "git push <remote> HEAD:refs/heads/x",
+    );
+  });
+
+  it("keeps a remote name that contains a slash", () => {
+    const text = pushCommandText(["push", "foo/bar", "HEAD:refs/heads/x"]);
+    assert.equal(text, "git push foo/bar HEAD:refs/heads/x");
+    assert.equal(pushCommandRemote(text), "foo/bar");
   });
 });

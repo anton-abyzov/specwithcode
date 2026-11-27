@@ -62,7 +62,21 @@ export function isArchivedRepositoryRefusal(stderr: string): boolean {
  * which can carry credentials and must never reach an error.
  */
 function isRemoteName(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+  // Remote names may contain slashes (`foo/bar`). URLs and paths are told
+  // apart by their credential and path shapes, not by the slash.
+  return (
+    value !== "" &&
+    !value.startsWith("/") &&
+    !value.startsWith(".") &&
+    !value.startsWith("~") &&
+    !value.includes("://") &&
+    !value.includes("@") &&
+    !value.includes(":") &&
+    !value.includes("\\") &&
+    !value.includes("?") &&
+    !value.includes("#") &&
+    !/\s/.test(value)
+  );
 }
 
 /** `git push origin HEAD:refs/heads/x`: the arguments the app built, never a URL or a token. */
