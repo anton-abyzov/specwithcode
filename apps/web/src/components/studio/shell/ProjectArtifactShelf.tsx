@@ -629,6 +629,8 @@ export function ProjectArtifactShelf(props: {
   readonly onPin: (id: string, on: boolean) => void;
   readonly onViewAll: () => void;
   readonly onOpenThread?: ((threadId: ThreadId, environmentId: EnvironmentId) => void) | undefined;
+  /** Rereads the project's artifacts after New makes one, so it is listed at once. */
+  readonly onCreated?: (() => void) | undefined;
   /** The project, when its Design studio works on this machine: New then offers Design, Slides and Design system. */
   readonly designProject?: DesignEntryProject | undefined;
 }) {
@@ -660,7 +662,10 @@ export function ProjectArtifactShelf(props: {
   const newMenu = (
     <ArtifactNewMenu
       entries={newEntries}
-      onCreated={(created) => opener.openPath(created.path, created.title)}
+      onCreated={(created) => {
+        opener.openPath(created.path, created.title);
+        props.onCreated?.();
+      }}
     />
   );
   if (props.artifacts.length === 0) {

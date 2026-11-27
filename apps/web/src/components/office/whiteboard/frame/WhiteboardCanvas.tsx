@@ -116,6 +116,15 @@ export function WhiteboardCanvas(props: { readonly host: WhiteboardFrameHost }):
         window.focus();
         document.querySelector<HTMLElement>(".excalidraw")?.focus();
       },
+      key: (key) => {
+        window.focus();
+        const editor = document.querySelector<HTMLElement>(".excalidraw");
+        editor?.focus();
+        // Excalidraw reads keys from the document (handleKeyboardGlobally).
+        (document.activeElement ?? editor ?? document.body).dispatchEvent(
+          new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }),
+        );
+      },
     });
   }, [api, host]);
 

@@ -184,6 +184,14 @@ const OUTPUT_DEPTH = 3;
 const OUTPUT_FOLDER_BUDGET = 3000;
 /** Files the scan may stat. */
 const OUTPUT_FILE_BUDGET = 4000;
+/**
+ * Whiteboards, sheets and documents in `.specweave/artifacts/`, read to this
+ * depth so people can sort them into folders. They are made on purpose, so
+ * they never compete with generated reports for the report limit: they have
+ * their own, high enough for years of boards in one project.
+ */
+const OFFICE_DEPTH = 4;
+export const OFFICE_ARTIFACT_LIMIT = 2000;
 
 interface OutputFolder {
   readonly relative: string;
@@ -237,8 +245,6 @@ export async function readProjectOutputs(root: string): Promise<ProjectLibraryOu
   if (!(await lstatWithin(realRoot, ".specweave"))?.isDirectory()) return [];
   const folders: OutputFolder[] = [];
   await collectFolders(realRoot, ".specweave/reports", null, OUTPUT_DEPTH, folders);
-  // Sheets and other Office artifacts: data files the app opens in its own viewer.
-  await collectFolders(realRoot, OFFICE_ARTIFACTS_DIR, null, 1, folders);
   if ((await lstatWithin(realRoot, ".specweave/increments"))?.isDirectory()) {
     for (const entry of await listEntries(realRoot, ".specweave/increments")) {
       if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
@@ -251,6 +257,27 @@ export async function readProjectOutputs(root: string): Promise<ProjectLibraryOu
       );
     }
   }
+  // Sheets, whiteboards and documents: data files the app opens in its own editors.
+  const office: OutputFolder[] = [];
+  await collectFolders(realRoot, OFFICE_ARTIFACTS_DIR, null, OFFICE_DEPTH, office);
+  const newest = (files: ProjectLibraryOutput[], limit: number) =>
+    files
+      .toSorted((left, right) => right.modifiedAt.localeCompare(left.modifiedAt))
+      .slice(0, limit);
+  return newest(
+    [
+      ...newest(await readOutputFiles(realRoot, folders), PROJECT_LIBRARY_OUTPUT_LIMIT),
+      ...newest(await readOutputFiles(realRoot, office), OFFICE_ARTIFACT_LIMIT),
+    ],
+    PROJECT_LIBRARY_OUTPUT_LIMIT + OFFICE_ARTIFACT_LIMIT,
+  );
+}
+
+/** The files in `folders`, newest folders first, within the file budget. */
+async function readOutputFiles(
+  realRoot: string,
+  folders: readonly OutputFolder[],
+): Promise<ProjectLibraryOutput[]> {
   const found: ProjectLibraryOutput[] = [];
   let budget = OUTPUT_FILE_BUDGET;
   for (const folder of folders.toSorted((left, right) => right.mtimeMs - left.mtimeMs)) {
@@ -270,9 +297,7 @@ export async function readProjectOutputs(root: string): Promise<ProjectLibraryOu
       });
     }
   }
-  return found
-    .toSorted((left, right) => right.modifiedAt.localeCompare(left.modifiedAt))
-    .slice(0, PROJECT_LIBRARY_OUTPUT_LIMIT);
+  return found;
 }
 
 export async function readProjectLibrary(workspaceRoot: string): Promise<ProjectLibrarySnapshot> {

@@ -147,17 +147,19 @@ describe("readProjectLibrary", () => {
     ]);
   });
 
-  it("lists sheets saved in the artifacts folder", async () => {
+  it("lists sheets and whiteboards in the artifacts folder and its subfolders", async () => {
     const root = await project();
     const file = NodePath.join(root, ".specweave/artifacts/budget.sheet.json");
     await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
     await NodeFSP.writeFile(file, "x".repeat(10));
     await NodeFSP.utimes(file, 1_800_000_000, 1_800_000_000);
-    await NodeFSP.mkdir(NodePath.join(root, ".specweave/artifacts/nested"));
-    await NodeFSP.writeFile(
-      NodePath.join(root, ".specweave/artifacts/nested/deep.sheet.json"),
-      "x",
-    );
+    const nested = NodePath.join(root, ".specweave/artifacts/team/q4/flow.excalidraw");
+    await NodeFSP.mkdir(NodePath.dirname(nested), { recursive: true });
+    await NodeFSP.writeFile(nested, "x");
+    await NodeFSP.utimes(nested, 1_700_000_000, 1_700_000_000);
+    // Hidden folders stay out, as everywhere in the Library.
+    await NodeFSP.mkdir(NodePath.join(root, ".specweave/artifacts/.cache"));
+    await NodeFSP.writeFile(NodePath.join(root, ".specweave/artifacts/.cache/x.excalidraw"), "x");
 
     const library = await readProjectLibrary(root);
     expect(library.outputs).toEqual([
@@ -167,7 +169,34 @@ describe("readProjectLibrary", () => {
         modifiedAt: new Date(1_800_000_000_000).toISOString(),
         increment: null,
       },
+      {
+        path: ".specweave/artifacts/team/q4/flow.excalidraw",
+        byteLength: 1,
+        modifiedAt: new Date(1_700_000_000_000).toISOString(),
+        increment: null,
+      },
     ]);
+  });
+
+  it("keeps every whiteboard listed next to more reports than the report limit", async () => {
+    const root = await project();
+    const reports = NodePath.join(root, ".specweave/reports");
+    const boards = NodePath.join(root, ".specweave/artifacts");
+    await NodeFSP.mkdir(reports, { recursive: true });
+    await NodeFSP.mkdir(boards, { recursive: true });
+    const old = 1_700_000_000;
+    for (let index = 0; index < 150; index += 1) {
+      const board = NodePath.join(boards, `board-${index}.excalidraw`);
+      await NodeFSP.writeFile(board, "x");
+      await NodeFSP.utimes(board, old, old);
+    }
+    for (let index = 0; index < 130; index += 1) {
+      await NodeFSP.writeFile(NodePath.join(reports, `report-${index}.md`), "x");
+    }
+
+    const outputs = (await readProjectLibrary(root)).outputs ?? [];
+    expect(outputs.filter((item) => item.path.endsWith(".excalidraw"))).toHaveLength(150);
+    expect(outputs.filter((item) => item.path.endsWith(".md"))).toHaveLength(120);
   });
 
   it("finds a new file in an old increment's subfolder past a large reports tree", async () => {

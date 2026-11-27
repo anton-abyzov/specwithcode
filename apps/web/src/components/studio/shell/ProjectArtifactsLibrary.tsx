@@ -19,6 +19,7 @@ import {
   artifactTypesPresent,
   ARTIFACT_TYPE_FILTER_LABELS,
   ARTIFACT_TYPE_FILTERS,
+  artifactSubfolder,
   DEFAULT_ARTIFACT_SORT,
   formatArtifactDate,
   nextArtifactSort,
@@ -215,6 +216,11 @@ export function ProjectArtifactsLibrary(props: {
                   <span className="sws-library-chevron" aria-hidden />
                   <ArtifactKindIcon artifact={artifact} />
                   <span className="sws-library-label">{artifact.title}</span>
+                  {artifactSubfolder(artifact) !== null ? (
+                    <span className="ms-1.5 flex-none truncate text-2xs text-muted-foreground">
+                      {artifactSubfolder(artifact)}
+                    </span>
+                  ) : null}
                   {artifact.missing ? (
                     <span className="sws-artifact-missing-tag">Missing</span>
                   ) : null}

@@ -193,6 +193,11 @@ export interface ProjectWorkspaceSearch {
    * stays in the URL, so back closes the view and a link can open it.
    */
   readonly increment?: string;
+  /**
+   * A one-shot request to make a new artifact and open it, as the whiteboard
+   * shortcut asks for `whiteboard`. The page takes it once and drops it.
+   */
+  readonly new?: "whiteboard";
 }
 
 /** An increment folder name: its number, then words joined by hyphens. Nothing else reaches the server. */
@@ -225,6 +230,7 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
     ...(checkout && checkout.includes(":") ? { checkout } : {}),
     ...(pane ? { pane } : {}),
     ...(increment ? { increment } : {}),
+    ...(raw.new === "whiteboard" ? { new: "whiteboard" as const } : {}),
   };
 }
 

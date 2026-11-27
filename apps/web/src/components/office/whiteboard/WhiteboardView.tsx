@@ -16,9 +16,11 @@ import {
 } from "react";
 
 import { useTx } from "../../../i18n";
+import { isEditableFocused } from "../../../lib/editableFocus";
 import { Button } from "../../ui/button";
 import {
   WHITEBOARD_HOST_PROPERTY,
+  isWhiteboardEditorKey,
   type WhiteboardFrameApi,
   type WhiteboardFrameElement,
   type WhiteboardFrameHost,
@@ -149,6 +151,29 @@ export function WhiteboardView(props: {
     draft !== undefined && !parsed.ok ? parsed.error : null,
   );
   const [ready, setReady] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Undo, redo and select all reach the drawing while focus is on this view's
+  // toolbar or elsewhere in its dialog, not the app's shortcuts or the page.
+  useEffect(() => {
+    if (!ready) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const root = rootRef.current;
+      const focused = document.activeElement;
+      if (root === null || !isWhiteboardEditorKey(event)) return;
+      // In the viewer's dialog, a click on its plain background leaves focus on the body.
+      const dialog = root.closest<HTMLElement>("[role='dialog']");
+      const inScope =
+        focused !== null &&
+        ((dialog ?? root).contains(focused) || (dialog !== null && focused === document.body));
+      if (!inScope || isEditableFocused(focused)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const { key, code, metaKey, ctrlKey, shiftKey, altKey } = event;
+      apiRef.current?.key({ key, code, metaKey, ctrlKey, shiftKey, altKey });
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [ready]);
   const [baseRevision, setBaseRevision] = useState(state.current.base);
   const propsRef = useRef(props);
   useEffect(() => {
@@ -470,7 +495,7 @@ export function WhiteboardView(props: {
             : tx("Saved");
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-office="whiteboard">
+    <div ref={rootRef} className="flex min-h-0 min-w-0 flex-1 flex-col" data-office="whiteboard">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5 text-xs">
         <span
           className="min-w-0 flex-1 truncate text-muted-foreground"
