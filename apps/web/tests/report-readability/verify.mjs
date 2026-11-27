@@ -148,7 +148,7 @@ const measureTables = (page) =>
         maxRow: Math.round(
           Math.max(...[...table.tBodies[0].rows].map((row) => row.getBoundingClientRect().height)),
         ),
-        // A cell whose text wraps stays within 28rem, or within its widest
+        // A cell whose text wraps stays within 22rem, or within its widest
         // unbreakable piece (a whole chip, token or link chunk).
         longLines: [...table.querySelectorAll(".chat-markdown-cell")]
           .filter((cell) => {
@@ -158,7 +158,7 @@ const measureTables = (page) =>
             cell.style.width = "min-content";
             const piece = cell.getBoundingClientRect().width;
             cell.style.width = "";
-            return width > Math.max(449, piece + 1) && lines(range.getClientRects()) > 1;
+            return width > Math.max(353, piece + 1) && lines(range.getClientRects()) > 1;
           })
           .map((cell) => cell.textContent.slice(0, 40)),
         truncatedChips: [...table.querySelectorAll(".chat-markdown-file-link .truncate")].filter(
@@ -388,23 +388,17 @@ try {
             Math.abs(table.frameCenterOffset) <= 2,
             `${label} ${entry.doc} table ${index}: centered on the page`,
           );
-          // AC-02: a frame spreads across the room (up to 72rem), never past it;
-          // it scrolls only once it has the whole room.
+          // A frame stays in the text column (increment 1498, replacing the
+          // earlier spread across the room): never wider than the column, and
+          // what cannot fit scrolls inside it.
           NodeAssert.ok(
-            table.frameWidth >= Math.min(1152, entry.room) - 2 &&
-              table.frameWidth <= entry.room + 2,
-            `${label} ${entry.doc} table ${index}: frame spreads across the room (${table.frameWidth} of ${entry.room})`,
+            table.frameWidth <= entry.columnWidth + 2,
+            `${label} ${entry.doc} table ${index}: frame stays in the column (${table.frameWidth} of ${entry.columnWidth})`,
           );
-          if (table.scrollsInFrame) {
-            NodeAssert.ok(
-              table.frameWidth >= entry.room - 2,
-              `${label} ${entry.doc} table ${index}: scrolls only with the whole room`,
-            );
-          }
           NodeAssert.deepEqual(
             table.longLines,
             [],
-            `${label} ${entry.doc} table ${index}: lines by 28rem`,
+            `${label} ${entry.doc} table ${index}: lines by 22rem`,
           );
           NodeAssert.equal(
             table.truncatedChips,
@@ -421,25 +415,13 @@ try {
 
       const comparison = row(label, "comparison");
       const [skills, checks, values, commands] = comparison.tables;
-      // AC-02: prose keeps its measure (36rem) while tables leave it.
+      // AC-02: prose keeps its measure (36rem).
       NodeAssert.ok(comparison.widestParagraph <= 577, `${label}: prose keeps its measure`);
       NodeAssert.equal(checks.scrollsInFrame, false, `${label}: a two-column prose table fits`);
       // AC-01: a command wraps at its spaces instead of scrolling while it fits.
       NodeAssert.ok(commands.wrappedCode > 0, `${label}: commands wrap at their spaces`);
       if (/-(2400|1440|1100)$/u.test(label)) {
         NodeAssert.equal(commands.scrollsInFrame, false, `${label}: commands fit the measure`);
-      }
-      if (/-(2400|1440-hidden)$/u.test(label)) {
-        // With the room the defect's reader had, the comparison fits, wider than prose.
-        NodeAssert.ok(
-          skills.frameWidth >= comparison.columnWidth + 200,
-          `${label}: wider than prose`,
-        );
-        NodeAssert.equal(
-          skills.scrollsInFrame,
-          false,
-          `${label}: the comparison fits without scrolling`,
-        );
       }
       if (label.endsWith("390") || label.endsWith("zoom200")) {
         // AC-03: what cannot fit scrolls inside its frame, never the page.

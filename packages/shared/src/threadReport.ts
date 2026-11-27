@@ -109,6 +109,22 @@ function unquoted(value: string): string {
 }
 
 /**
+ * A frontmatter key as words: `review_cycle` and `reviewCycle` read "review
+ * cycle", `headSHA` reads "head SHA". Capitals a person typed stay.
+ */
+function frontmatterWords(key: string): string {
+  return key
+    .replace(
+      /([a-z0-9])([A-Z])(?=[a-z])/g,
+      (_, before: string, upper: string) => `${before} ${upper.toLowerCase()}`,
+    )
+    .replace(/([a-z0-9])([A-Z]{2,})/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * A flat YAML frontmatter block, the subset document viewers show as a
  * property table: `key: value` lines and lists as `- a` lines or `[a, b]`.
  * Anything richer (nesting, block text) is left in the body as written.
@@ -149,7 +165,7 @@ export function reportFrontmatter(text: string): {
     fields: fields
       .filter((field) => field.value.length > 0)
       .map((field) => {
-        const words = field.key.replace(/[-_]+/g, " ").trim();
+        const words = frontmatterWords(field.key);
         return { label: words.charAt(0).toUpperCase() + words.slice(1), value: field.value };
       }),
     body: source.slice(match[0].length).trim(),

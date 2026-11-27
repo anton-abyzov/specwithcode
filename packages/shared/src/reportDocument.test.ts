@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  frontmatterProperties,
   markdownDocument,
+  readableFrontmatterDate,
   reportBlocker,
   reportWaitReason,
   reportDocument,
   reportSentences,
 } from "./reportDocument.ts";
-import { reportSummary, reportTitle } from "./threadReport.ts";
+import { reportFrontmatter, reportSummary, reportTitle } from "./threadReport.ts";
+import { parseStudioThreadHref } from "./studioThreadLinks.ts";
 
 const WORKER_REPORT = [
   '**Outcome:** Thread rows now show the harness first, then the model. Native threads read "Claude Code · Opus 5.5".',
@@ -116,7 +119,7 @@ describe("reportDocument with frontmatter", () => {
     expect(reportDocument(text)).toEqual({
       lead: "Teams call about the operating model.",
       properties: [
-        { label: "Date", markdown: "2026-10-12" },
+        { label: "Date", markdown: readableFrontmatterDate("2026-10-12") },
         { label: "Review cycle", markdown: "2" },
         { label: "Tags", markdown: "", chips: ["meeting", "datadog"] },
         { label: "Attendees", markdown: "", chips: ["Anton", "Olli"] },
@@ -314,4 +317,77 @@ describe("explicit dependency reports", () => {
   ])("does not turn a user request or old wait into a dependency: %s", (text) =>
     expect(reportWaitReason(text)).toBeNull(),
   );
+});
+
+describe("saved report frontmatter", () => {
+  const SAVED = [
+    "---",
+    "title: Review of PR 877",
+    "thread: thread:delegated-task:command%3Amcp%3Aa1%3Areview-pr877",
+    "threadTitle: Review PR 877 suggestion clipboard",
+    "savedAt: 2026-11-24T16:16:00.739Z",
+    "headSHA: afa86003",
+    "review_cycle: 2",
+    "date: 2026-11-24",
+    "---",
+    "",
+    "Body.",
+  ].join("\n");
+
+  it("reads camelCase and snake_case keys as words", () => {
+    expect(reportFrontmatter(SAVED).fields.map((field) => field.label)).toEqual([
+      "Title",
+      "Thread",
+      "Thread title",
+      "Saved at",
+      "Head SHA",
+      "Review cycle",
+      "Date",
+    ]);
+  });
+
+  it("shows the thread as one link named by its title, and dates in words", () => {
+    const parts = frontmatterProperties(reportFrontmatter(SAVED).fields.slice(1), {
+      locale: "en-US",
+      timeZone: "UTC",
+    });
+    expect(parts.map((part) => part.label)).toEqual([
+      "Thread",
+      "Saved at",
+      "Head SHA",
+      "Review cycle",
+      "Date",
+    ]);
+    const link = /^\[([^\]]+)\]\((studio:\/\/thread\/[^)\s]+)\)$/.exec(parts[0]!.markdown);
+    expect(link?.[1]).toBe("Review PR 877 suggestion clipboard");
+    expect(parseStudioThreadHref(link![2]!)).toContain(
+      "thread:delegated-task:command%3Amcp%3Aa1%3Areview-pr877",
+    );
+    expect(parts[1]!.markdown).toBe("November 24, 2026 at 4:16 PM");
+    expect(parts[4]!.markdown).toBe("November 24, 2026");
+  });
+
+  it("links a thread with no title and leaves a sentence called thread alone", () => {
+    const [bare] = frontmatterProperties([{ label: "Thread", value: "thread-abc123" }]);
+    expect(bare!.markdown).toMatch(/^\[Open thread\]\(studio:\/\/thread\/thread-abc123\)$/);
+    const [prose] = frontmatterProperties([{ label: "Thread", value: "the review one" }]);
+    expect(prose!.markdown).toBe("the review one");
+  });
+
+  it("keeps values that only look like dates", () => {
+    expect(readableFrontmatterDate("2026-02-31")).toBe("2026-02-31");
+    expect(readableFrontmatterDate("2026-11-24 release")).toBe("2026-11-24 release");
+    expect(readableFrontmatterDate("v2026-11-24")).toBe("v2026-11-24");
+    expect(readableFrontmatterDate("2026-11-24", { locale: "en-US" })).toBe("November 24, 2026");
+  });
+
+  it("does the same in a Markdown file's property table", () => {
+    const document = markdownDocument(SAVED);
+    expect(document.title).toBe("Review of PR 877");
+    expect(document.properties.map((part) => part.label)).not.toContain("Thread title");
+    expect(document.properties[0]!.markdown).toMatch(
+      /^\[Review PR 877 suggestion clipboard\]\(studio:/,
+    );
+    expect(document.properties[1]!.markdown).not.toContain("T16:16");
+  });
 });

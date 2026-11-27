@@ -95,6 +95,6 @@ export default defineConfig({
   build: {
     outDir: here("../../../../.artifacts/report-experience/site"),
     emptyOutDir: true,
-    rollupOptions: { input: { index: here("./index.html"), files: here("./files.html") } },
+    rollupOptions: { input: { index: here("./index.html"), files: here("./files.html"), reportDoc: here("./report-doc.html") } },
   },
 });

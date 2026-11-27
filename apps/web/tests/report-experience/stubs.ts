@@ -1,3 +1,12 @@
+import { LINKED_DOC, LINKED_DOC_PATH, REPORT_DOC, REPORT_DOC_PATH } from "./reportDocFixture";
+
+const REPORT_DOC_FILES: Record<string, string> = {
+  [REPORT_DOC_PATH]: REPORT_DOC,
+  [LINKED_DOC_PATH]: LINKED_DOC,
+  "/Users/fixture/work/atlas/.specweave/increments/0042-season/plan.md":
+    "# Plan\n\nShip registration first.\n",
+};
+
 export function useAssetUrlState(_environmentId?: string, resource?: unknown) {
   // As the app does, nothing is asked for a resource it was not given.
   if (resource === null) return { _tag: "Loading" };
@@ -25,10 +34,12 @@ export function useClientSettings(select: (value: Record<string, string>) => unk
 export function useFilesystemReadAccess() {
   return { canReadFiles: !new URLSearchParams(location.search).has("no-read") };
 }
-/** A file the focused reader opens: synthetic text naming the path it was asked for. */
+/** A file the focused reader opens: synthetic text naming the path it was asked for,
+ * or the report-document fixture's report and the file it links. */
 export function useProjectFileQuery(_environmentId: string, _cwd: string, path: string | null) {
+  const known = path === null ? undefined : REPORT_DOC_FILES[path];
   return {
-    data: path === null ? null : { contents: `Fixture file\n${path}\n` },
+    data: path === null ? null : { contents: known ?? `Fixture file\n${path}\n` },
     error: null,
     readError: null,
     isNotFile: false,
