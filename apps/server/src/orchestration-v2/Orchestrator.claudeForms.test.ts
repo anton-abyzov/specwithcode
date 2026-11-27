@@ -413,7 +413,10 @@ it.effect("keeps the first answer's hand-off when a later answer is refused (149
       yield* refusal(respond("again", { decision: "accept", answers: { confirm: "other" } })),
       FORM_ALREADY_ANSWERED,
     );
-    assert.include(yield* refusal(respond("decline", { decision: "decline" })), FORM_ALREADY_ANSWERED);
+    assert.include(
+      yield* refusal(respond("decline", { decision: "decline" })),
+      FORM_ALREADY_ANSWERED,
+    );
     assert.equal((yield* status)?.status, "resolved");
     assert.equal(claudeFormCommitOutcome(requestId), "committed");
     assert.isFalse(beginClosingClaudeForm(requestId));
