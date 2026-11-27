@@ -2098,7 +2098,7 @@ export const make = Effect.gen(function* () {
     const destination =
       (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.pushRemote`)) ??
       (yield* readConfig("remote.pushDefault")) ??
-      (currentBranch === null ? null : yield* readConfig(`branch.${currentBranch}.remote`)) ??
+      (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null))) ??
       "origin";
     const remoteUrl =
       parseGitHubHttpsRemote(destination) !== null
