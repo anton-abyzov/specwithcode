@@ -446,7 +446,10 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
         worktreePath: worktree,
         requested: "1497",
         bound: bound(nestedIncrement, "claim"),
-        recorded: { root: NodePath.join(respelledWorktree, "packages", "app"), incrementId: INCREMENT },
+        recorded: {
+          root: NodePath.join(respelledWorktree, "packages", "app"),
+          incrementId: INCREMENT,
+        },
       });
       expect(sameWorktree).toMatchObject({ ok: true });
     }

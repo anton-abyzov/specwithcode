@@ -89,7 +89,10 @@ const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 async function placeBelow(workspace: string, path: string): Promise<string | null> {
   const resolved = NodePath.resolve(path);
   const { root } = NodePath.parse(resolved);
-  const parts = resolved.slice(root.length).split(NodePath.sep).filter((part) => part !== "");
+  const parts = resolved
+    .slice(root.length)
+    .split(NodePath.sep)
+    .filter((part) => part !== "");
   for (let index = 0; index <= parts.length; index++) {
     if ((await realPath(NodePath.join(root, ...parts.slice(0, index)))) === workspace) {
       return parts.slice(index).join(NodePath.sep);
