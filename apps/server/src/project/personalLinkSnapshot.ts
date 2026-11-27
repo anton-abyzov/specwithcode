@@ -21,7 +21,7 @@ import {
   LiveDatabaseSpaceError,
   removeStalePartials,
 } from "../persistence/liveDatabaseSnapshot.ts";
-import { snapshotProjectRows } from "../persistence/projectRowsSnapshot.ts";
+import { copiedProjectOf, snapshotProjectRows } from "../persistence/projectRowsSnapshot.ts";
 
 /** Why this machine could not save its database copy; the join stops before any write. */
 export class PersonalLinkSnapshotFailure extends Data.TaggedError("PersonalLinkSnapshotFailure")<{
@@ -59,26 +59,29 @@ export class PersonalLinkSnapshot extends Context.Reference<PersonalLinkSnapshot
 
 /**
  * One file name per operation id: a readable prefix plus a hash of the whole
- * id, so two ids that sanitize alike never share a copy.
+ * id, so two ids that sanitize alike never share a copy. `.rows.sqlite` marks
+ * a copy of one project's rows (1505), so a whole-database copy an older
+ * version saved for the same operation is never in its place.
  */
 export const snapshotFileName = (operationId: string) =>
   `${operationId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64) || "operation"}-${sha256(
     [operationId],
     "hex",
-  ).slice(0, 16)}.sqlite`;
+  ).slice(0, 16)}.rows.sqlite`;
 
 /**
  * Whether `target` is an earlier complete copy for the same operation: a
- * regular, non-empty file that is a database passing `quick_check`. An empty
- * file also passes `quick_check`, so it needs pages. Opens only the saved copy, read-only and
- * off the event loop, never the live database.
+ * regular, non-empty file that is a database passing `quick_check`, with
+ * pages (an empty file passes `quick_check` too), whose `swc_copy_info` names
+ * this project. Any other sound database there is no safety copy of it.
+ * Opens only the saved copy, read-only, never the live database.
  */
-const existingCopyIsSound = async (target: string): Promise<boolean> => {
+const existingCopyIsSound = async (target: string, projectId: string): Promise<boolean> => {
   const stat = NodeFS.lstatSync(target, { throwIfNoEntry: false });
   if (stat === undefined || !stat.isFile() || stat.size === 0) return false;
   try {
     const checked = await checkDatabaseCopy(target);
-    return checked.quickCheck === "ok" && checked.pages > 0;
+    return checked.quickCheck === "ok" && checked.pages > 0 && copiedProjectOf(target) === projectId;
   } catch {
     return false;
   }
@@ -179,10 +182,11 @@ export const makePersonalLinkSnapshotter = (
 
   const attempt = async (target: string, projectId: string): Promise<string> => {
     if (NodeFS.existsSync(target)) {
-      // A retry of the same operation after a restart: reuse its copy only when it is sound.
-      if (!(await existingCopyIsSound(target)))
+      // A retry of the same operation after a restart: reuse its copy only when it is
+      // a sound copy of this project's rows. Anything else stays where it is.
+      if (!(await existingCopyIsSound(target, projectId)))
         throw new PersonalLinkSnapshotFailure({
-          message: `An unusable file is in the way of the database copy at ${target}.`,
+          message: `An unusable file is in the way of the database copy at ${target}: it is not a sound copy of this project's rows.`,
         });
       return target;
     }

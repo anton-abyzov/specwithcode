@@ -327,7 +327,7 @@ describe("PersonalLinkSnapshot layerLive", () => {
     assert.notStrictEqual(snapshotFileName(`${prefix}a`), snapshotFileName(`${prefix}b`));
     assert.match(
       snapshotFileName("personal-link:op-1"),
-      /^personal-link_op-1-[0-9a-f]{16}\.sqlite$/,
+      /^personal-link_op-1-[0-9a-f]{16}\.rows\.sqlite$/,
     );
   });
 
@@ -389,6 +389,40 @@ describe("PersonalLinkSnapshot layerLive", () => {
           );
           assert.match(error.message, /unusable file/);
           assert.equal(NodeFS.statSync(target).size, 0);
+        }).pipe(Effect.provide(liveFor(baseDir)));
+      }),
+    ),
+  );
+
+  it.effect("never takes a sound database that is not this project's copy for a safety copy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const baseDir = yield* makeScratchBase();
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          yield* openScratchDatabase(config.dbPath, 1);
+          const dir = NodePath.join(config.stateDir, "backups", "personal-link");
+          NodeFS.mkdirSync(dir, { recursive: true });
+          const cases = [
+            // A copy of another project's rows.
+            "CREATE TABLE swc_copy_info (project_id TEXT NOT NULL); INSERT INTO swc_copy_info VALUES ('another-project')",
+            // A whole database, as copies before 1505 were, with no copy info.
+            "CREATE TABLE project_memory (project_id TEXT, name TEXT); INSERT INTO project_memory VALUES ('percy-project', 'a')",
+          ];
+          for (const [index, sql] of cases.entries()) {
+            const operation = `personal-link:op-foreign-${index}`;
+            const target = NodePath.join(dir, snapshotFileName(operation));
+            const foreign = new NodeSqlite.DatabaseSync(target);
+            foreign.exec(sql);
+            foreign.close();
+            const before = NodeFS.readFileSync(target);
+            const error = yield* Effect.flip(
+              (yield* PersonalLinkSnapshot).snapshot(operation, PERCY_ID),
+            );
+            assert.match(error.message, /not a sound copy of this project's rows/);
+            // Left exactly as it was.
+            assert.isTrue(NodeFS.readFileSync(target).equals(before));
+          }
         }).pipe(Effect.provide(liveFor(baseDir)));
       }),
     ),

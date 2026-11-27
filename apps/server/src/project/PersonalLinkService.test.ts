@@ -335,7 +335,7 @@ describe("PersonalLinkService", () => {
         assert.isTrue(joined.second.replayed);
         assert.match(
           joined.first.snapshotPath ?? "",
-          /^\/tmp\/backups\/op-1@r1-[0-9a-f]{16}\.sqlite$/,
+          /^\/tmp\/backups\/op-1@r1-[0-9a-f]{16}\.rows\.sqlite$/,
         );
         assert.strictEqual(joined.first.logicalProject.id, "logical:percy-shared-1");
         assert.strictEqual(joined.first.logicalProject.members.length, 2);
