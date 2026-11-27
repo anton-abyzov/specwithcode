@@ -414,6 +414,21 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
       recorded,
     });
     expect(!other.ok && other.message).toContain("is not the copy in");
+    if (!isWindows) {
+      // A link to the worktree root put in place of the recorded root.
+      NodeFS.rmSync(nested, { recursive: true });
+      NodeFS.symlinkSync(worktree, nested);
+      const linked = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(increment, "manual"),
+        recorded,
+      });
+      expect(linked).toMatchObject({ ok: false, code: "capability_denied" });
+      expect(!linked.ok && linked.message).toContain("now leads to");
+      NodeFS.rmSync(nested);
+      NodeFS.mkdirSync(nestedIncrement, { recursive: true });
+    }
     // The record of the chosen copy, a record of another increment, and one
     // outside the worktree (the shared project folder) change nothing.
     for (const fine of [

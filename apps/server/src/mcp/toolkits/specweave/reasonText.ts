@@ -8,9 +8,14 @@
  * retry is the same reason only when it would be written the same way.
  */
 
-/** Backtick code, URLs (scheme or scheme-less), and path-like tokens; as SpecWeave 3.2.5. */
+/**
+ * Backtick code, URLs (scheme or scheme-less), and path-like tokens; as
+ * SpecWeave 3.2.5, with its flags. With `u` added, `i` would also match `ſ`
+ * and the Kelvin sign as letters, and the two would split a reason differently.
+ */
+// oxlint-disable-next-line require-unicode-regexp
 const PROTECTED =
-  /`[^`]*`|\b[a-z][a-z0-9+.-]*:\/\/\S+|\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:[/?#]\S*)?|\b[^\s()[\]{}"'`,;]*\/[^\s()[\]{}"'`,;]*/giu;
+  /`[^`]*`|\b[a-z][a-z0-9+.-]*:\/\/\S+|\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:[/?#]\S*)?|\b[^\s()[\]{}"'`,;]*\/[^\s()[\]{}"'`,;]*/gi;
 
 /** Length of the protected part of a URL or path match; a `,word` sentence tail after a digit is not protected. */
 function protectedLength(raw: string): number {

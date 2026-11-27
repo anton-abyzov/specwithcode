@@ -302,19 +302,32 @@ export async function decideOwnership(input: {
     recorded.incrementId === bound.incrementId
   ) {
     const recordedRoot = await realPath(recorded.root);
+    // Where the recorded root sits in the real worktree, read from its path
+    // alone: a link put in its place must not move it to another copy.
+    const lexical = isInside(where.workspace, recorded.root)
+      ? NodePath.resolve(recorded.root)
+      : input.worktreePath !== null && isInside(input.worktreePath, recorded.root)
+        ? NodePath.join(where.workspace, NodePath.relative(input.worktreePath, recorded.root))
+        : null;
     const inside =
-      isInside(where.workspace, recorded.root) ||
-      (input.worktreePath !== null && isInside(input.worktreePath, recorded.root)) ||
-      (recordedRoot !== null && isInside(where.workspace, recordedRoot));
+      lexical !== null || (recordedRoot !== null && isInside(where.workspace, recordedRoot));
     const recordedCopy =
       recordedRoot === null
         ? null
         : await realPath(
             NodePath.join(recordedRoot, ".specweave", "increments", bound.incrementId),
           );
-    if (inside && (recordedCopy === null || recordedRoot !== specweaveRoot)) {
+    const problem =
+      recordedCopy === null
+        ? "that copy is gone"
+        : recordedRoot !== lexical
+          ? `${recorded.root} now leads to ${recordedRoot}`
+          : recordedRoot !== specweaveRoot
+            ? `that is not the copy in ${specweaveRoot}`
+            : null;
+    if (inside && problem !== null) {
       return denied(
-        `This thread last wrote increment ${bound.incrementId} in ${recorded.root}, and ${recordedCopy === null ? "that copy is gone" : `that is not the copy in ${specweaveRoot}`}. SpecWeave write tools never switch to another copy of the increment; restore that copy, or use \`specweave task claim|release|block\` in your shell.`,
+        `This thread last wrote increment ${bound.incrementId} in ${recorded.root}, and ${problem}. SpecWeave write tools never switch to another copy of the increment; restore that copy, or use \`specweave task claim|release|block\` in your shell.`,
       );
     }
   }

@@ -709,6 +709,9 @@ describe("sameReason (1497 review)", () => {
       "see `a,b` and https://x.dev/q?a=1,2;then",
     );
     expect(writtenReason("1,000 rows;next")).toBe("1,000 rows; next");
+    // Outputs of SpecWeave 3.2.5's own normalizeReason for the same input.
+    expect(writtenReason("Waiting on ſ://foo/a,b")).toBe("Waiting on ſ://foo/a, b");
+    expect(writtenReason("KELVIN \u212A://x/a,b")).toBe("KELVIN \u212A://x/a, b");
   });
 });
 
