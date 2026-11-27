@@ -198,6 +198,30 @@ export function isClaudeFormRequest(request: OrchestrationV2RuntimeRequest): boo
   );
 }
 
+/**
+ * A pending request the end of its provider turn cancels: a native question
+ * that has no message reply, or a Claude form (1493). A stopped run stops
+ * reading the adapter's events, so the adapter's own cancellation of a form
+ * can be dropped; this sweep is durable. A form already answered is not
+ * pending, so it is never swept (1481 D-11).
+ */
+export function isDismissedAtTurnEnd(request: OrchestrationV2RuntimeRequest): boolean {
+  return request.kind === "user_input"
+    ? request.responseCapability.type !== "message"
+    : isClaudeFormRequest(request);
+}
+
+/** The card of a request {@link isDismissedAtTurnEnd} cancels. */
+export function isDismissedTurnEndCard(
+  item: OrchestrationV2TurnItem,
+  requestIds: ReadonlySet<string>,
+): boolean {
+  return (
+    (item.type === "user_input_request" || item.type === "approval_request") &&
+    requestIds.has(item.requestId)
+  );
+}
+
 /** The form a Claude MCP card shows; Codex elicitations carry none. */
 export function claudeFormOf(
   item: OrchestrationV2TurnItem | undefined,
