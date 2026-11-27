@@ -79,16 +79,20 @@ const realPath = (path: string) => NodeFSP.realpath(path).catch(() => null);
 
 const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 
-/** A path with its trailing separators removed (a link read with one is followed). */
-const withoutTrailingSeparator = (path: string) => {
-  const resolved = NodePath.resolve(path);
-  return resolved === NodePath.parse(resolved).root ? resolved : resolved.replace(/[\\/]+$/u, "");
-};
+/**
+ * A path with its trailing separators removed (a link read with one is
+ * followed). `resolve` drops only this platform's separators, so a `\` that is
+ * part of a name on macOS and Linux stays.
+ */
+const withoutTrailingSeparator = (path: string) => NodePath.resolve(path);
+
+/** A folder name as compared: Unicode NFC and lower case (APFS treats both forms alike). */
+const comparable = (path: string) => path.normalize("NFC").toLowerCase();
 
 /**
  * Where `path` sits below the worktree: the rest of the path after its highest
  * folder that is the worktree itself. That folder must be spelled as the real
- * or the registered worktree path (letter case aside), be that very entry on
+ * or the registered worktree path (letter case and Unicode form aside), be that very entry on
  * disk (not followed, so a link put in its place or above it that leads to
  * the worktree is not it), and lead to the real worktree. Another spelling on
  * a disk that ignores case is the same entry and counts; so does a registered
@@ -101,7 +105,7 @@ async function placeBelow(
   path: string,
 ): Promise<string | null> {
   const own = [workspace, ...(registered === null ? [] : [withoutTrailingSeparator(registered)])];
-  const names = new Set(own.map((folder) => folder.toLowerCase()));
+  const names = new Set(own.map(comparable));
   const entries = (await Promise.all(own.map(lstatOrNull))).filter((stat) => stat !== null);
   const resolved = withoutTrailingSeparator(path);
   const { root } = NodePath.parse(resolved);
@@ -111,7 +115,7 @@ async function placeBelow(
     .filter((part) => part !== "");
   for (let index = 0; index <= parts.length; index++) {
     const folder = NodePath.join(root, ...parts.slice(0, index));
-    if (!names.has(folder.toLowerCase())) continue;
+    if (!names.has(comparable(folder))) continue;
     const stat = await lstatOrNull(folder);
     if (
       stat !== null &&

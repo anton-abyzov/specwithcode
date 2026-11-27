@@ -454,6 +454,20 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
       expect(sameWorktree).toMatchObject({ ok: true });
     }
     if (!isWindows) {
+      // A nested folder whose name ends in a backslash is a plain name here.
+      const odd = NodePath.join(worktree, "odd\\");
+      const oddIncrement = NodePath.join(odd, ".specweave", "increments", INCREMENT);
+      NodeFS.mkdirSync(oddIncrement, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(odd, ".specweave", "config.json"), "{}\n");
+      const backslash = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(oddIncrement, "claim"),
+        recorded: { root: odd, incrementId: INCREMENT },
+      });
+      expect(backslash).toMatchObject({ ok: true });
+    }
+    if (!isWindows) {
       // A recorded folder outside the worktree, later swapped for a link to it, is not the worktree.
       const project = NodePath.join(root, "project");
       NodeFS.symlinkSync(worktree, project);
