@@ -49,7 +49,7 @@ struct MarkdownDocumentTests {
     head: afa860030f
     areas: [Mermaid, "Reports"]
     owners:
-      - Anton
+      - Ada
       - 'Percy'
     verdict: ship once the PR Gate runs for real (undraft); no code fix required
     ---
@@ -61,7 +61,7 @@ struct MarkdownDocumentTests {
     #expect(document.title == "Review of PR 877, Suggestion clipboard fix")
     #expect(document.properties.map(\.label) == ["Thread title", "Saved at", "Head", "Areas", "Owners", "Verdict"])
     #expect(document.properties[3].value == .chips(["Mermaid", "Reports"]))
-    #expect(document.properties[4].value == .chips(["Anton", "Percy"]))
+    #expect(document.properties[4].value == .chips(["Ada", "Percy"]))
     // The opening heading differs from the title, so it stays in the body.
     #expect(document.body.hasPrefix("# PR 877 review at `afa86003`"))
   }
@@ -128,5 +128,58 @@ struct MarkdownDocumentTests {
       .properties([.init(label: "Verdict", value: .text("ship"))]),
       .paragraph("All green."),
     ])
+  }
+  @Test("A thread ID and its title become one link; ISO dates read as words")
+  func threadLinkAndDates() throws {
+    let fields = [
+      MarkdownProperty(label: "Thread", value: .text("thread:delegated-task:command%3Amcp%3Aa1")),
+      MarkdownProperty(label: "Thread title", value: .text("Review PR 877")),
+      MarkdownProperty(label: "Saved at", value: .text("2026-11-24T16:16:00.739Z")),
+      MarkdownProperty(label: "Date", value: .text("2026-11-24")),
+      MarkdownProperty(label: "Head", value: .text("afa860030f")),
+    ]
+    let shaped = MarkdownDocument.shaped(fields, locale: Locale(identifier: "en_US"), timeZone: TimeZone(identifier: "UTC")!)
+    #expect(shaped.map(\.label) == ["Thread", "Saved at", "Date", "Head"])
+    guard case let .text(link) = shaped[0].value else { Issue.record("not text"); return }
+    #expect(link.hasPrefix("[Review PR 877](studio://thread/"))
+    let url = try #require(URL(string: String(link.drop(while: { $0 != "(" }).dropFirst().dropLast())))
+    #expect(MarkdownThreadLink.route(url)?.threadIds.contains("thread:delegated-task:command%3Amcp%3Aa1") == true)
+    // Foundation puts a narrow no-break space before PM.
+    #expect(shaped[1].value == .text("November 24, 2026 at 4:16\u{202F}PM"))
+    #expect(shaped[2].value == .text("November 24, 2026"))
+    #expect(shaped[3].value == .text("afa860030f"))
+  }
+
+  @Test("Values that only look like dates or IDs stay as written")
+  func shapedLeavesOthers() {
+    #expect(MarkdownDocument.readableDate("2026-02-31") == "2026-02-31")
+    #expect(MarkdownDocument.readableDate("2026-11-24 release") == "2026-11-24 release")
+    let prose = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text("the review one"))])
+    #expect(prose == [MarkdownProperty(label: "Thread", value: .text("the review one"))])
+    let bare = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text("thread-abc123"))])
+    #expect(bare == [MarkdownProperty(label: "Thread", value: .text("[Open thread](studio://thread/thread-abc123)"))])
+  }
+
+  @Test("A report's relative links open the files beside it")
+  func relativeLinks() {
+    let report = "/Users/me/work/.specweave/reports/review.md"
+    let text = """
+    See [notes](notes.md), [spec](../increments/0042/spec.md#scope), [site](https://example.com), [top](#verdict), [abs](/tmp/a.md) and [img](./pic.png).
+    ```
+    [inside](notes.md)
+    ```
+    [above root](../../../../../../x.md) and [folder](My%20Notes/plan.md)
+    """
+    let resolved = HostFileLink.resolvingRelativeLinks(text, from: report)
+    #expect(resolved.contains("[notes](/Users/me/work/.specweave/reports/notes.md)"))
+    #expect(resolved.contains("[spec](/Users/me/work/.specweave/increments/0042/spec.md#scope)"))
+    #expect(resolved.contains("[site](https://example.com)"))
+    #expect(resolved.contains("[top](#verdict)"))
+    #expect(resolved.contains("[abs](/tmp/a.md)"))
+    #expect(resolved.contains("[img](/Users/me/work/.specweave/reports/pic.png)"))
+    #expect(resolved.contains("```\n[inside](notes.md)\n```"))
+    #expect(resolved.contains("[above root](../../../../../../x.md)"))
+    #expect(resolved.contains("[folder](/Users/me/work/.specweave/reports/My%20Notes/plan.md)"))
+    #expect(HostFileLink.hostPath("/Users/me/work/.specweave/reports/My%20Notes/plan.md") == "/Users/me/work/.specweave/reports/My Notes/plan.md")
   }
 }

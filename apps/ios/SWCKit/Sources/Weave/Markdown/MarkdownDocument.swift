@@ -82,10 +82,10 @@ public nonisolated struct MarkdownDocument: Hashable, Sendable {
         body = withoutLeadingBlankLines(String(body.dropFirst(opening.length)))
       }
     }
-    let properties = fields.filter { field in
+    let properties = shaped(fields.filter { field in
       if field.label == "Title", case .text = field.value { return false }
       return true
-    }
+    })
     return MarkdownDocument(title: title, properties: properties, body: body)
   }
 
@@ -132,6 +132,92 @@ public nonisolated struct MarkdownDocument: Hashable, Sendable {
     text = text.replacingOccurrences(of: #"(^|[\s(])([*_])(?=\S)(.+?)(?<=\S)\2(?=$|[\s).,:;!?])"#, with: "$1$3", options: .regularExpression)
     text = text.replacingOccurrences(of: #"\\([\\`*_{}\[\]()#+\-.!<>])"#, with: "$1", options: .regularExpression)
     return text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+  }
+
+  // MARK: Property values
+
+  /// The property table as the desktop shows it (`frontmatterProperties` in
+  /// `reportDocument.ts`): ISO dates in words, and a thread ID with its title
+  /// as one link to the thread instead of a raw ID row and a title row.
+  static func shaped(_ fields: [MarkdownProperty], locale: Locale = .current, timeZone: TimeZone = .current) -> [MarkdownProperty] {
+    let threadIndex = fields.firstIndex { field in
+      guard field.label == "Thread", case let .text(id) = field.value else { return false }
+      return isThreadId(id)
+    }
+    let titleIndex = threadIndex == nil ? nil : fields.firstIndex { field in
+      guard field.label == "Thread title", case .text = field.value else { return false }
+      return true
+    }
+    var shaped: [MarkdownProperty] = []
+    for (index, field) in fields.enumerated() {
+      if index == titleIndex { continue }
+      if index == threadIndex, case let .text(id) = field.value {
+        var title = ""
+        if let titleIndex, case let .text(named) = fields[titleIndex].value { title = named }
+        shaped.append(MarkdownProperty(label: field.label, value: .text(threadLink(id: id.trimmingCharacters(in: .whitespaces), title: title))))
+        continue
+      }
+      if case let .text(text) = field.value {
+        shaped.append(MarkdownProperty(label: field.label, value: .text(readableDate(text, locale: locale, timeZone: timeZone))))
+      } else {
+        shaped.append(field)
+      }
+    }
+    return shaped
+  }
+
+  /// One token, no spaces or Markdown: `thread:delegated-task:…` or a UUID.
+  static func isThreadId(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    return trimmed.count >= 6 && trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " \t[]()<>`*")) == nil
+  }
+
+  /// `[title](studio://thread/<id>)` with the ID encoded the way the desktop's
+  /// `formatStudioThreadHref` does, so `MarkdownThreadLink.route` reads it back.
+  static func threadLink(id: String, title: String) -> String {
+    var allowed = CharacterSet.alphanumerics
+    allowed.insert(charactersIn: "-_.~")
+    let encoded = id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id
+    let label = title.replacingOccurrences(of: #"[\[\]\\\r\n\t]"#, with: " ", options: .regularExpression)
+      .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+      .trimmingCharacters(in: .whitespaces)
+    return "[\(label.isEmpty ? "Open thread" : label)](studio://thread/\(encoded))"
+  }
+
+  private static let isoDay = try! NSRegularExpression(pattern: #"\A(\d{4})-(\d{2})-(\d{2})\z"#)
+  private static let isoTimestamp = try! NSRegularExpression(pattern: #"\A\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})\z"#, options: [.caseInsensitive])
+
+  /// An ISO date or timestamp in words, `November 24, 2026` or `November 24,
+  /// 2026 at 4:16 PM`; anything else comes back unchanged. A bare date names
+  /// a day, so no zone moves it.
+  static func readableDate(_ value: String, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespaces)
+    let utc = TimeZone(identifier: "UTC")!
+    if let year = capture(isoDay, trimmed, group: 1).flatMap(Int.init),
+       let month = capture(isoDay, trimmed, group: 2).flatMap(Int.init),
+       let day = capture(isoDay, trimmed, group: 3).flatMap(Int.init) {
+      var calendar = Calendar(identifier: .gregorian)
+      calendar.timeZone = utc
+      let components = DateComponents(year: year, month: month, day: day)
+      guard components.isValidDate(in: calendar), let date = calendar.date(from: components) else { return value }
+      let formatter = DateFormatter()
+      formatter.locale = locale
+      formatter.timeZone = utc
+      formatter.dateStyle = .long
+      formatter.timeStyle = .none
+      return formatter.string(from: date)
+    }
+    guard matches(isoTimestamp, trimmed) else { return value }
+    let parser = ISO8601DateFormatter()
+    let normalized = trimmed.replacingOccurrences(of: " ", with: "T")
+    parser.formatOptions = normalized.contains(".") ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+    guard let date = parser.date(from: normalized) else { return value }
+    let formatter = DateFormatter()
+    formatter.locale = locale
+    formatter.timeZone = timeZone
+    formatter.dateStyle = .long
+    formatter.timeStyle = .short
+    return formatter.string(from: date)
   }
 
   // MARK: Helpers

@@ -130,7 +130,10 @@ private struct ChatScreen: View {
         )
       }
       .sheet(item: $hostFile) { file in
-        HostFileViewer(file: file, target: target)
+        HostFileViewer(file: file, target: target) { url in
+          hostFile = nil
+          openThreadLink(url, markdown: nil)
+        }
           .presentationDragIndicator(.visible)
       }
       .environment(\.markdownImageLoader, imageLoader)
@@ -1156,6 +1159,15 @@ private struct ChatScreen: View {
   }
 
   private func openThreadLink(_ url: URL, in row: TranscriptRow) {
+    let markdown: String? = switch row.kind {
+    case let .user(text, _, _): text
+    case let .assistant(text, _): text
+    default: nil
+    }
+    openThreadLink(url, markdown: markdown)
+  }
+
+  private func openThreadLink(_ url: URL, markdown: String?) {
     if let path = HostFileLink.path(url) {
       hostFile = HostFileRoute(path: path)
       return
@@ -1163,11 +1175,6 @@ private struct ChatScreen: View {
     guard let route = MarkdownThreadLink.route(url) else {
       router.showError(SyncError.sendBlocked("This thread link is invalid."))
       return
-    }
-    let markdown: String? = switch row.kind {
-    case let .user(text, _, _): text
-    case let .assistant(text, _): text
-    default: nil
     }
     let label = markdown.flatMap { MarkdownThreadLink.label(of: url, in: $0) }
     let origin = target.environmentId

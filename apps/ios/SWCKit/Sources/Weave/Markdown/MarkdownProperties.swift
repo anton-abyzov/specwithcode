@@ -177,6 +177,15 @@ public struct MarkdownDocumentView: View {
       }
       if !document.properties.isEmpty {
         MarkdownPropertiesView(properties: document.properties)
+          // The thread row is a link: it goes where the body's links go.
+          .environment(\.openURL, OpenURLAction { url in
+            if MarkdownThreadLink.threadId(url) != nil || HostFileLink.path(url) != nil {
+              guard let onOpenLink else { return .discarded }
+              onOpenLink(url)
+              return .handled
+            }
+            return MarkdownInline.isOpenable(url) ? .systemAction : .discarded
+          })
       }
       MarkdownText(document.body, onOpenLink: onOpenLink)
     }

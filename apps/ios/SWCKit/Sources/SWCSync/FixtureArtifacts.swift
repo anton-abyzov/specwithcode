@@ -102,7 +102,7 @@ public nonisolated enum FixtureArtifacts {
 
   ## Verdict
 
-  Ship it. Every artifact type opens, fits the screen and follows dark mode. The **Mermaid** renderer works offline and the source stays one tap away.
+  Ship it. Every artifact type opens, fits the screen and follows dark mode. The **Mermaid** renderer works offline and the source stays one tap away. Details are in the [release notes](notes.md) and the [checks sheet](./release-checks.csv).
 
   ## What changed
 

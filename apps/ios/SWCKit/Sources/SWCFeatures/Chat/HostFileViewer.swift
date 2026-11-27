@@ -20,6 +20,8 @@ struct HostFileRoute: Identifiable, Hashable {
 struct HostFileViewer: View {
   let file: HostFileRoute
   let target: ChatTarget
+  /// A `studio://thread/` link in a report: the chat closes the viewer and opens the thread.
+  var onOpenThread: ((URL) -> Void)?
 
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
@@ -49,7 +51,7 @@ struct HostFileViewer: View {
     .accessibilityIdentifier("hostFile.viewer")
     .task(id: attempt) { await load() }
     .sheet(item: $linked) { file in
-      HostFileViewer(file: file, target: target)
+      HostFileViewer(file: file, target: target, onOpenThread: onOpenThread)
     }
   }
 
@@ -115,8 +117,13 @@ struct HostFileViewer: View {
     case let .markdown(text):
       ScrollView {
         MarkdownDocumentView(text) { url in
-          // A report that links another file opens it on top; thread links stay in the chat.
-          if let path = HostFileLink.path(url) { linked = HostFileRoute(path: path) }
+          // A report that links another file opens it on top, with Done back to
+          // the report; a thread link hands over to the chat, which opens it.
+          if let path = HostFileLink.path(url) {
+            linked = HostFileRoute(path: path)
+          } else if MarkdownThreadLink.threadId(url) != nil, let onOpenThread {
+            onOpenThread(url)
+          }
         }
         .padding(.horizontal, WeaveSpacing.s4)
         .padding(.top, WeaveSpacing.s4)
@@ -159,7 +166,7 @@ struct HostFileViewer: View {
         state = .web(url)
       case .markdown, .text:
         let text = try await Self.fetchText(url)
-        state = kind == .markdown ? .markdown(text) : .text(Self.readable(text, path: file.path))
+        state = kind == .markdown ? .markdown(HostFileLink.resolvingRelativeLinks(text, from: file.path)) : .text(Self.readable(text, path: file.path))
       case .sheet:
         let text = try await Self.fetchText(url)
         let separator: Character = (file.path as NSString).pathExtension.lowercased() == "tsv" ? "\t" : ","
