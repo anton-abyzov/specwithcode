@@ -60,8 +60,11 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import {
+  beginClosingClaudeForm,
+  claudeFormCommitOutcome,
+  type ClaudeFormCommitOutcome,
   dropClaudeFormAnswers,
-  isClaudeFormAnswered,
+  onClaudeFormCommitOutcome,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
@@ -109,6 +112,8 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
   readonly unattendedTimer?: Effect.Effect<void>;
   /** Waits out {@link ANSWER_IN_FLIGHT_GRACE_MS}; tests pass their own. */
   readonly answerInFlightGrace?: Effect.Effect<void>;
+  /** Bounds the wait for a commit still running after the grace; tests pass their own. */
+  readonly commitOutcomeLimit?: Effect.Effect<void>;
 }
 
 export interface ClaudeMcpElicitations {
@@ -193,6 +198,17 @@ const abortEffect = (signal: AbortSignal) =>
     return Effect.sync(() => signal.removeEventListener("abort", abort));
   });
 
+const commitOutcome = (requestId: RuntimeRequestId) =>
+  Effect.callback<ClaudeFormCommitOutcome>((resume) => {
+    const now = claudeFormCommitOutcome(requestId);
+    if (now !== "pending") {
+      resume(Effect.succeed(now));
+      return Effect.void;
+    }
+    const stop = onClaudeFormCommitOutcome(requestId, (outcome) => resume(Effect.succeed(outcome)));
+    return Effect.sync(stop);
+  });
+
 export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext, E>(
   deps: ClaudeMcpElicitationDeps<C, E>,
 ): ClaudeMcpElicitations {
@@ -207,6 +223,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
     deps.unattendedTimer ?? Effect.sleep(Duration.millis(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS));
   const grace =
     deps.answerInFlightGrace ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
+  // Every dispatch settles its answer as it ends (1493); this only guards a
+  // dispatch that never ends, and then leaves the card as the record says.
+  const outcomeLimit =
+    deps.commitOutcomeLimit ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
 
   const notice = (context: C, nativeItemId: string, message: string) =>
     Effect.gen(function* () {
@@ -351,8 +371,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // The app may already have recorded the person's answer while its
         // delivery is still on the way. Stop and the timer then wait a little
         // for it and pass it on, so the server gets what the record says, and
-        // neither overwrites the recorded answer as cancelled.
-        const committed = raced.by !== "person" && isClaudeFormAnswered(artifacts.request.id);
+        // neither overwrites the recorded answer as cancelled. Otherwise the
+        // form is marked closing first, so an answer that comes in before the
+        // cancelled card lands is refused, never recorded (1493).
+        const committed = raced.by !== "person" && !beginClosingClaudeForm(artifacts.request.id);
         const awaited = committed
           ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
           : raced;
@@ -376,6 +398,15 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         remember(id);
         if (committed) {
           // The answer never arrived: the call ends, and the note says so.
+          // Its commit may still be running, so the call waits for it and
+          // closes the card itself if nothing was recorded, while its events
+          // still reach the thread; a recorded one stays (1493, 1481 D-11).
+          const outcome = yield* Effect.raceFirst(
+            commitOutcome(artifacts.request.id),
+            outcomeLimit.pipe(Effect.as("pending" as const)),
+          );
+          if (outcome === "failed" && beginClosingClaudeForm(artifacts.request.id))
+            yield* closeCard(artifacts);
           yield* notice(
             context,
             `${nativeRequestId}:undelivered`,

@@ -9254,7 +9254,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       if (providerSessionId === null) return;
-      ClaudeForms.handOffClaudeFormAnswers(command.requestId, form);
+      if (!ClaudeForms.handOffClaudeFormAnswers(command.requestId, form, command.commandId)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: ClaudeForms.FORM_CLOSED,
+        });
+      }
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
@@ -13833,7 +13839,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             )
-          : dispatchWithReceiptEffect(command),
+          : dispatchWithReceiptEffect(command).pipe(
+              // However the dispatch ends, a Claude form answer it handed off is settled (1493).
+              Effect.onExit((exit) =>
+                ClaudeForms.settleFormAnswerDispatch(command, Exit.isSuccess(exit)),
+              ),
+            ),
       ),
     );
     // Count the command through persistence, including admission and thread-lock waits.

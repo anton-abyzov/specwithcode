@@ -928,7 +928,7 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect.each(["completed", "interrupted", "failed", "cancelled", "control"] as const)(
-    "dismisses only native questions when a provider turn ends with %s",
+    "dismisses only native questions and Claude forms when a provider turn ends with %s",
     (terminal) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
@@ -965,16 +965,28 @@ layer("ProviderEventIngestorV2", (it) => {
           { key: "answered", responseCapability: { type: "live", providerSessionId } },
           { key: "other-turn", responseCapability: { type: "live", providerSessionId } },
           { key: "approval", responseCapability: { type: "live", providerSessionId } },
+          // A Claude MCP form is cancelled with its turn too (1493); a Codex one is not.
+          { key: "claude-form", responseCapability: { type: "live", providerSessionId } },
+          { key: "claude-form-answered", responseCapability: { type: "live", providerSessionId } },
+          { key: "codex-elicitation", responseCapability: { type: "live", providerSessionId } },
         ] as const;
         const fixtures = specs.map((spec, ordinal) => {
           const nodeId = NodeId.make(`${threadId}:${spec.key}`);
-          const resolved = spec.key === "answered";
+          const resolved = spec.key === "answered" || spec.key === "claude-form-answered";
+          const form = spec.key.startsWith("claude-form") || spec.key === "codex-elicitation";
+          const card = spec.key === "approval" || form;
           const request: OrchestrationV2RuntimeRequest = {
             id: RuntimeRequestId.make(`${threadId}:${spec.key}`),
             nodeId,
             providerTurnId: spec.key === "other-turn" ? otherTurnId : providerTurnId,
-            nativeRequestRef: null,
-            kind: spec.key === "approval" ? "command" : "user_input",
+            nativeRequestRef: spec.key.startsWith("claude-form")
+              ? {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  nativeId: `mcp-elicitation:github:${spec.key}`,
+                  strength: "strong",
+                }
+              : null,
+            kind: spec.key === "approval" ? "command" : form ? "mcp-elicitation" : "user_input",
             status: resolved ? "resolved" : "pending",
             responseCapability: spec.responseCapability,
             createdAt: now,
@@ -986,7 +998,7 @@ layer("ProviderEventIngestorV2", (it) => {
             runId: null,
             parentNodeId: null,
             rootNodeId: nodeId,
-            kind: spec.key === "approval" ? "approval_request" : "user_input_request",
+            kind: card ? "approval_request" : "user_input_request",
             status: resolved ? "completed" : "waiting",
             countsForRun: false,
             providerThreadId,
@@ -1012,8 +1024,12 @@ layer("ProviderEventIngestorV2", (it) => {
             startedAt: now,
             completedAt: resolved ? now : null,
             updatedAt: now,
-            ...(spec.key === "approval"
-              ? { type: "approval_request", requestId: request.id, requestKind: "command" }
+            ...(card
+              ? {
+                  type: "approval_request",
+                  requestId: request.id,
+                  requestKind: form ? "mcp-elicitation" : "command",
+                }
               : {
                   type: "user_input_request",
                   requestId: request.id,
@@ -1074,7 +1090,10 @@ layer("ProviderEventIngestorV2", (it) => {
         const stored = yield* ingestor.ingestNormalized(input);
         const projection = yield* projectionStore.getThreadProjection(threadId);
         for (const fixture of fixtures) {
-          const closed = fixture.key === "native" || fixture.key === "unavailable";
+          const closed =
+            fixture.key === "native" ||
+            fixture.key === "unavailable" ||
+            fixture.key === "claude-form";
           const request = projection.runtimeRequests.find(
             (item) => item.id === fixture.request.id,
           )!;
@@ -1095,7 +1114,7 @@ layer("ProviderEventIngestorV2", (it) => {
         }
         assert.equal(
           stored.filter((entry) => entry.event.type === "runtime-request.updated").length,
-          2,
+          3,
         );
         assert.isEmpty(
           (yield* projectionStore.getPendingNativeUserInputs(threadId, providerTurnId))
@@ -1108,16 +1127,16 @@ layer("ProviderEventIngestorV2", (it) => {
               entry.event.type === "runtime-request.updated" &&
               entry.event.payload.status === "cancelled",
           ).length,
-          2,
+          3,
         );
         const repeated = yield* ingestor.ingestNormalized(input);
         assert.isFalse(repeated.some((entry) => entry.event.type === "runtime-request.updated"));
       }),
   );
 
-  it.effect(
-    "preserves an answer committed after terminal normalization reads a pending question",
-    () =>
+  it.effect.each(["question", "claude-form"] as const)(
+    "preserves an answer committed after terminal normalization reads a pending %s",
+    (shape) =>
       Effect.scoped(
         Effect.gen(function* () {
           const eventSink = yield* EventSink.EventSinkV2;
@@ -1144,8 +1163,16 @@ layer("ProviderEventIngestorV2", (it) => {
             id: RuntimeRequestId.make(`${threadId}:question`),
             nodeId,
             providerTurnId,
-            nativeRequestRef: null,
-            kind: "user_input",
+            // A Claude MCP form is swept at turn end too, so it is guarded alike (1493).
+            nativeRequestRef:
+              shape === "claude-form"
+                ? {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    nativeId: `mcp-elicitation:github:${threadId}`,
+                    strength: "strong",
+                  }
+                : null,
+            kind: shape === "claude-form" ? "mcp-elicitation" : "user_input",
             status: "pending",
             responseCapability: { type: "live", providerSessionId },
             createdAt: now,
@@ -1157,7 +1184,7 @@ layer("ProviderEventIngestorV2", (it) => {
             runId: null,
             parentNodeId: null,
             rootNodeId: nodeId,
-            kind: "user_input_request",
+            kind: shape === "claude-form" ? "approval_request" : "user_input_request",
             status: "waiting",
             countsForRun: false,
             providerThreadId,
@@ -1183,9 +1210,13 @@ layer("ProviderEventIngestorV2", (it) => {
             startedAt: now,
             completedAt: null,
             updatedAt: now,
-            type: "user_input_request",
-            requestId: request.id,
-            questions: [],
+            ...(shape === "claude-form"
+              ? {
+                  type: "approval_request" as const,
+                  requestId: request.id,
+                  requestKind: "mcp-elicitation" as const,
+                }
+              : { type: "user_input_request" as const, requestId: request.id, questions: [] }),
           };
           const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
           for (const payload of [

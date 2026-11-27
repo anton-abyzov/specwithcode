@@ -133,6 +133,42 @@ describe("McpElicitationForm", () => {
     expect(field(container, "email").textContent).toContain("Enter an email address.");
   });
 
+  it("shows a date-time default in local time and sends RFC 3339 a server accepts (1493)", () => {
+    const onRespond = vi.fn(async () => undefined);
+    const container = mount(
+      <McpElicitationForm
+        requestId={requestId}
+        elicitation={{
+          ...elicitation,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              at: { type: "string", format: "date-time", default: "2026-12-01T09:00:00Z" },
+              hidden: { type: "string", format: "date-time", default: "next week" },
+            },
+          },
+        }}
+        pendingCount={1}
+        disabled={false}
+        isResponding={false}
+        onRespond={onRespond}
+      />,
+    );
+    const at = field(container, "at").querySelector("input")!;
+    expect(at.type).toBe("datetime-local");
+    expect(new Date(at.value).getTime()).toBe(Date.parse("2026-12-01T09:00:00Z"));
+    expect(field(container, "hidden").querySelector("input")!.value).toBe("");
+    typeInto(at, "2026-11-25T10:00");
+    click(container.querySelector('[data-approval-decision="accept"]'));
+    expect(onRespond).toHaveBeenCalledTimes(1);
+    const sent = (
+      onRespond.mock.calls[0] as unknown as [unknown, unknown, Record<string, string>]
+    )[2];
+    expect(Object.keys(sent)).toEqual(["at"]);
+    expect(sent.at).toMatch(/^2026-11-25T10:00:00[+-]\d{2}:\d{2}$/);
+    expect(new Date(sent.at!).getTime()).toBe(new Date(2026, 10, 25, 10, 0).getTime());
+  });
+
   it("never submits the composer form it sits in", () => {
     const onRespond = vi.fn(async () => undefined);
     const outerSubmit = vi.fn((event: React.FormEvent) => event.preventDefault());

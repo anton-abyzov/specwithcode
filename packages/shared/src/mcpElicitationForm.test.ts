@@ -282,3 +282,97 @@ describe("findMcpElicitationSecretField", () => {
     ).toBeUndefined();
   });
 });
+
+describe("what MCP servers accept (1493)", () => {
+  const one = (schema: Record<string, unknown>, required: ReadonlyArray<string> = []) =>
+    fieldsOf({ type: "object", properties: { value: schema }, required });
+
+  it("takes a date and time only with seconds, a zone and real values", () => {
+    const at = one({ type: "string", format: "date-time" });
+    for (const value of [
+      "2026-11-25T10:00:00Z",
+      "2026-11-25T10:00:00.250-08:00",
+      "2026-11-25t10:00:00z",
+      "2028-02-29T23:59:59+05:30",
+    ])
+      expect(validateMcpElicitationContent(at, { value })).toEqual({
+        ok: true,
+        content: { value },
+      });
+    for (const value of [
+      "2026-11-25T10:00",
+      "2026-11-25T10:00:00",
+      "2026-11-25 10:00:00Z",
+      "2026-02-30T10:00:00Z",
+      "2026-11-25T24:00:00Z",
+      "2026-11-25T10:60:00Z",
+      "2026-11-25T10:00:00+24:00",
+    ])
+      expect(validateMcpElicitationContent(at, { value })).toEqual({
+        ok: false,
+        errors: { value: "Enter a date and time." },
+      });
+  });
+
+  it("sends a formatted value trimmed", () => {
+    expect(
+      validateMcpElicitationContent(one({ type: "string", format: "email" }), {
+        value: " a@b.co ",
+      }),
+    ).toEqual({ ok: true, content: { value: "a@b.co" } });
+    expect(
+      validateMcpElicitationContent(one({ type: "string", format: "email", maxLength: 6 }), {
+        value: "  a@b.co  ",
+      }),
+    ).toEqual({ ok: true, content: { value: "a@b.co" } });
+    // Plain text keeps what the person typed.
+    expect(validateMcpElicitationContent(one({ type: "string" }), { value: " x " })).toEqual({
+      ok: true,
+      content: { value: " x " },
+    });
+  });
+
+  it("leaves an optional multi-select with minItems out when nothing is chosen", () => {
+    const tags = { type: "array", items: { type: "string", enum: ["a", "b"] }, minItems: 1 };
+    expect(validateMcpElicitationContent(one(tags), { value: [] })).toEqual({
+      ok: true,
+      content: {},
+    });
+    expect(validateMcpElicitationContent(one(tags, ["value"]), { value: [] })).toEqual({
+      ok: false,
+      errors: { value: "Choose at least one." },
+    });
+    expect(validateMcpElicitationContent(one({ ...tags, minItems: 2 }), { value: ["a"] })).toEqual({
+      ok: false,
+      errors: { value: "Choose at least 2." },
+    });
+  });
+
+  it("declines a number field or a joined acronym that names a secret", () => {
+    for (const [key, schema] of [
+      ["pin", { type: "integer", title: "PIN" }],
+      ["otp", { type: "number", title: "Code" }],
+      ["cvv", { type: "integer" }],
+      ["PINCode", { type: "string" }],
+      ["APIToken", { type: "string" }],
+      ["userOTPValue", { type: "integer" }],
+    ] as const)
+      expect(
+        findMcpElicitationSecretField(fieldsOf({ type: "object", properties: { [key]: schema } }))
+          ?.key,
+      ).toBe(key);
+    // A choice the server lists itself holds nothing the person types.
+    expect(
+      findMcpElicitationSecretField(
+        fieldsOf({
+          type: "object",
+          properties: {
+            mfa: { type: "string", title: "MFA method", enum: ["app", "sms"] },
+            useToken: { type: "boolean", title: "Use a token" },
+            tokenScopes: { type: "array", items: { type: "string", enum: ["read"] } },
+          },
+        }),
+      ),
+    ).toBeUndefined();
+  });
+});

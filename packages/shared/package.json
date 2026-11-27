@@ -312,6 +312,10 @@
       "types": "./src/mcpElicitationForm.ts",
       "import": "./src/mcpElicitationForm.ts"
     },
+    "./mcpElicitationDateTime": {
+      "types": "./src/mcpElicitationDateTime.ts",
+      "import": "./src/mcpElicitationDateTime.ts"
+    },
     "./teamRules": {
       "types": "./src/teamRules.ts",
       "import": "./src/teamRules.ts"

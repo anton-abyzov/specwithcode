@@ -5972,7 +5972,12 @@ it.layer(
           yield* Deferred.await(firstExitPublished);
 
           expect(activePorts.has("thread-1:run-port-stale-clear")).toBe(false);
-          expect(portEvents).toEqual([`register:${firstPid},${firstPid + 100}`, "unregister"]);
+          // Each poll re-registers the same ports, so a busy machine can log
+          // generation 1's registration more than once before it exits.
+          expect(portEvents.at(-1)).toBe("unregister");
+          expect(new Set(portEvents.slice(0, -1))).toEqual(
+            new Set([`register:${firstPid},${firstPid + 100}`]),
+          );
         } finally {
           releaseFirstCleanup();
           unsub();

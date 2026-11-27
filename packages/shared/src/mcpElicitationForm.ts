@@ -12,6 +12,8 @@
  * @module mcpElicitationForm
  */
 
+import { isRfc3339DateTime } from "./mcpElicitationDateTime.ts";
+
 /** A form larger than this, as JSON, is not shown. */
 export const MCP_ELICITATION_SCHEMA_MAX_BYTES = 64 * 1024;
 /** A form with more fields than this is not shown. */
@@ -271,7 +273,6 @@ const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
 
 function formatError(format: McpElicitationStringFormat, value: string): string | undefined {
   switch (format) {
@@ -293,9 +294,8 @@ function formatError(format: McpElicitationStringFormat, value: string): string 
       return days !== undefined && day >= 1 && day <= days ? undefined : "Enter a real date.";
     }
     case "date-time":
-      return DATE_TIME.test(value) && !Number.isNaN(Date.parse(value))
-        ? undefined
-        : "Enter a date and time.";
+      // RFC 3339 with seconds and a zone, as MCP servers check it (1493).
+      return isRfc3339DateTime(value) ? undefined : "Enter a date and time.";
   }
 }
 
@@ -319,6 +319,8 @@ function checkField(
     const allowed = new Set(field.options.map((option) => option.value));
     if (!list.every((entry) => allowed.has(entry))) return { error: "Choose from the list." };
     const unique = [...new Set(list as ReadonlyArray<string>)];
+    // A missing optional property is valid whatever its minItems (1493).
+    if (unique.length === 0 && !field.required) return {};
     const least = field.minItems ?? (field.required ? 1 : 0);
     if (unique.length === 0 && least === 0) return field.required ? { value: unique } : {};
     if (unique.length < least)
@@ -344,12 +346,14 @@ function checkField(
     return field.options.some((option) => option.value === raw)
       ? { value: raw }
       : { error: "Choose from the list." };
-  if (field.minLength !== undefined && raw.length < field.minLength)
+  // A formatted value is sent trimmed: servers check the format on what they get (1493).
+  const text = field.format === undefined ? raw : raw.trim();
+  if (field.minLength !== undefined && text.length < field.minLength)
     return { error: `Enter at least ${field.minLength} characters.` };
-  if (field.maxLength !== undefined && raw.length > field.maxLength)
+  if (field.maxLength !== undefined && text.length > field.maxLength)
     return { error: `Enter at most ${field.maxLength} characters.` };
-  const error = field.format === undefined ? undefined : formatError(field.format, raw.trim());
-  return error === undefined ? { value: raw } : { error };
+  const error = field.format === undefined ? undefined : formatError(field.format, text);
+  return error === undefined ? { value: text } : { error };
 }
 
 /**
@@ -377,7 +381,7 @@ export function validateMcpElicitationContent(
     : { ok: true, content: { ...content } };
 }
 
-// Words that name a credential in a text field's key or title, matched as
+// Words that name a credential in a text or number field's key or title, matched as
 // whole words after splitting camelCase, snake_case and kebab-case, so
 // `businessName` or `max_tokens` are not read as secrets. MCP forbids a server
 // from asking for secrets in form mode; a form that does is never shown.
@@ -417,6 +421,7 @@ const LIST_POSITION_WORDS = new Set(["page", "next", "cursor", "continuation"]);
 
 function namesSecret(text: string): boolean {
   const words = text
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .toLowerCase()
     .split(/[^a-z0-9]+/)
@@ -429,11 +434,17 @@ function namesSecret(text: string): boolean {
   );
 }
 
-/** The first text field that asks for a password, token or other secret, if any. */
+/**
+ * The first text or number field that asks for a password, PIN or other
+ * secret, if any. Select, multi-select and yes/no fields hold only values the
+ * server lists itself, so nothing secret can be typed into them.
+ */
 export function findMcpElicitationSecretField(
   fields: ReadonlyArray<McpElicitationField>,
 ): McpElicitationField | undefined {
   return fields.find(
-    (field) => field.kind === "text" && (namesSecret(field.key) || namesSecret(field.title)),
+    (field) =>
+      (field.kind === "text" || field.kind === "number") &&
+      (namesSecret(field.key) || namesSecret(field.title)),
   );
 }

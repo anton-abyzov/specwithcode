@@ -21,6 +21,7 @@ import type {
   RuntimeRequestId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as Effect from "effect/Effect";
 import {
   parseMcpElicitationSchema,
   validateMcpElicitationContent,
@@ -41,20 +42,132 @@ export const CLAUDE_FORM_NATIVE_PREFIX = "mcp-elicitation:";
 const handedOff = new Map<string, ProviderUserInputAnswers>();
 // Forms whose answer the app has recorded and is delivering to the adapter.
 const answered = new Set<string>();
+// Forms the adapter is closing after a Stop or the timer (1493). Kept after
+// the call ends, until the cancelled card has surely landed; bounded like the
+// adapter's own closed set.
+const closing = new Set<string>();
+const CLOSING_KEPT = 200;
+// Answered forms whose commit finished; one not here is still committing.
+const committed = new Set<string>();
+// The command whose dispatch made each hand-off; only its exit settles it (1493).
+const owners = new Map<string, string>();
+// A call waiting, after Stop or the timer, for its answer's commit (1493).
+const outcomeWaiters = new Map<string, (outcome: ClaudeFormCommitOutcome) => void>();
+
+/** Where the answer the app recorded for a form stands. */
+export type ClaudeFormCommitOutcome = "committed" | "failed" | "pending";
+
+function markClosing(requestId: string): void {
+  closing.add(requestId);
+  if (closing.size > CLOSING_KEPT) closing.delete(closing.values().next().value as string);
+}
 
 /**
  * Notes that the app recorded an answer to a Claude form, and holds the
  * person's validated content for the adapter that is waiting for it. Called
  * as the answer is recorded, before its delivery is queued, so a Stop or the
  * unattended timer that fires in between knows an answer is on its way.
+ * Returns false, recording nothing, when the adapter already began closing
+ * the form: the answer is then refused, never recorded as resolved.
  */
 export function handOffClaudeFormAnswers(
   requestId: RuntimeRequestId,
   check: ClaudeFormResponseCheck | undefined,
-): void {
-  if (check === undefined) return;
+  commandId?: string,
+): boolean {
+  if (check === undefined) return true;
+  if (closing.has(requestId)) return false;
   answered.add(requestId);
+  if (commandId !== undefined) owners.set(requestId, commandId);
   if (check.handOff !== undefined) handedOff.set(requestId, check.handOff);
+  return true;
+}
+
+/**
+ * The adapter's side of the same choice: after a Stop or the timer, marks the
+ * form as closing unless the app already recorded an answer to it. Returns
+ * true when the adapter should close the card. This and the hand-off above
+ * each run without yielding, so exactly one of them wins.
+ */
+export function beginClosingClaudeForm(requestId: RuntimeRequestId): boolean {
+  if (answered.has(requestId)) return false;
+  markClosing(requestId);
+  return true;
+}
+
+/**
+ * Whether the answer handed off for this form committed, failed (or was never
+ * handed off), or is still committing. A call whose answer never arrived
+ * waits for "pending" to settle before it ends, so it closes the card itself
+ * while its events still reach the thread (1493).
+ */
+export function claudeFormCommitOutcome(requestId: RuntimeRequestId): ClaudeFormCommitOutcome {
+  if (!answered.has(requestId)) return "failed";
+  return committed.has(requestId) ? "committed" : "pending";
+}
+
+/** Calls `notify` once the commit settles; returns the unsubscribe. */
+export function onClaudeFormCommitOutcome(
+  requestId: RuntimeRequestId,
+  notify: (outcome: ClaudeFormCommitOutcome) => void,
+): () => void {
+  outcomeWaiters.set(requestId, notify);
+  return () => {
+    if (outcomeWaiters.get(requestId) === notify) outcomeWaiters.delete(requestId);
+  };
+}
+
+/** Notes that a `runtime-request.respond` committed; its answer is recorded. */
+export function markClaudeFormAnswerCommitted(command: {
+  readonly type: string;
+  readonly requestId?: string;
+}): void {
+  if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
+  if (!answered.has(command.requestId)) return;
+  committed.add(command.requestId);
+  outcomeWaiters.get(command.requestId)?.("committed");
+}
+
+/**
+ * Forgets the answer a `runtime-request.respond` handed off when its commit
+ * failed or was rejected: nothing is on its way, so a later Stop or the timer
+ * closes the card instead of waiting for it (1493).
+ */
+export function forgetUncommittedFormAnswer(command: {
+  readonly type: string;
+  readonly requestId?: string;
+}): void {
+  if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
+  handedOff.delete(command.requestId);
+  answered.delete(command.requestId);
+  committed.delete(command.requestId);
+  const waiter = outcomeWaiters.get(command.requestId);
+  if (waiter === undefined) return;
+  // A call is waiting to close the card: refuse a Submit queued behind this
+  // commit at once, before the call wakes.
+  markClosing(command.requestId);
+  waiter("failed");
+}
+
+/**
+ * Settles the answer a `runtime-request.respond` handed off, however its
+ * dispatch ended: committed on success; forgotten on any failure, rejection,
+ * defect or interruption, planning included, so a call waiting for it never
+ * waits on a commit that will not come (1493).
+ */
+export function settleFormAnswerDispatch(
+  command: { readonly type: string; readonly commandId: string; readonly requestId?: string },
+  succeeded: boolean,
+): Effect.Effect<void> {
+  return Effect.sync(() => {
+    if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
+    // A refused second answer, or any dispatch that made no hand-off, never
+    // touches the one another dispatch made; a committed answer stays.
+    if (owners.get(command.requestId) !== command.commandId) return;
+    owners.delete(command.requestId);
+    if (succeeded) markClaudeFormAnswerCommitted(command);
+    else if (!committed.has(command.requestId)) forgetUncommittedFormAnswer(command);
+  });
 }
 
 /** The app has recorded an answer to this form that may not have arrived yet. */
@@ -73,8 +186,11 @@ export function takeClaudeFormAnswers(
 
 /** Forgets a closed card's answers that nothing took. */
 export function dropClaudeFormAnswers(requestId: RuntimeRequestId): void {
+  owners.delete(requestId);
   handedOff.delete(requestId);
   answered.delete(requestId);
+  committed.delete(requestId);
+  outcomeWaiters.delete(requestId);
 }
 
 /** Which fields were answered, never what was entered. */
@@ -90,6 +206,30 @@ export function isClaudeFormRequest(request: OrchestrationV2RuntimeRequest): boo
     request.kind === "mcp-elicitation" &&
     request.nativeRequestRef?.driver === "claudeAgent" &&
     (request.nativeRequestRef.nativeId ?? "").startsWith(CLAUDE_FORM_NATIVE_PREFIX)
+  );
+}
+
+/**
+ * A pending request the end of its provider turn cancels: a native question
+ * that has no message reply, or a Claude form (1493). A stopped run stops
+ * reading the adapter's events, so the adapter's own cancellation of a form
+ * can be dropped; this sweep is durable. A form already answered is not
+ * pending, so it is never swept (1481 D-11).
+ */
+export function isDismissedAtTurnEnd(request: OrchestrationV2RuntimeRequest): boolean {
+  return request.kind === "user_input"
+    ? request.responseCapability.type !== "message"
+    : isClaudeFormRequest(request);
+}
+
+/** The card of a request {@link isDismissedAtTurnEnd} cancels. */
+export function isDismissedTurnEndCard(
+  item: OrchestrationV2TurnItem,
+  requestIds: ReadonlySet<string>,
+): boolean {
+  return (
+    (item.type === "user_input_request" || item.type === "approval_request") &&
+    requestIds.has(item.requestId)
   );
 }
 
@@ -143,7 +283,7 @@ export function checkFormResponse(
   }
   const status = request.status;
   if (status === "resolved") return { refusal: FORM_ALREADY_ANSWERED };
-  if (status !== "pending") return { refusal: FORM_CLOSED };
+  if (status !== "pending" || closing.has(request.id)) return { refusal: FORM_CLOSED };
   if (command.answeredByThreadId !== undefined) return { refusal: FORM_AGENT_REFUSAL };
   if (command.decision === "decline" || command.decision === "cancel") return {};
   if (command.answers === undefined) return { refusal: FORM_NEEDS_CARD };

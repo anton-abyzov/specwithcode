@@ -19,12 +19,20 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
+  beginClosingClaudeForm,
+  claudeFormCommitOutcome,
   FORM_AGENT_REFUSAL,
   FORM_ALREADY_ANSWERED,
+  FORM_CLOSED,
   FORM_NEEDS_CARD,
   FORM_OPENING,
+  forgetUncommittedFormAnswer,
+  handOffClaudeFormAnswers,
+  isClaudeFormAnswered,
+  settleFormAnswerDispatch,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "./ClaudeFormResponses.ts";
@@ -265,6 +273,8 @@ it.effect("records only which fields were answered and hands the answers to the 
     assert.equal(resolved?.status, "resolved");
     assert.deepEqual(resolved?.answers, { confirm: REDACTED_FORM_ANSWER });
     assert.deepEqual(takeClaudeFormAnswers(requestId), { confirm: "octo/repo" });
+    // The adapter can tell the answer is recorded, not still committing (1493).
+    assert.equal(claudeFormCommitOutcome(requestId), "committed");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -323,3 +333,105 @@ it.effect("treats a Claude form's request as a form before its card lands", () =
     assert.isUndefined(closed?.answers);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("queues the answer's delivery with only the redacted summary (1493)", () =>
+  Effect.gen(function* () {
+    const { respond } = yield* card("effect-redacted", confirmForm);
+    yield* respond("person", { decision: "accept", answers: { confirm: "octo/repo" } });
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly payload_json: string }>`
+      SELECT payload_json FROM orchestration_v2_effect_outbox
+      WHERE command_id = 'respond:effect-redacted:person'`;
+    assert.equal(rows.length, 1);
+    const payload = JSON.parse(rows[0]!.payload_json) as {
+      readonly answers?: unknown;
+      readonly request?: { readonly answers?: unknown };
+    };
+    assert.deepEqual(payload.request?.answers ?? payload.answers, {
+      confirm: REDACTED_FORM_ANSWER,
+    });
+    assert.notInclude(rows[0]!.payload_json, "octo/repo");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses an answer once the adapter began closing the card (1493)", () =>
+  Effect.gen(function* () {
+    const { respond, status, requestId } = yield* card("closing", confirmForm);
+    // Stop or the timer fired; the cancelled card has not landed yet.
+    assert.isTrue(beginClosingClaudeForm(requestId));
+    assert.include(
+      yield* refusal(respond("late", { decision: "accept", answers: { confirm: "octo/repo" } })),
+      FORM_CLOSED,
+    );
+    assert.equal((yield* status)?.status, "pending");
+    assert.isFalse(isClaudeFormAnswered(requestId));
+    assert.isUndefined(takeClaudeFormAnswers(requestId));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it("lets exactly one of the hand-off and the close win (1493)", () => {
+  const first = RuntimeRequestId.make("request:race-answer-first");
+  assert.isTrue(handOffClaudeFormAnswers(first, { handOff: { confirm: "x" } }));
+  assert.isFalse(beginClosingClaudeForm(first));
+  const second = RuntimeRequestId.make("request:race-close-first");
+  assert.isTrue(beginClosingClaudeForm(second));
+  assert.isFalse(handOffClaudeFormAnswers(second, { handOff: { confirm: "x" } }));
+  assert.isFalse(isClaudeFormAnswered(second));
+  assert.isUndefined(takeClaudeFormAnswers(second));
+});
+
+it.effect("settles a hand-off however its dispatch ends (1493)", () =>
+  Effect.gen(function* () {
+    const respond = (requestId: RuntimeRequestId, commandId: string) => ({
+      type: "runtime-request.respond",
+      commandId,
+      requestId,
+    });
+    const failed = RuntimeRequestId.make("request:dispatch-failed");
+    handOffClaudeFormAnswers(failed, { handOff: { confirm: "x" } }, "command:a");
+    assert.equal(claudeFormCommitOutcome(failed), "pending");
+    // Another dispatch's exit never touches this hand-off.
+    yield* settleFormAnswerDispatch(respond(failed, "command:other"), false);
+    assert.equal(claudeFormCommitOutcome(failed), "pending");
+    // Its own unsuccessful exit does, planning and interruption included.
+    yield* settleFormAnswerDispatch(respond(failed, "command:a"), false);
+    assert.equal(claudeFormCommitOutcome(failed), "failed");
+    assert.isUndefined(takeClaudeFormAnswers(failed));
+    const succeeded = RuntimeRequestId.make("request:dispatch-succeeded");
+    handOffClaudeFormAnswers(succeeded, { handOff: { confirm: "x" } }, "command:b");
+    yield* settleFormAnswerDispatch(respond(succeeded, "command:b"), true);
+    assert.equal(claudeFormCommitOutcome(succeeded), "committed");
+  }),
+);
+
+it.effect("keeps the first answer's hand-off when a later answer is refused (1493)", () =>
+  Effect.gen(function* () {
+    const { respond, status, requestId } = yield* card("second-refused", confirmForm);
+    // The effect worker is off, so the first answer is still on its way.
+    yield* respond("person", { decision: "accept", answers: { confirm: "octo/repo" } });
+    assert.include(
+      yield* refusal(respond("again", { decision: "accept", answers: { confirm: "other" } })),
+      FORM_ALREADY_ANSWERED,
+    );
+    assert.include(
+      yield* refusal(respond("decline", { decision: "decline" })),
+      FORM_ALREADY_ANSWERED,
+    );
+    assert.equal((yield* status)?.status, "resolved");
+    assert.equal(claudeFormCommitOutcome(requestId), "committed");
+    assert.isFalse(beginClosingClaudeForm(requestId));
+    assert.deepEqual(takeClaudeFormAnswers(requestId), { confirm: "octo/repo" });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it("forgets an answer whose commit failed, so the card can close (1493)", () => {
+  const requestId = RuntimeRequestId.make("request:commit-failed");
+  handOffClaudeFormAnswers(requestId, { handOff: { confirm: "x" } });
+  // Only a respond command's own request is touched.
+  forgetUncommittedFormAnswer({ type: "thread.stop" });
+  assert.isTrue(isClaudeFormAnswered(requestId));
+  forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId });
+  assert.isFalse(isClaudeFormAnswered(requestId));
+  assert.isUndefined(takeClaudeFormAnswers(requestId));
+  assert.isTrue(beginClosingClaudeForm(requestId));
+});

@@ -6,7 +6,9 @@ import * as Effect from "effect/Effect";
 
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 import {
+  forgetUncommittedFormAnswer,
   handOffClaudeFormAnswers,
+  markClaudeFormAnswerCommitted,
   redactClaudeFormAnswers,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
@@ -43,7 +45,11 @@ const turnInput = (thread: "user" | "agent", scheduled = false) =>
     },
   }) as unknown as ProviderAdapter.ProviderAdapterV2TurnInput;
 
+// Request ids are unique per harness: a closing mark outlives its call (1493).
+let harnesses = 0;
+
 function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: boolean } = {}) {
+  const prefix = `h${++harnesses}`;
   const events: Array<Event> = [];
   let released = 0;
   let requestCount = 0;
@@ -54,12 +60,13 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
   };
   const timer = Effect.runSync(Deferred.make<void>());
   const grace = Effect.runSync(Deferred.make<void>());
+  const outcomeLimit = Effect.runSync(Deferred.make<void>());
   const elicitations = makeClaudeMcpElicitations({
     activeTurn: Effect.succeed(options.noTurn === true ? null : context),
     buildApprovalRequestArtifacts: (input) =>
       Effect.sync(() => {
         requestCount += 1;
-        const id = RuntimeRequestId.make(`request-${requestCount}`);
+        const id = RuntimeRequestId.make(`${prefix}-request-${requestCount}`);
         return {
           node: { id: "node-request", parentNodeId: "node-from-item", status: "waiting" },
           request: { id, kind: input.requestKind, status: "pending" },
@@ -84,6 +91,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     runPromise: Effect.runPromise,
     unattendedTimer: Deferred.await(timer),
     answerInFlightGrace: Deferred.await(grace),
+    commitOutcomeLimit: Deferred.await(outcomeLimit),
   });
   const ask = (request: Partial<ElicitationRequest>, signal = new AbortController().signal) =>
     elicitations.onElicitation(
@@ -109,7 +117,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setImmediate(resolve));
     expect(check()).toBe(true);
   };
-  const requestId = RuntimeRequestId.make("request-1");
+  const requestId = RuntimeRequestId.make(`${prefix}-request-1`);
   return {
     events,
     elicitations,
@@ -120,6 +128,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     requestId,
     fireTimer: () => Effect.runSync(Deferred.succeed(timer, undefined)),
     endGrace: () => Effect.runSync(Deferred.succeed(grace, undefined)),
+    endOutcomeLimit: () => Effect.runSync(Deferred.succeed(outcomeLimit, undefined)),
     released: () => released,
   };
 }
@@ -235,6 +244,7 @@ describe("ClaudeMcpElicitation", () => {
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
     handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } });
+    markClaudeFormAnswerCommitted({ type: "runtime-request.respond", requestId: h.requestId });
     controller.abort();
     h.endGrace();
     expect(await result).toEqual({ action: "cancel" });
@@ -318,6 +328,23 @@ describe("ClaudeMcpElicitation", () => {
     expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(30 * 60 * 1_000);
   });
 
+  it("refuses an answer that comes in after the timer began closing the card (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    h.fireTimer();
+    expect(await result).toEqual({ action: "cancel" });
+    // A Submit recorded now would be overwritten by the cancelled card.
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } })).toBe(false);
+    expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toBe(true);
+  });
+
   it("waits for an answer the app recorded when the timer fires before it arrives", async () => {
     const h = harness({ thread: "agent" });
     const result = h.ask({ requestedSchema: confirmSchema });
@@ -365,6 +392,7 @@ describe("ClaudeMcpElicitation", () => {
     const second = lost.ask({ requestedSchema: confirmSchema });
     await lost.until(() => lost.card() !== undefined);
     handOffClaudeFormAnswers(lost.requestId, { handOff: { name: "octo/repo" } });
+    markClaudeFormAnswerCommitted({ type: "runtime-request.respond", requestId: lost.requestId });
     lost.fireTimer();
     lost.endGrace();
     expect(await second).toEqual({ action: "cancel" });
@@ -378,6 +406,89 @@ describe("ClaudeMcpElicitation", () => {
             (event.type === "turn_item.updated" && event.turnItem.status === "cancelled"),
         ),
       ).toEqual([]);
+  });
+
+  it("closes the card when the answer's commit failed during the wait (1493)", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    // The commit of that answer fails: nothing was recorded.
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    h.endGrace();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
+  });
+
+  it("waits past the grace for a commit still running, and closes the card if it fails (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    let ended = false;
+    const result = h.ask({ requestedSchema: confirmSchema }).finally(() => (ended = true));
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    h.endGrace();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    // The commit is still running: the call waits, so its events still land.
+    expect(ended).toBe(false);
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    // A Submit queued behind the failed commit is refused before the call wakes.
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("ends a call whose commit never settles, leaving the card as the record says (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    h.endGrace();
+    h.endOutcomeLimit();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves the record alone when a commit still running past the grace succeeds (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    h.endGrace();
+    await new Promise((resolve) => setImmediate(resolve));
+    markClaudeFormAnswerCommitted({ type: "runtime-request.respond", requestId: h.requestId });
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toBe(false);
   });
 
   it("keeps a watched thread's card open past the timer", async () => {
