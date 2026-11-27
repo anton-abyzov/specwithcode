@@ -424,6 +424,27 @@ describe("ClaudeMcpElicitation", () => {
     expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
   });
 
+  it("closes the card when the answer's commit fails after the call ended (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    h.endGrace();
+    expect(await result).toEqual({ action: "cancel" });
+    const cancelled = () =>
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ).length;
+    // The commit is still running: the record may yet say answered, so it stays.
+    expect(cancelled()).toBe(0);
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    // A Submit queued behind the failed commit is refused before the card lands.
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
+    await h.until(() => cancelled() === 1);
+  });
+
   it("keeps a watched thread's card open past the timer", async () => {
     const h = harness({ thread: "user" });
     const result = h.ask({ requestedSchema: confirmSchema });

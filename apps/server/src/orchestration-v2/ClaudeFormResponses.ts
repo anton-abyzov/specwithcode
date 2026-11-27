@@ -46,6 +46,14 @@ const answered = new Set<string>();
 // adapter's own closed set.
 const closing = new Set<string>();
 const CLOSING_KEPT = 200;
+// Cards whose call ended while their answer's commit was still running: if
+// that commit fails, nothing else would close them (1493).
+const closers = new Map<string, () => void>();
+
+function markClosing(requestId: string): void {
+  closing.add(requestId);
+  if (closing.size > CLOSING_KEPT) closing.delete(closing.values().next().value as string);
+}
 
 /**
  * Notes that the app recorded an answer to a Claude form, and holds the
@@ -74,9 +82,25 @@ export function handOffClaudeFormAnswers(
  */
 export function beginClosingClaudeForm(requestId: RuntimeRequestId): boolean {
   if (answered.has(requestId)) return false;
-  closing.add(requestId);
-  if (closing.size > CLOSING_KEPT) closing.delete(closing.values().next().value as string);
+  markClosing(requestId);
   return true;
+}
+
+/**
+ * For a call that ends without the answer the app recorded: returns true when
+ * the card should close now (that answer's commit already failed). Otherwise
+ * the commit may still be running, so `closeLater` is kept and runs if it
+ * fails (`forgetUncommittedFormAnswer`); a recorded answer is never closed
+ * over (1481 D-11). One synchronous step, so no commit outcome slips between.
+ */
+export function closeClaudeFormNowOrOnFailedCommit(
+  requestId: RuntimeRequestId,
+  closeLater: () => void,
+): boolean {
+  if (beginClosingClaudeForm(requestId)) return true;
+  closers.set(requestId, closeLater);
+  if (closers.size > CLOSING_KEPT) closers.delete(closers.keys().next().value as string);
+  return false;
 }
 
 /**
@@ -91,6 +115,12 @@ export function forgetUncommittedFormAnswer(command: {
   if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
   handedOff.delete(command.requestId);
   answered.delete(command.requestId);
+  // The call already ended: refuse any later answer at once, then close the card.
+  const close = closers.get(command.requestId);
+  if (close === undefined) return;
+  closers.delete(command.requestId);
+  markClosing(command.requestId);
+  close();
 }
 
 /** The app has recorded an answer to this form that may not have arrived yet. */

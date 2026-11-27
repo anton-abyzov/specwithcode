@@ -61,6 +61,7 @@ import * as Effect from "effect/Effect";
 
 import {
   beginClosingClaudeForm,
+  closeClaudeFormNowOrOnFailedCommit,
   dropClaudeFormAnswers,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
@@ -378,9 +379,18 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         remember(id);
         if (committed) {
           // The answer never arrived: the call ends, and the note says so. If
-          // its commit failed meanwhile, its mark is gone and nothing was
-          // recorded, so the card closes too (1493); a recorded one stays.
-          if (beginClosingClaudeForm(artifacts.request.id)) yield* closeCard(artifacts);
+          // its commit failed, nothing was recorded and the card closes, now
+          // or when that commit fails later (1493); a recorded one stays.
+          const closeLater = () =>
+            void deps.runPromise(
+              closeCard(artifacts).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logError("Could not close an MCP form card.", { cause }),
+                ),
+              ),
+            );
+          if (closeClaudeFormNowOrOnFailedCommit(artifacts.request.id, closeLater))
+            yield* closeCard(artifacts);
           yield* notice(
             context,
             `${nativeRequestId}:undelivered`,
