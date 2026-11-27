@@ -449,9 +449,13 @@ export interface ClaudeAgentSdkQuerySession {
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /**
+   * Resolves with the mode the CLI reports in effect, which can differ from the
+   * one asked for; nothing when the CLI names no mode (older Claude Code).
+   */
   readonly setPermissionMode: (
     mode: PermissionMode,
-  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  ) => Effect.Effect<PermissionMode | void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /**
@@ -951,6 +955,7 @@ export const layerQueryRunner: Layer.Layer<
               try: () => queryRuntime.setPermissionMode(mode),
               catch: (cause) => queryRunnerError(cause, "setPermissionMode"),
             }).pipe(
+              Effect.map((applied) => applied?.mode),
               Effect.tap(() =>
                 logProtocolEvent({
                   direction: "outgoing",
@@ -8569,6 +8574,24 @@ export function makeClaudeAdapterV2(
             projectAdditionalDirectories,
           ]);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
+          // Claude can switch its own mode mid-session (EnterPlanMode), and a
+          // denied ExitPlanMode leaves it there. Puts the live process back in
+          // the thread's mode and records the mode the CLI reports, not the one
+          // asked for. False when the CLI stays in another mode.
+          const restoreOpenedPermissionMode = Effect.fnUntraced(function* (
+            live: ClaudeLiveQueryContext,
+          ) {
+            if (live.permissionMode === live.openedPermissionMode) return true;
+            const applied = yield* live.query.setPermissionMode(live.openedPermissionMode);
+            live.permissionMode = typeof applied === "string" ? applied : live.openedPermissionMode;
+            if (live.permissionMode === live.openedPermissionMode) return true;
+            yield* Effect.logWarning("claude.query.permission-mode-not-restored", {
+              threadId: turnInput.threadId,
+              requested: live.openedPermissionMode,
+              applied: live.permissionMode,
+            });
+            return false;
+          });
           // A reused process may have given up on SpecWithCode's MCP server
           // after a 401 (its credential was revoked for a while, as when the
           // thread ran on another provider). The credential it carries is the
@@ -8603,19 +8626,16 @@ export function makeClaudeAdapterV2(
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selectionKey === compiledSelection.queryIdentity
           ) {
-            // Claude can switch its own mode mid-session (EnterPlanMode), and
-            // a denied ExitPlanMode leaves it there. Put the live process back
-            // in the thread's mode before the next prompt.
-            if (existing.permissionMode !== existing.openedPermissionMode) {
-              yield* existing.query.setPermissionMode(existing.openedPermissionMode);
-              existing.permissionMode = existing.openedPermissionMode;
+            // Put the live process back in the thread's mode before the next
+            // prompt; a process the CLI leaves in another mode is replaced below.
+            if (yield* restoreOpenedPermissionMode(existing)) {
+              existing.deferredSelectionKey = null;
+              existing.deferredSelectionNotice = null;
+              yield* reconnectStudioMcp(existing);
+              // A Stop can claim the process while the reconnect waits; it then gets
+              // replaced below like any process Stop is closing.
+              if (!isStopping(existing)) return existing;
             }
-            existing.deferredSelectionKey = null;
-            existing.deferredSelectionNotice = null;
-            yield* reconnectStudioMcp(existing);
-            // A Stop can claim the process while the reconnect waits; it then gets
-            // replaced below like any process Stop is closing.
-            if (!isStopping(existing)) return existing;
           }
 
           // Background agents and shells run inside the CLI process, so a
@@ -8670,9 +8690,13 @@ export function makeClaudeAdapterV2(
                   ).length,
                 });
               }
-              if (existing.permissionMode !== existing.openedPermissionMode) {
-                yield* existing.query.setPermissionMode(existing.openedPermissionMode);
-                existing.permissionMode = existing.openedPermissionMode;
+              // Replacing the process would kill its background work.
+              if (!(yield* restoreOpenedPermissionMode(existing))) {
+                const blockedBy = (yield* liveProcessBackgroundWork(existing))?.label;
+                return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
+                  change: "settings",
+                  ...(blockedBy === undefined ? {} : { blockedBy }),
+                });
               }
               yield* reconnectStudioMcp(existing);
               if (!isStopping(existing)) return existing;

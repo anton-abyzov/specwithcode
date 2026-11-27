@@ -6,6 +6,7 @@ import { ProjectKnowledgeToolkit } from "../../mcp/toolkits/projectKnowledge/too
 import * as NodeOS from "node:os";
 
 import type {
+  PermissionMode,
   Query as ClaudeQuery,
   SDKMessage,
   SDKResultMessage,
@@ -2998,6 +2999,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly endProcessTree?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly browserExtensionPairingFile?: string;
+    /** The mode the CLI reports after setPermissionMode; nothing by default (older CLIs). */
+    readonly appliedPermissionMode?: (requested: string) => PermissionMode | void;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3005,6 +3008,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "studio-claude-v2-wake-",
       });
+      let openCount = 0;
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
       const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
@@ -3057,6 +3061,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           open: (input) =>
             Effect.sync(() => {
               openedOptions = input.options;
+              openCount += 1;
               return {
                 messages: Stream.fromQueue(sdkMessages).pipe(
                   Stream.flatMap((message) =>
@@ -3083,6 +3088,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setPermissionMode: (mode) =>
                   Effect.sync(() => {
                     permissionModeChanges.push(mode);
+                    return options?.appliedPermissionMode?.(mode);
                   }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -3154,6 +3160,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         providerThreadReceipts,
         systemNoticeReceipts,
         getOpenedOptions: () => openedOptions,
+        getOpenCount: () => openCount,
         terminalEvents,
         hasPendingBackgroundWork,
       };
@@ -5172,6 +5179,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // The second prompt reuses the live process, which is still in the
         // plan mode Claude entered, so it is put back in the thread's mode.
         assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions"]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  // SDK 0.3.332 resolves setPermissionMode with the mode the CLI put in effect.
+  const reuseAfterSelfEnteredPlan = (
+    appliedPermissionMode: (requested: string) => PermissionMode,
+  ) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({ appliedPermissionMode });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-mode-restore-1"),
+          text: "Plan the work.",
+          attachments: [],
+        }),
+      );
+      // Claude entered plan mode on its own (EnterPlanMode).
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: null,
+          permissionMode: "plan",
+          uuid: "00000000-0000-4000-8000-000000000601",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000602", result: "Planned." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-mode-restore-2"),
+          providerTurnOrdinal: 2,
+          text: "Go on.",
+          attachments: [],
+        }),
+      );
+      assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions"]);
+      return harness.getOpenCount();
+    });
+
+  it.effect("reuses the live process when the CLI confirms the thread's mode", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        assert.equal(
+          yield* reuseAfterSelfEnteredPlan((requested) => requested as PermissionMode),
+          1,
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("replaces the live process when the CLI stays in another mode", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        assert.equal(yield* reuseAfterSelfEnteredPlan(() => "plan"), 2);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
