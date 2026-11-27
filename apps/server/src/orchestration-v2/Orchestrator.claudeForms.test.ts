@@ -32,6 +32,7 @@ import {
   forgetUncommittedFormAnswer,
   handOffClaudeFormAnswers,
   isClaudeFormAnswered,
+  settleFormAnswerDispatch,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "./ClaudeFormResponses.ts";
@@ -378,6 +379,22 @@ it("lets exactly one of the hand-off and the close win (1493)", () => {
   assert.isFalse(isClaudeFormAnswered(second));
   assert.isUndefined(takeClaudeFormAnswers(second));
 });
+
+it.effect("settles a hand-off however its dispatch ends (1493)", () =>
+  Effect.gen(function* () {
+    const failed = RuntimeRequestId.make("request:dispatch-failed");
+    handOffClaudeFormAnswers(failed, { handOff: { confirm: "x" } });
+    assert.equal(claudeFormCommitOutcome(failed), "pending");
+    // Any unsuccessful exit, planning and interruption included.
+    yield* settleFormAnswerDispatch({ type: "runtime-request.respond", requestId: failed }, false);
+    assert.equal(claudeFormCommitOutcome(failed), "failed");
+    assert.isUndefined(takeClaudeFormAnswers(failed));
+    const succeeded = RuntimeRequestId.make("request:dispatch-succeeded");
+    handOffClaudeFormAnswers(succeeded, { handOff: { confirm: "x" } });
+    yield* settleFormAnswerDispatch({ type: "runtime-request.respond", requestId: succeeded }, true);
+    assert.equal(claudeFormCommitOutcome(succeeded), "committed");
+  }),
+);
 
 it("forgets an answer whose commit failed, so the card can close (1493)", () => {
   const requestId = RuntimeRequestId.make("request:commit-failed");

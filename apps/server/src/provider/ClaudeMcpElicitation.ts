@@ -112,6 +112,8 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
   readonly unattendedTimer?: Effect.Effect<void>;
   /** Waits out {@link ANSWER_IN_FLIGHT_GRACE_MS}; tests pass their own. */
   readonly answerInFlightGrace?: Effect.Effect<void>;
+  /** Bounds the wait for a commit still running after the grace; tests pass their own. */
+  readonly commitOutcomeLimit?: Effect.Effect<void>;
 }
 
 export interface ClaudeMcpElicitations {
@@ -221,6 +223,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
     deps.unattendedTimer ?? Effect.sleep(Duration.millis(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS));
   const grace =
     deps.answerInFlightGrace ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
+  // Every dispatch settles its answer as it ends (1493); this only guards a
+  // dispatch that never ends, and then leaves the card as the record says.
+  const outcomeLimit =
+    deps.commitOutcomeLimit ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
 
   const notice = (context: C, nativeItemId: string, message: string) =>
     Effect.gen(function* () {
@@ -395,7 +401,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           // Its commit may still be running, so the call waits for it and
           // closes the card itself if nothing was recorded, while its events
           // still reach the thread; a recorded one stays (1493, 1481 D-11).
-          const outcome = yield* commitOutcome(artifacts.request.id);
+          const outcome = yield* Effect.raceFirst(
+            commitOutcome(artifacts.request.id),
+            outcomeLimit.pipe(Effect.as("pending" as const)),
+          );
           if (outcome === "failed" && beginClosingClaudeForm(artifacts.request.id))
             yield* closeCard(artifacts);
           yield* notice(

@@ -60,6 +60,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
   };
   const timer = Effect.runSync(Deferred.make<void>());
   const grace = Effect.runSync(Deferred.make<void>());
+  const outcomeLimit = Effect.runSync(Deferred.make<void>());
   const elicitations = makeClaudeMcpElicitations({
     activeTurn: Effect.succeed(options.noTurn === true ? null : context),
     buildApprovalRequestArtifacts: (input) =>
@@ -90,6 +91,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     runPromise: Effect.runPromise,
     unattendedTimer: Deferred.await(timer),
     answerInFlightGrace: Deferred.await(grace),
+    commitOutcomeLimit: Deferred.await(outcomeLimit),
   });
   const ask = (request: Partial<ElicitationRequest>, signal = new AbortController().signal) =>
     elicitations.onElicitation(
@@ -126,6 +128,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     requestId,
     fireTimer: () => Effect.runSync(Deferred.succeed(timer, undefined)),
     endGrace: () => Effect.runSync(Deferred.succeed(grace, undefined)),
+    endOutcomeLimit: () => Effect.runSync(Deferred.succeed(outcomeLimit, undefined)),
     released: () => released,
   };
 }
@@ -449,6 +452,24 @@ describe("ClaudeMcpElicitation", () => {
           event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
       ),
     ).toHaveLength(1);
+  });
+
+  it("ends a call whose commit never settles, leaving the card as the record says (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    h.endGrace();
+    h.endOutcomeLimit();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toBe(false);
   });
 
   it("leaves the record alone when a commit still running past the grace succeeds (1493)", async () => {

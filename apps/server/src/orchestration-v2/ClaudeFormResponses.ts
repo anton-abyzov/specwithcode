@@ -21,6 +21,7 @@ import type {
   RuntimeRequestId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as Effect from "effect/Effect";
 import {
   parseMcpElicitationSchema,
   validateMcpElicitationContent,
@@ -142,6 +143,21 @@ export function forgetUncommittedFormAnswer(command: {
   // commit at once, before the call wakes.
   markClosing(command.requestId);
   waiter("failed");
+}
+
+/**
+ * Settles the answer a `runtime-request.respond` handed off, however its
+ * dispatch ended: committed on success; forgotten on any failure, rejection,
+ * defect or interruption, planning included, so a call waiting for it never
+ * waits on a commit that will not come (1493).
+ */
+export function settleFormAnswerDispatch(
+  command: { readonly type: string; readonly requestId?: string },
+  succeeded: boolean,
+): Effect.Effect<void> {
+  return Effect.sync(() =>
+    succeeded ? markClaudeFormAnswerCommitted(command) : forgetUncommittedFormAnswer(command),
+  );
 }
 
 /** The app has recorded an answer to this form that may not have arrived yet. */

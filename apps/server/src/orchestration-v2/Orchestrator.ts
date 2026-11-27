@@ -13774,19 +13774,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
         Effect.mapError((error) => deadlineRefusal(error, (cause) => startRefusal(command, cause))),
-        // A form answer that was never recorded is not on its way (1493).
-        Effect.tapError(() => Effect.sync(() => ClaudeForms.forgetUncommittedFormAnswer(command))),
       );
 
     if (committed.receipt.status === "rejected") {
-      ClaudeForms.forgetUncommittedFormAnswer(command);
       return yield* new OrchestratorCommandPreviouslyRejectedError({
         commandId: command.commandId,
         commandType: command.type,
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    ClaudeForms.markClaudeFormAnswerCommitted(command);
     if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
@@ -13843,7 +13839,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             )
-          : dispatchWithReceiptEffect(command),
+          : dispatchWithReceiptEffect(command).pipe(
+              // However the dispatch ends, a Claude form answer it handed off is settled (1493).
+              Effect.onExit((exit) => ClaudeForms.settleFormAnswerDispatch(command, Exit.isSuccess(exit))),
+            ),
       ),
     );
     // Count the command through persistence, including admission and thread-lock waits.
