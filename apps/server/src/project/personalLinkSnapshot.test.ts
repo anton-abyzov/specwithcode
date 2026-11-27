@@ -155,7 +155,8 @@ const countRows = (path: string) => {
   try {
     return Number(
       Object.values(
-        copy.prepare("SELECT count(*) FROM project_memory WHERE project_id = ?").get(PERCY_ID) ?? {},
+        copy.prepare("SELECT count(*) FROM project_memory WHERE project_id = ?").get(PERCY_ID) ??
+          {},
       )[0],
     );
   } finally {
@@ -195,7 +196,9 @@ describe("PersonalLinkSnapshot layerLive", () => {
           const copy = new NodeSqlite.DatabaseSync(path, { readOnly: true });
           try {
             assert.strictEqual(
-              Number(Object.values(copy.prepare("SELECT count(*) FROM project_memory").get() ?? {})[0]),
+              Number(
+                Object.values(copy.prepare("SELECT count(*) FROM project_memory").get() ?? {})[0],
+              ),
               5,
             );
             assert.strictEqual(
@@ -472,7 +475,9 @@ describe("makePersonalLinkSnapshotter", () => {
           state: makeSnapshotState(),
         });
         // A timed-out call left the first series' copy running; the switch went off and on.
-        const first = yield* Effect.forkChild(snapshotter.snapshot("percy-join-p-series-1", PERCY_ID));
+        const first = yield* Effect.forkChild(
+          snapshotter.snapshot("percy-join-p-series-1", PERCY_ID),
+        );
         yield* waitFor(() => manual.calls.length === 1);
         const refused = yield* Effect.flip(snapshotter.snapshot("percy-join-p-series-2", PERCY_ID));
         assert.match(refused.message, /Another copy of the database is still being saved/);
@@ -480,7 +485,9 @@ describe("makePersonalLinkSnapshotter", () => {
         manual.finish();
         yield* Fiber.join(first);
         // Once it ends, the new series copies at once: the refusal left no wait behind.
-        const second = yield* Effect.forkChild(snapshotter.snapshot("percy-join-p-series-2", PERCY_ID));
+        const second = yield* Effect.forkChild(
+          snapshotter.snapshot("percy-join-p-series-2", PERCY_ID),
+        );
         yield* waitFor(() => manual.calls.length === 2);
         manual.finish();
         yield* Fiber.join(second);

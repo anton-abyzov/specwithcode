@@ -171,7 +171,8 @@ export async function snapshotProjectRows(
       source.exec("ROLLBACK");
     }
   } catch (error) {
-    for (const suffix of LIVE_DATABASE_SUFFIXES) NodeFS.rmSync(`${partial}${suffix}`, { force: true });
+    for (const suffix of LIVE_DATABASE_SUFFIXES)
+      NodeFS.rmSync(`${partial}${suffix}`, { force: true });
     throw error;
   } finally {
     source.close();
@@ -183,6 +184,7 @@ export async function snapshotProjectRows(
     publishWithoutReplacing(partial, target);
     return { path: target, bytes: NodeFS.statSync(target).size, pages, quickCheck, rows };
   } finally {
-    for (const suffix of LIVE_DATABASE_SUFFIXES) NodeFS.rmSync(`${partial}${suffix}`, { force: true });
+    for (const suffix of LIVE_DATABASE_SUFFIXES)
+      NodeFS.rmSync(`${partial}${suffix}`, { force: true });
   }
 }

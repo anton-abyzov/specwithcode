@@ -26,7 +26,9 @@ const withHeldDatabase = async (run: (dbPath: string, directory: string) => Prom
       CREATE TABLE scheduled_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT REFERENCES missing_parent(id), big INTEGER);
       CREATE TABLE orchestration_v2_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, payload_json TEXT NOT NULL);
     `);
-    holder.prepare("INSERT INTO projection_projects VALUES (?, ?, ?)").run(PERCY, "Percy", '{"revision":3}');
+    holder
+      .prepare("INSERT INTO projection_projects VALUES (?, ?, ?)")
+      .run(PERCY, "Percy", '{"revision":3}');
     holder.prepare("INSERT INTO projection_projects VALUES (?, ?, ?)").run("work", "Work", "{}");
     const memory = holder.prepare("INSERT INTO project_memory VALUES (?, ?, ?)");
     memory.run(PERCY, "people.md", "Elena");
@@ -75,7 +77,10 @@ describe("snapshotProjectRows", () => {
           copy.prepare("SELECT workspace_settings_json AS s FROM projection_projects").get()?.s,
           '{"revision":3}',
         );
-        assert.equal(count(copy, "SELECT count(*) FROM project_memory WHERE project_id <> 'percy-project'"), 0);
+        assert.equal(
+          count(copy, "SELECT count(*) FROM project_memory WHERE project_id <> 'percy-project'"),
+          0,
+        );
         // Integers past 2^53 survive exactly.
         const big = copy.prepare("SELECT big FROM scheduled_tasks");
         big.setReadBigInts(true);
