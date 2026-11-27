@@ -40,7 +40,7 @@ With the user's consent, the app downloads these on first use. They are not dist
 
 ## Whiteboards
 
-The whiteboard editor embeds [Excalidraw](https://github.com/excalidraw/excalidraw) `@excalidraw/excalidraw` 0.18.1 (MIT License, Copyright (c) 2020 Excalidraw), with its bundled fonts served from the app, and the [Radix UI primitives](https://github.com/radix-ui/primitives) it depends on (MIT License, Copyright (c) 2022 WorkOS). Each license text is in its repository's `LICENSE` file; the full list of bundled packages and their notices is in Settings, under open source licenses.
+The whiteboard editor embeds [Excalidraw](https://github.com/excalidraw/excalidraw) `@excalidraw/excalidraw` 0.18.0-dabd83c (MIT License, Copyright (c) 2020 Excalidraw), with its bundled fonts served from the app, and the packages it depends on, among them the [Radix UI primitives](https://github.com/radix-ui/primitives) (MIT License, Copyright (c) 2022 WorkOS) and [CodeMirror](https://github.com/codemirror/dev) (MIT License, Copyright (C) 2018-2021 by Marijn Haverbeke and others). Each license text is in its repository's `LICENSE` file; the full list of bundled packages and their notices is in Settings, under open source licenses.
 
 ## Live documents
 
