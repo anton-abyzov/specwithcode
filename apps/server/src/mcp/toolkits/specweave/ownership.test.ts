@@ -232,19 +232,22 @@ describe("ledgerPathsInside: real folders and plain files (1497 review)", () => 
     expect(!result.ok && result.message).toContain("is a link");
   });
 
-  it.skipIf(isWindows)("refuses a linked state folder or a ledger with a second hard link", async () => {
-    const { root, worktree, increment } = scratch();
-    const outside = NodePath.join(root, "outside");
-    NodeFS.mkdirSync(outside);
-    NodeFS.symlinkSync(outside, NodePath.join(worktree, ".specweave", "state"));
-    const linkedState = await check(worktree);
-    expect(!linkedState.ok && linkedState.message).toContain("leads outside");
-    NodeFS.rmSync(NodePath.join(worktree, ".specweave", "state"));
+  it.skipIf(isWindows)(
+    "refuses a linked state folder or a ledger with a second hard link",
+    async () => {
+      const { root, worktree, increment } = scratch();
+      const outside = NodePath.join(root, "outside");
+      NodeFS.mkdirSync(outside);
+      NodeFS.symlinkSync(outside, NodePath.join(worktree, ".specweave", "state"));
+      const linkedState = await check(worktree);
+      expect(!linkedState.ok && linkedState.message).toContain("leads outside");
+      NodeFS.rmSync(NodePath.join(worktree, ".specweave", "state"));
 
-    NodeFS.linkSync(NodePath.join(increment, "ledger.jsonl"), NodePath.join(outside, "copy"));
-    const hard = await check(worktree);
-    expect(!hard.ok && hard.message).toContain("another hard link");
-  });
+      NodeFS.linkSync(NodePath.join(increment, "ledger.jsonl"), NodePath.join(outside, "copy"));
+      const hard = await check(worktree);
+      expect(!hard.ok && hard.message).toContain("another hard link");
+    },
+  );
 
   it("refuses a leftover temporary file the CLI would write through", async () => {
     const { worktree, increment } = scratch();

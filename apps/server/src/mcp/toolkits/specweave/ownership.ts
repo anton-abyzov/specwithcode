@@ -121,7 +121,8 @@ async function plainFile(path: string, workspace: string): Promise<PathCheck> {
   if (stat === null) return { ok: true };
   if (stat.isSymbolicLink()) {
     const real = await realPath(path);
-    if (real === null) return { ok: false, message: `${path} is a link that points nowhere. Fix it first.` };
+    if (real === null)
+      return { ok: false, message: `${path} is a link that points nowhere. Fix it first.` };
     if (!isInside(workspace, real)) return { ok: false, message: OUTSIDE(path, workspace) };
     return {
       ok: false,
@@ -235,7 +236,10 @@ export async function decideOwnership(input: {
       `This thread's increment ${bound.incrementId} is only guessed from its ${bound.binding === "name" ? "title or branch name" : "session checkpoint"}, which does not make it the owner. Link the increment on the thread's plan card, or launch the thread with increment set.`,
     );
   }
-  if (bound.binding === "branch" && !branchNamesIncrement(input.branch ?? null, bound.incrementId)) {
+  if (
+    bound.binding === "branch" &&
+    !branchNamesIncrement(input.branch ?? null, bound.incrementId)
+  ) {
     return denied(
       `This thread's increment ${bound.incrementId} is only guessed from a ledger line that names its branch, which does not make it the owner. Link the increment on the thread's plan card, or launch the thread with increment set.`,
     );
