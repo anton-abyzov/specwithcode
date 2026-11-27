@@ -8,6 +8,7 @@ import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 import {
   forgetUncommittedFormAnswer,
   handOffClaudeFormAnswers,
+  markClaudeFormAnswerCommitted,
   redactClaudeFormAnswers,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
@@ -240,6 +241,7 @@ describe("ClaudeMcpElicitation", () => {
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
     handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } });
+    markClaudeFormAnswerCommitted({ type: "runtime-request.respond", requestId: h.requestId });
     controller.abort();
     h.endGrace();
     expect(await result).toEqual({ action: "cancel" });
@@ -387,6 +389,7 @@ describe("ClaudeMcpElicitation", () => {
     const second = lost.ask({ requestedSchema: confirmSchema });
     await lost.until(() => lost.card() !== undefined);
     handOffClaudeFormAnswers(lost.requestId, { handOff: { name: "octo/repo" } });
+    markClaudeFormAnswerCommitted({ type: "runtime-request.respond", requestId: lost.requestId });
     lost.fireTimer();
     lost.endGrace();
     expect(await second).toEqual({ action: "cancel" });
@@ -424,25 +427,47 @@ describe("ClaudeMcpElicitation", () => {
     expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
   });
 
-  it("closes the card when the answer's commit fails after the call ended (1493)", async () => {
+  it("waits past the grace for a commit still running, and closes the card if it fails (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    let ended = false;
+    const result = h.ask({ requestedSchema: confirmSchema }).finally(() => (ended = true));
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    h.fireTimer();
+    h.endGrace();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    // The commit is still running: the call waits, so its events still land.
+    expect(ended).toBe(false);
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    // A Submit queued behind the failed commit is refused before the call wakes.
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("leaves the record alone when a commit still running past the grace succeeds (1493)", async () => {
     const h = harness({ thread: "agent" });
     const result = h.ask({ requestedSchema: confirmSchema });
     await h.until(() => h.card() !== undefined);
     handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
     h.fireTimer();
     h.endGrace();
+    await new Promise((resolve) => setImmediate(resolve));
+    markClaudeFormAnswerCommitted({ type: "runtime-request.respond", requestId: h.requestId });
     expect(await result).toEqual({ action: "cancel" });
-    const cancelled = () =>
-      h.events.filter(
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.some(
         (event) =>
           event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
-      ).length;
-    // The commit is still running: the record may yet say answered, so it stays.
-    expect(cancelled()).toBe(0);
-    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
-    // A Submit queued behind the failed commit is refused before the card lands.
-    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
-    await h.until(() => cancelled() === 1);
+      ),
+    ).toBe(false);
   });
 
   it("keeps a watched thread's card open past the timer", async () => {

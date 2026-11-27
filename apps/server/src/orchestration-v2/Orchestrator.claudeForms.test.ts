@@ -23,6 +23,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
   beginClosingClaudeForm,
+  claudeFormCommitOutcome,
   FORM_AGENT_REFUSAL,
   FORM_ALREADY_ANSWERED,
   FORM_CLOSED,
@@ -271,6 +272,8 @@ it.effect("records only which fields were answered and hands the answers to the 
     assert.equal(resolved?.status, "resolved");
     assert.deepEqual(resolved?.answers, { confirm: REDACTED_FORM_ANSWER });
     assert.deepEqual(takeClaudeFormAnswers(requestId), { confirm: "octo/repo" });
+    // The adapter can tell the answer is recorded, not still committing (1493).
+    assert.equal(claudeFormCommitOutcome(requestId), "committed");
   }).pipe(Effect.provide(layerTest)),
 );
 

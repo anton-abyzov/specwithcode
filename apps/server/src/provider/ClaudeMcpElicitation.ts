@@ -61,8 +61,10 @@ import * as Effect from "effect/Effect";
 
 import {
   beginClosingClaudeForm,
-  closeClaudeFormNowOrOnFailedCommit,
+  claudeFormCommitOutcome,
+  type ClaudeFormCommitOutcome,
   dropClaudeFormAnswers,
+  onClaudeFormCommitOutcome,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
@@ -192,6 +194,17 @@ const abortEffect = (signal: AbortSignal) =>
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
     return Effect.sync(() => signal.removeEventListener("abort", abort));
+  });
+
+const commitOutcome = (requestId: RuntimeRequestId) =>
+  Effect.callback<ClaudeFormCommitOutcome>((resume) => {
+    const now = claudeFormCommitOutcome(requestId);
+    if (now !== "pending") {
+      resume(Effect.succeed(now));
+      return Effect.void;
+    }
+    const stop = onClaudeFormCommitOutcome(requestId, (outcome) => resume(Effect.succeed(outcome)));
+    return Effect.sync(stop);
   });
 
 export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext, E>(
@@ -378,18 +391,12 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         }
         remember(id);
         if (committed) {
-          // The answer never arrived: the call ends, and the note says so. If
-          // its commit failed, nothing was recorded and the card closes, now
-          // or when that commit fails later (1493); a recorded one stays.
-          const closeLater = () =>
-            void deps.runPromise(
-              closeCard(artifacts).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logError("Could not close an MCP form card.", { cause }),
-                ),
-              ),
-            );
-          if (closeClaudeFormNowOrOnFailedCommit(artifacts.request.id, closeLater))
+          // The answer never arrived: the call ends, and the note says so.
+          // Its commit may still be running, so the call waits for it and
+          // closes the card itself if nothing was recorded, while its events
+          // still reach the thread; a recorded one stays (1493, 1481 D-11).
+          const outcome = yield* commitOutcome(artifacts.request.id);
+          if (outcome === "failed" && beginClosingClaudeForm(artifacts.request.id))
             yield* closeCard(artifacts);
           yield* notice(
             context,

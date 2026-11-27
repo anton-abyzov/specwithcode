@@ -13786,6 +13786,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    ClaudeForms.markClaudeFormAnswerCommitted(command);
     if (command.type === "queue.resume") breakerConsent.set(command.threadId, "next");
     if (command.type === "queue.resume" || command.type === "queued-message.steer-settle") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));

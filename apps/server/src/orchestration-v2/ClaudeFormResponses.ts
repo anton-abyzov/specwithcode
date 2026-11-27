@@ -46,9 +46,13 @@ const answered = new Set<string>();
 // adapter's own closed set.
 const closing = new Set<string>();
 const CLOSING_KEPT = 200;
-// Cards whose call ended while their answer's commit was still running: if
-// that commit fails, nothing else would close them (1493).
-const closers = new Map<string, () => void>();
+// Answered forms whose commit finished; one not here is still committing.
+const committed = new Set<string>();
+// A call waiting, after Stop or the timer, for its answer's commit (1493).
+const outcomeWaiters = new Map<string, (outcome: ClaudeFormCommitOutcome) => void>();
+
+/** Where the answer the app recorded for a form stands. */
+export type ClaudeFormCommitOutcome = "committed" | "failed" | "pending";
 
 function markClosing(requestId: string): void {
   closing.add(requestId);
@@ -87,20 +91,36 @@ export function beginClosingClaudeForm(requestId: RuntimeRequestId): boolean {
 }
 
 /**
- * For a call that ends without the answer the app recorded: returns true when
- * the card should close now (that answer's commit already failed). Otherwise
- * the commit may still be running, so `closeLater` is kept and runs if it
- * fails (`forgetUncommittedFormAnswer`); a recorded answer is never closed
- * over (1481 D-11). One synchronous step, so no commit outcome slips between.
+ * Whether the answer handed off for this form committed, failed (or was never
+ * handed off), or is still committing. A call whose answer never arrived
+ * waits for "pending" to settle before it ends, so it closes the card itself
+ * while its events still reach the thread (1493).
  */
-export function closeClaudeFormNowOrOnFailedCommit(
+export function claudeFormCommitOutcome(requestId: RuntimeRequestId): ClaudeFormCommitOutcome {
+  if (!answered.has(requestId)) return "failed";
+  return committed.has(requestId) ? "committed" : "pending";
+}
+
+/** Calls `notify` once the commit settles; returns the unsubscribe. */
+export function onClaudeFormCommitOutcome(
   requestId: RuntimeRequestId,
-  closeLater: () => void,
-): boolean {
-  if (beginClosingClaudeForm(requestId)) return true;
-  closers.set(requestId, closeLater);
-  if (closers.size > CLOSING_KEPT) closers.delete(closers.keys().next().value as string);
-  return false;
+  notify: (outcome: ClaudeFormCommitOutcome) => void,
+): () => void {
+  outcomeWaiters.set(requestId, notify);
+  return () => {
+    if (outcomeWaiters.get(requestId) === notify) outcomeWaiters.delete(requestId);
+  };
+}
+
+/** Notes that a `runtime-request.respond` committed; its answer is recorded. */
+export function markClaudeFormAnswerCommitted(command: {
+  readonly type: string;
+  readonly requestId?: string;
+}): void {
+  if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
+  if (!answered.has(command.requestId)) return;
+  committed.add(command.requestId);
+  outcomeWaiters.get(command.requestId)?.("committed");
 }
 
 /**
@@ -115,12 +135,13 @@ export function forgetUncommittedFormAnswer(command: {
   if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
   handedOff.delete(command.requestId);
   answered.delete(command.requestId);
-  // The call already ended: refuse any later answer at once, then close the card.
-  const close = closers.get(command.requestId);
-  if (close === undefined) return;
-  closers.delete(command.requestId);
+  committed.delete(command.requestId);
+  const waiter = outcomeWaiters.get(command.requestId);
+  if (waiter === undefined) return;
+  // A call is waiting to close the card: refuse a Submit queued behind this
+  // commit at once, before the call wakes.
   markClosing(command.requestId);
-  close();
+  waiter("failed");
 }
 
 /** The app has recorded an answer to this form that may not have arrived yet. */
@@ -141,6 +162,8 @@ export function takeClaudeFormAnswers(
 export function dropClaudeFormAnswers(requestId: RuntimeRequestId): void {
   handedOff.delete(requestId);
   answered.delete(requestId);
+  committed.delete(requestId);
+  outcomeWaiters.delete(requestId);
 }
 
 /** Which fields were answered, never what was entered. */
