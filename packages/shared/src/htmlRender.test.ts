@@ -705,6 +705,36 @@ describe("stage pages", () => {
     ).toBe(true);
   });
 
+  it("reads a page's head front to back, as a browser does", () => {
+    const marker = '<meta name="specwithcode-page" content="stage">';
+    // Text before a template still ends the head.
+    expect(isHtmlRenderStagePage(`Intro<template></template>${marker}`)).toBe(false);
+    // A <template> written in a textarea inside a template is text, not a nested template.
+    expect(
+      isHtmlRenderStagePage(`<head><template><textarea><template></textarea></template>${marker}`),
+    ).toBe(true);
+    // A raw-text tag name inside a quoted attribute is part of the value.
+    expect(isHtmlRenderStagePage(`<head data-note="<noframes>">${marker}`)).toBe(true);
+    expect(isHtmlRenderStagePage(`<head data-note="</head>">${marker}`)).toBe(true);
+    // An unquoted value runs to whitespace, so a quote in it opens nothing.
+    expect(isHtmlRenderStagePage(`<link x=a"b> Intro <meta x=" >${marker}`)).toBe(false);
+    // An end tag inside a script's text is its end only with the script's name.
+    expect(isHtmlRenderStagePage(`<script>a("</scripts>")</script >${marker}`)).toBe(true);
+    // A non-breaking space is text to a browser.
+    expect(isHtmlRenderStagePage(`\u00a0${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`\ufeff<!doctype html>${marker}`)).toBe(true);
+    // What this reading does not follow makes the page a report.
+    expect(isHtmlRenderStagePage(`<script><!--<script></script>${marker}</script>`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<template><svg><style></template>${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<link href="a.css${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<title>x${marker}`)).toBe(false);
+    // Comments end where a browser ends them.
+    expect(isHtmlRenderStagePage(`<!-->${marker}`)).toBe(true);
+    expect(isHtmlRenderStagePage(`<!-- a --!>${marker}`)).toBe(true);
+    expect(isHtmlRenderStagePage(`</br>${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`</p>${marker}`)).toBe(true);
+  });
+
   it("carries the stage flag through a reference", () => {
     const stage = { attachmentId: "a-html", title: "Deck", height: 600, stage: true };
     expect(readHtmlRenderReference(stage)?.stage).toBe(true);

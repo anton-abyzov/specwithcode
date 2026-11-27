@@ -52,71 +52,180 @@ export const HTML_RENDER_STAGE_ALLOW = "autoplay; fullscreen";
 /** The global a stage page sets once its scenes are built and its shaders compiled. */
 export const HTML_RENDER_STAGE_READY_GLOBAL = "specwithcodeReady";
 
-/** A tag's attributes, names lower-cased; the first of a repeated name wins, as in HTML. */
-function tagAttributes(tag: string): Map<string, string> {
-  const attributes = new Map<string, string>();
-  const body = tag.replace(/^<[a-z0-9-]+/i, "").replace(/\/?>$/, "");
-  for (const match of body.matchAll(
-    /(?:^|\s)([^\s"'=<>/`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g,
-  )) {
-    const name = match[1]!.toLowerCase();
-    if (!attributes.has(name)) attributes.set(name, match[2] ?? match[3] ?? match[4] ?? "");
-  }
-  return attributes;
-}
-
 /**
  * Whether a page declares itself a stage page: a `<meta name="specwithcode-page"
  * content="stage">` in its head, attributes in any order and quoting, outside
  * scripts, styles and comments. Only the `name` and `content` attributes count
  * (not `data-name`), and a tag in the body does not, so a report never turns
  * into a stage page with its permissions by quoting the tag.
+ *
+ * The page is read once, front to back, the way a browser tokenizes it, until the
+ * marker or the end of the head. Anything this reading does not follow exactly
+ * (a script holding `<!--`, SVG or MathML in a template, a tag left open) makes
+ * the page a report, the side without the stage's permissions.
  */
 export function isHtmlRenderStagePage(html: string): boolean {
-  // Only what a head may hold is blanked with its contents; any other element, an iframe
-  // or a textarea say, stays as a tag and so ends the head. Templates nest, so they are
-  // skipped in the walk instead.
-  const scan = html.replace(
-    /<!--[\s\S]*?(?:-->|$)|<(script|style|title|noscript|noframes)\b[\s\S]*?(?:<\/\1\s*>|$)/gi,
-    (match) => " ".repeat(match.length),
-  );
-  let at = 0;
+  let at = html.startsWith("﻿") ? 1 : 0;
   let templates = 0;
-  // The head ends where a browser ends it: at `</head>`, at text, or at the first tag that
-  // cannot be in a head (`<body>` or `<main>`, written or implied). Quoted values may hold `>`.
-  for (const match of scan.matchAll(
-    /<(\/?)([a-z][a-z0-9-]*)(?:[^>"']|"[^"]*"|'[^']*')*>|<![^>]*>|<\?[^>]*>/gi,
-  )) {
-    const between = scan.slice(at, match.index);
-    at = match.index + match[0].length;
-    const name = match[2]?.toLowerCase();
-    // Inside a template nothing counts: its content is inert and not the page's head.
-    if (name === "template") {
-      templates = Math.max(0, templates + (match[1] ? -1 : 1));
-      continue;
+  while (at < html.length) {
+    const open = html.indexOf("<", at);
+    const text = html.slice(at, open === -1 ? html.length : open);
+    // Text ends the head, but inside a template it is the template's own content.
+    if (templates === 0 && !HTML_WHITESPACE_ONLY.test(text)) return false;
+    if (open === -1) return false;
+    if (html.startsWith("<!--", open)) {
+      at = commentEnd(html, open + 4);
+    } else if (html[open + 1] === "!" || html[open + 1] === "?") {
+      at = indexAfter(html, ">", open);
+    } else if (html.startsWith("</", open) && !ASCII_ALPHA.test(html[open + 2] ?? "")) {
+      // `</>` is dropped; `</` and anything else but a letter is a bogus comment.
+      at = html[open + 2] === ">" ? open + 3 : indexAfter(html, ">", open);
+    } else {
+      const tag = readTag(html, open);
+      if (tag === undefined) {
+        // A `<` that starts no tag is text.
+        if (templates === 0) return false;
+        at = open + 1;
+        continue;
+      }
+      at = tag.end;
+      if (tag.closing) {
+        if (tag.name === "template") templates = Math.max(0, templates - 1);
+        else if (templates === 0 && HEAD_ENDING_END_TAGS.has(tag.name)) return false;
+        continue;
+      }
+      if (RAW_TEXT_TAGS.has(tag.name)) {
+        // Its contents are text up to its own end tag, a `<template>` written there too.
+        if (templates === 0 && !HEAD_RAW_TEXT_TAGS.has(tag.name)) return false;
+        const close = rawTextEnd(html, at, tag.name);
+        if (close === undefined) return false;
+        if (tag.name === "script" && html.slice(at, close.start).includes("<!--")) return false;
+        at = close.end;
+        continue;
+      }
+      if (tag.name === "template") {
+        templates += 1;
+        continue;
+      }
+      if (templates > 0) {
+        if (tag.name === "svg" || tag.name === "math") return false;
+        continue;
+      }
+      if (!HEAD_TAGS.has(tag.name)) return false;
+      if (
+        tag.name === "meta" &&
+        tag.attributes.get("name")?.trim().toLowerCase() === "specwithcode-page" &&
+        tag.attributes.get("content")?.trim().toLowerCase() === "stage"
+      )
+        return true;
     }
-    if (templates > 0) continue;
-    if (between.trim() !== "") return false;
-    if (name === undefined) continue;
-    if (match[1]) {
-      if (name === "head") return false;
-      continue;
-    }
-    if (!HEAD_TAGS.has(name)) return false;
-    if (name !== "meta") continue;
-    const attributes = tagAttributes(match[0]);
-    if (
-      attributes.get("name")?.trim().toLowerCase() === "specwithcode-page" &&
-      attributes.get("content")?.trim().toLowerCase() === "stage"
-    )
-      return true;
+    if (at === -1) return false;
   }
   return false;
 }
 
-// Start tags a browser keeps in the head; script, style, title, noscript and noframes
-// are blanked with their contents before the walk, and templates are skipped in it.
+// Start tags a browser keeps in the head without contents of their own.
 const HEAD_TAGS = new Set(["html", "head", "meta", "link", "base", "basefont", "bgsound"]);
+// Elements whose contents are text; the first five may be in a head (noscript as it is
+// read with scripting on), the others end it.
+const HEAD_RAW_TEXT_TAGS = new Set(["script", "style", "title", "noscript", "noframes"]);
+const RAW_TEXT_TAGS = new Set([
+  ...HEAD_RAW_TEXT_TAGS,
+  "textarea",
+  "xmp",
+  "iframe",
+  "noembed",
+  "plaintext",
+]);
+const HEAD_ENDING_END_TAGS = new Set(["head", "body", "html", "br"]);
+const HTML_WHITESPACE_ONLY = /^[\t\n\f\r ]*$/;
+const HTML_WHITESPACE = /[\t\n\f\r ]/;
+const ASCII_ALPHA = /[a-z]/i;
+
+/** The index just after the next `char` from `from`, or -1 when there is none. */
+function indexAfter(html: string, char: string, from: number): number {
+  const index = html.indexOf(char, from);
+  return index === -1 ? -1 : index + 1;
+}
+
+/** Where a comment whose `<!--` ends just before `from` ends, as a browser ends it. */
+function commentEnd(html: string, from: number): number {
+  if (html[from] === ">") return from + 1;
+  if (html.startsWith("->", from)) return from + 2;
+  const end = /--!?>/g;
+  end.lastIndex = from;
+  const match = end.exec(html);
+  return match === null ? -1 : match.index + match[0].length;
+}
+
+interface ReadTag {
+  readonly closing: boolean;
+  readonly name: string;
+  readonly attributes: ReadonlyMap<string, string>;
+  readonly end: number;
+}
+
+/**
+ * The tag at `at`, read as a browser reads it: a quoted value may hold `>`, an unquoted
+ * one runs to whitespace or `>`, and the first of a repeated attribute wins. Undefined
+ * when `<` starts no tag there or the tag never closes.
+ */
+function readTag(html: string, at: number): ReadTag | undefined {
+  const closing = html[at + 1] === "/";
+  let index = at + (closing ? 2 : 1);
+  if (!ASCII_ALPHA.test(html[index] ?? "")) return undefined;
+  const nameStart = index;
+  while (index < html.length && !/[\t\n\f\r />]/.test(html[index]!)) index += 1;
+  const name = html.slice(nameStart, index).toLowerCase();
+  const attributes = new Map<string, string>();
+  while (index < html.length) {
+    const char = html[index]!;
+    if (char === ">") return { closing, name, attributes, end: index + 1 };
+    if (char === "/" || HTML_WHITESPACE.test(char)) {
+      index += 1;
+      continue;
+    }
+    // A name may start with `=`; after that it runs to whitespace, `/`, `>` or `=`.
+    const attributeStart = index;
+    index += 1;
+    while (index < html.length && !/[\t\n\f\r />=]/.test(html[index]!)) index += 1;
+    const attribute = html.slice(attributeStart, index).toLowerCase();
+    while (index < html.length && HTML_WHITESPACE.test(html[index]!)) index += 1;
+    let value = "";
+    if (html[index] === "=") {
+      index += 1;
+      while (index < html.length && HTML_WHITESPACE.test(html[index]!)) index += 1;
+      const quote = html[index];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, index + 1);
+        if (close === -1) return undefined;
+        value = html.slice(index + 1, close);
+        index = close + 1;
+      } else {
+        const valueStart = index;
+        while (index < html.length && !/[\t\n\f\r >]/.test(html[index]!)) index += 1;
+        value = html.slice(valueStart, index);
+      }
+    }
+    if (!attributes.has(attribute)) attributes.set(attribute, value);
+  }
+  return undefined;
+}
+
+/** Where a raw-text element's own end tag starts and ends, or undefined when it has none. */
+function rawTextEnd(
+  html: string,
+  from: number,
+  name: string,
+): { readonly start: number; readonly end: number } | undefined {
+  if (name === "plaintext") return undefined;
+  const endTag = new RegExp(`</${name}[\\t\\n\\f\\r />]`, "gi");
+  endTag.lastIndex = from;
+  const match = endTag.exec(html);
+  if (match === null) return undefined;
+  const tag = readTag(html, match.index);
+  return tag === undefined ? undefined : { start: match.index, end: tag.end };
+}
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */
 export const HTML_RENDER_MEASURE_WIDTHS = [320, 375, 430, 520, 640, 728, 860, 1000, 1144] as const;
