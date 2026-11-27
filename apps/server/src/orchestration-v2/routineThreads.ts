@@ -2,7 +2,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { CONTEXT_COMPACT_MESSAGE_PREFIX, CONTEXT_RETRY_MESSAGE_PREFIX } from "./contextRecoveryIds.ts";
+import {
+  CONTEXT_COMPACT_MESSAGE_PREFIX,
+  CONTEXT_RETRY_MESSAGE_PREFIX,
+} from "./contextRecoveryIds.ts";
 import {
   LIMIT_FALLBACK_MESSAGE_PREFIX,
   PROVIDER_FALLBACK_MESSAGE_PREFIX,

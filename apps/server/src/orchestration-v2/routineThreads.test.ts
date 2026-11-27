@@ -66,7 +66,10 @@ it("finds the run an automatic continuation continues, and nothing for other mes
 });
 
 it("traces a routine id, follows continuations and keeps untraceable server turns off", () => {
-  assert.equal(messageOrigin({ scheduledTaskId: "task-1", creationSource: "server" }, null), "routine");
+  assert.equal(
+    messageOrigin({ scheduledTaskId: "task-1", creationSource: "server" }, null),
+    "routine",
+  );
   assert.equal(messageOrigin({ creationSource: "server" }, "r1"), "follow");
   assert.equal(messageOrigin({ creationSource: "web" }, null), "person");
   assert.equal(messageOrigin({ creationSource: "mcp" }, null), "person");
