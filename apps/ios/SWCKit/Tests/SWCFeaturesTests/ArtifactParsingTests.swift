@@ -44,6 +44,28 @@ struct ArtifactParsingTests {
     #expect(!table.truncated)
   }
 
+  @Test("A byte-order mark is not part of the first header")
+  func bom() {
+    #expect(CSVTable.parse("\u{FEFF}Name,Count\nA,1\n").header == ["Name", "Count"])
+  }
+
+  @Test("The diagram scrub follows the web app's forbid list")
+  func scrubList() {
+    for name in ["script", "foreignObject", "animate", "image", "src"] {
+      #expect(MermaidConfig.bootstrap.contains(name))
+    }
+    #expect(!MermaidConfig.bootstrap.contains("data:image/"))
+  }
+
+  @Test("A huge drawing keeps at most the point budget")
+  func whiteboardPointBudget() throws {
+    let points = (0..<(ExcalidrawScene.maxPoints + 10)).map { "[\($0),0]" }.joined(separator: ",")
+    let json = #"{"type":"excalidraw","elements":[{"type":"freedraw","x":0,"y":0,"width":1,"height":1,"points":["# + points + #"]},{"type":"rectangle","x":0,"y":0,"width":10,"height":10}]}"#
+    let scene = try #require(ExcalidrawScene.decode(json))
+    #expect(scene.elements.map(\.kind) == [.rectangle])
+    #expect(scene.bounds.width >= 10)
+  }
+
   @Test("TSV, ragged rows and CRLF line ends")
   func tsv() {
     let table = CSVTable.parse("a\tb\r\n1\r\n2\t3\t4\r\n", separator: "\t")

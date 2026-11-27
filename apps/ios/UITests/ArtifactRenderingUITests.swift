@@ -21,6 +21,9 @@ final class ArtifactRenderingUITests: SWCUITestCase {
     revealOlder(flow)
     settle(2)
     capture("chat-mermaid")
+    // The fixture's flowchart finishes as a picture, not the failure note.
+    XCTAssertTrue(app.buttons["Diagram"].firstMatch.waitForExistence(timeout: 15), "The flowchart did not render")
+    XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Couldn't draw this diagram")).firstMatch.exists, "A diagram failed to render")
 
     open("iPhone rendering review", name: "report", scrolls: 3) { self.openLinkedNotes() }
     open("release-dashboard.html", name: "html")

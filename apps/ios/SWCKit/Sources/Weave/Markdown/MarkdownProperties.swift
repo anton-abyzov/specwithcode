@@ -74,7 +74,7 @@ public struct MarkdownPropertiesView: View {
 
   /// One long token with no spaces, such as `thread:delegated-task:…` or a SHA.
   static func isIdentifier(_ text: String) -> Bool {
-    text.count >= 20 && !text.contains(" ")
+    text.count >= 20 && !text.contains(" ") && !text.contains("](")
   }
 
   static func plain(_ value: MarkdownProperty.Value) -> String {

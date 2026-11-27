@@ -368,10 +368,17 @@ describe("saved report frontmatter", () => {
   });
 
   it("links a thread with no title and leaves a sentence called thread alone", () => {
-    const [bare] = frontmatterProperties([{ label: "Thread", value: "thread-abc123" }]);
-    expect(bare!.markdown).toMatch(/^\[Open thread\]\(studio:\/\/thread\/thread-abc123\)$/);
-    const [prose] = frontmatterProperties([{ label: "Thread", value: "the review one" }]);
-    expect(prose!.markdown).toBe("the review one");
+    const uuid = "0f9c2b9e-5a51-4c55-9d1e-7b2f1d1e2a3b";
+    const [bare] = frontmatterProperties([{ label: "Thread", value: uuid }]);
+    expect(bare!.markdown).toBe(`[Open thread](studio://thread/${uuid})`);
+    for (const value of [
+      "the review one",
+      "general-discussion",
+      "1498-iphone-rendering",
+      "https://example.com/t/1",
+    ]) {
+      expect(frontmatterProperties([{ label: "Thread", value }])[0]!.markdown).toBe(value);
+    }
   });
 
   it("keeps values that only look like dates", () => {

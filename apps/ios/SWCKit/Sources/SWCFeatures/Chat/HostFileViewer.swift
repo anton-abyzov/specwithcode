@@ -194,7 +194,7 @@ struct HostFileViewer: View {
     if url.isFileURL {
       guard isFixtureFile(url) else { throw HostFileError.missing }
       let data = try Data(contentsOf: url)
-      return String(decoding: data, as: UTF8.self)
+      return String(decoding: data.prefix(limit), as: UTF8.self)
     }
     let session = URLSession(configuration: .ephemeral)
     defer { session.finishTasksAndInvalidate() }
@@ -213,8 +213,8 @@ struct HostFileViewer: View {
 
   /// A file the sample data wrote to its temporary folder; no other local file is read.
   static func isFixtureFile(_ url: URL) -> Bool {
-    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("swc-fixture-artifacts").standardizedFileURL.path
-    let path = url.standardizedFileURL.path
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("swc-fixture-artifacts").resolvingSymlinksInPath().path
+    let path = url.resolvingSymlinksInPath().path
     return path.hasPrefix(folder + "/") && !path.split(separator: "/").contains("..")
   }
 

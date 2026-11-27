@@ -207,8 +207,13 @@ export interface FrontmatterPropertyOptions {
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
-/** A thread ID is one token: no spaces, no Markdown. */
-const THREAD_ID = /^[^\s[\]()<>`*]{6,}$/;
+/**
+ * A thread ID this app mints: `thread:…` (delegated and fleet threads) or one
+ * holding a UUID (`project-coordinator-<uuid>`, a bare UUID). A slug, a URL or
+ * a forum thread's name stays text.
+ */
+const THREAD_ID_TOKEN = /^[^\s[\]()<>`*/]{6,}$/;
+const THREAD_ID_SHAPE = /^thread:|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 /**
  * An ISO date or timestamp as a person reads it, `November 24, 2026` or
@@ -262,7 +267,8 @@ export function frontmatterProperties(
     (field) =>
       field.label === "Thread" &&
       typeof field.value === "string" &&
-      THREAD_ID.test(field.value.trim()),
+      THREAD_ID_TOKEN.test(field.value.trim()) &&
+      THREAD_ID_SHAPE.test(field.value.trim()),
   );
   const titleField = threadField
     ? fields.find((field) => field.label === "Thread title" && typeof field.value === "string")

@@ -156,8 +156,15 @@ struct MarkdownDocumentTests {
     #expect(MarkdownDocument.readableDate("2026-11-24 release") == "2026-11-24 release")
     let prose = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text("the review one"))])
     #expect(prose == [MarkdownProperty(label: "Thread", value: .text("the review one"))])
-    let bare = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text("thread-abc123"))])
-    #expect(bare == [MarkdownProperty(label: "Thread", value: .text("[Open thread](studio://thread/thread-abc123)"))])
+    let uuid = "0f9c2b9e-5a51-4c55-9d1e-7b2f1d1e2a3b"
+    let bare = MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text(uuid))])
+    #expect(bare == [MarkdownProperty(label: "Thread", value: .text("[Open thread](studio://thread/\(uuid))"))])
+    for value in ["general-discussion", "1498-iphone-rendering", "https://example.com/t/1"] {
+      #expect(MarkdownDocument.shaped([MarkdownProperty(label: "Thread", value: .text(value))]) == [MarkdownProperty(label: "Thread", value: .text(value))])
+    }
+    // A link whose title has no spaces is still a link, not an identifier in mono.
+    #expect(!MarkdownPropertiesView.isIdentifier("[ReviewPR877clipboardfix](studio://thread/thread%3Aabc)"))
+    #expect(MarkdownPropertiesView.isIdentifier("afa860030f4789c75f5319252ee4aac1d4f2357a"))
   }
 
   @Test("A report's relative links open the files beside it")

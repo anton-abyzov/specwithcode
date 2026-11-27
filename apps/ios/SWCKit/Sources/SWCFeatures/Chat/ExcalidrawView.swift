@@ -31,9 +31,16 @@ nonisolated struct ExcalidrawScene: Equatable, Sendable {
 
   var elements: [Element]
   var background: String?
+  /// The box around every element, in scene units, worked out once.
+  let bounds: CGRect
 
-  /// The box around every element, in scene units.
-  var bounds: CGRect {
+  init(elements: [Element], background: String?) {
+    self.elements = elements
+    self.background = background
+    self.bounds = Self.bounds(of: elements)
+  }
+
+  private static func bounds(of elements: [Element]) -> CGRect {
     elements.reduce(CGRect.null) { box, element in
       var frame = CGRect(x: element.x, y: element.y, width: element.width, height: element.height).standardized
       if !element.points.isEmpty {
@@ -47,18 +54,25 @@ nonisolated struct ExcalidrawScene: Equatable, Sendable {
 
   /// At most this many elements are drawn, so a huge board cannot stall a frame.
   static let maxElements = 5_000
+  /// And at most this many points across all lines and drawings, the same
+  /// bound for work that the element cap gives for shapes.
+  static let maxPoints = 100_000
 
   static func decode(_ text: String) -> ExcalidrawScene? {
     guard let data = text.data(using: .utf8),
           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let raw = root["elements"] as? [[String: Any]] else { return nil }
+    var pointBudget = maxPoints
     let elements: [Element] = raw.prefix(maxElements).compactMap { item in
       guard item["isDeleted"] as? Bool != true,
             let type = item["type"] as? String, let kind = Element.Kind(rawValue: type) else { return nil }
       func number(_ key: String, _ fallback: Double = 0) -> Double {
         (item[key] as? NSNumber)?.doubleValue ?? fallback
       }
-      let points = (item["points"] as? [[Any]] ?? []).compactMap { pair -> CGPoint? in
+      let rawPoints = item["points"] as? [[Any]] ?? []
+      guard rawPoints.count <= pointBudget else { return nil }
+      pointBudget -= rawPoints.count
+      let points = rawPoints.compactMap { pair -> CGPoint? in
         guard pair.count >= 2, let x = (pair[0] as? NSNumber)?.doubleValue, let y = (pair[1] as? NSNumber)?.doubleValue else { return nil }
         return CGPoint(x: x, y: y)
       }

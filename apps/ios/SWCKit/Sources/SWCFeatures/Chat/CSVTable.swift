@@ -18,7 +18,7 @@ nonisolated struct CSVTable: Equatable, Sendable {
     var field = ""
     var quoted = false
     var truncated = false
-    var iterator = text.makeIterator()
+    var iterator = (text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text).makeIterator()
     var pending: Character?
 
     func endField() {

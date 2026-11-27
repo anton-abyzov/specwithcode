@@ -85,18 +85,24 @@ public nonisolated enum MermaidConfig {
       const doc = new DOMParser().parseFromString(result.svg, "image/svg+xml");
       const svg = doc.documentElement;
       if (!svg || svg.nodeName.toLowerCase() !== "svg") throw new Error("Mermaid returned no picture.");
-      svg.querySelectorAll("script").forEach(function (node) { node.remove(); });
+      // The web app's DOMPurify settings, by hand: no scripts, links, images,
+      // HTML islands or animation; no handlers, sources or outside references;
+      // CSS keeps only in-document url(#…) references.
+      svg.querySelectorAll("script, a, image, img, foreignObject, animate, set, animateMotion, animateTransform, iframe, object, embed").forEach(function (node) { node.remove(); });
+      const outside = /url\(\s*(?!['"]?#)[^)]*\)/gi;
+      svg.querySelectorAll("style").forEach(function (node) { node.textContent = String(node.textContent).replace(outside, "none").replace(/@import[^;]*;?/gi, ""); });
       svg.querySelectorAll("*").forEach(function (node) {
         Array.from(node.attributes).forEach(function (attribute) {
           const name = attribute.name.toLowerCase();
           const value = String(attribute.value).trim().toLowerCase();
-          if (name.indexOf("on") === 0) node.removeAttribute(attribute.name);
-          if ((name === "href" || name === "xlink:href") && value.indexOf("#") !== 0 && value.indexOf("data:image/") !== 0) node.removeAttribute(attribute.name);
+          if (name.indexOf("on") === 0 || name === "src") { node.removeAttribute(attribute.name); return; }
+          if ((name === "href" || name === "xlink:href") && value.indexOf("#") !== 0) { node.removeAttribute(attribute.name); return; }
+          if (name === "style" || value.indexOf("url(") !== -1) node.setAttribute(attribute.name, String(attribute.value).replace(outside, "none"));
         });
       });
       let width = 0, height = 0;
       const box = (svg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
-      if (box.length === 4 && box[2] > 0 && box[3] > 0) { width = box[2]; height = box[3]; }
+      if (box.length === 4 && isFinite(box[2]) && isFinite(box[3]) && box[2] > 0 && box[3] > 0) { width = box[2]; height = box[3]; }
       if (!width || !height) {
         width = parseFloat(svg.getAttribute("width")) || 600;
         height = parseFloat(svg.getAttribute("height")) || 400;
@@ -166,6 +172,11 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
   private var loaded: [CheckedContinuation<Bool, Never>] = []
   private var isLoaded = false
   private var loadFailed = false
+  /// Keys whose last try failed for a reason other than the diagram itself
+  /// (timeout, a crashed or unstartable page); their result is not kept.
+  private var transient: Set<Key> = []
+  /// The diagram the page is laying out now.
+  private var current: Key?
 
   /// A finished result, without waiting.
   public func cached(_ source: String, dark: Bool) -> MermaidOutcome? {
@@ -186,7 +197,7 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
     tail = task
     let outcome = await task.value
     inflight[key] = nil
-    store(outcome, for: key)
+    if transient.remove(key) == nil { store(outcome, for: key) }
     return outcome
   }
 
@@ -198,7 +209,12 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
 
   private func perform(_ key: Key) async -> MermaidOutcome {
     guard key.source.count <= MermaidConfig.maxSource else { return .failure("This diagram is too long to draw here.") }
-    guard await ensureLoaded(), let webView else { return .failure("The diagram renderer couldn't start.") }
+    guard await ensureLoaded(), let webView else {
+      transient.insert(key)
+      // A page that failed to start once may start next time.
+      loadFailed = false
+      return .failure("The diagram renderer couldn't start.")
+    }
     return await evaluate(key, on: webView)
   }
 
@@ -220,6 +236,7 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
   private func evaluate(_ key: Key, on webView: WKWebView) async -> MermaidOutcome {
     await withCheckedContinuation { (continuation: CheckedContinuation<MermaidOutcome, Never>) in
       let once = Once()
+      current = key
       webView.callAsyncJavaScript(
         "return await window.__swcRender(source, dark, vars, secure);",
         arguments: [
@@ -240,6 +257,7 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
         guard !once.done else { return }
         once.done = true
         self?.recycle()
+        self?.transient.insert(key)
         continuation.resume(returning: .failure(Self.message(Timeout())))
       }
     }
@@ -253,18 +271,23 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
     case let .success(value):
       guard let result = value as? [String: Any], let svg = result["svg"] as? String,
             let width = (result["width"] as? NSNumber)?.doubleValue, let height = (result["height"] as? NSNumber)?.doubleValue,
-            width > 0, height > 0 else { return .failure("Mermaid returned no picture.") }
-      return .diagram(MermaidDiagram(svg: svg, size: CGSize(width: width, height: height)))
+            width.isFinite, height.isFinite, width > 0, height > 0 else { return .failure("Mermaid returned no picture.") }
+      let limit = 100_000.0
+      return .diagram(MermaidDiagram(svg: svg, size: CGSize(width: min(width, limit), height: min(height, limit))))
     }
   }
 
-  /// Drops the page; the next diagram loads a new one.
+  /// Drops the page; the next diagram loads a new one. Anyone still waiting
+  /// for this page to load is told it failed, so the queue moves on.
   private func recycle() {
     webView?.stopLoading()
     webView?.navigationDelegate = nil
     webView = nil
     isLoaded = false
     loadFailed = false
+    let waiting = loaded
+    loaded = []
+    waiting.forEach { $0.resume(returning: false) }
   }
 
   /// Mermaid's own error text, first line, without WebKit's wrapping.
@@ -337,7 +360,8 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
   }
 
   public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-    // Start over on the next diagram.
+    // Start over on the next diagram; the one that was drawing may try again.
+    if let current { transient.insert(current) }
     recycle()
   }
 }

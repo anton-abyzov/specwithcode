@@ -179,10 +179,13 @@ public nonisolated struct MarkdownDocument: Hashable, Sendable {
     return shaped
   }
 
-  /// One token, no spaces or Markdown: `thread:delegated-task:…` or a UUID.
+  /// An ID this app mints: `thread:…` (delegated and fleet threads) or one
+  /// holding a UUID (`project-coordinator-<uuid>`, a bare UUID). A slug, a
+  /// URL or a forum thread's name stays text.
   static func isThreadId(_ text: String) -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespaces)
-    return trimmed.count >= 6 && trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " \t[]()<>`*")) == nil
+    guard trimmed.count >= 6, trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " \t[]()<>`*/")) == nil else { return false }
+    return trimmed.hasPrefix("thread:") || trimmed.range(of: #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#, options: .regularExpression) != nil
   }
 
   /// `[title](studio://thread/<id>)` with the ID encoded the way the desktop's
