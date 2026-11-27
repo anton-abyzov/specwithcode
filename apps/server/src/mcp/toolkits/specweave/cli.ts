@@ -46,6 +46,11 @@ export interface SpecweaveRunInput {
   readonly specweaveRoot: string;
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Input;
+  /**
+   * A ledger write's identity (1497): the caller's own SpecWeave variables
+   * (identity.ts), in place of the fixed view agent the reads use.
+   */
+  readonly writeAs?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -156,7 +161,9 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
         NO_COLOR: "1",
         FORCE_COLOR: "0",
         CI: "1",
-        SPECWEAVE_AGENT: SPECWEAVE_VIEW_AGENT,
+        // Reads see every claim as someone else's; a write is the caller's own,
+        // so SPECWEAVE_AGENT stays whatever the agents inherit from the server.
+        ...(input.writeAs ?? { SPECWEAVE_AGENT: SPECWEAVE_VIEW_AGENT }),
         // On Windows the npm `.cmd` shim runs through cmd.exe in the worktree; this keeps a
         // bare `node` from resolving to an executable in that folder.
         NoDefaultCurrentDirectoryInExePath: "1",

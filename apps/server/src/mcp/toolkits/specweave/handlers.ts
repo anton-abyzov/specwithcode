@@ -6,6 +6,7 @@ import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementSer
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { runSpecweave } from "./cli.ts";
+import { runLedgerCall } from "./ledgerHandlers.ts";
 import { SpecweaveToolkit } from "./tools.ts";
 import { resolveCallerWorkspace, type CallerWorkspaceInput } from "./workspace.ts";
 
@@ -118,5 +119,16 @@ export const layer = Access.toLayer(SpecweaveToolkit, {
         data: { ...nextData, liveClaims: list.ok ? liveClaimsOf(list.data) : null },
       };
     }),
+  ),
+  // Ledger writes (1497): only the caller's own increment, in its own worktree,
+  // while its run is live; read-only clients and advisor threads are refused.
+  specweave_task_claim: Access.actsAsCaller((input) =>
+    runLedgerCall({ action: "claim", ...input }),
+  ),
+  specweave_task_release: Access.actsAsCaller((input) =>
+    runLedgerCall({ action: "release", ...input }),
+  ),
+  specweave_task_block: Access.actsAsCaller((input) =>
+    runLedgerCall({ action: "block", ...input }),
   ),
 });

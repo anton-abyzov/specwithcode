@@ -78,6 +78,22 @@ describe("STUDIO_READ_ONLY_TOOLS", () => {
     assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("specweave_pickup"));
   });
 
+  it("keeps the SpecWeave ledger writes behind approval, and has no done, verify or pickup tool (1497)", () => {
+    const names = Object.values(SpecweaveToolkit.tools).map((tool) => tool.name);
+    assert.deepEqual(names.toSorted(), [
+      "specweave_next_task",
+      "specweave_task_block",
+      "specweave_task_claim",
+      "specweave_task_release",
+      "specweave_task_status",
+    ]);
+    for (const name of ["specweave_task_claim", "specweave_task_release", "specweave_task_block"]) {
+      assert.isFalse(STUDIO_READ_ONLY_TOOLS.has(name), name);
+      const tool = Object.values(SpecweaveToolkit.tools).find((entry) => entry.name === name)!;
+      assert.isFalse(Context.get(tool.annotations, Tool.Readonly), name);
+    }
+  });
+
   it("keeps other threads' transcripts behind approval", () => {
     for (const name of ["studio_thread_read", ...THREAD_CONTENT_TOOLS])
       assert.isFalse(STUDIO_READ_ONLY_TOOLS.has(name), name);
