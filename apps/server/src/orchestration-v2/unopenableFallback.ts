@@ -336,6 +336,7 @@ export function unopenableFallbackCommand(
     currentModel: thread.modelSelection.model,
     currentOptions: thread.modelSelection.options,
     rule,
+    rowUltracode: true,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
     anyReady: true,

@@ -109,6 +109,7 @@ const fallBack = (opusRow: ModelSelection) =>
     belowPercent: 100,
     anyReady: true,
     lane: "routine",
+    rowUltracode: true,
   });
 
 describe("falling back onto a track row", () => {
@@ -143,6 +144,7 @@ describe("falling back onto a track row", () => {
         belowPercent: 100,
         anyReady: true,
         lane: "routine",
+        rowUltracode: true,
       });
     const target = move([medium]);
     expect(target?.instanceId).toBe("claudeAgent_work");
@@ -150,5 +152,23 @@ describe("falling back onto a track row", () => {
     // A thread that turned it off keeps it off.
     const off = { id: "ultracode", value: false };
     expect(move([medium, off])?.options).toContainEqual(off);
+  });
+
+  it("adds nothing for a caller the rows do not apply to (a routine, a coordinator turn)", () => {
+    const spent = provider("claudeAgent", "claudeAgent", [OPUS], 100, claudeOptions);
+    const second = provider("claudeAgent_work", "claudeAgent", [OPUS], 10, claudeOptions);
+    const target = resolveProviderFallback({
+      providers: [spent, second, codex],
+      currentInstanceId: id("claudeAgent"),
+      currentModel: OPUS,
+      currentOptions: [medium],
+      rule: rule({ instanceId: id("claudeAgent"), model: OPUS, options: [medium, ultracodeOn] }),
+      nowMs: now,
+      belowPercent: 100,
+      anyReady: true,
+      lane: "routine",
+    });
+    expect(target?.instanceId).toBe("claudeAgent_work");
+    expect(target?.options).toEqual([medium]);
   });
 });

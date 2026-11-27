@@ -840,7 +840,9 @@ export function resolveProviderFallback(
   if (target === null) return null;
   const moved = withMovedEffort(target, input);
   // A move onto a Daily or Complex row takes its Ultracode, unless the thread named it (1506).
-  return input.rule.threadModelMode === "tracks" && input.review !== true
+  return input.rowUltracode === true &&
+    input.rule.threadModelMode === "tracks" &&
+    input.review !== true
     ? withTrackRowUltracode(
         moved,
         input.rule.modelLanes,
@@ -938,6 +940,11 @@ function resolveProviderFallbackPass(input: {
   /** Internal: leave out providers that report no usage unless the user named them. */
   readonly verifiedOnly?: boolean;
   readonly allowLastResort?: boolean;
+  /**
+   * A thread or worker moving onto a Daily or Complex row takes the row's
+   * Ultracode (1506). Off for a routine's own thread and a coordinator turn.
+   */
+  readonly rowUltracode?: boolean;
 }): ModelSelection | null {
   const verifiedOnly = input.verifiedOnly === true;
   const reviewOnly = input.review === true ? () => false : reviewOnlyModel(input.rule);
@@ -1472,6 +1479,7 @@ export function resolveWorkerLaunchSelection(input: {
     anyReady: true,
     limitedInstanceIds: limited,
     ...(held === undefined ? {} : { excludedSelections: held }),
+    rowUltracode: true,
   });
   if (target === null) return { selection: preferred, reason: "no-room" };
   const targetProvider = input.providers.find(
