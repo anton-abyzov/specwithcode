@@ -41,6 +41,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { runSpecweave, specweaveRunsWithoutShell, type SpecweaveRunResult } from "./cli.ts";
 import { ledgerWriteEnvironment, specweaveToolForInstance } from "./identity.ts";
 import { decideOwnership, recheckTarget, type LedgerTarget } from "./ownership.ts";
+import { sameReason, writtenReason } from "./reasonText.ts";
 
 const WRITE_TIMEOUT = Duration.minutes(1);
 /** Sibling threads whose binding files are read to name a holder; more is not a real checkout. */
@@ -104,30 +105,6 @@ export type LedgerPlan =
     };
 
 const HELD = new Set(["claimed", "blocked"]);
-
-/** A block reason as it is written: one line, single spaces. */
-export const normalizeReason = (reason: string | undefined) =>
-  (reason ?? "").replace(/\s+/gu, " ").trim();
-
-/**
- * A block reason's spacing-free form. SpecWeave fixes a reason's spacing as it
- * writes it (3.2 collapses runs of whitespace and adds a space after `,` and
- * `;`), but never inside backtick code, so whitespace is dropped outside code
- * spans and only collapsed inside them.
- */
-const reasonKey = (reason: string | undefined) =>
-  (reason ?? "")
-    .split(/(`[^`]*`)/u)
-    .map((part) =>
-      part.startsWith("`") && part.endsWith("`") && part.length > 1
-        ? part.replace(/\s+/gu, " ")
-        : part.replace(/\s+/gu, ""),
-    )
-    .join("");
-
-/** Whether two block reasons are the same reason once SpecWeave's spacing fixes are set aside. */
-export const sameReason = (left: string | undefined, right: string | undefined) =>
-  reasonKey(left) === reasonKey(right);
 
 const describeHold = (task: FoldedTask) =>
   `${task.status} by ${task.by ?? "someone"}${task.since === undefined ? "" : ` since ${task.since}`}${task.status === "blocked" && task.note ? ` (${task.note})` : ""}`;
@@ -215,7 +192,7 @@ export function ledgerWriteArgs(input: {
       return [...base, "--no-commit", "--json"];
     case "block":
       // `=` keeps a reason that starts with a dash a value, not a flag.
-      return [...base, `--reason=${normalizeReason(input.reason)}`, "--no-commit", "--json"];
+      return [...base, `--reason=${writtenReason(input.reason)}`, "--no-commit", "--json"];
   }
 }
 
@@ -470,13 +447,14 @@ export const runLedgerCall = Effect.fn("specweaveTools.ledger")(function* (input
     .read({ projectId: caller.shell.projectId, threadIds: [caller.threadId] })
     .pipe(Effect.orElseSucceed(() => null));
   const bound = snapshot?.threads.find((entry) => entry.threadId === caller.threadId);
-  const owned = yield* Effect.promise(() =>
+  const owned = yield* Effect.promise(async () =>
     decideOwnership({
       worktreePath: caller.shell.worktreePath,
       branch: caller.shell.branch,
       folder: input.folder,
       requested: input.increment,
       bound,
+      recorded: await readBinding(caller.threadId, undefined),
     }),
   );
   if (!owned.ok) return yield* failure(owned.code, owned.message);

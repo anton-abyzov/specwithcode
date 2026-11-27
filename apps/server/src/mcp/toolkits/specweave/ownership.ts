@@ -210,6 +210,12 @@ export async function decideOwnership(input: {
   readonly folder?: string | undefined;
   readonly requested: string;
   readonly bound: ThreadIncrementProgress | undefined;
+  /**
+   * SpecWeave's binding file for this thread, as read: where the thread's own
+   * last write of an increment went. The progress reader drops it once its
+   * folder is gone and may then pick another copy; a write never does.
+   */
+  readonly recorded?: { readonly root?: unknown; readonly incrementId?: unknown } | null;
 }): Promise<Ownership> {
   const where = await resolveCallerWorkspace({
     worktreePath: input.worktreePath,
@@ -287,6 +293,24 @@ export async function decideOwnership(input: {
         : await resolveCallerWorkspace({ worktreePath: input.worktreePath });
     if (!home.ok) return denied(home.message);
     specweaveRoot = home.specweaveRoot;
+  }
+  const recorded = input.recorded;
+  if (
+    recorded !== undefined &&
+    recorded !== null &&
+    typeof recorded.root === "string" &&
+    recorded.incrementId === bound.incrementId
+  ) {
+    const recordedRoot = await realPath(recorded.root);
+    const inside =
+      isInside(where.workspace, recorded.root) ||
+      (input.worktreePath !== null && isInside(input.worktreePath, recorded.root)) ||
+      (recordedRoot !== null && isInside(where.workspace, recordedRoot));
+    if (inside && recordedRoot !== specweaveRoot) {
+      return denied(
+        `This thread last wrote increment ${bound.incrementId} in ${recorded.root}, and ${recordedRoot === null ? "that copy is gone" : `that is not the copy in ${specweaveRoot}`}. SpecWeave write tools never switch to another copy of the increment; restore that copy, or use \`specweave task claim|release|block\` in your shell.`,
+      );
+    }
   }
   if (input.folder !== undefined && where.specweaveRoot !== specweaveRoot) {
     return denied(

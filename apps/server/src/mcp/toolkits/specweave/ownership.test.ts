@@ -387,3 +387,51 @@ describe("ledgerPathsInside (1497)", () => {
     },
   );
 });
+
+describe("decideOwnership: the thread's own record wins (1497 review round 4)", () => {
+  it("refuses the root copy when the thread last wrote a nested copy that is gone", async () => {
+    const { root, worktree, increment } = scratch();
+    const nested = NodePath.join(worktree, "packages", "app");
+    const nestedIncrement = NodePath.join(nested, ".specweave", "increments", INCREMENT);
+    NodeFS.mkdirSync(nestedIncrement, { recursive: true });
+    const recorded = { root: nested, incrementId: INCREMENT };
+    // The progress reader fell back to the root copy once the nested folder went.
+    NodeFS.rmSync(NodePath.join(nested, ".specweave"), { recursive: true });
+    const gone = await decideOwnership({
+      worktreePath: worktree,
+      requested: "1497",
+      bound: bound(increment, "manual"),
+      recorded,
+    });
+    expect(gone).toMatchObject({ ok: false, code: "capability_denied" });
+    expect(!gone.ok && gone.message).toContain("that copy is gone");
+    // A nested copy that still exists but is not the chosen one is refused too.
+    NodeFS.mkdirSync(nestedIncrement, { recursive: true });
+    const other = await decideOwnership({
+      worktreePath: worktree,
+      requested: "1497",
+      bound: bound(increment, "manual"),
+      recorded,
+    });
+    expect(!other.ok && other.message).toContain("is not the copy in");
+    // The record of the chosen copy, a record of another increment, and one
+    // outside the worktree (the shared project folder) change nothing.
+    for (const fine of [
+      { root: worktree, incrementId: INCREMENT },
+      { root: nested, incrementId: "1498-other" },
+      { root: NodePath.join(root, "project"), incrementId: INCREMENT },
+      null,
+    ]) {
+      expect(
+        (
+          await decideOwnership({
+            worktreePath: worktree,
+            requested: "1497",
+            bound: bound(increment, "manual"),
+            recorded: fine,
+          })
+        ).ok,
+      ).toBe(true);
+    }
+  });
+});

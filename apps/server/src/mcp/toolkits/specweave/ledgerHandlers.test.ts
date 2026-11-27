@@ -28,12 +28,12 @@ import {
   foldedFromList,
   ledgerWriteArgs,
   planLedgerCall,
-  sameReason,
   runLedgerCall,
   holdOwner,
   recordWrittenHold,
   type FoldedTask,
 } from "./ledgerHandlers.ts";
+import { sameReason, writtenReason } from "./reasonText.ts";
 
 const isWindows = HostProcessPlatform.defaultValue() === "win32";
 const INCREMENT = "1497-ledger-tools";
@@ -691,14 +691,24 @@ describe("commandRunsWithoutShell (1497 review)", () => {
 
 describe("sameReason (1497 review)", () => {
   it("treats SpecWeave's spacing fixes as the same reason, and other words as another", () => {
-    expect(sameReason("Waiting on QA,then rerun", "Waiting on QA, then rerun")).toBe(true);
-    expect(sameReason("valid;113/148", "valid; 113/148")).toBe(true);
-    expect(sameReason("  waiting\ton review ", "waiting on review")).toBe(true);
+    expect(sameReason("Waiting on QA, then rerun", "Waiting on QA,then rerun")).toBe(true);
+    expect(sameReason("valid; 113/148", "valid;113/148")).toBe(true);
+    expect(sameReason("waiting on review", "  waiting\ton  review ")).toBe(true);
     expect(sameReason("waiting on review", "waiting on QA")).toBe(false);
     expect(sameReason(undefined, "waiting on QA")).toBe(false);
-    // Spaces inside backtick code are part of the reason.
+    // A shell block on SpecWeave 3.1 is stored as typed, trimmed.
+    expect(sameReason("Waiting on QA,then rerun", " Waiting on QA,then rerun")).toBe(true);
+  });
+
+  it("keeps backtick code, URLs and numbers as written", () => {
     expect(sameReason("Waiting on `AB 12`", "Waiting on `AB12`")).toBe(false);
-    expect(sameReason("Waiting on `AB  12`", "Waiting on `AB 12`")).toBe(true);
+    expect(sameReason("Waiting on `AB  12`", "Waiting on `AB 12`")).toBe(false);
+    expect(sameReason("Waiting on ``a b``", "Waiting on ``ab``")).toBe(false);
+    expect(sameReason("Waiting on ``ab``", "Waiting on ``ab``")).toBe(true);
+    expect(writtenReason("see `a,b` and https://x.dev/q?a=1,2;then")).toBe(
+      "see `a,b` and https://x.dev/q?a=1,2;then",
+    );
+    expect(writtenReason("1,000 rows;next")).toBe("1,000 rows; next");
   });
 });
 
