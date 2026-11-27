@@ -94,7 +94,9 @@ async function placeBelow(
   path: string,
 ): Promise<string | null> {
   const entries = (
-    await Promise.all([workspace, registered].map((own) => (own === null ? null : lstatOrNull(own))))
+    await Promise.all(
+      [workspace, registered].map((own) => (own === null ? null : lstatOrNull(own))),
+    )
   ).filter((stat) => stat !== null);
   const resolved = NodePath.resolve(path);
   const { root } = NodePath.parse(resolved);
