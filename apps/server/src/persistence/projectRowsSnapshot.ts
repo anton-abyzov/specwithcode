@@ -145,7 +145,10 @@ export async function snapshotProjectRows(
           // a JS string would cut it at an embedded NUL.
           const insert = copy.prepare(
             `INSERT INTO ${quoteIdentifier(table.name)} (${names}) VALUES (${table.columns
-              .map((_, index) => `CASE ?${2 * index + 2} WHEN 'text' THEN CAST(?${2 * index + 1} AS TEXT) ELSE ?${2 * index + 1} END`)
+              .map(
+                (_, index) =>
+                  `CASE ?${2 * index + 2} WHEN 'text' THEN CAST(?${2 * index + 1} AS TEXT) ELSE ?${2 * index + 1} END`,
+              )
               .join(", ")})`,
           );
           const select = source.prepare(
