@@ -77,9 +77,12 @@ const moved = (thread: typeof idle | typeof stopped, noRowUltracode: boolean) =>
     noRowUltracode,
   });
   if (step?.type !== "switch") throw new Error(`expected a switch, got ${step?.type}`);
-  const command = step.command as { readonly modelSelection: typeof idle.modelSelection };
-  expect(command.modelSelection.instanceId).toBe(work);
-  return command.modelSelection.options ?? [];
+  // An idle move sets the model; a stopped thread's continuation carries it.
+  const command = step.command;
+  const selection = "modelSelection" in command ? command.modelSelection : undefined;
+  if (!selection) throw new Error(`expected a model, got ${command.type}`);
+  expect(selection.instanceId).toBe(work);
+  return selection.options ?? [];
 };
 
 describe("a move onto the same model on another account (1506)", () => {

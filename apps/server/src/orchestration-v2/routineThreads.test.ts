@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 
 import * as Sqlite from "../persistence/Sqlite.ts";
 import { bindOwnThread } from "../scheduledTasks/ScheduledTaskOwnThread.ts";
-import { harness, taskInput } from "../scheduledTasks/ScheduledTaskService.coordinatorGate.testkit.ts";
+import {
+  harness,
+  taskInput,
+} from "../scheduledTasks/ScheduledTaskService.coordinatorGate.testkit.ts";
 import { routineThreadIds, skipsRowUltracode } from "./routineThreads.ts";
 
 it.effect("lists the threads routines run in, their own or a person's (1506)", () =>
@@ -24,7 +27,10 @@ it.effect("lists the threads routines run in, their own or a person's (1506)", (
       threadId: ThreadId.make("routine-thread"),
       updatedAt: "2026-11-27T12:00:00.000Z",
     });
-    assert.deepEqual([...(yield* routineThreadIds)].toSorted(), ["person-thread", "routine-thread"]);
+    assert.deepEqual([...(yield* routineThreadIds)].toSorted(), [
+      "person-thread",
+      "routine-thread",
+    ]);
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
