@@ -6,6 +6,7 @@ import {
   DelegateTaskTool,
   OrchestratorToolkit,
   ScheduleTaskTool,
+  TASK_STATUS_NO_POLLING_SENTENCE,
   ThreadUpdateTool,
 } from "./tools.ts";
 import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
@@ -28,7 +29,7 @@ describe("orchestrator MCP tool guidance", () => {
     // A completion wakes the parent: polling a working child costs model round trips.
     assert.include(
       OrchestratorToolkit.tools.task_status.description ?? "",
-      "A child's completion wakes this thread, so do not call this repeatedly while the child is working: end your turn, or use delegate_task mode=wait when this turn needs the result. Reading the result after that wake is the expected use.",
+      TASK_STATUS_NO_POLLING_SENTENCE,
     );
     // Detailed may include steps, so the fixed tool text must not forbid them.
     assert.notInclude(DelegateTaskTool.description ?? "", "not a replay of steps");

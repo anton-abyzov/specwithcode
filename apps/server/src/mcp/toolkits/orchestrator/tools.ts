@@ -124,9 +124,15 @@ export const AdvisorTool = Tool.make("advisor", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false);
 
+/** A child this thread delegated wakes it on completion; a polling loop only costs model round trips. */
+export const TASK_STATUS_NO_POLLING_SENTENCE =
+  "When a task this thread delegated completes, it wakes this thread, so do not call this in a loop while the child is working: end your turn, or use delegate_task mode=wait when this turn needs the result. A single read mid-turn, or reading the result after that wake, is the expected use.";
+
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Needs an agent running inside a SpecWithCode thread. Read a SpecWithCode-owned delegated task created by this parent thread. A child's completion wakes this thread, so do not call this repeatedly while the child is working: end your turn, or use delegate_task mode=wait when this turn needs the result. Reading the result after that wake is the expected use. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. When you tell the user, relay its outcome in your response style and link the child; do not paste summary verbatim, but quote provider errors, failing tests and security warnings in it exactly. A project coordinator does not relay: the result stays in the worker's thread. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task, and task_cancel stops those turns too. latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery. " +
+    "Needs an agent running inside a SpecWithCode thread. Read a SpecWithCode-owned delegated task created by this parent thread. " +
+    TASK_STATUS_NO_POLLING_SENTENCE +
+    " childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. When you tell the user, relay its outcome in your response style and link the child; do not paste summary verbatim, but quote provider errors, failing tests and security warnings in it exactly. A project coordinator does not relay: the result stays in the worker's thread. hasPendingChildRuns reports later queued or executing turns in the backing child thread, even after the task is terminal; it does not reopen the task, and task_cancel stops those turns too. latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery. " +
     DELEGATED_RESULT_VERIFY_SENTENCE,
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
