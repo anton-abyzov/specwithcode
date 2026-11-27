@@ -76,8 +76,8 @@ const moved = (thread: typeof idle | typeof stopped, noRowUltracode: boolean) =>
     apiCreditsAttempted: true,
     noRowUltracode,
   });
-  expect(step?.type).toBe("switch");
-  const command = step!.command as { readonly modelSelection: typeof idle.modelSelection };
+  if (step?.type !== "switch") throw new Error(`expected a switch, got ${step?.type}`);
+  const command = step.command as { readonly modelSelection: typeof idle.modelSelection };
   expect(command.modelSelection.instanceId).toBe(work);
   return command.modelSelection.options ?? [];
 };

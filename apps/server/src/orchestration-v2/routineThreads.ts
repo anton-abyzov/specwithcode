@@ -25,6 +25,11 @@ export const routineThreadIds = Effect.gen(function* () {
 export const skipsRowUltracode = (
   threadId: string,
   routineThreads: ReadonlySet<string>,
-  project: { readonly workspaceSettings?: { readonly coordinatorThreadId?: string | null } | null },
+  project: {
+    readonly workspaceSettings?:
+      | { readonly coordinatorThreadId?: string | null | undefined }
+      | null
+      | undefined;
+  },
 ): boolean =>
   routineThreads.has(threadId) || threadId === project.workspaceSettings?.coordinatorThreadId;
