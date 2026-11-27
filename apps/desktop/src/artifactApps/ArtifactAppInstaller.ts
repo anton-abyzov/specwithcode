@@ -1164,11 +1164,21 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed((): ReadonlyArray<string> => ["unknown"]),
       );
       if (removing.length > 0) return;
+      // A shim must also still be the signed bundle whose hash is recorded.
+      const recordedHash = Option.isSome(location.shim)
+        ? Option.map(yield* shimRecords.get(installId), (record) => record.cdHash)
+        : Option.none<string>();
+      if (Option.isSome(location.shim) && Option.isNone(recordedHash)) return;
       let left: string | undefined;
       for (const candidate of yield* upgradeLeftovers(location, installId)) {
-        const matches = yield* launcherPathOwned(location, candidate, installId).pipe(
+        const owned = yield* launcherPathOwned(location, candidate, installId).pipe(
           Effect.orElseSucceed(() => false),
         );
+        const matches =
+          owned &&
+          (Option.isNone(recordedHash) ||
+            Option.getOrUndefined(yield* host.readCdHash(candidate).pipe(Effect.option)) ===
+              recordedHash.value);
         if (matches) {
           left = candidate;
           break;

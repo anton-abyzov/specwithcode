@@ -441,6 +441,30 @@ describe("ArtifactAppInstaller with app shims", () => {
     ),
   );
 
+  it.effect("never puts back a shim copy whose executable changed", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const appShim = shimConfig(loader);
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        // Left aside between the renames, then its loader changed: the plist still matches.
+        const aside = path.join(
+          folder,
+          `.Morning dashboard.app.upgrading-${first.app.installId}.${"8".repeat(32)}`,
+        );
+        yield* fileSystem.rename(bundle, aside);
+        h.calls.tampered.add(hostPath(aside));
+        yield* h.installer.upgradeLaunchers;
+        assert.isFalse(yield* fileSystem.exists(bundle));
+        assert.isTrue(yield* fileSystem.exists(aside));
+      }),
+    ),
+  );
+
   it.effect("leaves upgrade copies alone through a linked apps folder", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {
