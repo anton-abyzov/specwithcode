@@ -11,6 +11,7 @@
  */
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
+  AuthAccessWriteScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
   type PersonalShareStatus,
@@ -28,6 +29,11 @@ import {
 } from "../../state/environments";
 import { useEnvironmentScopeAccess, useEnvironmentsScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  allowIncomingStudioFleetWorkers,
+  allowStudioFleetWorkers,
+  readStudioFleetMachines,
+} from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   findMachineAssistant,
@@ -52,6 +58,7 @@ import {
   setPersonalSharedCommand,
   undoPersonalShareCommand,
 } from "../../studio/personalShareCommands";
+import { allowShareMachine } from "../../studio/personalShareAllow";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import {
@@ -108,6 +115,8 @@ export function PercySharedSetting() {
   const saved = usePrimarySettings((settings) => settings.personalAssistantShared);
   const aideEnabled = usePrimarySettings((settings) => settings.aideEnabled);
   const ownAccess = useEnvironmentScopeAccess(ownId, AuthSettingsWriteScope);
+  // Allowing work between machines is access management here, as in Settings > Machines.
+  const canAllow = useEnvironmentScopeAccess(ownId, AuthAccessWriteScope) === "granted";
   const otherIds = useMemo(
     () =>
       environments
@@ -368,6 +377,47 @@ export function PercySharedSetting() {
     await refresh();
   };
 
+  // The grant Settings > Machines makes, from this card; the machine is kept on this list.
+  const allowMachine = async (environmentId: EnvironmentId) => {
+    if (ownId === null) return;
+    setBusy(true);
+    setError(null);
+    const label = labelOf(environmentId);
+    const result = await allowShareMachine(
+      {
+        machines: () => readStudioFleetMachines(ownId),
+        allowThere: async (id, access) =>
+          (await allowStudioFleetWorkers(ownId, { id, access })).workers,
+        allowHere: async (id, access) =>
+          (await allowIncomingStudioFleetWorkers(ownId, id, access)).workers,
+      },
+      environmentId,
+      label,
+    ).catch(
+      (failure: unknown) =>
+        ({
+          ok: false,
+          reason: "refused",
+          message: failure instanceof Error ? failure.message : String(failure),
+        }) as const,
+    );
+    if (!result.ok) {
+      setBusy(false);
+      setError(result.message);
+      return;
+    }
+    const confirmed = saved?.machines ?? [];
+    if (!confirmed.includes(environmentId)) {
+      const here = await setShared({
+        environmentId: ownId,
+        input: { enabled: checked, machines: [...confirmed, environmentId] },
+      });
+      if (here._tag === "Failure") setError(failureText(squashAtomCommandFailure(here)));
+    }
+    setBusy(false);
+    await refresh();
+  };
+
   // Adds a machine to this machine's list only; it links once its own switch is on there.
   const addMachine = async (environmentId: EnvironmentId) => {
     if (ownId === null) return;
@@ -414,6 +464,7 @@ export function PercySharedSetting() {
         labelOf,
         runnerEnvironmentId: personalRoutineRunnerOf(linkedSeats)?.environmentId ?? null,
         canTurnOn: (environmentId) => writable.has(environmentId),
+        canAllow,
         // Only the Connect account's machines: adding one shares Percy's memory with it.
         accountMachines: [...accountIds]
           .filter((environmentId) => environmentId !== ownId)
@@ -515,6 +566,27 @@ export function PercySharedSetting() {
                             >
                               {tx("Turn on")}
                             </Button>
+                          </span>
+                        ) : row.action === "allow" ? (
+                          <span className="grid justify-items-start gap-0.5">
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              disabled={!canChange || busy}
+                              data-share-allow
+                              onClick={() => void allowMachine(row.environmentId as EnvironmentId)}
+                            >
+                              {tx("Allow")}
+                            </Button>
+                            <span className="text-muted-foreground">
+                              {tx(
+                                "Allows work between {here} and {machine}, as Settings > Machines does",
+                                {
+                                  here: ownLabel,
+                                  machine: row.label,
+                                },
+                              )}
+                            </span>
                           </span>
                         ) : row.action === "add" ? (
                           <span className="grid justify-items-start gap-0.5">
