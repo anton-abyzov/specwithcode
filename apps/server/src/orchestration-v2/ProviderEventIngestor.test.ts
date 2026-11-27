@@ -928,7 +928,7 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect.each(["completed", "interrupted", "failed", "cancelled", "control"] as const)(
-    "dismisses only native questions when a provider turn ends with %s",
+    "dismisses only native questions and Claude forms when a provider turn ends with %s",
     (terminal) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
@@ -1125,7 +1125,7 @@ layer("ProviderEventIngestorV2", (it) => {
               entry.event.type === "runtime-request.updated" &&
               entry.event.payload.status === "cancelled",
           ).length,
-          2,
+          3,
         );
         const repeated = yield* ingestor.ingestNormalized(input);
         assert.isFalse(repeated.some((entry) => entry.event.type === "runtime-request.updated"));
