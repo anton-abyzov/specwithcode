@@ -642,9 +642,7 @@ describe("ArtifactAppWindows", () => {
     assert.isTrue(ArtifactAppWindows.isArtifactAppLinuxEntry(entryFor(ID), ID));
     assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry(entryFor(idFor(1)), ID));
     assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry("", ID));
-    assert.isFalse(
-      ArtifactAppWindows.isArtifactAppLinuxEntry(`#!/bin/sh\n${entryFor(ID)}`, ID),
-    );
+    assert.isFalse(ArtifactAppWindows.isArtifactAppLinuxEntry(`#!/bin/sh\n${entryFor(ID)}`, ID));
   });
 
   it.effect("gives a Linux window its launcher's desktop id while the launcher is there", () => {
