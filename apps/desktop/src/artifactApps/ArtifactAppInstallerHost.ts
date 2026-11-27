@@ -138,7 +138,7 @@ export class ArtifactAppInstallerHost extends Context.Service<
      * loader; none elsewhere, where launchers stay scripts and shortcuts.
      */
     readonly appShim: Option.Option<ArtifactAppShimConfig>;
-    /** The signed bundle's code directory hash, as `codesign -d` prints it. */
+    /** The bundle's code hash, once its contents are verified against its signature. */
     readonly readCdHash: (bundlePath: string) => Effect.Effect<string, ArtifactAppHostCommandError>;
     /** Starts an app bundle, as opening it in Finder would. */
     readonly openApp: (bundlePath: string) => Effect.Effect<void>;
@@ -337,15 +337,13 @@ const makeElectronHost = Effect.gen(function* () {
     } satisfies ArtifactAppShimConfig);
   });
 
-  const readCdHash = (bundlePath: string) =>
+  // Runs codesign and keeps what it printed on stderr, where it writes its details.
+  const codesign = (args: ReadonlyArray<string>) =>
     Effect.scoped(
       Effect.gen(function* () {
         const handle = yield* spawner.spawn(
-          ChildProcess.make("/usr/bin/codesign", ["-d", "-vvv", bundlePath], {
-            stdin: "ignore",
-          }),
+          ChildProcess.make("/usr/bin/codesign", args, { stdin: "ignore" }),
         );
-        // codesign prints the signature's details on stderr.
         const [, details, exitCode] = yield* Effect.all(
           [
             handle.stdout.pipe(Stream.runDrain),
@@ -354,16 +352,28 @@ const makeElectronHost = Effect.gen(function* () {
           ],
           { concurrency: "unbounded" },
         ).pipe(Effect.timeout(COMMAND_TIMEOUT));
-        const cdHash = parseCdHash(details);
-        if (Number(exitCode) !== 0 || Option.isNone(cdHash)) {
-          return yield* new ArtifactAppHostCommandError({
-            command: "codesign-read",
-            exitCode: Number(exitCode),
-          });
-        }
-        return cdHash.value;
+        return { details, exitCode: Number(exitCode) };
       }),
-    ).pipe(
+    );
+
+  // `codesign -d` reports the hash the signature claims even after the executable was
+  // changed, so the bundle is verified against its signature first.
+  const readCdHash = (bundlePath: string) =>
+    Effect.gen(function* () {
+      const verified = yield* codesign(["--verify", "--strict", bundlePath]);
+      if (verified.exitCode !== 0) {
+        return yield* new ArtifactAppHostCommandError({
+          command: "codesign-read",
+          exitCode: verified.exitCode,
+        });
+      }
+      const { details, exitCode } = yield* codesign(["-d", "-vvv", bundlePath]);
+      const cdHash = parseCdHash(details);
+      if (exitCode !== 0 || Option.isNone(cdHash)) {
+        return yield* new ArtifactAppHostCommandError({ command: "codesign-read", exitCode });
+      }
+      return cdHash.value;
+    }).pipe(
       Effect.mapError((error) =>
         isHostCommandError(error)
           ? error

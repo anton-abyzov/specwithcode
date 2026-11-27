@@ -16,11 +16,14 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
@@ -128,7 +131,6 @@ export class ArtifactAppShimServer extends Context.Service<
     readonly onVersionMismatch: (
       listener: (bundlePath: string) => void,
     ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly onBeforeQuit: (listener: () => void) => Effect.Effect<void, never, Scope.Scope>;
     readonly setMenu: (
       shim: Electron.AppShimHost,
       template: ReadonlyArray<Electron.MenuItemConstructorOptions>,
@@ -163,7 +165,6 @@ export const layerElectronShimServer = Layer.succeed(
       scopedAppListener("app-shim-version-mismatch", (_event, bundlePath: string) =>
         listener(bundlePath),
       ),
-    onBeforeQuit: (listener) => scopedAppListener("before-quit", () => listener()),
     setMenu: (shim, template) =>
       Effect.sync(() => {
         shim.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
@@ -182,10 +183,14 @@ const make = Effect.gen(function* () {
   const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
   const records = yield* ArtifactAppRecords.ArtifactAppRecords;
   const shimRecords = yield* ArtifactAppShimRecords.ArtifactAppShimRecords;
+  const desktopState = yield* DesktopState.DesktopState;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const mainWindowSeen = yield* Deferred.make<void>();
   const launchersReady = yield* Deferred.make<void>();
-  let quitting = false;
+  // Hashes of shims rebuilt at this start: one already running when SpecWithCode was
+  // started by it (or moved) still has the old hash and is still this install's.
+  let replacedHashes: ReadonlyMap<string, string> = new Map();
+  const reopenLock = yield* Semaphore.make(1);
   const mismatchShown = new Set<string>();
 
   // As for every launch: page windows wait for the main window (see ArtifactAppRouting).
@@ -203,21 +208,22 @@ const make = Effect.gen(function* () {
   yield* electronApp.on("browser-window-focus", () => runFork(checkMainWindow));
 
   // The pages open in shims now, kept current so a crash still reopens them. Once the
-  // app is quitting, its windows closing must not empty the list.
-  const rememberOpenPages = Effect.gen(function* () {
-    if (quitting) return;
-    yield* shimRecords
-      .writeReopen(yield* windows.shimInstallIds)
-      .pipe(
-        Effect.catchCause((cause) =>
-          logWarning("reopen list not written", { cause: Cause.pretty(cause) }),
-        ),
-      );
-  });
+  // app has started to quit (the updater closes every window before before-quit), its
+  // windows closing must not empty the list. One write at a time, each from the state
+  // it was taken in, so an older write never lands last.
+  const rememberOpenPages = reopenLock.withPermits(1)(
+    Effect.gen(function* () {
+      if (yield* Ref.get(desktopState.shutdownBegun)) return;
+      yield* shimRecords
+        .writeReopen(yield* windows.shimInstallIds)
+        .pipe(
+          Effect.catchCause((cause) =>
+            logWarning("reopen list not written", { cause: Cause.pretty(cause) }),
+          ),
+        );
+    }),
+  );
   yield* windows.onClosed(() => runFork(rememberOpenPages));
-  yield* server.onBeforeQuit(() => {
-    quitting = true;
-  });
 
   const turnAway = (shim: Electron.AppShimHost, reason: string) =>
     Effect.gen(function* () {
@@ -235,12 +241,15 @@ const make = Effect.gen(function* () {
     const found = yield* installer.shimInstallFor(shim.bundlePath);
     if (Option.isNone(found)) return yield* turnAway(shim, "not an installed page");
     const { installId, cdHash } = found.value;
-    let trusted = false;
-    try {
-      trusted = shim.satisfiesCodeRequirement(artifactAppShimCodeRequirement(cdHash));
-    } catch {
-      trusted = false;
-    }
+    const satisfies = (hash: string | undefined) => {
+      if (hash === undefined) return false;
+      try {
+        return shim.satisfiesCodeRequirement(artifactAppShimCodeRequirement(hash));
+      } catch {
+        return false;
+      }
+    };
+    const trusted = satisfies(cdHash) || satisfies(replacedHashes.get(installId));
     if (!trusted) return yield* turnAway(shim, "code hash differs from the installed launcher");
     const app = yield* records.get(installId);
     if (Option.isNone(app)) return yield* turnAway(shim, "install is no longer recorded");
@@ -298,7 +307,7 @@ const make = Effect.gen(function* () {
     yield* server.start(config.serverName);
     yield* logInfo("app shim server started", { name: config.serverName });
     // Launchers are rebuilt for this app before any shim is checked against them.
-    yield* installer.upgradeLaunchers;
+    replacedHashes = yield* installer.upgradeLaunchers;
     yield* Deferred.succeed(launchersReady, undefined);
     yield* checkMainWindow;
     yield* Deferred.await(mainWindowSeen);
@@ -307,9 +316,12 @@ const make = Effect.gen(function* () {
     }
   }).pipe(
     Effect.catchCause((cause) =>
-      logWarning("app shim server did not start; installed pages open as windows", {
+      logWarning("app shim server did not start; new installs get script launchers", {
         cause: Cause.pretty(cause),
-      }).pipe(Effect.andThen(Deferred.succeed(launchersReady, undefined))),
+      }).pipe(
+        Effect.andThen(installer.disableShims),
+        Effect.andThen(Deferred.succeed(launchersReady, undefined)),
+      ),
     ),
   );
   yield* Effect.forkScoped(start);

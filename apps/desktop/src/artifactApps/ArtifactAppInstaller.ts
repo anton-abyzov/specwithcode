@@ -142,8 +142,14 @@ export class ArtifactAppInstaller extends Context.Service<
      * which connects back; any other opens its window here.
      */
     readonly launch: (installId: string) => Effect.Effect<boolean>;
-    /** Rebuilds every owned macOS launcher that is not a shim for the running app as one. */
-    readonly upgradeLaunchers: Effect.Effect<void>;
+    /**
+     * Rebuilds every owned macOS launcher that is not a shim for the running app as one.
+     * Gives, per install it rebuilt from an older shim, that shim's code hash: a shim
+     * started before the upgrade still runs it.
+     */
+    readonly upgradeLaunchers: Effect.Effect<ReadonlyMap<string, string>>;
+    /** New installs get script launchers from now on: the shim server did not start. */
+    readonly disableShims: Effect.Effect<void>;
   }
 >()("@specweave-studio/desktop/artifactApps/ArtifactAppInstaller") {}
 
@@ -236,12 +242,14 @@ const make = Effect.gen(function* () {
     });
 
   // What a new macOS launcher is built for now: the running app's shim, when it has one.
-  const currentShim = Option.map(host.appShim, (config) => ({
+  let shimsEnabled = true;
+  const shimConfig = Option.map(host.appShim, (config) => ({
     hostAppPath: config.hostAppPath,
     hostBundleId: config.hostBundleId,
     serverName: config.serverName,
     minimumSystemVersion: config.minimumSystemVersion,
   }));
+  const currentShim = () => (shimsEnabled ? shimConfig : Option.none());
 
   // Throws when the name or id is not one a generator accepts (a hand-edited record).
   // A macOS launcher is rebuilt from `shim`, the one it was written for, so an owned
@@ -758,13 +766,28 @@ const make = Effect.gen(function* () {
     location: LauncherLocation,
   ) {
     if (location.kind === "mac-bundle" && Option.isSome(location.shim)) {
+      // Launch Services runs whatever executable the bundle has, so it must still be the
+      // one that was signed and recorded.
+      const recorded = yield* shimRecords.get(installId);
+      const onDisk = yield* host.readCdHash(location.path).pipe(Effect.option);
+      if (
+        Option.isNone(recorded) ||
+        Option.isNone(onDisk) ||
+        onDisk.value !== recorded.value.cdHash
+      ) {
+        yield* logWarning("installed page app does not match its signed launcher; not opened", {
+          installId,
+        });
+        return false;
+      }
       yield* host.openApp(location.path);
-      return;
+      return true;
     }
     const opened = yield* windows.open(installId);
     if (opened !== "opened" && opened !== "focused") {
       yield* logWarning("installed page window did not open", { installId, result: opened });
     }
+    return true;
   });
 
   const sameInstall = (app: DesktopArtifactApp, input: DesktopArtifactAppInstallInput) =>
@@ -819,7 +842,7 @@ const make = Effect.gen(function* () {
     if (choice !== 0) return { status: "cancelled" } as const;
 
     const installId = newArtifactAppInstallId();
-    const location = locateLauncher({ installId, name }, context, currentShim);
+    const location = locateLauncher({ installId, name }, context, currentShim());
     const cdHash = yield* writeLauncher(location, installId, context.icons);
     // A shim launcher without its hash would be turned away, so it is taken back when the
     // hash cannot be kept.
@@ -983,8 +1006,7 @@ const make = Effect.gen(function* () {
     ) {
       return false;
     }
-    yield* openInstall(installId, location.value);
-    return true;
+    return yield* openInstall(installId, location.value);
   });
 
   const sameShim = (
@@ -1009,33 +1031,51 @@ const make = Effect.gen(function* () {
     context: LauncherContext,
   ) {
     const current = yield* locateRecorded(app, context);
-    if (Option.isNone(current) || current.value.kind !== "mac-bundle") return;
-    if (sameShim(current.value.shim, wanted)) return;
+    if (Option.isNone(current) || current.value.kind !== "mac-bundle") return Option.none<string>();
+    if (sameShim(current.value.shim, wanted)) return Option.none<string>();
     if (!(yield* launcherPathOwned(current.value, current.value.path, app.installId))) {
       yield* logInfo("left a launcher that is not this page's own; not upgraded", {
         installId: app.installId,
       });
-      return;
+      return Option.none<string>();
     }
     const next = locateLauncher(app, context, Option.some(wanted));
-    if (next.kind !== "mac-bundle") return;
+    if (next.kind !== "mac-bundle") return Option.none<string>();
     const staging = stagingFolder(next, app.installId);
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       const built = yield* buildMacBundle(next, staging, context.icons);
-      if (Option.isNone(built.cdHash)) return;
+      if (Option.isNone(built.cdHash)) return Option.none<string>();
+      const previous = yield* shimRecords.get(app.installId);
+      // The new hash is kept before the new bundle is public, so a failed write changes
+      // nothing; a failed swap puts the old bundle and its record back.
+      yield* shimRecords.set(app.installId, { ...wanted, cdHash: built.cdHash.value });
+      const restoreRecord = Option.match(previous, {
+        onNone: () => shimRecords.remove(app.installId),
+        onSome: (record) => shimRecords.set(app.installId, record),
+      }).pipe(Effect.ignore);
       const claimed = rules.join(
         next.folder,
         `.${rules.basename(next.path)}.removing-${app.installId}.${newArtifactAppInstallId()}`,
       );
-      yield* fileSystem
-        .rename(current.value.path, claimed)
-        .pipe(Effect.mapError(writeError("remove-launcher", current.value.path)));
+      yield* fileSystem.rename(current.value.path, claimed).pipe(
+        Effect.mapError(writeError("remove-launcher", current.value.path)),
+        Effect.tapError(() => restoreRecord),
+      );
       yield* fileSystem.rename(built.stagedBundle, next.path).pipe(
         Effect.mapError(writeError("move-into-place", next.path)),
         // Nothing took the old launcher's place yet, so it goes back.
-        Effect.tapError(() => fileSystem.rename(claimed, current.value.path).pipe(Effect.ignore)),
+        Effect.tapError(() =>
+          fileSystem.rename(claimed, current.value.path).pipe(
+            Effect.catchCause((cause) =>
+              logWarning("old launcher could not be put back", {
+                installId: app.installId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+            Effect.andThen(restoreRecord),
+          ),
+        ),
       );
-      yield* shimRecords.set(app.installId, { ...wanted, cdHash: built.cdHash.value });
       // The old copy must not stay under a removal name: it is no longer what uninstall
       // recognises, so it would hold every later uninstall back.
       if (yield* launcherPathOwned(current.value, claimed, app.installId)) {
@@ -1050,6 +1090,7 @@ const make = Effect.gen(function* () {
       yield* logInfo("upgraded installed page launcher to an app shim", {
         installId: app.installId,
       });
+      return Option.map(previous, (record) => record.cdHash);
     }).pipe(
       Effect.ensuring(
         fileSystem.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore),
@@ -1058,20 +1099,24 @@ const make = Effect.gen(function* () {
   });
 
   const upgradeLaunchers = Effect.gen(function* () {
-    if (host.platform !== "darwin" || Option.isNone(currentShim)) return;
+    const replaced = new Map<string, string>();
+    const shim = currentShim();
+    if (host.platform !== "darwin" || Option.isNone(shim)) return replaced;
     const context = yield* launcherContext;
     for (const app of yield* records.list) {
-      yield* installLock
-        .withPermits(1)(upgradeOne(app, currentShim.value, context))
+      const previous = yield* installLock
+        .withPermits(1)(upgradeOne(app, shim.value, context))
         .pipe(
           Effect.catchCause((cause) =>
             logWarning("installed page launcher was not upgraded", {
               installId: app.installId,
               cause: Cause.pretty(cause),
-            }),
+            }).pipe(Effect.as(Option.none<string>())),
           ),
         );
+      if (Option.isSome(previous)) replaced.set(app.installId, previous.value);
     }
+    return replaced;
   }).pipe(Effect.withSpan("desktop.artifactApps.upgradeLaunchers"));
 
   const quietly =
@@ -1093,6 +1138,9 @@ const make = Effect.gen(function* () {
       ),
     launch: (installId) => launch(installId).pipe(quietly("installed page launch failed", false)),
     upgradeLaunchers,
+    disableShims: Effect.sync(() => {
+      shimsEnabled = false;
+    }),
     install,
     // One install or uninstall at a time, so two never race over one launcher.
     uninstall: (installId) =>

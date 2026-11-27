@@ -24,6 +24,10 @@ Every launcher is ad-hoc signed when it is written. Its code hash is kept in `ar
 
 Anything else is turned away with `shim.quit()` and opens nothing. Checks wait until the main window exists, like every other launch.
 
+When SpecWithCode itself starts a page's app (reopening it after a restart, or a second install of the same page), it first verifies the bundle against its signature with `codesign --verify --strict` and compares the hash with the recorded one. A bundle whose executable was changed is never started.
+
+The checks defend against other processes connecting to the shim server or changing a launcher. They do not defend against a process that can rewrite SpecWithCode's own state folder: such a process can already change the install records, grants and settings kept there.
+
 ### What the page's app does
 
 - **Menu bar:** the app menu is named after the page and has About, Show App in Finder, Uninstall, Hide, Hide Others, Show All and Quit. Edit, View (Reload, zoom, full screen) and Window menus follow.
@@ -36,7 +40,9 @@ SpecWithCode itself opens normally when a page's app starts it.
 
 ### Upgrades
 
-At start, SpecWithCode rebuilds every recorded install's launcher as a shim. That covers older script launchers, and shims that point at a SpecWithCode.app path which is no longer the running one. A launcher that was changed by hand or is missing is left alone and logged. The new bundle is staged, signed and swapped in; the old one goes to the Trash.
+At start, SpecWithCode rebuilds every recorded install's launcher as a shim. That covers older script launchers, and shims that point at a SpecWithCode.app path which is no longer the running one. A launcher that was changed by hand or is missing is left alone and logged. The new bundle is staged and signed, and its hash is recorded before it is swapped in, so a failed write leaves the old launcher as it was. A failed swap puts the old bundle and its record back. The old one then goes to the Trash. A page's app that was already running the old bundle (it started SpecWithCode, for example after SpecWithCode was moved) is still accepted with the old hash until SpecWithCode quits.
+
+If the shim server cannot start, new installs get script launchers that open windows of SpecWithCode.
 
 If SpecWithCode was updated on disk while it was running, a page's app cannot load the new framework. SpecWithCode then shows "<Name> could not open because SpecWithCode was updated." once per page, and the fix is to quit and reopen SpecWithCode.
 

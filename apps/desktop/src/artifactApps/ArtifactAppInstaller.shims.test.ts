@@ -53,7 +53,8 @@ describe("ArtifactAppInstaller with app shims", () => {
         assert.include(plist, "<string>/Applications/SpecWithCode.app</string>");
         // Signed and hashed before it was moved into place, then started instead of a window here.
         assert.equal(h.calls.codesigned.length, 1);
-        assert.deepEqual(h.calls.cdHashReads, h.calls.codesigned);
+        // Read once as signed, and again, verified, before it was started.
+        assert.deepEqual(h.calls.cdHashReads, [...h.calls.codesigned, hostPath(bundle)]);
         assert.deepEqual(h.calls.openedApps, [hostPath(bundle)]);
         assert.deepEqual(h.opened, []);
         const record = yield* h.shimRecords.get(result.app.installId);
@@ -78,6 +79,12 @@ describe("ArtifactAppInstaller with app shims", () => {
         assert.equal(h.calls.openedApps.length, 2);
         assert.isTrue(yield* h.installer.launch(result.app.installId));
         assert.equal(h.calls.openedApps.length, 3);
+
+        // A changed executable is never started, though its plist still matches.
+        h.calls.tampered.add(hostPath(bundle));
+        assert.isFalse(yield* h.installer.launch(result.app.installId));
+        assert.equal(h.calls.openedApps.length, 3);
+        h.calls.tampered.clear();
 
         // A bundle whose plist was changed is no longer this install's.
         yield* fileSystem.writeFileString(
@@ -180,6 +187,93 @@ describe("ArtifactAppInstaller with app shims", () => {
         yield* after.installer.upgradeLaunchers;
         assert.equal(after.calls.trashed.length, 1);
         assert.isTrue(yield* after.installer.uninstall(first.app.installId));
+      }),
+    ),
+  );
+
+  it.effect("keeps the old launcher when the new hash cannot be kept", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const before = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const first = yield* before.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        // A folder where the hash file goes makes every write of it fail.
+        yield* fileSystem.makeDirectory(
+          path.join(`${recordsPath}.shims`, "artifact-app-shims.json"),
+          {
+            recursive: true,
+          },
+        );
+        const appShim = shimConfig(yield* writeLoader(fileSystem, path, home));
+        const after = yield* harness(
+          { platform: "darwin", appShim, fileSystem },
+          home,
+          recordsPath,
+        );
+        yield* after.installer.upgradeLaunchers;
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        assert.isTrue(yield* fileSystem.exists(path.join(bundle, "Contents", "MacOS", "launcher")));
+        assert.isFalse(yield* fileSystem.exists(path.join(bundle, "Contents", "MacOS", "page")));
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.startsWith(".")),
+          [],
+        );
+        assert.deepEqual(after.calls.trashed, []);
+      }),
+    ),
+  );
+
+  it.effect("reports the hash of a shim it rebuilt for a moved app", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const before = yield* harness(
+          { platform: "darwin", appShim: shimConfig(loader), fileSystem },
+          home,
+          recordsPath,
+        );
+        const first = yield* before.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const oldHash = Option.getOrThrow(
+          yield* before.shimRecords.get(first.app.installId),
+        ).cdHash;
+        const moved = {
+          ...shimConfig(loader),
+          hostAppPath: "/Applications/Tools/SpecWithCode.app",
+        };
+        const after = yield* harness(
+          { platform: "darwin", appShim: moved, fileSystem },
+          home,
+          recordsPath,
+        );
+        const replaced = yield* after.installer.upgradeLaunchers;
+        assert.deepEqual([...replaced], [[first.app.installId, oldHash]]);
+        const record = Option.getOrThrow(yield* after.shimRecords.get(first.app.installId));
+        assert.equal(record.hostAppPath, "/Applications/Tools/SpecWithCode.app");
+        // Nothing to rebuild the second time.
+        assert.deepEqual([...(yield* after.installer.upgradeLaunchers)], []);
+      }),
+    ),
+  );
+
+  it.effect("writes script launchers once shims are turned off", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const appShim = shimConfig(yield* writeLoader(fileSystem, path, home));
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        yield* h.installer.disableShims;
+        const result = yield* h.installer.install(input);
+        assert.equal(result.status, "installed");
+        const bundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Morning dashboard.app",
+        );
+        assert.isTrue(yield* fileSystem.exists(path.join(bundle, "Contents", "MacOS", "launcher")));
+        assert.deepEqual(h.calls.openedApps, []);
+        assert.equal(h.opened.length, 1);
       }),
     ),
   );

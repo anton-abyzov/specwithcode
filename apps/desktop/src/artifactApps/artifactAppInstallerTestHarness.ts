@@ -39,6 +39,8 @@ export interface HostCalls {
   readonly revealed: Array<string>;
   readonly openedApps: Array<string>;
   readonly cdHashReads: Array<string>;
+  /** Bundles whose executable was changed after signing: they no longer verify. */
+  readonly tampered: Set<string>;
 }
 
 export const newCalls = (): HostCalls => ({
@@ -50,6 +52,7 @@ export const newCalls = (): HostCalls => ({
   revealed: [],
   openedApps: [],
   cdHashReads: [],
+  tampered: new Set(),
 });
 
 export const WINDOWS_HOST = HostProcessPlatform.defaultValue() === "win32";
@@ -112,18 +115,19 @@ export const hostLayer = (input: {
           input.calls.codesigned.push(hostPath(bundlePath));
         }),
       appShim: Option.fromNullishOr(input.appShim),
-      // A distinct hash per signing, as a rebuilt bundle would have.
+      // A distinct hash per signing, as a rebuilt bundle would have; reading again gives
+      // the same one, and a changed bundle fails verification.
       readCdHash: (bundlePath) =>
         Effect.gen(function* () {
           input.calls.cdHashReads.push(hostPath(bundlePath));
-          if (input.cdHashFails === true) {
+          if (input.cdHashFails === true || input.calls.tampered.has(hostPath(bundlePath))) {
             return yield* Effect.fail(
               new ArtifactAppInstallerHost.ArtifactAppHostCommandError({
                 command: "codesign-read",
               }),
             );
           }
-          return String(input.calls.cdHashReads.length).padStart(40, "a");
+          return String(input.calls.codesigned.length).padStart(40, "a");
         }),
       openApp: (bundlePath) =>
         Effect.sync(() => {

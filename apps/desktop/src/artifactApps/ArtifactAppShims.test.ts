@@ -3,11 +3,13 @@ import type { DesktopArtifactApp } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
 
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
@@ -79,6 +81,8 @@ const setup = (
     readonly reopen?: ReadonlyArray<string>;
     readonly openResult?: ArtifactAppWindows.ArtifactAppWindowOpenResult;
     readonly startFails?: boolean;
+    /** Install id to the hash its launcher had before this start's upgrade. */
+    readonly replaced?: ReadonlyMap<string, string>;
   } = {},
 ) => {
   const state = {
@@ -88,6 +92,7 @@ const setup = (
     openInShim: [] as Array<string>,
     started: [] as Array<string>,
     upgrades: 0,
+    shimsDisabled: false,
     launched: [] as Array<string>,
     revealed: [] as Array<string>,
     uninstalled: [] as Array<string>,
@@ -95,10 +100,11 @@ const setup = (
     menus: [] as Array<ReadonlyArray<Electron.MenuItemConstructorOptions>>,
     shimIds: [] as Array<string>,
   };
+  // Set by the lifecycle as the app starts to quit, before any window closes.
+  const shutdownBegun = Ref.makeUnsafe(false);
   const appListeners = new Map<string, Array<(...args: Array<any>) => void>>();
   const connected: Array<(shim: Electron.AppShimHost) => void> = [];
   const mismatch: Array<(bundlePath: string) => void> = [];
-  const beforeQuit: Array<() => void> = [];
   const closed: Array<(installId: string) => void> = [];
 
   const layer = ArtifactAppShims.layer.pipe(
@@ -133,7 +139,6 @@ const setup = (
                 }),
           onConnected: (listener) => Effect.sync(() => void connected.push(listener)),
           onVersionMismatch: (listener) => Effect.sync(() => void mismatch.push(listener)),
-          onBeforeQuit: (listener) => Effect.sync(() => void beforeQuit.push(listener)),
           setMenu: (_shim, template) => Effect.sync(() => void state.menus.push(template)),
         }),
         Layer.mock(ElectronApp.ElectronApp)({
@@ -156,8 +161,12 @@ const setup = (
             Effect.succeed(
               bundlePath === BUNDLE ? Option.some({ installId: ID, cdHash: HASH }) : Option.none(),
             ),
+          disableShims: Effect.sync(() => {
+            state.shimsDisabled = true;
+          }),
           upgradeLaunchers: Effect.sync(() => {
             state.upgrades += 1;
+            return input.replaced ?? new Map<string, string>();
           }),
           launch: (installId) =>
             Effect.sync(() => {
@@ -189,6 +198,12 @@ const setup = (
           get: (installId) =>
             Effect.succeed(installId === ID ? Option.some(recorded(ID)) : Option.none()),
         }),
+        Layer.succeed(DesktopState.DesktopState, {
+          backendReady: Ref.makeUnsafe(true),
+          quitting: Ref.makeUnsafe(false),
+          shutdownBegun,
+          updaterQuitAllowed: Ref.makeUnsafe(false),
+        }),
         Layer.mock(ArtifactAppShimRecords.ArtifactAppShimRecords)({
           writeReopen: (ids) => Effect.sync(() => void state.written.push([...ids])),
           takeReopen: Effect.sync(() => state.reopen.splice(0)),
@@ -209,9 +224,7 @@ const setup = (
     mismatch: (bundlePath: string) => {
       for (const listener of mismatch) listener(bundlePath);
     },
-    quit: () => {
-      for (const listener of beforeQuit) listener();
-    },
+    quit: Ref.set(shutdownBegun, true),
     close: (installId: string) => {
       for (const listener of closed) listener(installId);
     },
@@ -357,7 +370,7 @@ describe("ArtifactAppShims", () => {
       assert.deepEqual(fixture.state.written.at(-1), []);
 
       fixture.state.shimIds = [ID];
-      fixture.quit();
+      yield* fixture.quit;
       fixture.state.shimIds = [];
       fixture.close(ID);
       yield* settle;
@@ -379,13 +392,34 @@ describe("ArtifactAppShims", () => {
     }).pipe(Effect.scoped);
   });
 
-  it.effect("leaves installed pages as windows when the server cannot start", () => {
+  it.effect("gives new installs script launchers when the server cannot start", () => {
     const fixture = setup({ startFails: true, reopen: [ID] });
     return Effect.gen(function* () {
       yield* Layer.build(fixture.layer);
       yield* settle;
       assert.equal(fixture.state.upgrades, 0);
+      assert.isTrue(fixture.state.shimsDisabled);
       assert.deepEqual(fixture.state.launched, []);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("trusts a shim still running the launcher this start replaced", () => {
+    const OLD = "e".repeat(40);
+    const fixture = setup({ replaced: new Map([[ID, OLD]]) });
+    return Effect.gen(function* () {
+      yield* Layer.build(fixture.layer);
+      yield* settle;
+      // The shim that started SpecWithCode after it moved runs the old bundle.
+      const running = fakeShim({ bundlePath: BUNDLE, cdHash: OLD });
+      fixture.connect(running);
+      yield* settle;
+      assert.equal(running.quits.count, 0);
+      assert.deepEqual(fixture.state.openInShim, [ID]);
+      // Any other hash is still turned away.
+      const other = fakeShim({ bundlePath: BUNDLE, cdHash: "f".repeat(40) });
+      fixture.connect(other);
+      yield* settle;
+      assert.equal(other.quits.count, 1);
     }).pipe(Effect.scoped);
   });
 });
