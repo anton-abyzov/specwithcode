@@ -1384,6 +1384,8 @@ export function resolveWorkerLaunchSelection(input: {
   readonly limitedInstanceIds?: ReadonlySet<string>;
   /** Sources (`fallbackSelectionKey`) a current limit stop holds, whatever their read (1460). */
   readonly heldSelections?: ReadonlySet<string>;
+  /** Review work: a moved reviewer never takes a track row's Ultracode (1506). */
+  readonly review?: boolean;
 }): { readonly selection: ModelSelection; readonly reason: WorkerLaunchSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
@@ -1436,7 +1438,11 @@ export function resolveWorkerLaunchSelection(input: {
       });
   if (same !== null)
     return {
-      selection: withMovedRowUltracode(same, { ...input, currentOptions: preferred.options }),
+      selection: withMovedRowUltracode(same, {
+        ...input,
+        currentOptions: preferred.options,
+        review: input.review === true,
+      }),
       reason: "same-model",
     };
   const coordinator = input.coordinator;
@@ -1496,7 +1502,7 @@ export function resolveWorkerLaunchSelection(input: {
     anyReady: true,
     limitedInstanceIds: limited,
     ...(held === undefined ? {} : { excludedSelections: held }),
-    rowUltracode: true,
+    rowUltracode: input.review !== true,
   });
   if (target === null) return { selection: preferred, reason: "no-room" };
   const targetProvider = input.providers.find(

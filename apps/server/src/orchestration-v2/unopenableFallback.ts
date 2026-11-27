@@ -326,6 +326,8 @@ export function unopenableFallbackCommand(
     readonly proven?: ModelSelection | null;
     readonly limited?: ReadonlySet<string> | undefined;
     readonly failed?: ReadonlySet<string> | undefined;
+    /** False for a routine's own thread (1506). */
+    readonly rowUltracode?: boolean;
   } = {},
 ): Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }> | null {
   if (rule.providerLimitAction !== "switch" || !unopenableStopIsLive(thread, stop, nowMs))
@@ -336,7 +338,7 @@ export function unopenableFallbackCommand(
     currentModel: thread.modelSelection.model,
     currentOptions: thread.modelSelection.options,
     rule,
-    rowUltracode: true,
+    rowUltracode: options.rowUltracode !== false,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
     anyReady: true,

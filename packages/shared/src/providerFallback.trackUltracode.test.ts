@@ -225,5 +225,16 @@ describe("falling back onto a track row", () => {
     expect(result.reason).toBe("same-model");
     expect(result.selection.instanceId).toBe("claudeAgent_work");
     expect(result.selection.options).toContainEqual(ultracodeOn);
+    // A reviewer moved the same way takes only its model and effort.
+    const review = resolveWorkerLaunchSelection({
+      preferred: { instanceId: id("claudeAgent"), model: OPUS, options: [medium] },
+      coordinator: null,
+      providers: [spent, second, codex],
+      rule: rule(opusRow),
+      nowMs: now,
+      review: true,
+    });
+    expect(review.selection.instanceId).toBe("claudeAgent_work");
+    expect(review.selection.options).not.toContainEqual(ultracodeOn);
   });
 });

@@ -2,6 +2,7 @@ import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
 import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
+import { routineOwnThreadIds } from "./routineOwnThreads.ts";
 import {
   CommandId,
   type ManualCodexCreditIntent,
@@ -248,6 +249,8 @@ export function providerFallbackCommand(
   limited?: ReadonlySet<string>,
   /** Fallback order entries whose continuation of this stop failed to dispatch. */
   failed?: ReadonlySet<string>,
+  /** False for a routine's own thread: a track row's Ultracode is not for it (1506). */
+  rowUltracode = true,
 ): OrchestrationV2ServerCommand | null {
   if (rule.providerLimitAction !== "switch") return null;
   if (!threadIsFree(thread)) return null;
@@ -261,7 +264,7 @@ export function providerFallbackCommand(
       currentModel: thread.modelSelection.model,
       currentOptions: thread.modelSelection.options,
       rule,
-      rowUltracode: true,
+      rowUltracode,
       nowMs,
       belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
       anyReady: true,
@@ -302,6 +305,7 @@ export function providerFallbackCommand(
     currentModel: thread.modelSelection.model,
     currentOptions: thread.modelSelection.options,
     rule,
+    rowUltracode,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent,
     anyReady: true,
@@ -556,6 +560,8 @@ function limitStep(
     readonly openWindow?: number;
     /** The thread's chain of limit stops used its hops: no automatic switch (1460). */
     readonly parked?: boolean;
+    /** A routine started this thread as its own (`routineOwnThreadIds`). */
+    readonly routineThread?: boolean;
   },
 ):
   | {
@@ -582,6 +588,7 @@ function limitStep(
       proven: options.proven ?? null,
       limited: options.limited,
       failed: options.failedTargets,
+      rowUltracode: options.routineThread !== true,
     });
     return command === null ? null : { type: "switch", command };
   }
@@ -698,6 +705,7 @@ function limitStep(
     options.proven ?? null,
     options.limited,
     options.failedTargets,
+    options.routineThread !== true,
   );
   return command === null ? null : { type: "switch", command };
 }
@@ -824,6 +832,7 @@ function idlePreswitchCommand(
     readonly openWindow?: number;
     /** Sources a limit stop holds, among others (see `withHeldSources`). */
     readonly failedTargets?: ReadonlySet<string> | undefined;
+    readonly routineThread?: boolean;
   },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
   const id = idlePreswitchId(thread, providers, rule, nowMs, options.openWindow);
@@ -836,6 +845,7 @@ function idlePreswitchCommand(
     lockedProven(thread.routing, providers, options.proven),
     options.limited,
     options.failedTargets,
+    options.routineThread !== true,
   );
   return command?.type === "thread.model-selection.set"
     ? (lockedStep(thread, providers, { command: { ...command, commandId: CommandId.make(id) } })
@@ -1866,6 +1876,7 @@ export const makeSweep = Effect.gen(function* () {
     if (!wake && now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
     yield* Ref.set(lastRunAt, now);
     const preferences = yield* settings.getSettings;
+    const routineThreads = yield* routineOwnThreadIds;
     let providers = withSimulatedUsage(yield* registry.getProviders, now, env);
     // The way back does not depend on a rule: a thread the rule moved must
     // not keep spending after the rule is turned off. Nor does the retry of a
@@ -2076,6 +2087,7 @@ export const makeSweep = Effect.gen(function* () {
         limited,
         failedTargets: withHeldSources(triedTargets, heldSources),
         parked: limitChainParked(chainsNow.get(thread.id)),
+        routineThread: routineThreads.has(thread.id),
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
         stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),

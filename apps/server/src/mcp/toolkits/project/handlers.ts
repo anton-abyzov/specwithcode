@@ -897,9 +897,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   taskLane: input.taskLane,
                 })),
         });
-        // A thread named no model starts on the project's own model, whoever launches it; a
-        // coordinator falls back to this host's default worker model (as delegate_task does),
-        // either moved off a provider with no room (see workerLaunchWithRoom).
+        // No model named: the project's own model, whoever launches it, else for a coordinator
+        // this host's default worker model, moved off a source with no room (workerLaunchWithRoom).
         const ownProjectModel =
           namedSelection === undefined && project !== undefined
             ? yield* projectWorkerModelOf(project)
@@ -928,6 +927,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 coordinator: caller?.modelSelection ?? null,
                 providers: workerProviders,
                 runtimePolicy: { runtimeMode, interactionMode },
+                review: input.taskClass === "review",
               })
             : null;
         const workerSelection =
