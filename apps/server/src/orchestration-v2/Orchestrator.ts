@@ -13841,7 +13841,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             )
           : dispatchWithReceiptEffect(command).pipe(
               // However the dispatch ends, a Claude form answer it handed off is settled (1493).
-              Effect.onExit((exit) => ClaudeForms.settleFormAnswerDispatch(command, Exit.isSuccess(exit))),
+              Effect.onExit((exit) =>
+                ClaudeForms.settleFormAnswerDispatch(command, Exit.isSuccess(exit)),
+              ),
             ),
       ),
     );

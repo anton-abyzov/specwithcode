@@ -391,7 +391,10 @@ it.effect("settles a hand-off however its dispatch ends (1493)", () =>
     assert.isUndefined(takeClaudeFormAnswers(failed));
     const succeeded = RuntimeRequestId.make("request:dispatch-succeeded");
     handOffClaudeFormAnswers(succeeded, { handOff: { confirm: "x" } });
-    yield* settleFormAnswerDispatch({ type: "runtime-request.respond", requestId: succeeded }, true);
+    yield* settleFormAnswerDispatch(
+      { type: "runtime-request.respond", requestId: succeeded },
+      true,
+    );
     assert.equal(claudeFormCommitOutcome(succeeded), "committed");
   }),
 );
