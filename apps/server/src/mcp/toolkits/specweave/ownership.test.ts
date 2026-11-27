@@ -438,7 +438,7 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
         bound: bound(nestedIncrement, "claim"),
         recorded: { root: respelled, incrementId: INCREMENT },
       });
-      expect(sameFolder).toMatchObject({ ok: true });
+      expect(!sameFolder.ok && sameFolder.message).toBe(false);
     }
     // The record of the chosen copy, a record of another increment, and one
     // outside the worktree (the shared project folder) change nothing.
