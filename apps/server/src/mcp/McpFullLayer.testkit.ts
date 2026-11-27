@@ -42,6 +42,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import { runningTurnRecords } from "./McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -85,6 +86,7 @@ const stubServices = (shell: StubCaller, options: StubOptions = {}) =>
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadShell: () => Effect.succeed(shell as never),
       listProjectThreads: () => Effect.succeed([]),
+      getThreadRecords: () => Effect.succeed(runningTurnRecords()),
     }),
     Layer.mock(ThreadIncrementProgressService.ThreadIncrementProgressService)({
       read: (input) =>

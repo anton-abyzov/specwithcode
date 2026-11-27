@@ -34,7 +34,7 @@ import * as IncrementProgress from "../../../project/ThreadIncrementProgressServ
 import { specweaveAgentEnvironment } from "../../../provider/RuntimeInstructions.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell, runningTurnRecords } from "../../McpToolAccess.testkit.ts";
 import { SpecweaveCommandOverride } from "./cli.ts";
 import { runLedgerCall } from "./ledgerHandlers.ts";
 
@@ -167,6 +167,7 @@ it.effect.skipIf(CLI === null)(
             getThreadShell: (id) =>
               Effect.succeed({ ...liveThreadShell(id), worktreePath: repo.worktree }),
             listProjectThreads: () => Effect.succeed([]),
+            getThreadRecords: () => Effect.succeed(runningTurnRecords()),
           }),
           Layer.mock(IncrementProgress.ThreadIncrementProgressService)({
             read: (input) => Effect.succeed({ projectId: input.projectId, threads: [bound] }),

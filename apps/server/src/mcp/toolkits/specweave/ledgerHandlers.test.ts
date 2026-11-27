@@ -22,7 +22,7 @@ import * as ProcessRunner from "../../../processRunner.ts";
 import * as IncrementProgress from "../../../project/ThreadIncrementProgressService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
+import { liveThreadShell, runningTurnRecords } from "../../McpToolAccess.testkit.ts";
 import { commandRunsWithoutShell, SpecweaveCommandOverride } from "./cli.ts";
 import {
   foldedFromList,
@@ -155,8 +155,12 @@ const services = (
     readonly threadIdOverride?: ThreadId;
     /** Other live threads in the same checkout. */
     readonly siblings?: ReadonlyArray<ThreadId>;
-    /** The caller's runtime mode (default full-access). */
+    /** The caller's saved runtime mode (default full-access). */
     readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+    /** The mode its running turn was started in (default full-access); null: no turn record. */
+    readonly turnMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access" | null;
+    /** The caller has no run in progress. */
+    readonly betweenTurns?: boolean;
     /** The path the siblings are registered under (default: the caller's). */
     readonly siblingPath?: string;
     /** The project's thread list cannot be read. */
@@ -190,9 +194,18 @@ const services = (
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadShell: (id) =>
         Effect.succeed({
-          ...liveThreadShell(id, { runtimeMode: options.runtimeMode ?? "full-access" }),
+          ...liveThreadShell(id, {
+            runtimeMode: options.runtimeMode ?? "full-access",
+            ...(options.betweenTurns ? { activeRunId: null } : {}),
+          }),
           worktreePath: fixture.worktree,
         }),
+      getThreadRecords: () =>
+        Effect.succeed(
+          options.turnMode === null
+            ? ({ runs: [], attempts: [] } as never)
+            : runningTurnRecords(undefined, options.turnMode ?? "full-access"),
+        ),
       listProjectThreads: () =>
         options.listFails
           ? Effect.fail(
@@ -470,9 +483,28 @@ describe("SpecWeave ledger tools (1497)", () => {
           );
           expect(error.code).toBe("capability_denied");
           expect(error.message).toContain(
-            `full-access mode, and this thread runs in ${runtimeMode}`,
+            `full-access mode, and this thread's turn runs in ${runtimeMode}`,
           );
+          // Switched to full-access during a turn that started sandboxed: still refused.
+          const switched = yield* refusal(
+            runLedgerCall({ action: "claim", increment: "1497", task: "T-01" }).pipe(
+              Effect.provide(services(fixture, { turnMode: runtimeMode })),
+            ),
+          );
+          expect(switched.message).toContain(`this thread's turn runs in ${runtimeMode}`);
         }
+        const unknown = yield* refusal(
+          runLedgerCall({ action: "claim", increment: "1497", task: "T-01" }).pipe(
+            Effect.provide(services(fixture, { turnMode: null })),
+          ),
+        );
+        expect(unknown.message).toContain("cannot tell which mode");
+        const idle = yield* refusal(
+          runLedgerCall({ action: "claim", increment: "1497", task: "T-01" }).pipe(
+            Effect.provide(services(fixture, { betweenTurns: true })),
+          ),
+        );
+        expect(idle.message).toContain("only during one of this thread's turns");
         expect(fixture.writes()).toEqual([]);
       }),
     ),
@@ -664,6 +696,9 @@ describe("sameReason (1497 review)", () => {
     expect(sameReason("  waiting\ton review ", "waiting on review")).toBe(true);
     expect(sameReason("waiting on review", "waiting on QA")).toBe(false);
     expect(sameReason(undefined, "waiting on QA")).toBe(false);
+    // Spaces inside backtick code are part of the reason.
+    expect(sameReason("Waiting on `AB 12`", "Waiting on `AB12`")).toBe(false);
+    expect(sameReason("Waiting on `AB  12`", "Waiting on `AB 12`")).toBe(true);
   });
 });
 

@@ -165,6 +165,21 @@ export const runSpecweave = Effect.fn("specweaveTools.run")(function* (input: Sp
       text: "The specweave command is not installed on this machine. Install it with npm i -g specweave, or set SpecWeave up from the project's Board.",
     } satisfies SpecweaveRunResult;
   }
+  if (
+    input.writeAs !== undefined &&
+    !commandRunsWithoutShell(located.command, yield* HostProcessPlatform)
+  ) {
+    // Checked on the very command this call starts: a ledger call never runs through cmd.exe.
+    return {
+      ok: false,
+      exitCode: null,
+      timedOut: false,
+      command: shown,
+      workspace: input.specweaveRoot,
+      data: null,
+      text: `${located.command} is a .cmd or .bat script, which runs through cmd.exe, and SpecWeave write tools never start a shell. Use \`specweave task claim|release|block\` in your shell instead.`,
+    } satisfies SpecweaveRunResult;
+  }
   const output = yield* runner
     .run({
       command: located.command,

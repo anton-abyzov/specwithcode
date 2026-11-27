@@ -110,12 +110,24 @@ export const normalizeReason = (reason: string | undefined) =>
   (reason ?? "").replace(/\s+/gu, " ").trim();
 
 /**
- * Whether two block reasons are the same reason. SpecWeave fixes a reason's
- * spacing as it writes it (3.2 adds a space after `,` and `;`), so reasons
- * are compared with all whitespace removed.
+ * A block reason's spacing-free form. SpecWeave fixes a reason's spacing as it
+ * writes it (3.2 collapses runs of whitespace and adds a space after `,` and
+ * `;`), but never inside backtick code, so whitespace is dropped outside code
+ * spans and only collapsed inside them.
  */
+const reasonKey = (reason: string | undefined) =>
+  (reason ?? "")
+    .split(/(`[^`]*`)/u)
+    .map((part) =>
+      part.startsWith("`") && part.endsWith("`") && part.length > 1
+        ? part.replace(/\s+/gu, " ")
+        : part.replace(/\s+/gu, ""),
+    )
+    .join("");
+
+/** Whether two block reasons are the same reason once SpecWeave's spacing fixes are set aside. */
 export const sameReason = (left: string | undefined, right: string | undefined) =>
-  (left ?? "").replace(/\s+/gu, "") === (right ?? "").replace(/\s+/gu, "");
+  reasonKey(left) === reasonKey(right);
 
 const describeHold = (task: FoldedTask) =>
   `${task.status} by ${task.by ?? "someone"}${task.since === undefined ? "" : ` since ${task.since}`}${task.status === "blocked" && task.note ? ` (${task.note})` : ""}`;
@@ -303,6 +315,24 @@ export async function holdOwner(input: {
   return { kind: "unknown", names: input.siblings.map(named) };
 }
 
+/**
+ * The runtime mode the running turn's provider was given (the active
+ * attempt's `startedModes`), or null when that cannot be read.
+ */
+const runningTurnMode = (
+  threads: ThreadManagement.ThreadManagementService["Service"],
+  threadId: ThreadId,
+  runId: string,
+) =>
+  threads.getThreadRecords(threadId, ["runs", "attempts"]).pipe(
+    Effect.map(({ runs, attempts }) => {
+      const run = runs.find((entry) => entry.id === runId);
+      const attempt = attempts.find((entry) => entry.id === run?.activeAttemptId);
+      return attempt?.status === "running" ? (attempt.startedModes?.runtimeMode ?? null) : null;
+    }),
+    Effect.orElseSucceed(() => null),
+  );
+
 /** The calling thread, its checkout's other live threads, and its write identity. */
 const callerContext = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -322,10 +352,23 @@ const callerContext = Effect.gen(function* () {
   // Owner decision, November 27, 2026 (spec D-13): the server writes with more
   // reach than a sandboxed agent has, and the CLI follows links when it opens
   // files, so only a thread that can already write anywhere gets these tools.
-  if (shell.runtimeMode !== "full-access") {
+  // The mode that counts is the one the running turn's provider was given; a
+  // mode changed during the turn reaches only the next one, so both must be
+  // full-access.
+  if (shell.activeRunId === null) {
     return yield* failure(
       "capability_denied",
-      `SpecWeave write tools run only for threads in full-access mode, and this thread runs in ${shell.runtimeMode} mode. Use \`specweave task claim|release|block\` in your shell instead, under this thread's own permissions.`,
+      "SpecWeave write tools run only during one of this thread's turns, and none is running now (background work after a turn does not count).",
+    );
+  }
+  const turnMode = yield* runningTurnMode(threads, shell.id, shell.activeRunId);
+  const mode = shell.runtimeMode !== "full-access" ? shell.runtimeMode : turnMode;
+  if (mode !== "full-access") {
+    return yield* failure(
+      "capability_denied",
+      mode === null
+        ? "SpecWithCode cannot tell which mode this thread's running turn was started in, so SpecWeave write tools will not run. Try again on the next turn, or use `specweave task claim|release|block` in your shell."
+        : `SpecWeave write tools run only for threads in full-access mode, and this thread's turn runs in ${mode} mode. Use \`specweave task claim|release|block\` in your shell instead, under this thread's own permissions.`,
     );
   }
   const settings = yield* ServerSettings.ServerSettingsService;

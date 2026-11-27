@@ -242,6 +242,29 @@ describe("decideOwnership: the bound path itself (1497 review round 2)", () => {
   );
 });
 
+describe("decideOwnership: an in-worktree binding is never swapped (1497 review round 3)", () => {
+  it.skipIf(isWindows)(
+    "refuses a binding inside the worktree that links outside, even with a copy at the root",
+    async () => {
+      const { root, worktree } = scratch();
+      const outside = NodePath.join(root, "elsewhere", ".specweave", "increments", INCREMENT);
+      NodeFS.mkdirSync(outside, { recursive: true });
+      const nested = NodePath.join(worktree, "repos", "app");
+      NodeFS.mkdirSync(NodePath.join(nested, ".specweave", "increments"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(nested, ".specweave", "config.json"), "{}\n");
+      const bindingPath = NodePath.join(nested, ".specweave", "increments", INCREMENT);
+      NodeFS.symlinkSync(outside, bindingPath);
+      const result = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(bindingPath),
+      });
+      expect(result).toMatchObject({ ok: false, code: "capability_denied" });
+      expect(!result.ok && result.message).toContain("not to increment");
+    },
+  );
+});
+
 describe("ledgerPathsInside: real folders and plain files (1497 review)", () => {
   const check = (worktree: string, incrementId = INCREMENT) =>
     ledgerPathsInside({ workspace: worktree, specweaveRoot: worktree, incrementId });

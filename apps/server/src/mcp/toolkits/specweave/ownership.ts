@@ -253,19 +253,28 @@ export async function decideOwnership(input: {
   // link in it leads: `<root>/.specweave/increments/<id>` must be that very
   // folder, with no link on the way, or the copy is refused.
   const boundDir = await realPath(bound.incrementPath);
+  // A binding recorded inside the worktree (by path, or by where it leads)
+  // must be valid as it stands; only one recorded outside it, in the shared
+  // project folder, falls back to the worktree's own copy.
+  const recordedInside =
+    isInside(where.workspace, bound.incrementPath) ||
+    (input.worktreePath !== null && isInside(input.worktreePath, bound.incrementPath)) ||
+    (boundDir !== null && isInside(where.workspace, boundDir));
   let specweaveRoot: string;
-  if (boundDir !== null && isInside(where.workspace, boundDir)) {
+  if (recordedInside) {
     const recordedRoot = NodePath.dirname(NodePath.dirname(NodePath.dirname(bound.incrementPath)));
     const root = await realPath(recordedRoot);
     const expected =
       root === null ? null : NodePath.join(root, ".specweave", "increments", bound.incrementId);
     if (
       root === null ||
+      boundDir === null ||
+      !isInside(where.workspace, boundDir) ||
       NodePath.basename(bound.incrementPath) !== bound.incrementId ||
       boundDir !== expected
     ) {
       return denied(
-        `${bound.incrementPath} leads to ${boundDir}, not to increment ${bound.incrementId}'s own folder under ${recordedRoot}. SpecWeave write tools write only to the increment's own folder.`,
+        `${bound.incrementPath} leads to ${boundDir ?? "nowhere"}, not to increment ${bound.incrementId}'s own folder under ${recordedRoot}. SpecWeave write tools write only to the increment's own folder.`,
       );
     }
     const nested = await resolveCallerWorkspace({ worktreePath: input.worktreePath, folder: root });
