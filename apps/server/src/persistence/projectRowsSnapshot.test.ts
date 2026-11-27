@@ -23,7 +23,9 @@ const withHeldDatabase = async (run: (dbPath: string, directory: string) => Prom
       PRAGMA user_version = 77;
       CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT NOT NULL, workspace_settings_json TEXT);
       CREATE TABLE project_memory (project_id TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL, PRIMARY KEY (project_id, name));
-      CREATE TABLE scheduled_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT REFERENCES missing_parent(id), big INTEGER);
+      CREATE TABLE task_owners (id INTEGER PRIMARY KEY);
+      INSERT INTO task_owners VALUES (1);
+      CREATE TABLE scheduled_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT, owner_id INTEGER REFERENCES task_owners(id), big INTEGER);
       CREATE TABLE orchestration_v2_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, payload_json TEXT NOT NULL);
     `);
     holder
@@ -38,7 +40,7 @@ const withHeldDatabase = async (run: (dbPath: string, directory: string) => Prom
     for (let i = 0; i < 2000; i++) memory.run("work", `file-${i}.md`, "x".repeat(2000));
     holder.exec("COMMIT");
     holder
-      .prepare("INSERT INTO scheduled_tasks (project_id, big) VALUES (?, ?)")
+      .prepare("INSERT INTO scheduled_tasks (project_id, owner_id, big) VALUES (?, 1, ?)")
       .run(PERCY, 9007199254740993n);
     holder.prepare("INSERT INTO scheduled_tasks (project_id, big) VALUES (?, ?)").run("work", 1);
     holder
@@ -85,9 +87,12 @@ describe("snapshotProjectRows", () => {
         const big = copy.prepare("SELECT big FROM scheduled_tasks");
         big.setReadBigInts(true);
         assert.equal(big.get()?.big, 9007199254740993n);
-        // Tables keyed by thread, not project, stay out.
+        // Tables keyed by thread, not project, stay out, even one a copied row refers to.
         assert.equal(
-          count(copy, "SELECT count(*) FROM sqlite_master WHERE name = 'orchestration_v2_events'"),
+          count(
+            copy,
+            "SELECT count(*) FROM sqlite_master WHERE name IN ('orchestration_v2_events', 'task_owners')",
+          ),
           0,
         );
         const info = copy.prepare(`SELECT * FROM ${COPY_INFO_TABLE}`).get();
