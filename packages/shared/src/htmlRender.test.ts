@@ -12,6 +12,7 @@ import {
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   injectHtmlRenderBootstrap,
   isHtmlRenderStagePage,
+  htmlRenderPageFragment,
   isHtmlVisualDocument,
   isHtmlVisualSvg,
   htmlRenderThemeMessage,
@@ -618,6 +619,18 @@ describe("stage pages", () => {
     ]);
   });
 
+  it("keeps the page's own fragment and drops the host's", () => {
+    const theme = htmlRenderThemeFragment({ appearance: "dark", variables: {} });
+    expect(htmlRenderPageFragment("/a/page.html?sig=1")).toBe("");
+    expect(htmlRenderPageFragment("/a/page.html#")).toBe("");
+    expect(htmlRenderPageFragment("/a/page.html#deck-2")).toBe("#deck-2");
+    expect(htmlRenderPageFragment(`/a/page.html#deck-2${theme}`)).toBe("#deck-2");
+    expect(htmlRenderPageFragment(`/a/page.html${theme}`)).toBe("");
+    expect(htmlRenderPageFragment(`/a/page.html#x${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toBe(
+      "#x",
+    );
+  });
+
   it("detects the stage meta tag only in markup", () => {
     expect(
       isHtmlRenderStagePage('<head><meta name="specwithcode-page" content="stage"></head>'),
@@ -631,6 +644,21 @@ describe("stage pages", () => {
     expect(isHtmlRenderStagePage("<!-- <meta name=specwithcode-page content=stage> -->")).toBe(
       false,
     );
+    // Only the real attributes count, and only in the head.
+    expect(isHtmlRenderStagePage('<meta data-name="specwithcode-page" data-content="stage">')).toBe(
+      false,
+    );
+    expect(
+      isHtmlRenderStagePage('<meta name="specwithcode-page" data-content="stage" content="x">'),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(
+        '<head><title>r</title></head><body><meta name="specwithcode-page" content="stage"></body>',
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<META NAME="SpecWithCode-Page" CONTENT=" stage "><body></body>'),
+    ).toBe(true);
   });
 
   it("carries the stage flag through a reference", () => {

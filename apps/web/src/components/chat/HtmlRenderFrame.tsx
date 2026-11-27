@@ -390,7 +390,8 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
             inert={!expanded}
             style={{ height: documentHeight }}
           >
-            {src !== null ? (
+            {/* An earlier version mounts no page, and so runs nothing, until it is opened. */}
+            {src !== null && (expanded || props.replaced !== true) ? (
               <HtmlRenderDocument
                 src={src}
                 title={title}

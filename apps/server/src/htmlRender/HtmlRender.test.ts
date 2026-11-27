@@ -305,8 +305,26 @@ describe("HtmlRender", () => {
       yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
       const secret = path.join(config.secretsDir, "keys.html");
       yield* fileSystem.writeFileString(secret, "<p>secret</p>");
+      // A link named *.html to the secret, and a path that goes back up through a link.
+      const linked = path.join(directory, "linked.html");
+      yield* fileSystem.symlink(secret, linked);
+      const nested = path.join(config.secretsDir, "nested");
+      yield* fileSystem.makeDirectory(nested, { recursive: true });
+      const hop = path.join(directory, "hop");
+      yield* fileSystem.symlink(nested, hop);
+      const throughLink = `${hop}/../keys.html`;
+      const large = path.join(directory, "large.html");
+      yield* fileSystem.writeFile(large, new Uint8Array(25 * 1024 * 1024 + 1));
       const reasons = yield* Effect.forEach(
-        ["deck.html", notes, secret, path.join(directory, "missing.html")],
+        [
+          "deck.html",
+          notes,
+          secret,
+          path.join(directory, "missing.html"),
+          linked,
+          throughLink,
+          large,
+        ],
         (candidate) =>
           htmlRender.readPageFile(candidate).pipe(
             Effect.flip,
@@ -318,6 +336,9 @@ describe("HtmlRender", () => {
         "only .html and .htm files can be shown.",
         "SpecWithCode keeps this path away from agents.",
         "the file does not exist or cannot be read.",
+        "SpecWithCode keeps this path away from agents.",
+        "the path must not have . or .. parts.",
+        "it is 26214401 bytes, over the 25.0 MiB limit.",
       ]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -588,6 +609,32 @@ describe("HtmlRender", () => {
           // Ready was seen (no warning), and the theme fragment did not stay in the page's hash.
           expect(texts).toContain("hash:");
           expect(texts.join(" ")).not.toContain("specwithcodeReady");
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
+      }),
+    60_000,
+  );
+
+  it.live(
+    "stops waiting for a stage page as soon as it shows its error",
+    (ctx) =>
+      Effect.gen(function* () {
+        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+        yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          const started = yield* Clock.currentTimeMillis;
+          const preview = yield* htmlRender.preview({
+            html: [
+              '<meta name="specwithcode-page" content="stage">',
+              '<body><script>setTimeout(() => { const e = document.createElement("div");',
+              'e.className = "swc-error"; e.textContent = "no WebGL 2"; document.body.append(e);',
+              'window.specwithcodeFailed = "no WebGL 2"; }, 200);</script>',
+            ].join(""),
+          });
+          expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(30_000);
+          expect(preview.consoleMessages.map((message) => message.text).join(" ")).toContain(
+            "showed its error instead of becoming ready",
+          );
         }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     60_000,

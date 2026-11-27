@@ -5,6 +5,7 @@ import {
   htmlRenderError,
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   HTML_RENDER_STAGE_ALLOW,
+  htmlRenderPageFragment,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -232,7 +233,7 @@ export function HtmlRenderDocument(props: {
   });
   const [src] = useState(
     () =>
-      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
+      `${props.src.split("#", 1)[0]}${htmlRenderPageFragment(props.src)}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
   );
   const [loaded, setLoaded] = useState(false);
   const postTheme = () => {

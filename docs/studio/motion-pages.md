@@ -29,7 +29,7 @@ A page's own URL fragment survives the theme bootstrap, so `#scene-2` deep links
 
 `html_render` and `html_preview` accept either `html` or `path`. Use `path` (an absolute path to an `.html` or `.htm` file, up to 25 MiB) for anything big; inline `html` is capped at 512,000 characters.
 
-`html_preview` captures a stage page at 1280 px wide, 16:9, after the page sets `window.specwithcodeReady = true` (it waits up to 90 seconds, then captures anyway with a warning).
+`html_preview` captures a stage page at 1280 px wide, 16:9, after the page sets `window.specwithcodeReady = true`. It waits up to 90 seconds, then captures anyway with a warning. A page that cannot run sets `window.specwithcodeFailed` to a message (the deck does this for you): the preview then captures at once and returns the page's errors.
 
 ## Libraries
 
@@ -101,7 +101,9 @@ Easings: `linear`, `inQuad`, `outQuad`, `inOutQuad`, `outCubic`, `inOutCubic`, `
 
 ### Loading
 
-Before the show, the deck builds every scene, compiles its shaders and draws each beat once offscreen, moving the loading bar one step per scene. Then it sets `window.specwithcodeReady = true` and fires `specwithcode:ready`. A scene that throws while loading is skipped and logged; the others still run.
+Before the show, the deck builds every scene, compiles its shaders and draws each beat once offscreen, moving the loading bar one step per scene. Then it sets `window.specwithcodeReady = true` and fires `specwithcode:ready`. A scene that throws while loading is skipped and logged; the others still run. A scene that throws later, in any of its own functions, goes blank and is logged, and the deck keeps moving.
+
+A scene's own `input`, `textarea`, `select`, `button`, link or label takes clicks and keys; the deck's keys stay out of it while it has focus. Everything else in a scene's HTML lets clicks through to the stage.
 
 ### Picture
 

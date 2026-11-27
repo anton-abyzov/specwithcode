@@ -747,8 +747,12 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 /** How long a stage page may take to build its scenes and compile its shaders in the preview. */
 export const STAGE_READY_TIMEOUT_MS = 90_000;
 // Resolves true once the page sets its ready global, false when the wait runs out.
+// "ready", "failed" once the page shows its error (a deck without three.js or WebGL 2
+// never becomes ready, so waiting the full timeout would only hold a browser), or "timeout".
 const stageReadyExpression = (global: string, timeoutMs: number) =>
-  `new Promise(function(r){var t=Date.now();(function p(){if(window[${JSON.stringify(global)}]===true)return r(true);if(Date.now()-t>${timeoutMs})return r(false);setTimeout(p,250);})();})`;
+  `new Promise(function(r){var t=Date.now();(function p(){if(window[${JSON.stringify(global)}]===true)return r("ready");if(typeof window.specwithcodeFailed==="string"||document.querySelector(".swc-error"))return r("failed");if(Date.now()-t>${timeoutMs})return r("timeout");setTimeout(p,250);})();})`;
+
+const StageReadyState = Schema.Literals(["ready", "failed", "timeout"]);
 
 /**
  * A stage page (a motion presentation) in a 16:9 viewport at `width`: waits for
@@ -774,26 +778,30 @@ export const captureStageScreenshot = Effect.fn("headlessChrome.captureStageScre
     const height = Math.round((input.width * 9) / 16);
     const page = yield* browser.openPage(input.width, { height, scale: 1 });
     yield* page.load(pageBody(input.html), input.urlFragment);
-    const ready = yield* page.evaluate(
+    const state = yield* page.evaluate(
       stageReadyExpression(input.readyGlobal, STAGE_READY_TIMEOUT_MS),
-      Schema.Boolean,
+      StageReadyState,
       { awaitPromise: true },
     );
-    yield* page.evaluate(
-      "new Promise(function(r){setTimeout(function(){r(true)},1500)})",
-      Schema.Boolean,
-      { awaitPromise: true },
-    );
+    // A beat of motion plays before a ready stage is captured; a failed one shows its error now.
+    if (state === "ready") {
+      yield* page.evaluate(
+        "new Promise(function(r){setTimeout(function(){r(true)},1500)})",
+        Schema.Boolean,
+        { awaitPromise: true },
+      );
+    }
     const png = yield* page.screenshot(height);
-    const consoleMessages: ReadonlyArray<ConsoleMessage> = ready
-      ? page.consoleMessages()
-      : [
-          ...page.consoleMessages(),
-          {
-            level: "warning",
-            text: `The stage page never set window.${input.readyGlobal} = true within ${STAGE_READY_TIMEOUT_MS / 1000} seconds; the screenshot may show its loading screen.`,
-          },
-        ];
+    const warning =
+      state === "failed"
+        ? "The stage page showed its error instead of becoming ready; see the errors above."
+        : state === "timeout"
+          ? `The stage page never set window.${input.readyGlobal} = true within ${STAGE_READY_TIMEOUT_MS / 1000} seconds; the screenshot may show its loading screen.`
+          : null;
+    const consoleMessages: ReadonlyArray<ConsoleMessage> =
+      warning === null
+        ? page.consoleMessages()
+        : [...page.consoleMessages(), { level: "warning", text: warning }];
     return { png, contentHeight: height, capturedHeight: height, consoleMessages };
   },
   Effect.scoped,

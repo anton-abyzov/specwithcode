@@ -142,7 +142,14 @@ describe("HtmlRenderFrame earlier versions", () => {
     expect(container.textContent).toContain("Earlier version. The newest is further down.");
     expect(container.textContent).not.toContain("install-button");
     expect(container.querySelector<HTMLElement>(".html-report-preview")?.hidden).toBe(true);
-    expect(container.textContent).toContain("Open report");
+    // Hidden is not enough: a hidden frame still runs, so no frame exists until it is opened.
+    expect(document.querySelector("iframe")).toBeNull();
+    const openButton = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Open report"),
+    );
+    expect(openButton).toBeDefined();
+    await act(async () => openButton?.click());
+    expect(document.querySelector("iframe")).not.toBeNull();
   });
 
   it("keeps Install as app on the newest version", async () => {

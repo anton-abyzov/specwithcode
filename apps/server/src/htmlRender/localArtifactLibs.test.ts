@@ -210,6 +210,21 @@ describe("inlineArtifactLibraries", () => {
     expect(result.unavailable).toEqual(["three"]);
   });
 
+  it("inlines Mermaid beside a SpecWithCode library, in either order", () => {
+    const mermaid =
+      '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>';
+    const three = '<script src="specwithcode:three"></script>';
+    for (const html of [`${three}${mermaid}`, `${mermaid}${three}`]) {
+      const result = inlineArtifactLibraries(html, {
+        ...options(),
+        resolveMermaidSource: () => "window.mermaid={};",
+      });
+      expect(result.html).toContain('<script data-local-artifact-lib="mermaid">');
+      expect(result.html).toContain('<script data-local-artifact-lib="three">');
+      expect(result.html).not.toContain("already inlined");
+    }
+  });
+
   it("says when the inlined page would pass the size limit", () => {
     const html = '<script src="specwithcode:three"></script>';
     const result = inlineArtifactLibraries(html, options(10));

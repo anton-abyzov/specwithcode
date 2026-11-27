@@ -261,6 +261,7 @@ export function inlineArtifactLibraries(
   let safeSource: string | null = null;
   let sourceLoaded = false;
   let rewrittenCount = 0;
+  let mermaidCount = 0;
   const unknown = new Set<string>();
   const unavailable = new Set<SpecWithCodeArtifactLibrary>();
   const inlined = new Set<SpecWithCodeArtifactLibrary>();
@@ -444,7 +445,9 @@ export function inlineArtifactLibraries(
       }
       if (safeSource !== null) {
         rewrittenCount += 1;
-        if (rewrittenCount > 1) {
+        // Mermaid keeps its own count: a SpecWithCode library before it must not stand in for it.
+        mermaidCount += 1;
+        if (mermaidCount > 1) {
           out.push("<!-- mermaid@11 already inlined locally -->");
         } else {
           const nonceValue = attrs.get("nonce");

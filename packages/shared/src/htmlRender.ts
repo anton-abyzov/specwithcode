@@ -52,18 +52,35 @@ export const HTML_RENDER_STAGE_ALLOW = "autoplay; fullscreen";
 /** The global a stage page sets once its scenes are built and its shaders compiled. */
 export const HTML_RENDER_STAGE_READY_GLOBAL = "specwithcodeReady";
 
+/** A tag's attributes, names lower-cased; the first of a repeated name wins, as in HTML. */
+function tagAttributes(tag: string): Map<string, string> {
+  const attributes = new Map<string, string>();
+  const body = tag.replace(/^<[a-z0-9-]+/i, "").replace(/\/?>$/, "");
+  for (const match of body.matchAll(
+    /(?:^|\s)([^\s"'=<>/`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g,
+  )) {
+    const name = match[1]!.toLowerCase();
+    if (!attributes.has(name)) attributes.set(name, match[2] ?? match[3] ?? match[4] ?? "");
+  }
+  return attributes;
+}
+
 /**
  * Whether a page declares itself a stage page: a `<meta name="specwithcode-page"
- * content="stage">` in its markup, attributes in any order and quoting, outside
- * scripts, styles and comments.
+ * content="stage">` in its head, attributes in any order and quoting, outside
+ * scripts, styles and comments. Only the `name` and `content` attributes count
+ * (not `data-name`), and a tag in the body does not, so a report never turns
+ * into a stage page with its permissions by quoting the tag.
  */
 export function isHtmlRenderStagePage(html: string): boolean {
   const scan = blankNonMarkup(html);
-  for (const match of scan.matchAll(/<meta\b[^>]*>/gi)) {
-    const tag = match[0];
+  const bodyStart = scan.search(/<body[\s>]/i);
+  const head = bodyStart === -1 ? scan : scan.slice(0, bodyStart);
+  for (const match of head.matchAll(/<meta\b[^>]*>/gi)) {
+    const attributes = tagAttributes(match[0]);
     if (
-      /\bname\s*=\s*["']?specwithcode-page["'\s/>]/i.test(tag) &&
-      /\bcontent\s*=\s*["']?stage["'\s/>]/i.test(tag)
+      attributes.get("name")?.trim().toLowerCase() === "specwithcode-page" &&
+      attributes.get("content")?.trim().toLowerCase() === "stage"
     )
       return true;
   }
@@ -584,6 +601,18 @@ export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
 }
 
 const CONTAIN_SCROLL_FRAGMENT_KEY = "studio-contain-scroll";
+
+/**
+ * The page's own fragment in `src` (`#deck-2` for a deck's second scene), with
+ * any host fragment the app added dropped, or "" when there is none. A frame
+ * puts it in front of the theme fragment so the page opens where it was linked.
+ */
+export function htmlRenderPageFragment(src: string): string {
+  const hashAt = src.indexOf("#");
+  if (hashAt === -1) return "";
+  const own = src.slice(hashAt).split(/[#&]studio-/, 1)[0]!;
+  return own.length > 1 ? own : "";
+}
 
 /**
  * Goes after {@link htmlRenderThemeFragment} for a frame that sits inline in

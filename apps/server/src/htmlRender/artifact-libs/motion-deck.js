@@ -93,6 +93,8 @@
     ".swc-layer{position:absolute;inset:0;opacity:0;transition:opacity .5s ease;color:#f4f1ea;" +
     "font-family:var(--swc-font,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif)}" +
     ".swc-layer.swc-on{opacity:1}" +
+    // A scene's own controls take the pointer; everything else lets clicks reach the stage.
+    ".swc-layer.swc-on :is(input,textarea,select,button,a[href],label,[contenteditable]){pointer-events:auto}" +
     ".swc-w{display:inline-block;overflow:hidden;vertical-align:top;padding-bottom:.08em;margin-bottom:-.08em}" +
     ".swc-w>span{display:inline-block;will-change:transform}" +
     ".swc-odo{display:inline-flex;font-variant-numeric:tabular-nums;line-height:1}" +
@@ -696,6 +698,24 @@
     function fail(message) {
       el("div", "swc-error", ui, "<p>" + message + "</p>");
       console.error("[motion-deck] " + message);
+      // Tells a waiting preview at once that the deck will never be ready.
+      window.specwithcodeFailed = String(message);
+    }
+    // A scene's own code runs through here: a scene that throws goes blank and the deck
+    // keeps going, instead of every later frame, key and click stopping at the throw.
+    function call(entry, name, a, b, c) {
+      var inst = entry.inst;
+      if (!inst || typeof inst[name] !== "function") return undefined;
+      try {
+        return inst[name](a, b, c);
+      } catch (error) {
+        console.error(
+          "[motion-deck] scene " + (entry.def.id || "") + " failed in " + name + "()",
+          error,
+        );
+        entry.inst = null;
+        return undefined;
+      }
     }
     if (!THREE)
       return fail("This presentation needs three.js: load specwithcode:three before the deck.");
@@ -814,7 +834,7 @@
           cam.aspect = s.aspect;
           cam.updateProjectionMatrix();
         }
-        if (entry.inst && entry.inst.resize) entry.inst.resize(s);
+        call(entry, "resize", s);
       });
     }
     var quality = 1;
@@ -826,6 +846,14 @@
     function draw(entry, slot) {
       var inst = entry.inst;
       if (!inst) return;
+      try {
+        drawScene(entry, inst, slot);
+      } catch (error) {
+        console.error("[motion-deck] scene " + (entry.def.id || "") + " failed to draw", error);
+        entry.inst = null;
+      }
+    }
+    function drawScene(entry, inst, slot) {
       post.render(
         inst.scene,
         inst.camera,
@@ -930,14 +958,14 @@
       if (cut) seekState(entry, beat, 0);
       entry.s.beat = beat;
       if (entry.def.bed !== undefined) audio.bed(entry.def.bed);
-      if (entry.inst && entry.inst.enter) entry.inst.enter(entry.s);
+      call(entry, "enter", entry.s);
       beatChanged(entry);
       writeHash();
     }
     function beatChanged(entry) {
       var s = entry.s;
       s.since[s.beat] = 0;
-      if (entry.inst && entry.inst.beat) entry.inst.beat(s.beat, s);
+      call(entry, "beat", s.beat, s);
     }
     function jump(index, beat) {
       transition = null;
@@ -1075,7 +1103,15 @@
       });
     }
     window.addEventListener("keydown", function (e) {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      // Keys typed into a scene's own field belong to the field.
+      var target = e.target;
+      if (
+        target &&
+        target.closest &&
+        target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")
+      )
+        return;
       unlock();
       var k = e.key;
       var handled = true;
@@ -1113,7 +1149,7 @@
       canvas.focus({ preventScroll: true });
       down = { x: e.clientX, y: e.clientY, t: performance.now(), button: e.button };
       var entry = instances[deck.index];
-      if (entry.inst && entry.inst.pointer && entry.inst.pointer("down", e, entry.s)) {
+      if (call(entry, "pointer", "down", e, entry.s)) {
         down = null;
         canvas.setPointerCapture(e.pointerId);
       }
@@ -1121,7 +1157,7 @@
     canvas.addEventListener("pointerup", function (e) {
       var entry = instances[deck.index];
       if (!down) {
-        if (entry.inst && entry.inst.pointer) entry.inst.pointer("up", e, entry.s);
+        call(entry, "pointer", "up", e, entry.s);
         return;
       }
       var dx = e.clientX - down.x,
@@ -1144,7 +1180,7 @@
       var entry = instances[deck.index];
       entry.s.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
       entry.s.mouse.y = -((e.clientY / window.innerHeight) * 2 - 1);
-      if (entry.inst && entry.inst.pointer) entry.inst.pointer("move", e, entry.s);
+      call(entry, "pointer", "move", e, entry.s);
       document.body.classList.remove("swc-idle");
       clearTimeout(idleTimer);
       idleTimer = setTimeout(function () {
@@ -1184,7 +1220,7 @@
           s.since[k] = s.p[k] * d.dur + (d.delay || 0);
         }
       }
-      if (entry.inst && entry.inst.update) entry.inst.update(s);
+      call(entry, "update", s);
     }
     function frame(now) {
       requestAnimationFrame(frame);

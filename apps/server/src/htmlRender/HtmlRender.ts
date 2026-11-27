@@ -545,32 +545,68 @@ const make = Effect.gen(function* () {
       Effect.provideContext(services),
     );
 
-  const readPageFile = Effect.fn("HtmlRender.readPageFile")(function* (path: string) {
-    const refuse = (reason: string) => new HtmlRenderPageFileError({ path, reason });
-    if (!pathOps.isAbsolute(path)) return yield* refuse("the path must be absolute.");
-    if (!/\.html?$/i.test(path)) return yield* refuse("only .html and .htm files can be shown.");
-    // A credential store never reaches the page, also through a link named *.html.
-    if (yield* agentPathGuard.isProtected(path)) {
-      return yield* refuse("SpecWithCode keeps this path away from agents.");
-    }
-    const info = yield* fileSystem
-      .stat(path)
-      .pipe(Effect.mapError(() => refuse("the file does not exist or cannot be read.")));
-    if (info.type !== "File") return yield* refuse("it is not a file.");
-    if (Number(info.size) > MAX_PAGE_BYTES) {
-      return yield* refuse(
-        `it is ${formatMib(Number(info.size))}; the limit is ${formatMib(MAX_PAGE_BYTES)}.`,
-      );
-    }
-    const bytes = yield* fileSystem.stream(path, { bytesToRead: MAX_PAGE_BYTES + 1 }).pipe(
-      Stream.mkUint8Array,
-      Effect.mapError(() => refuse("the file cannot be read.")),
-    );
-    if (bytes.byteLength > MAX_PAGE_BYTES) {
-      return yield* refuse(`it grew past ${formatMib(MAX_PAGE_BYTES)} while being read.`);
-    }
-    return new TextDecoder().decode(bytes);
-  });
+  // Device and inode name one file; where the platform reports no inode, size and change time stand in.
+  const sameFileIdentity = (a: FileSystem.File.Info, b: FileSystem.File.Info) =>
+    a.dev === b.dev &&
+    (Option.isSome(a.ino) && Option.isSome(b.ino)
+      ? a.ino.value === b.ino.value
+      : a.size === b.size &&
+        Option.getOrUndefined(a.mtime)?.getTime() === Option.getOrUndefined(b.mtime)?.getTime());
+
+  const readPageFile = Effect.fn("HtmlRender.readPageFile")(
+    function* (path: string) {
+      const refuse = (reason: string) => new HtmlRenderPageFileError({ path, reason });
+      if (!pathOps.isAbsolute(path)) return yield* refuse("the path must be absolute.");
+      // `..` after a link means the link's parent to the system but not to a path check,
+      // so only a path that is already in its plain form is read.
+      if (path.split(/[\\/]/).some((part) => part === "." || part === "..")) {
+        return yield* refuse("the path must not have . or .. parts.");
+      }
+      if (!/\.html?$/i.test(path)) return yield* refuse("only .html and .htm files can be shown.");
+      const unreadable = () => refuse("the file does not exist or cannot be read.");
+      // Opening a pipe would wait for a writer, so only a plain file is opened.
+      if ((yield* fileSystem.stat(path).pipe(Effect.mapError(unreadable))).type !== "File") {
+        return yield* refuse("it is not a file.");
+      }
+      // The file is opened first and everything after is checked against the open file, so
+      // a link swapped in between the check and the read never reaches a protected file.
+      const file = yield* fileSystem.open(path, { flag: "r" }).pipe(Effect.mapError(unreadable));
+      const opened = yield* file.stat.pipe(Effect.mapError(unreadable));
+      if (opened.type !== "File") return yield* refuse("it is not a file.");
+      const real = yield* fileSystem.realPath(path).pipe(Effect.mapError(unreadable));
+      if (!/\.html?$/i.test(real)) return yield* refuse("only .html and .htm files can be shown.");
+      // A credential store never reaches the page, also through a link named *.html.
+      if ((yield* agentPathGuard.isProtected(path)) || (yield* agentPathGuard.isProtected(real))) {
+        return yield* refuse("SpecWithCode keeps this path away from agents.");
+      }
+      const checked = yield* fileSystem.stat(real).pipe(Effect.mapError(unreadable));
+      if (!sameFileIdentity(opened, checked)) {
+        return yield* refuse("the file changed while it was being opened.");
+      }
+      if (Number(opened.size) > MAX_PAGE_BYTES) {
+        return yield* refuse(
+          `it is ${Number(opened.size)} bytes, over the ${formatMib(MAX_PAGE_BYTES)} limit.`,
+        );
+      }
+      // One byte more than the cap shows a file that grew after it was measured.
+      const bytes = new Uint8Array(MAX_PAGE_BYTES + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const read = Number(
+          yield* file
+            .read(bytes.subarray(length))
+            .pipe(Effect.mapError(() => refuse("the file cannot be read."))),
+        );
+        if (read === 0) break;
+        length += read;
+      }
+      if (length > MAX_PAGE_BYTES) {
+        return yield* refuse(`it grew past ${formatMib(MAX_PAGE_BYTES)} while being read.`);
+      }
+      return new TextDecoder().decode(bytes.subarray(0, length));
+    },
+    (effect) => Effect.scoped(effect),
+  );
 
   const prepare = Effect.fn("HtmlRender.prepare")(function* (html: string) {
     const inlined = yield* inline(html);

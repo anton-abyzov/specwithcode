@@ -41,10 +41,28 @@ SpecWithCodeDeck.start({
   ],
 });`;
 
-const page = (hash: string, withThree = true) => ({
+// A first scene whose enter() throws and whose update() throws after a while, and a
+// second scene with its own text field.
+const FAULTY = `
+SpecWithCodeDeck.start({
+  title: "Faulty deck",
+  scenes: [
+    { id: "broken", beats: [{ dur: 0.2 }],
+      create(ctx) {
+        let t = 0;
+        return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera(),
+          enter() { throw new Error("enter broke"); },
+          update(s) { t += 1; if (t > 30) throw new Error("update broke"); } };
+      } },
+    { id: "form", html: '<input id="field">',
+      create(ctx) { return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera() }; } },
+  ],
+});`;
+
+const page = (hash: string, withThree = true, scenes = SCENES) => ({
   url: `http://deck.test/${hash}`,
   html: `<!doctype html><html><head><meta name="specwithcode-page" content="stage"></head><body>
-${withThree ? `<script>${THREE}</script>` : ""}<script>${DECK}</script><script>${SCENES}</script></body></html>`,
+${withThree ? `<script>${THREE}</script>` : ""}<script>${DECK}</script><script>${scenes}</script></body></html>`,
 });
 
 describe("motion deck runtime", () => {
@@ -62,8 +80,8 @@ describe("motion deck runtime", () => {
   const ready = (tab: Page) =>
     tab.waitForFunction("window.specwithcodeReady === true", null, { timeout: 60_000 });
 
-  async function open(hash: string, withThree = true): Promise<Page> {
-    const target = page(hash, withThree);
+  async function open(hash: string, withThree = true, scenes = SCENES): Promise<Page> {
+    const target = page(hash, withThree, scenes);
     const tab = await browser.newPage({ viewport: { width: 960, height: 540 } });
     await tab.route("http://deck.test/**", (route) =>
       route.fulfill({ status: 200, contentType: "text/html", body: target.html }),
@@ -124,6 +142,23 @@ describe("motion deck runtime", () => {
   it("says what is missing when three.js is not on the page", async () => {
     const tab = await open("", false);
     await expect(tab.locator(".swc-error").textContent()).resolves.toContain("specwithcode:three");
+    expect(await tab.evaluate<string>("window.specwithcodeFailed")).toContain("specwithcode:three");
+    await tab.close();
+  });
+
+  it("keeps going past a scene that throws, and leaves typed keys to a scene's field", async () => {
+    const tab = await open("", true, FAULTY);
+    await ready(tab);
+    // enter() threw on the first scene, yet the loader went and the deck still moves.
+    await tab.waitForFunction("!document.querySelector('.swc-load')", null, { timeout: 5_000 });
+    await tab.waitForTimeout(800); // long enough for update() to throw too
+    await tab.keyboard.press("ArrowRight");
+    expect(await tab.evaluate<string>("location.hash")).toBe("#form");
+    await tab.click("#field");
+    await tab.keyboard.type("a f m");
+    await tab.keyboard.press("Backspace");
+    expect(await tab.inputValue("#field")).toBe("a f ");
+    expect(await tab.evaluate<string>("location.hash")).toBe("#form");
     await tab.close();
   });
 });

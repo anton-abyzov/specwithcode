@@ -473,12 +473,16 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(ArtifactAppWindows, make);
 
-/** The platform's quit shortcut: Command-Q on macOS, Control-Q elsewhere, with no other modifier. */
+/**
+ * The app menu's quit shortcut, Command-Q, with no other modifier, matched by key or by its
+ * place on the keyboard so a non-Latin layout counts. Only macOS has one: the Windows and
+ * Linux menus carry no Quit item, so Control-Q there stays the page's.
+ */
 export function isArtifactAppQuitShortcut(
-  input: Pick<Electron.Input, "type" | "key" | "meta" | "control" | "alt" | "shift">,
+  input: Pick<Electron.Input, "type" | "key" | "code" | "meta" | "control" | "alt" | "shift">,
   platform: NodeJS.Platform,
 ): boolean {
-  if (input.type !== "keyDown" || input.key.toLowerCase() !== "q") return false;
-  if (input.alt || input.shift) return false;
-  return platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
+  if (platform !== "darwin" || input.type !== "keyDown") return false;
+  if (input.key.toLowerCase() !== "q" && input.code !== "KeyQ") return false;
+  return input.meta && !input.control && !input.alt && !input.shift;
 }
