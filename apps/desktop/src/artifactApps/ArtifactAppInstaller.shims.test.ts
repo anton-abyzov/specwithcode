@@ -257,6 +257,54 @@ describe("ArtifactAppInstaller with app shims", () => {
     ),
   );
 
+  it.effect("finishes an upgrade that stopped part way", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const before = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const first = yield* before.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        // Stopped between the renames: the old launcher sits under its removal name.
+        const aside = path.join(
+          folder,
+          `.Morning dashboard.app.removing-${first.app.installId}.${"0".repeat(32)}`,
+        );
+        yield* fileSystem.rename(bundle, aside);
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const after = yield* harness(
+          { platform: "darwin", appShim: shimConfig(loader), fileSystem },
+          home,
+          recordsPath,
+        );
+        yield* after.installer.upgradeLaunchers;
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(bundle, "Contents", "MacOS", "page")),
+          "MACH-O LOADER",
+        );
+        assert.isTrue(Option.isSome(yield* after.installer.shimInstallFor(bundle)));
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.includes(".removing-")),
+          [],
+        );
+
+        // Stopped after the swap, before the record: the new bundle is rebuilt, not trusted.
+        const recorded = Option.getOrThrow(yield* after.shimRecords.get(first.app.installId));
+        yield* after.shimRecords.set(first.app.installId, {
+          ...recorded,
+          hostAppPath: "/Applications/Old/SpecWithCode.app",
+        });
+        assert.deepEqual(yield* after.installer.shimInstallFor(bundle), Option.none());
+        const signedBefore = after.calls.codesigned.length;
+        yield* after.installer.upgradeLaunchers;
+        assert.equal(after.calls.codesigned.length, signedBefore + 1);
+        const rebuilt = Option.getOrThrow(yield* after.shimRecords.get(first.app.installId));
+        assert.equal(rebuilt.hostAppPath, "/Applications/SpecWithCode.app");
+        assert.isTrue(Option.isSome(yield* after.installer.shimInstallFor(bundle)));
+      }),
+    ),
+  );
+
   it.effect("writes script launchers once shims are turned off", () =>
     withHome(({ home, recordsPath, fileSystem, path }) =>
       Effect.gen(function* () {

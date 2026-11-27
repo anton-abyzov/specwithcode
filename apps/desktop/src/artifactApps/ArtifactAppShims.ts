@@ -207,23 +207,33 @@ const make = Effect.gen(function* () {
   );
   yield* electronApp.on("browser-window-focus", () => runFork(checkMainWindow));
 
-  // The pages open in shims now, kept current so a crash still reopens them. Once the
-  // app has started to quit (the updater closes every window before before-quit), its
-  // windows closing must not empty the list. One write at a time, each from the state
-  // it was taken in, so an older write never lands last.
-  const rememberOpenPages = reopenLock.withPermits(1)(
-    Effect.gen(function* () {
-      if (yield* Ref.get(desktopState.shutdownBegun)) return;
-      yield* shimRecords
-        .writeReopen(yield* windows.shimInstallIds)
+  // The pages open in shims now, kept current so a crash still reopens them. The list
+  // is taken when a window opens or closes, so a page closed just before quitting is
+  // left out even if its write runs late. Once the app has started to quit (the updater
+  // closes every window before before-quit), closing windows no longer changes the list.
+  // Writes go one at a time, in the order the lists were taken.
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+  const takeOpenPages = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.shutdownBegun)) return Option.none<ReadonlyArray<string>>();
+    return Option.some(yield* windows.shimInstallIds);
+  });
+  const writeOpenPages = (ids: ReadonlyArray<string>) =>
+    reopenLock.withPermits(1)(
+      shimRecords
+        .writeReopen(ids)
         .pipe(
           Effect.catchCause((cause) =>
             logWarning("reopen list not written", { cause: Cause.pretty(cause) }),
           ),
-        );
-    }),
+        ),
+    );
+  const rememberOpenPages = Effect.flatMap(takeOpenPages, (ids) =>
+    Option.isSome(ids) ? writeOpenPages(ids.value) : Effect.void,
   );
-  yield* windows.onClosed(() => runFork(rememberOpenPages));
+  yield* windows.onClosed(() => {
+    const ids = runSync(takeOpenPages);
+    if (Option.isSome(ids)) runFork(writeOpenPages(ids.value));
+  });
 
   const turnAway = (shim: Electron.AppShimHost, reason: string) =>
     Effect.gen(function* () {

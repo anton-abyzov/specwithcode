@@ -26,7 +26,7 @@ Anything else is turned away with `shim.quit()` and opens nothing. Checks wait u
 
 When SpecWithCode itself starts a page's app (reopening it after a restart, or a second install of the same page), it first verifies the bundle against its signature with `codesign --verify --strict` and compares the hash with the recorded one. A bundle whose executable was changed is never started.
 
-The checks defend against other processes connecting to the shim server or changing a launcher. They do not defend against a process that can rewrite SpecWithCode's own state folder: such a process can already change the install records, grants and settings kept there.
+The checks defend against other processes connecting to the shim server or changing a launcher. They do not defend against a process that can rewrite SpecWithCode's own state folder: such a process can already change the install records, grants and settings kept there. A process that swaps a launcher in the moment between that check and Launch Services starting it gets only its own code started, which it could start itself; its window is still refused when it connects.
 
 ### What the page's app does
 
@@ -40,7 +40,7 @@ SpecWithCode itself opens normally when a page's app starts it.
 
 ### Upgrades
 
-At start, SpecWithCode rebuilds every recorded install's launcher as a shim. That covers older script launchers, and shims that point at a SpecWithCode.app path which is no longer the running one. A launcher that was changed by hand or is missing is left alone and logged. The new bundle is staged and signed, and its hash is recorded before it is swapped in, so a failed write leaves the old launcher as it was. A failed swap puts the old bundle and its record back. The old one then goes to the Trash. A page's app that was already running the old bundle (it started SpecWithCode, for example after SpecWithCode was moved) is still accepted with the old hash until SpecWithCode quits.
+At start, SpecWithCode rebuilds every recorded install's launcher as a shim. That covers older script launchers, and shims that point at a SpecWithCode.app path which is no longer the running one. A launcher that was changed by hand or is missing is left alone and logged. The new bundle is staged and signed, swapped in, and then its hash is recorded; the old one goes to the Trash. A failed swap or a failed record write puts the old launcher back. If SpecWithCode stops part way through, the next start puts a launcher left aside back in place, and rebuilds a new bundle that has no record yet rather than trusting it. A page's app that was already running the old bundle (it started SpecWithCode, for example after SpecWithCode was moved) is still accepted with the old hash until SpecWithCode quits.
 
 If the shim server cannot start, new installs get script launchers that open windows of SpecWithCode.
 

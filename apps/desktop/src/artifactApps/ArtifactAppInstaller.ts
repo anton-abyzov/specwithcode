@@ -1022,63 +1022,72 @@ const make = Effect.gen(function* () {
   /**
    * Replaces one owned launcher with a shim for the running app. The new bundle is
    * built and signed aside first; the old one moves to a private removal name, the
-   * new one takes its place, and only then is the hash recorded and the old one
-   * trashed. A failure before the swap leaves the old launcher working.
+   * new one takes its place, and then the hash is recorded and the old one trashed.
+   * Any failure puts the old launcher back. A start after a crash part way through
+   * finishes the job: a launcher left under its removal name goes back first, and a
+   * new bundle swapped in without its record is rebuilt (never trusted as found).
    */
   const upgradeOne = Effect.fn("desktop.artifactApps.upgradeLauncher")(function* (
     app: DesktopArtifactApp,
     wanted: Omit<ArtifactAppShimRecords.ArtifactAppShimRecord, "cdHash">,
     context: LauncherContext,
   ) {
+    const next = locateLauncher(app, context, Option.some(wanted));
+    if (next.kind !== "mac-bundle") return Option.none<string>();
+    yield* restoreInterruptedLauncher(next, app.installId);
     const current = yield* locateRecorded(app, context);
     if (Option.isNone(current) || current.value.kind !== "mac-bundle") return Option.none<string>();
-    if (sameShim(current.value.shim, wanted)) return Option.none<string>();
-    if (!(yield* launcherPathOwned(current.value, current.value.path, app.installId))) {
+    const ownedNow = yield* launcherPathOwned(current.value, current.value.path, app.installId);
+    if (ownedNow && sameShim(current.value.shim, wanted)) return Option.none<string>();
+    const from = ownedNow
+      ? current.value
+      : (yield* launcherPathOwned(next, next.path, app.installId))
+        ? next
+        : undefined;
+    if (from === undefined) {
       yield* logInfo("left a launcher that is not this page's own; not upgraded", {
         installId: app.installId,
       });
       return Option.none<string>();
     }
-    const next = locateLauncher(app, context, Option.some(wanted));
-    if (next.kind !== "mac-bundle") return Option.none<string>();
     const staging = stagingFolder(next, app.installId);
     return yield* Effect.gen(function* () {
       const built = yield* buildMacBundle(next, staging, context.icons);
       if (Option.isNone(built.cdHash)) return Option.none<string>();
       const previous = yield* shimRecords.get(app.installId);
-      // The new hash is kept before the new bundle is public, so a failed write changes
-      // nothing; a failed swap puts the old bundle and its record back.
-      yield* shimRecords.set(app.installId, { ...wanted, cdHash: built.cdHash.value });
-      const restoreRecord = Option.match(previous, {
-        onNone: () => shimRecords.remove(app.installId),
-        onSome: (record) => shimRecords.set(app.installId, record),
-      }).pipe(Effect.ignore);
       const claimed = rules.join(
         next.folder,
         `.${rules.basename(next.path)}.removing-${app.installId}.${newArtifactAppInstallId()}`,
       );
-      yield* fileSystem.rename(current.value.path, claimed).pipe(
-        Effect.mapError(writeError("remove-launcher", current.value.path)),
-        Effect.tapError(() => restoreRecord),
-      );
-      yield* fileSystem.rename(built.stagedBundle, next.path).pipe(
-        Effect.mapError(writeError("move-into-place", next.path)),
-        // Nothing took the old launcher's place yet, so it goes back.
-        Effect.tapError(() =>
-          fileSystem.rename(claimed, current.value.path).pipe(
-            Effect.catchCause((cause) =>
-              logWarning("old launcher could not be put back", {
-                installId: app.installId,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-            Effect.andThen(restoreRecord),
-          ),
+      const putBack = fileSystem.rename(claimed, from.path).pipe(
+        Effect.catchCause((cause) =>
+          logWarning("old launcher could not be put back", {
+            installId: app.installId,
+            cause: Cause.pretty(cause),
+          }),
         ),
       );
+      yield* fileSystem
+        .rename(from.path, claimed)
+        .pipe(Effect.mapError(writeError("remove-launcher", from.path)));
+      // Nothing took the old launcher's place yet, so it goes back.
+      yield* fileSystem.rename(built.stagedBundle, next.path).pipe(
+        Effect.mapError(writeError("move-into-place", next.path)),
+        Effect.tapError(() => putBack),
+      );
+      // Without its hash the new bundle would be turned away, so the old one comes back.
+      yield* shimRecords
+        .set(app.installId, { ...wanted, cdHash: built.cdHash.value })
+        .pipe(
+          Effect.tapError(() =>
+            fileSystem
+              .remove(next.path, { recursive: true, force: true })
+              .pipe(Effect.ignore, Effect.andThen(putBack)),
+          ),
+        );
       // The old copy must not stay under a removal name: it is no longer what uninstall
       // recognises, so it would hold every later uninstall back.
-      if (yield* launcherPathOwned(current.value, claimed, app.installId)) {
+      if (yield* launcherPathOwned(from, claimed, app.installId)) {
         yield* host
           .trashItem(claimed)
           .pipe(
@@ -1097,6 +1106,24 @@ const make = Effect.gen(function* () {
       ),
     );
   });
+
+  // An upgrade stopped between its two renames leaves the launcher under its removal
+  // name and nothing in its place; it goes back before anything else looks at it.
+  const restoreInterruptedLauncher = Effect.fn("desktop.artifactApps.restoreInterruptedLauncher")(
+    function* (location: Extract<LauncherLocation, { kind: "mac-bundle" }>, installId: string) {
+      if (yield* fileSystem.exists(location.path).pipe(Effect.orElseSucceed(() => true))) return;
+      const prefix = `.${rules.basename(location.path)}.removing-${installId}.`;
+      const entries = yield* fileSystem
+        .readDirectory(location.folder)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const left = entries.find((entry) => entry.startsWith(prefix));
+      if (left === undefined) return;
+      yield* fileSystem
+        .rename(rules.join(location.folder, left), location.path)
+        .pipe(Effect.ignore);
+      yield* logInfo("put back a launcher an interrupted upgrade left aside", { installId });
+    },
+  );
 
   const upgradeLaunchers = Effect.gen(function* () {
     const replaced = new Map<string, string>();
