@@ -20,6 +20,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 
+import { randomBytes } from "../nodeCrypto.ts";
 import { LIVE_DATABASE_SUFFIXES } from "./liveDatabaseGuard.ts";
 
 const BUSY_TIMEOUT_MS = 5_000;
@@ -100,15 +101,130 @@ export interface LiveDatabaseSnapshot {
   readonly quickCheck: string;
 }
 
+const GIB = 1024 ** 3;
+
+/**
+ * Free space a copy of `bytes` needs beyond its own size: the larger of 1 GiB
+ * and a tenth of it. A one-step backup holds one read snapshot for the whole
+ * copy, so the live `-wal` cannot checkpoint past it and grows meanwhile.
+ */
+export const snapshotHeadroom = (bytes: number): number => Math.max(GIB, Math.ceil(bytes / 10));
+
+/** Bytes as people read them on a disk ("18.8 GB"); binary units, as Finder's rounding is close enough. */
+export const formatBytes = (bytes: number): string =>
+  bytes >= GIB
+    ? `${(bytes / GIB).toFixed(1)} GB`
+    : `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
+
+/** Bytes an unprivileged process may still write in the folder `dir` (or its nearest existing parent). */
+export const freeBytesAt = (dir: string): number => {
+  let probe = NodePath.resolve(dir);
+  while (!NodeFS.existsSync(probe)) {
+    const parent = NodePath.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const stats = NodeFS.statfsSync(probe);
+  return Number(stats.bavail) * Number(stats.bsize);
+};
+
+/** The destination has less free space than the copy needs; nothing was written. */
+export class LiveDatabaseSpaceError extends Error {
+  readonly needed: number;
+  readonly free: number;
+  readonly databaseBytes: number;
+  constructor(input: {
+    readonly databaseBytes: number;
+    readonly free: number;
+    readonly dir: string;
+  }) {
+    const needed = input.databaseBytes + snapshotHeadroom(input.databaseBytes);
+    super(
+      `Not enough free disk space for the database copy: it needs ${formatBytes(needed)} ` +
+        `(the ${formatBytes(input.databaseBytes)} database plus room to spare) and ` +
+        `${formatBytes(input.free)} is free where it is saved (${input.dir}). Free some space and it tries again.`,
+    );
+    this.name = "LiveDatabaseSpaceError";
+    this.needed = needed;
+    this.free = input.free;
+    this.databaseBytes = input.databaseBytes;
+  }
+}
+
+/** Size of the database a backup would write: every page, free ones included. */
+const databaseBytesOf = (source: NodeSqlite.DatabaseSync): number => {
+  const pages = Number(Object.values(source.prepare("PRAGMA page_count").get() ?? {})[0]);
+  const pageSize = Number(Object.values(source.prepare("PRAGMA page_size").get() ?? {})[0]);
+  return pages * pageSize;
+};
+
+const PARTIAL_MARK = ".partial-";
+
+/** Whether a process with this id is running (a process we may not signal still counts). */
+export const processIsRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Removes the partial files an earlier copy into `target` left behind: those
+ * of a process that is no longer running, and this process's own. Call it
+ * only while this process runs no copy into `target`. A partial of another
+ * running process (a `db snapshot` into the same file) is left alone, as is a
+ * name that carries no process id.
+ */
+export function removeStalePartials(
+  target: string,
+  isRunning: (pid: number) => boolean = processIsRunning,
+): ReadonlyArray<string> {
+  const resolved = NodePath.resolve(target);
+  const dir = NodePath.dirname(resolved);
+  const prefix = `${NodePath.basename(resolved)}${PARTIAL_MARK}`;
+  let names: Array<string>;
+  try {
+    names = NodeFS.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const removed: Array<string> = [];
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const pid = Number(/^(\d+)(?:-|$)/.exec(name.slice(prefix.length))?.[1] ?? Number.NaN);
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    if (pid !== process.pid && isRunning(pid)) continue;
+    NodeFS.rmSync(NodePath.join(dir, name), { force: true });
+    removed.push(name);
+  }
+  return removed;
+}
+
+export interface SnapshotLiveDatabaseOptions {
+  /** Free bytes where the copy is saved; `freeBytesAt` unless a test supplies its own. */
+  readonly freeBytes?: (dir: string) => number;
+  /** SQLite's online backup; replaced only by tests that make it fail. */
+  readonly backup?: typeof NodeSqlite.backup;
+}
+
 /**
  * Copies the live database into `outputPath` with SQLite's online backup,
  * through a connection opened by `openLiveDatabaseReadOnly`. The copy is a
  * self-contained rollback-journal database, checked with `quick_check`, and
  * published only once complete.
+ *
+ * The backup copies every page in one step (`rate: -1`). In steps of a few
+ * pages SQLite starts over whenever the service writes between two steps, so
+ * a busy multi-gigabyte database is never copied. Before any file is made the
+ * destination must have the database's size plus `snapshotHeadroom` free.
+ * Each attempt writes its own partial file and removes it when it fails.
  */
 export async function snapshotLiveDatabase(
   dbPath: string,
   outputPath: string,
+  options: SnapshotLiveDatabaseOptions = {},
 ): Promise<LiveDatabaseSnapshot> {
   const target = NodePath.resolve(outputPath);
   for (const suffix of LIVE_DATABASE_SUFFIXES) {
@@ -119,35 +235,41 @@ export async function snapshotLiveDatabase(
   if (NodeFS.existsSync(target)) {
     throw new Error(`${target} already exists; choose a new file for the snapshot.`);
   }
-  NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true, mode: 0o700 });
-  const partial = `${target}.partial-${process.pid}`;
-  NodeFS.rmSync(partial, { force: true });
+  const dir = NodePath.dirname(target);
+  const source = openLiveDatabaseReadOnly(dbPath);
   try {
-    const source = openLiveDatabaseReadOnly(dbPath);
+    const databaseBytes = databaseBytesOf(source);
+    const free = (options.freeBytes ?? freeBytesAt)(dir);
+    if (free < databaseBytes + snapshotHeadroom(databaseBytes)) {
+      throw new LiveDatabaseSpaceError({ databaseBytes, free, dir });
+    }
+    NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const partial = `${target}${PARTIAL_MARK}${process.pid}-${randomBytes(4).toString("hex")}`;
     try {
-      await NodeSqlite.backup(source, partial);
+      await (options.backup ?? NodeSqlite.backup)(source, partial, { rate: -1 });
+      const copy = new NodeSqlite.DatabaseSync(partial);
+      let quickCheck: string;
+      let pages: number;
+      try {
+        copy.exec("PRAGMA journal_mode = DELETE;");
+        quickCheck = String(Object.values(copy.prepare("PRAGMA quick_check").get() ?? {})[0]);
+        pages = Number(Object.values(copy.prepare("PRAGMA page_count").get() ?? {})[0]);
+      } finally {
+        copy.close();
+      }
+      if (quickCheck !== "ok") {
+        throw new Error(`The snapshot failed PRAGMA quick_check: ${quickCheck}`);
+      }
+      NodeFS.chmodSync(partial, 0o600);
+      NodeFS.renameSync(partial, target);
+      return { path: target, bytes: NodeFS.statSync(target).size, pages, quickCheck };
     } finally {
-      source.close();
+      // After the rename the partial is gone; after a failure this removes it and its journal.
+      for (const suffix of LIVE_DATABASE_SUFFIXES) {
+        NodeFS.rmSync(`${partial}${suffix}`, { force: true });
+      }
     }
-    const copy = new NodeSqlite.DatabaseSync(partial);
-    let quickCheck: string;
-    let pages: number;
-    try {
-      copy.exec("PRAGMA journal_mode = DELETE;");
-      quickCheck = String(Object.values(copy.prepare("PRAGMA quick_check").get() ?? {})[0]);
-      pages = Number(Object.values(copy.prepare("PRAGMA page_count").get() ?? {})[0]);
-    } finally {
-      copy.close();
-    }
-    if (quickCheck !== "ok") {
-      throw new Error(`The snapshot failed PRAGMA quick_check: ${quickCheck}`);
-    }
-    NodeFS.chmodSync(partial, 0o600);
-    NodeFS.renameSync(partial, target);
-    return { path: target, bytes: NodeFS.statSync(target).size, pages, quickCheck };
   } finally {
-    for (const suffix of LIVE_DATABASE_SUFFIXES) {
-      NodeFS.rmSync(`${partial}${suffix}`, { force: true });
-    }
+    source.close();
   }
 }

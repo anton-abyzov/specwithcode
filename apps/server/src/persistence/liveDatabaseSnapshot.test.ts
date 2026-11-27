@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite is the driver under test.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- node:sqlite is the driver under test; a plain timer stands in for the service writing.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -7,8 +7,11 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  LiveDatabaseSpaceError,
   liveDatabaseReadOnlyUri,
   openLiveDatabaseReadOnly,
+  removeStalePartials,
+  snapshotHeadroom,
   snapshotLiveDatabase,
 } from "./liveDatabaseSnapshot.ts";
 
@@ -92,5 +95,133 @@ describe("snapshotLiveDatabase", () => {
         [],
       );
     });
+  });
+
+  it("finishes while another connection keeps writing the database", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const writer = new NodeSqlite.DatabaseSync(dbPath);
+      try {
+        writer.exec("CREATE TABLE blobs(b BLOB)");
+        const insert = writer.prepare("INSERT INTO blobs(b) VALUES (randomblob(4000))");
+        writer.exec("BEGIN");
+        for (let i = 0; i < 3000; i++) insert.run();
+        writer.exec("COMMIT");
+        // The service writes all the time; a backup in small steps restarts on every write.
+        let writes = 0;
+        let writesDuringCopy = 0;
+        const writing = setInterval(() => {
+          insert.run();
+          writes += 1;
+        }, 1);
+        try {
+          const output = NodePath.join(directory, "busy.sqlite");
+          // Let the writer start first, so the copy begins while the database is busy.
+          while (writes < 3) await new Promise((resolve) => setTimeout(resolve, 2));
+          const before = writes;
+          const snapshot = await snapshotLiveDatabase(dbPath, output);
+          writesDuringCopy = writes - before;
+          assert.equal(snapshot.quickCheck, "ok");
+          assert.isAtLeast(snapshot.pages, 3000);
+          // The copy runs off the event loop, so the service kept writing while it ran.
+          assert.isAbove(writesDuringCopy, 0);
+        } finally {
+          clearInterval(writing);
+        }
+      } finally {
+        writer.close();
+      }
+    });
+  }, 20_000);
+
+  it("refuses, creating nothing, when the disk lacks the database size plus headroom", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const reader = openLiveDatabaseReadOnly(dbPath);
+      const databaseBytes =
+        Number(reader.prepare("PRAGMA page_count").get()?.page_count) *
+        Number(reader.prepare("PRAGMA page_size").get()?.page_size);
+      reader.close();
+      const needed = databaseBytes + snapshotHeadroom(databaseBytes);
+      const output = NodePath.join(directory, "copies", "copy.sqlite");
+      let asked = "";
+      const error = await snapshotLiveDatabase(dbPath, output, {
+        freeBytes: (dir) => {
+          asked = dir;
+          return needed - 1;
+        },
+      }).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      assert.instanceOf(error, LiveDatabaseSpaceError);
+      assert.equal(asked, NodePath.dirname(output));
+      assert.match((error as Error).message, /Not enough free disk space.*needs .*is free/);
+      assert.equal((error as LiveDatabaseSpaceError).needed, needed);
+      assert.equal((error as LiveDatabaseSpaceError).databaseBytes, databaseBytes);
+      assert.isFalse(NodeFS.existsSync(NodePath.dirname(output)));
+      // Exactly the size plus headroom is enough.
+      const snapshot = await snapshotLiveDatabase(dbPath, output, { freeBytes: () => needed });
+      assert.equal(snapshot.quickCheck, "ok");
+    });
+  });
+
+  it("leaves no partial or journal behind when the backup fails", async () => {
+    await withHeldDatabase(async (dbPath, directory) => {
+      const output = NodePath.join(directory, "copies", "copy.sqlite");
+      const partials: Array<string> = [];
+      const failing = (async (_source: NodeSqlite.DatabaseSync, path: string) => {
+        partials.push(path);
+        NodeFS.writeFileSync(path, "half a copy");
+        NodeFS.writeFileSync(`${path}-journal`, "journal");
+        throw new Error("database or disk is full");
+      }) as unknown as typeof NodeSqlite.backup;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await snapshotLiveDatabase(dbPath, output, { backup: failing }).then(
+          () => assert.fail("the copy should fail"),
+          (error: Error) => assert.match(error.message, /disk is full/),
+        );
+      }
+      // Every attempt writes its own partial, so starting one never removes a running one.
+      assert.equal(new Set(partials).size, 2);
+      assert.deepEqual(NodeFS.readdirSync(NodePath.dirname(output)), []);
+    });
+  });
+});
+
+describe("removeStalePartials", () => {
+  it("removes this process's and stopped processes' partials, never a running one's", () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-stale-partials-"));
+    try {
+      const target = NodePath.join(directory, "copy.sqlite");
+      const own = process.pid;
+      for (const name of [
+        `copy.sqlite.partial-${own}`,
+        `copy.sqlite.partial-${own}-abcd1234-journal`,
+        "copy.sqlite.partial-111-abcd1234",
+        "copy.sqlite.partial-222-abcd1234",
+        "copy.sqlite.partial-notapid",
+        "copy.sqlite",
+        "other.sqlite.partial-111",
+      ])
+        NodeFS.writeFileSync(NodePath.join(directory, name), "x");
+      // 222 is a running `db snapshot` into the same file; 111 stopped.
+      const removed = removeStalePartials(target, (pid) => pid === 222);
+      assert.deepEqual(
+        removed.toSorted(),
+        [
+          "copy.sqlite.partial-111-abcd1234",
+          `copy.sqlite.partial-${own}`,
+          `copy.sqlite.partial-${own}-abcd1234-journal`,
+        ].toSorted(),
+      );
+      assert.deepEqual(NodeFS.readdirSync(directory).toSorted(), [
+        "copy.sqlite",
+        "copy.sqlite.partial-222-abcd1234",
+        "copy.sqlite.partial-notapid",
+        "other.sqlite.partial-111",
+      ]);
+      assert.deepEqual(removeStalePartials(NodePath.join(directory, "missing", "x.sqlite")), []);
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

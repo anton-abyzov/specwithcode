@@ -30,7 +30,8 @@ import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as Workspace from "./ProjectWorkspaceService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
-import { joinLink, sharedMemoryOf } from "./personalShareLink.ts";
+import { PersonalLinkSnapshotFailure } from "./personalLinkSnapshot.ts";
+import { joinLink, PersonalShareLinkError, sharedMemoryOf } from "./personalShareLink.ts";
 
 const laptop = EnvironmentId.make("env-laptop");
 const desktop = EnvironmentId.make("env-desktop");
@@ -242,3 +243,20 @@ it.effect(
     }).pipe(Effect.provide(stores), Effect.scoped),
   60_000,
 );
+
+it("shows the copy's own reason when the database copy fails", () => {
+  const reason =
+    "Not enough free disk space for the database copy: it needs 20.7 GB and 4.3 GB is free.";
+  const error = new PersonalShareLinkError({
+    stage: "snapshot",
+    cause: new PersonalLinkSnapshotFailure({ message: reason }),
+  });
+  assert.strictEqual(
+    error.message,
+    `Could not save a copy of the database before linking; nothing was linked. ${reason}`,
+  );
+  assert.strictEqual(
+    new PersonalShareLinkError({ stage: "snapshot" }).message,
+    "Could not save a copy of the database before linking; nothing was linked.",
+  );
+});

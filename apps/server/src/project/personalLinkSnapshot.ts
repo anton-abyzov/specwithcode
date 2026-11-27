@@ -16,7 +16,12 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import { sha256 } from "../nodeCrypto.ts";
-import { snapshotLiveDatabase } from "../persistence/liveDatabaseSnapshot.ts";
+import {
+  freeBytesAt,
+  LiveDatabaseSpaceError,
+  removeStalePartials,
+  snapshotLiveDatabase,
+} from "../persistence/liveDatabaseSnapshot.ts";
 
 /** Why this machine could not save its database copy; the join stops before any write. */
 export class PersonalLinkSnapshotFailure extends Data.TaggedError("PersonalLinkSnapshotFailure")<{
@@ -76,48 +81,179 @@ const existingCopyIsSound = (target: string): boolean => {
   }
 };
 
+/** A failed copy for one target: how often in a row, the reason, and when the next try may start. */
+interface SnapshotFailureRecord {
+  readonly failures: number;
+  readonly message: string;
+  readonly nextAt: number;
+  /** Set when the copy failed for free space: the bytes it needed. */
+  readonly neededBytes?: number;
+}
+
+/**
+ * What the copies of one server process share. The layer is provided more
+ * than once (`runtimeLayer.ts`), so the default state is per process, keyed by
+ * the copy's resolved path: two callers never run two copies into one file.
+ */
+export interface PersonalLinkSnapshotState {
+  readonly done: Map<string, string>;
+  readonly running: Map<string, Promise<string>>;
+  readonly failed: Map<string, SnapshotFailureRecord>;
+}
+
+export const makeSnapshotState = (): PersonalLinkSnapshotState => ({
+  done: new Map(),
+  running: new Map(),
+  failed: new Map(),
+});
+
+const processState = makeSnapshotState();
+
+export const SNAPSHOT_RETRY_FIRST_MS = 60_000;
+export const SNAPSHOT_RETRY_MAX_MS = 3_600_000;
+
+/** Wait after `failures` failed copies in a row: one minute, doubling, at most an hour. */
+export const snapshotRetryDelayMs = (failures: number): number =>
+  Math.min(SNAPSHOT_RETRY_MAX_MS, SNAPSHOT_RETRY_FIRST_MS * 2 ** Math.max(0, failures - 1));
+
+const withFullStop = (text: string) =>
+  /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
+
+const inMinutes = (ms: number) => {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return minutes === 1 ? "about a minute" : `about ${minutes} minutes`;
+};
+
+export interface PersonalLinkSnapshotterDeps {
+  /** `<state>/backups/personal-link`. */
+  readonly dir: string;
+  readonly dbPath: string;
+  readonly now?: () => number;
+  /** Writes the copy; `snapshotLiveDatabase` unless a test supplies its own. */
+  readonly copy?: (dbPath: string, target: string) => Promise<{ readonly quickCheck: string }>;
+  /** Free bytes in `dir`, read to learn whether space freed since a copy failed for it. */
+  readonly freeBytes?: (dir: string) => number;
+  readonly state?: PersonalLinkSnapshotState;
+}
+
 /**
  * Copies the live database with SQLite's online backup into
  * `<state>/backups/personal-link/<operation>.sqlite`, beside the database and
  * outside every project folder. Never opens the live files through `node:fs`.
+ *
+ * One copy runs at a time in the process: a caller for the same target that
+ * comes while it runs waits for it, even when the caller that started it was
+ * interrupted (a peer's call that timed out), because the copy itself cannot
+ * be stopped; a caller for another target fails at once without a backoff. After a failure
+ * the next copy waits `snapshotRetryDelayMs`; until then a call fails at once
+ * with the last reason. A copy that failed for space tries again as soon as
+ * the space is there.
  */
+export const makePersonalLinkSnapshotter = (
+  deps: PersonalLinkSnapshotterDeps,
+): PersonalLinkSnapshotter => {
+  const state = deps.state ?? processState;
+  const now = deps.now ?? Date.now;
+  const freeBytes = deps.freeBytes ?? freeBytesAt;
+  const copy =
+    deps.copy ??
+    ((dbPath: string, target: string) => snapshotLiveDatabase(dbPath, target, { freeBytes }));
+
+  const spaceIsBack = (failure: SnapshotFailureRecord) => {
+    if (failure.neededBytes === undefined) return false;
+    try {
+      return freeBytes(deps.dir) >= failure.neededBytes;
+    } catch {
+      return false;
+    }
+  };
+
+  const attempt = async (target: string): Promise<string> => {
+    if (NodeFS.existsSync(target)) {
+      // A retry of the same operation after a restart: reuse its copy only when it is sound.
+      if (!existingCopyIsSound(target))
+        throw new PersonalLinkSnapshotFailure({
+          message: `An unusable file is in the way of the database copy at ${target}.`,
+        });
+      return target;
+    }
+    // No copy into `target` runs now, so partials beside it are leftovers of a stopped process.
+    removeStalePartials(target);
+    const written = await copy(deps.dbPath, target);
+    if (written.quickCheck !== "ok")
+      throw new PersonalLinkSnapshotFailure({
+        message: `The copy failed its check (${written.quickCheck}).`,
+      });
+    return target;
+  };
+
+  const start = (target: string): Promise<string> => {
+    const known = state.done.get(target);
+    if (known !== undefined) return Promise.resolve(known);
+    const running = state.running.get(target);
+    if (running !== undefined) return running;
+    const failure = state.failed.get(target);
+    if (failure !== undefined && now() < failure.nextAt && !spaceIsBack(failure))
+      return Promise.reject(
+        new PersonalLinkSnapshotFailure({
+          message: `${withFullStop(failure.message)} It tries again in ${inMinutes(failure.nextAt - now())}.`,
+        }),
+      );
+    // One database copy at a time in this process, whatever its target: a join series that
+    // began again (the switch turned off and on) must not start a second multi-gigabyte copy
+    // beside one a timed-out call left running. Not a failure of this target: no backoff.
+    if (state.running.size > 0)
+      return Promise.reject(
+        new PersonalLinkSnapshotFailure({
+          message:
+            "Another copy of the database is still being saved; it tries again once that copy ends.",
+        }),
+      );
+    const run = attempt(target);
+    state.running.set(target, run);
+    // Settles the shared state even when every caller was interrupted, and handles the rejection.
+    run.then(
+      (path) => {
+        state.running.delete(target);
+        state.failed.delete(target);
+        state.done.set(target, path);
+      },
+      (error: unknown) => {
+        state.running.delete(target);
+        const failures = (state.failed.get(target)?.failures ?? 0) + 1;
+        state.failed.set(target, {
+          failures,
+          message: error instanceof Error ? error.message : String(error),
+          nextAt: now() + snapshotRetryDelayMs(failures),
+          ...(error instanceof LiveDatabaseSpaceError ? { neededBytes: error.needed } : {}),
+        });
+      },
+    );
+    return run;
+  };
+
+  return {
+    snapshot: (operationId: string) =>
+      Effect.tryPromise({
+        try: () => start(NodePath.resolve(deps.dir, snapshotFileName(operationId))),
+        catch: (error) =>
+          error instanceof PersonalLinkSnapshotFailure
+            ? error
+            : new PersonalLinkSnapshotFailure({
+                message: error instanceof Error ? error.message : String(error),
+              }),
+      }),
+  };
+};
+
 export const layerLive = Layer.effect(
   PersonalLinkSnapshot,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const dir = NodePath.join(config.stateDir, "backups", "personal-link");
-    const done = new Map<string, string>();
-    return {
-      snapshot: (operationId: string) =>
-        Effect.tryPromise({
-          try: async () => {
-            const target = NodePath.join(dir, snapshotFileName(operationId));
-            const known = done.get(target);
-            if (known !== undefined) return known;
-            if (NodeFS.existsSync(target)) {
-              // A retry of the same operation after a restart: reuse its copy only when it is sound.
-              if (!existingCopyIsSound(target))
-                throw new PersonalLinkSnapshotFailure({
-                  message: `An unusable file is in the way of the database copy at ${target}.`,
-                });
-            } else {
-              const written = await snapshotLiveDatabase(config.dbPath, target);
-              if (written.quickCheck !== "ok")
-                throw new PersonalLinkSnapshotFailure({
-                  message: `The copy failed its check (${written.quickCheck}).`,
-                });
-            }
-            done.set(target, target);
-            return target;
-          },
-          catch: (error) =>
-            error instanceof PersonalLinkSnapshotFailure
-              ? error
-              : new PersonalLinkSnapshotFailure({
-                  message: error instanceof Error ? error.message : String(error),
-                }),
-        }),
-    };
+    return makePersonalLinkSnapshotter({
+      dir: NodePath.join(config.stateDir, "backups", "personal-link"),
+      dbPath: config.dbPath,
+    });
   }),
 );
 
