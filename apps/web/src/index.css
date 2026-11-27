@@ -1618,7 +1618,7 @@ video.artifact-viewer-media {
 .report-document .chat-markdown table {
   min-width: 100%;
   font-family: var(--font-sans);
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
