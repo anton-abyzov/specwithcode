@@ -10279,6 +10279,89 @@
       "commit": "2691142f218d709ce29d531b8161bf2d494c5a6f",
       "pr": 942,
       "reason": "Yjs 13.6.33 (MIT) with lib0 0.2.120 and isomorphic.js 0.2.5 (MIT), exact pins: the merge engine for live sheet sessions (increment 1480, slice C1), used only by packages/shared."
+    },
+    {
+      "op": "replace",
+      "parent": [
+        "importers:",
+        "apps/server:",
+        "dependencies:",
+        "'@anthropic-ai/claude-agent-sdk':"
+      ],
+      "before": "specifier: ^0.3.276",
+      "after": "specifier: ^0.3.332",
+      "commit": "d115e1a1d2125493db42d05113ae91f0b0fd83b9",
+      "pr": 967,
+      "reason": "Claude Agent SDK 0.3.276 to 0.3.332 (Anthropic, same peers, same eight cut platform packages): SDK side of the November 2026 MCP work (increment 1494)."
+    },
+    {
+      "op": "replace",
+      "parent": [
+        "importers:",
+        "apps/server:",
+        "dependencies:",
+        "'@anthropic-ai/claude-agent-sdk':"
+      ],
+      "before": "version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)",
+      "after": "version: 0.3.332(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)",
+      "commit": "d115e1a1d2125493db42d05113ae91f0b0fd83b9",
+      "pr": 967,
+      "reason": "Claude Agent SDK 0.3.276 to 0.3.332 (Anthropic, same peers, same eight cut platform packages): SDK side of the November 2026 MCP work (increment 1494)."
+    },
+    {
+      "op": "remove",
+      "parent": ["packages:"],
+      "lines": [
+        "'@anthropic-ai/claude-agent-sdk@0.3.276':",
+        "  resolution: {integrity: sha512-Dic43v4uuGLhibPAArWy3RSfq3zHdn+4Oh2AI2/18a5tlbNKkvChEpazyp8c+grUJvzxkzt0jETCa1wrADbkyw==}"
+      ],
+      "package": "@anthropic-ai/claude-agent-sdk@0.3.276",
+      "integrity": "sha512-Dic43v4uuGLhibPAArWy3RSfq3zHdn+4Oh2AI2/18a5tlbNKkvChEpazyp8c+grUJvzxkzt0jETCa1wrADbkyw==",
+      "commit": "d115e1a1d2125493db42d05113ae91f0b0fd83b9",
+      "pr": 967,
+      "reason": "Claude Agent SDK 0.3.276 to 0.3.332 (Anthropic, same peers, same eight cut platform packages): SDK side of the November 2026 MCP work (increment 1494)."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "lines": [
+        "'@anthropic-ai/claude-agent-sdk@0.3.332':",
+        "  resolution: {integrity: sha512-N0ejnrTLMNJYXkvhdmLEy8QSfjym2ljJCkUBCrLKesYNGgqooi8zHDHawNsi+An6zav/ImPnpi27sbRsRjfcOw==}",
+        "  engines: {node: '>=18.14.0'}",
+        "  peerDependencies:",
+        "    '@anthropic-ai/sdk': '>=0.93.0'",
+        "    '@modelcontextprotocol/sdk': ^1.29.0",
+        "    zod: ^4.0.0"
+      ],
+      "package": "@anthropic-ai/claude-agent-sdk@0.3.332",
+      "integrity": "sha512-N0ejnrTLMNJYXkvhdmLEy8QSfjym2ljJCkUBCrLKesYNGgqooi8zHDHawNsi+An6zav/ImPnpi27sbRsRjfcOw==",
+      "commit": "d115e1a1d2125493db42d05113ae91f0b0fd83b9",
+      "pr": 967,
+      "reason": "Claude Agent SDK 0.3.276 to 0.3.332 (Anthropic, same peers, same eight cut platform packages): SDK side of the November 2026 MCP work (increment 1494)."
+    },
+    {
+      "op": "remove",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@anthropic-ai/claude-agent-sdk@0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)':"
+      ],
+      "commit": "d115e1a1d2125493db42d05113ae91f0b0fd83b9",
+      "pr": 967,
+      "reason": "Claude Agent SDK 0.3.276 to 0.3.332 (Anthropic, same peers, same eight cut platform packages): SDK side of the November 2026 MCP work (increment 1494)."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "'@anthropic-ai/claude-agent-sdk@0.3.332(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)':",
+        "  dependencies:",
+        "    '@anthropic-ai/sdk': 0.93.0(zod@4.6.7)",
+        "    '@modelcontextprotocol/sdk': 1.32.2(zod@4.6.7)",
+        "    zod: 4.6.7"
+      ],
+      "commit": "d115e1a1d2125493db42d05113ae91f0b0fd83b9",
+      "pr": 967,
+      "reason": "Claude Agent SDK 0.3.276 to 0.3.332 (Anthropic, same peers, same eight cut platform packages): SDK side of the November 2026 MCP work (increment 1494)."
     }
   ]
 }

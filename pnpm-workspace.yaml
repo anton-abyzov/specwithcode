@@ -119,7 +119,7 @@ minimumReleaseAgeExclude:
   - expo-sqlite@58.0.8
   - expo-symbols@58.0.3
   - electron@44.10.1
-  - "@anthropic-ai/claude-agent-sdk@0.3.276"
+  - "@anthropic-ai/claude-agent-sdk@0.3.332"
   - "@alchemy.run/cloudflare-runtime@2.0.0-beta.80"
   - "@alchemy.run/floci@2.0.0-beta.80"
   - "@alchemy.run/node-utils@2.0.0-beta.80"
