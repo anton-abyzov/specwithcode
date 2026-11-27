@@ -63,7 +63,9 @@ const scopedTablesOf = (source: NodeSqlite.DatabaseSync): ReadonlyArray<ScopedTa
     // Virtual tables (full-text indexes) cannot be recreated by their CREATE text alone.
     if (/^\s*CREATE\s+VIRTUAL\s+TABLE/i.test(table.sql)) continue;
     const columns = (
-      source.prepare(`PRAGMA table_info(${quoteIdentifier(table.name)})`).all() as unknown as ReadonlyArray<{
+      source
+        .prepare(`PRAGMA table_info(${quoteIdentifier(table.name)})`)
+        .all() as unknown as ReadonlyArray<{
         name: string;
       }>
     ).map((column) => column.name);
