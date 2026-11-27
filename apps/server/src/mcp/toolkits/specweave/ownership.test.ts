@@ -476,6 +476,27 @@ describe("decideOwnership: the thread's own record wins (1497 review round 4)", 
         recorded: { root: registered, incrementId: INCREMENT },
       });
       expect(viaLink).toMatchObject({ ok: true });
+      // The same registered link written with a trailing separator.
+      const trailing = await decideOwnership({
+        worktreePath: `${registered}/`,
+        requested: "1497",
+        bound: bound(increment, "manual"),
+        recorded: { root: registered, incrementId: INCREMENT },
+      });
+      expect(trailing).toMatchObject({ ok: true });
+      // A recorded folder elsewhere whose parent was swapped for a link, so that
+      // the path now ends on the worktree's own folder, is not the worktree.
+      const outside = NodePath.join(root, "outside");
+      NodeFS.symlinkSync(root, outside);
+      const above = await decideOwnership({
+        worktreePath: worktree,
+        requested: "1497",
+        bound: bound(increment, "manual"),
+        recorded: { root: NodePath.join(outside, "worktree", "."), incrementId: INCREMENT },
+      });
+      expect(above).toMatchObject({ ok: false, code: "capability_denied" });
+      NodeFS.rmSync(outside);
+      NodeFS.rmSync(registered);
     }
     // The record of the chosen copy, a record of another increment, and one
     // outside the worktree (the shared project folder) change nothing.

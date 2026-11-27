@@ -79,26 +79,31 @@ const realPath = (path: string) => NodeFSP.realpath(path).catch(() => null);
 
 const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 
+/** A path with its trailing separators removed (a link read with one is followed). */
+const withoutTrailingSeparator = (path: string) => {
+  const resolved = NodePath.resolve(path);
+  return resolved === NodePath.parse(resolved).root ? resolved : resolved.replace(/[\\/]+$/u, "");
+};
+
 /**
  * Where `path` sits below the worktree: the rest of the path after its highest
- * folder that is the worktree's own folder entry, the real one or the
- * registered one (the same entry on disk, so another spelling on a disk that
- * ignores case counts, and so does a registered worktree path that is itself a
- * link). Any other link that leads to the worktree is not the worktree: it is
- * part of the rest, or makes the path not sit below it at all. Taking the
- * highest one means a link further down that leads back is still checked.
+ * folder that is the worktree itself. That folder must be spelled as the real
+ * or the registered worktree path (letter case aside), be that very entry on
+ * disk (not followed, so a link put in its place or above it that leads to
+ * the worktree is not it), and lead to the real worktree. Another spelling on
+ * a disk that ignores case is the same entry and counts; so does a registered
+ * worktree path that is itself a link. Taking the highest one means a link
+ * further down that leads back is still checked.
  */
 async function placeBelow(
   workspace: string,
   registered: string | null,
   path: string,
 ): Promise<string | null> {
-  const entries = (
-    await Promise.all(
-      [workspace, registered].map((own) => (own === null ? null : lstatOrNull(own))),
-    )
-  ).filter((stat) => stat !== null);
-  const resolved = NodePath.resolve(path);
+  const own = [workspace, ...(registered === null ? [] : [withoutTrailingSeparator(registered)])];
+  const names = new Set(own.map((folder) => folder.toLowerCase()));
+  const entries = (await Promise.all(own.map(lstatOrNull))).filter((stat) => stat !== null);
+  const resolved = withoutTrailingSeparator(path);
   const { root } = NodePath.parse(resolved);
   const parts = resolved
     .slice(root.length)
@@ -106,10 +111,11 @@ async function placeBelow(
     .filter((part) => part !== "");
   for (let index = 0; index <= parts.length; index++) {
     const folder = NodePath.join(root, ...parts.slice(0, index));
+    if (!names.has(folder.toLowerCase())) continue;
     const stat = await lstatOrNull(folder);
     if (
       stat !== null &&
-      entries.some((own) => own.dev === stat.dev && own.ino === stat.ino) &&
+      entries.some((entry) => entry.dev === stat.dev && entry.ino === stat.ino) &&
       (await realPath(folder)) === workspace
     ) {
       return parts.slice(index).join(NodePath.sep);
