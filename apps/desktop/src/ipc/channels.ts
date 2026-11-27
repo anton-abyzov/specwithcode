@@ -32,7 +32,6 @@ export const INSTALL_ARTIFACT_APP_CHANNEL = "desktop:install-artifact-app";
 export const UNINSTALL_ARTIFACT_APP_CHANNEL = "desktop:uninstall-artifact-app";
 export const LIST_ARTIFACT_APPS_CHANNEL = "desktop:list-artifact-apps";
 export const GET_ARTIFACT_APP_CHANNEL = "desktop:get-artifact-app";
-export const REVEAL_ARTIFACT_APP_CHANNEL = "desktop:reveal-artifact-app";
 export const ARTIFACT_APP_PERMISSIONS_CHANNEL = "desktop:artifact-app-permissions";
 export const ARTIFACT_APP_POWER_CHANNEL = "desktop:artifact-app-power";
 export const ARTIFACT_APP_POWER_EVENT_CHANNEL = "desktop:artifact-app-power-event";

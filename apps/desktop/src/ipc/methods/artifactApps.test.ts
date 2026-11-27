@@ -19,7 +19,6 @@ import {
   getArtifactApp,
   installArtifactApp,
   listArtifactApps,
-  revealArtifactApp,
   uninstallArtifactApp,
 } from "./artifactApps.ts";
 
@@ -128,22 +127,18 @@ describe("artifact app IPC", () => {
         { installId: ID.toUpperCase() },
       ]) {
         assert.equal((yield* Effect.exit(uninstallArtifactApp.handler(payload)))._tag, "Failure");
-        assert.equal((yield* Effect.exit(revealArtifactApp.handler(payload)))._tag, "Failure");
       }
       assert.deepEqual(fixture.installs, []);
       assert.deepEqual(fixture.uninstalled, []);
-      assert.deepEqual(fixture.revealed, []);
     }).pipe(Effect.provide(fixture.layer));
   });
 
-  it.effect("uninstalls, reveals and lists through the installer and records", () => {
+  it.effect("uninstalls and lists through the installer and records", () => {
     const fixture = setup();
     return Effect.gen(function* () {
       assert.isTrue(yield* uninstallArtifactApp.handler({ installId: ID }));
-      assert.isFalse(yield* revealArtifactApp.handler({ installId: ID }));
       assert.deepEqual(yield* listArtifactApps.handler(undefined), [app]);
       assert.deepEqual(fixture.uninstalled, [ID]);
-      assert.deepEqual(fixture.revealed, [ID]);
     }).pipe(Effect.provide(fixture.layer));
   });
 

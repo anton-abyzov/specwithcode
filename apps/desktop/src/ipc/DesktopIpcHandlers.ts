@@ -100,7 +100,6 @@ import {
   getArtifactApp,
   installArtifactApp,
   listArtifactApps,
-  revealArtifactApp,
   uninstallArtifactApp,
 } from "./methods/artifactApps.ts";
 import { installVoice } from "./methods/voice.ts";
@@ -192,7 +191,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(uninstallArtifactApp);
   yield* ipc.handle(listArtifactApps);
   yield* ipc.handle(getArtifactApp);
-  yield* ipc.handle(revealArtifactApp);
   yield* ipc.handle(artifactAppPermissions);
   yield* ipc.handle(artifactAppPower);
   yield* ipc.handle(startFileDrag);

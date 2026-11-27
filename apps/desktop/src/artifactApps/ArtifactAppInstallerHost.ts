@@ -52,7 +52,7 @@ const COMMAND_TIMEOUT = "20 seconds";
 export class ArtifactAppHostCommandError extends Schema.TaggedError<ArtifactAppHostCommandError>()(
   "ArtifactAppHostCommandError",
   {
-    command: Schema.Literals(["codesign", "codesign-read", "update-desktop-database"]),
+    command: Schema.Literals(["codesign", "codesign-read", "update-desktop-database", "open"]),
     exitCode: Schema.optionalKey(Schema.Number),
     cause: Schema.optionalKey(Schema.Defect()),
   },
@@ -464,7 +464,15 @@ const makeElectronHost = Effect.gen(function* () {
         try: () => Electron.shell.trashItem(path),
         catch: (cause) => new ArtifactAppTrashError({ path, cause }),
       }),
-    showItemInFolder: (path) => Effect.sync(() => Electron.shell.showItemInFolder(path)),
+    // A page's own app is the active one when its menu asks for Finder, and macOS does not let
+    // a background app bring Finder forward: Finder would select the launcher behind the page.
+    // `open -R` asks Launch Services, which does bring it forward.
+    showItemInFolder: (path) =>
+      environment.platform === "darwin"
+        ? runCommand("open", ["-R", path], "/usr/bin/open").pipe(
+            Effect.catch(() => Effect.sync(() => Electron.shell.showItemInFolder(path))),
+          )
+        : Effect.sync(() => Electron.shell.showItemInFolder(path)),
   });
 });
 

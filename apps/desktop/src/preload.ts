@@ -278,7 +278,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.UNINSTALL_ARTIFACT_APP_CHANNEL, input),
   listArtifactApps: () => ipcRenderer.invoke(IpcChannels.LIST_ARTIFACT_APPS_CHANNEL),
   getArtifactApp: () => ipcRenderer.invoke(IpcChannels.GET_ARTIFACT_APP_CHANNEL),
-  revealArtifactApp: (input) => ipcRenderer.invoke(IpcChannels.REVEAL_ARTIFACT_APP_CHANNEL, input),
   artifactAppPermissions: (input) =>
     ipcRenderer.invoke(IpcChannels.ARTIFACT_APP_PERMISSIONS_CHANNEL, input),
   artifactAppPower: (input) => ipcRenderer.invoke(IpcChannels.ARTIFACT_APP_POWER_CHANNEL, input),

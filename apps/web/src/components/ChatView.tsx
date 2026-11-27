@@ -16459,7 +16459,6 @@ export default function ChatView(props: ChatViewProps) {
                                   handleInteractionModeChange={handleInteractionModeChange}
                                   focusComposer={focusComposer}
                                   scheduleComposerFocus={scheduleComposerFocus}
-                                  setThreadError={setThreadError}
                                   onExpandImage={onExpandTimelineImage}
                                   onFileOpen={openFileAttachment}
                                   editingQueuedAttachments={composerEditingQueuedAttachments}
