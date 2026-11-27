@@ -10,6 +10,10 @@ import {
   validateMcpElicitationContent,
   type McpElicitationField,
 } from "@specweave-studio/shared/mcpElicitationForm";
+import {
+  mcpElicitationCardValues,
+  mcpElicitationSentValues,
+} from "@specweave-studio/shared/mcpElicitationDateTime";
 import { memo, useId, useMemo, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -63,7 +67,9 @@ export const McpElicitationForm = memo(function McpElicitationForm({
     [elicitation.requestedSchema],
   );
   const fields = form.ok ? form.fields : [];
-  const [values, setValues] = useState<Values>(() => mcpElicitationInitialValues(fields));
+  const [values, setValues] = useState<Values>(() =>
+    mcpElicitationCardValues(fields, mcpElicitationInitialValues(fields)),
+  );
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const locked = disabled || isResponding;
   const set = (key: string, value: unknown) => {
@@ -76,7 +82,8 @@ export const McpElicitationForm = memo(function McpElicitationForm({
   };
   const submit = () => {
     if (locked || !form.ok) return;
-    const checked = validateMcpElicitationContent(fields, values);
+    // A datetime-local entry has no zone; servers want RFC 3339 (1493).
+    const checked = validateMcpElicitationContent(fields, mcpElicitationSentValues(fields, values));
     if (!checked.ok) {
       setErrors(checked.errors);
       return;

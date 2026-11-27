@@ -60,8 +60,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import {
+  beginClosingClaudeForm,
   dropClaudeFormAnswers,
-  isClaudeFormAnswered,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
@@ -351,8 +351,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // The app may already have recorded the person's answer while its
         // delivery is still on the way. Stop and the timer then wait a little
         // for it and pass it on, so the server gets what the record says, and
-        // neither overwrites the recorded answer as cancelled.
-        const committed = raced.by !== "person" && isClaudeFormAnswered(artifacts.request.id);
+        // neither overwrites the recorded answer as cancelled. Otherwise the
+        // form is marked closing first, so an answer that comes in before the
+        // cancelled card lands is refused, never recorded (1493).
+        const committed = raced.by !== "person" && !beginClosingClaudeForm(artifacts.request.id);
         const awaited = committed
           ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
           : raced;

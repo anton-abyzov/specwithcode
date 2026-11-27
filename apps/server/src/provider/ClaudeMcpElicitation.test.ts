@@ -43,7 +43,11 @@ const turnInput = (thread: "user" | "agent", scheduled = false) =>
     },
   }) as unknown as ProviderAdapter.ProviderAdapterV2TurnInput;
 
+// Request ids are unique per harness: a closing mark outlives its call (1493).
+let harnesses = 0;
+
 function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: boolean } = {}) {
+  const prefix = `h${++harnesses}`;
   const events: Array<Event> = [];
   let released = 0;
   let requestCount = 0;
@@ -59,7 +63,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     buildApprovalRequestArtifacts: (input) =>
       Effect.sync(() => {
         requestCount += 1;
-        const id = RuntimeRequestId.make(`request-${requestCount}`);
+        const id = RuntimeRequestId.make(`${prefix}-request-${requestCount}`);
         return {
           node: { id: "node-request", parentNodeId: "node-from-item", status: "waiting" },
           request: { id, kind: input.requestKind, status: "pending" },
@@ -109,7 +113,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setImmediate(resolve));
     expect(check()).toBe(true);
   };
-  const requestId = RuntimeRequestId.make("request-1");
+  const requestId = RuntimeRequestId.make(`${prefix}-request-1`);
   return {
     events,
     elicitations,
@@ -316,6 +320,23 @@ describe("ClaudeMcpElicitation", () => {
       "No one answered github's question in 30 minutes; it was cancelled.",
     );
     expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(30 * 60 * 1_000);
+  });
+
+  it("refuses an answer that comes in after the timer began closing the card (1493)", async () => {
+    const h = harness({ thread: "agent" });
+    const result = h.ask({ requestedSchema: confirmSchema });
+    await h.until(() => h.card() !== undefined);
+    h.fireTimer();
+    expect(await result).toEqual({ action: "cancel" });
+    // A Submit recorded now would be overwritten by the cancelled card.
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } })).toBe(false);
+    expect(takeClaudeFormAnswers(h.requestId)).toBeUndefined();
+    expect(
+      h.events.some(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toBe(true);
   });
 
   it("waits for an answer the app recorded when the timer fires before it arrives", async () => {

@@ -9254,7 +9254,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       }
       if (providerSessionId === null) return;
-      ClaudeForms.handOffClaudeFormAnswers(command.requestId, form);
+      if (!ClaudeForms.handOffClaudeFormAnswers(command.requestId, form)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: ClaudeForms.FORM_CLOSED,
+        });
+      }
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
@@ -13768,9 +13774,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
         Effect.mapError((error) => deadlineRefusal(error, (cause) => startRefusal(command, cause))),
+        // A form answer that was never recorded is not on its way (1493).
+        Effect.tapError(() => Effect.sync(() => ClaudeForms.forgetUncommittedFormAnswer(command))),
       );
 
     if (committed.receipt.status === "rejected") {
+      ClaudeForms.forgetUncommittedFormAnswer(command);
       return yield* new OrchestratorCommandPreviouslyRejectedError({
         commandId: command.commandId,
         commandType: command.type,

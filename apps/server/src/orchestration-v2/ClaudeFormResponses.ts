@@ -41,20 +41,56 @@ export const CLAUDE_FORM_NATIVE_PREFIX = "mcp-elicitation:";
 const handedOff = new Map<string, ProviderUserInputAnswers>();
 // Forms whose answer the app has recorded and is delivering to the adapter.
 const answered = new Set<string>();
+// Forms the adapter is closing after a Stop or the timer (1493). Kept after
+// the call ends, until the cancelled card has surely landed; bounded like the
+// adapter's own closed set.
+const closing = new Set<string>();
+const CLOSING_KEPT = 200;
 
 /**
  * Notes that the app recorded an answer to a Claude form, and holds the
  * person's validated content for the adapter that is waiting for it. Called
  * as the answer is recorded, before its delivery is queued, so a Stop or the
  * unattended timer that fires in between knows an answer is on its way.
+ * Returns false, recording nothing, when the adapter already began closing
+ * the form: the answer is then refused, never recorded as resolved.
  */
 export function handOffClaudeFormAnswers(
   requestId: RuntimeRequestId,
   check: ClaudeFormResponseCheck | undefined,
-): void {
-  if (check === undefined) return;
+): boolean {
+  if (check === undefined) return true;
+  if (closing.has(requestId)) return false;
   answered.add(requestId);
   if (check.handOff !== undefined) handedOff.set(requestId, check.handOff);
+  return true;
+}
+
+/**
+ * The adapter's side of the same choice: after a Stop or the timer, marks the
+ * form as closing unless the app already recorded an answer to it. Returns
+ * true when the adapter should close the card. This and the hand-off above
+ * each run without yielding, so exactly one of them wins.
+ */
+export function beginClosingClaudeForm(requestId: RuntimeRequestId): boolean {
+  if (answered.has(requestId)) return false;
+  closing.add(requestId);
+  if (closing.size > CLOSING_KEPT) closing.delete(closing.values().next().value as string);
+  return true;
+}
+
+/**
+ * Forgets the answer a `runtime-request.respond` handed off when its commit
+ * failed or was rejected: nothing is on its way, so a later Stop or the timer
+ * closes the card instead of waiting for it (1493).
+ */
+export function forgetUncommittedFormAnswer(command: {
+  readonly type: string;
+  readonly requestId?: RuntimeRequestId;
+}): void {
+  if (command.type !== "runtime-request.respond" || command.requestId === undefined) return;
+  handedOff.delete(command.requestId);
+  answered.delete(command.requestId);
 }
 
 /** The app has recorded an answer to this form that may not have arrived yet. */
@@ -143,7 +179,7 @@ export function checkFormResponse(
   }
   const status = request.status;
   if (status === "resolved") return { refusal: FORM_ALREADY_ANSWERED };
-  if (status !== "pending") return { refusal: FORM_CLOSED };
+  if (status !== "pending" || closing.has(request.id)) return { refusal: FORM_CLOSED };
   if (command.answeredByThreadId !== undefined) return { refusal: FORM_AGENT_REFUSAL };
   if (command.decision === "decline" || command.decision === "cancel") return {};
   if (command.answers === undefined) return { refusal: FORM_NEEDS_CARD };

@@ -19,12 +19,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
+  beginClosingClaudeForm,
   FORM_AGENT_REFUSAL,
   FORM_ALREADY_ANSWERED,
+  FORM_CLOSED,
   FORM_NEEDS_CARD,
   FORM_OPENING,
+  forgetUncommittedFormAnswer,
+  handOffClaudeFormAnswers,
+  isClaudeFormAnswered,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
 } from "./ClaudeFormResponses.ts";
@@ -323,3 +329,61 @@ it.effect("treats a Claude form's request as a form before its card lands", () =
     assert.isUndefined(closed?.answers);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("queues the answer's delivery with only the redacted summary (1493)", () =>
+  Effect.gen(function* () {
+    const { respond } = yield* card("effect-redacted", confirmForm);
+    yield* respond("person", { decision: "accept", answers: { confirm: "octo/repo" } });
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly payload_json: string }>`
+      SELECT payload_json FROM orchestration_v2_effect_outbox
+      WHERE command_id = 'respond:effect-redacted:person'`;
+    assert.equal(rows.length, 1);
+    const payload = JSON.parse(rows[0]!.payload_json) as {
+      readonly answers?: unknown;
+      readonly request?: { readonly answers?: unknown };
+    };
+    assert.deepEqual(payload.request?.answers ?? payload.answers, {
+      confirm: REDACTED_FORM_ANSWER,
+    });
+    assert.notInclude(rows[0]!.payload_json, "octo/repo");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses an answer once the adapter began closing the card (1493)", () =>
+  Effect.gen(function* () {
+    const { respond, status, requestId } = yield* card("closing", confirmForm);
+    // Stop or the timer fired; the cancelled card has not landed yet.
+    assert.isTrue(beginClosingClaudeForm(requestId));
+    assert.include(
+      yield* refusal(respond("late", { decision: "accept", answers: { confirm: "octo/repo" } })),
+      FORM_CLOSED,
+    );
+    assert.equal((yield* status)?.status, "pending");
+    assert.isFalse(isClaudeFormAnswered(requestId));
+    assert.isUndefined(takeClaudeFormAnswers(requestId));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it("lets exactly one of the hand-off and the close win (1493)", () => {
+  const first = RuntimeRequestId.make("request:race-answer-first");
+  assert.isTrue(handOffClaudeFormAnswers(first, { handOff: { confirm: "x" } }));
+  assert.isFalse(beginClosingClaudeForm(first));
+  const second = RuntimeRequestId.make("request:race-close-first");
+  assert.isTrue(beginClosingClaudeForm(second));
+  assert.isFalse(handOffClaudeFormAnswers(second, { handOff: { confirm: "x" } }));
+  assert.isFalse(isClaudeFormAnswered(second));
+  assert.isUndefined(takeClaudeFormAnswers(second));
+});
+
+it("forgets an answer whose commit failed, so the card can close (1493)", () => {
+  const requestId = RuntimeRequestId.make("request:commit-failed");
+  handOffClaudeFormAnswers(requestId, { handOff: { confirm: "x" } });
+  // Only a respond command's own request is touched.
+  forgetUncommittedFormAnswer({ type: "thread.stop" });
+  assert.isTrue(isClaudeFormAnswered(requestId));
+  forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId });
+  assert.isFalse(isClaudeFormAnswered(requestId));
+  assert.isUndefined(takeClaudeFormAnswers(requestId));
+  assert.isTrue(beginClosingClaudeForm(requestId));
+});
