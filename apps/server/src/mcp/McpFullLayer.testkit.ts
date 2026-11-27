@@ -5,7 +5,12 @@
  * while listing.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
+import {
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+  type ThreadIncrementProgress,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -29,6 +34,7 @@ import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgressService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -36,6 +42,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import { runningTurnRecords } from "./McpToolAccess.testkit.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -61,7 +68,16 @@ export interface StubShell {
   readonly deletedAt: string | null;
 }
 
-const stubServices = (shell: StubShell | null) =>
+/** What the stubs answer beyond the calling thread's shell. */
+export interface StubOptions {
+  /** The plan-card read's entries for the caller (1497 ownership); none by default. */
+  readonly bound?: ReadonlyArray<ThreadIncrementProgress>;
+}
+
+/** The listing reads a few shell fields; a write tool needs a whole live shell. */
+export type StubCaller = StubShell | OrchestrationV2ThreadShell | null;
+
+const stubServices = (shell: StubCaller, options: StubOptions = {}) =>
   Layer.mergeAll(
     Layer.mock(Orchestrator.OrchestratorV2)({}),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
@@ -69,6 +85,12 @@ const stubServices = (shell: StubShell | null) =>
     Layer.mock(ComputerUseBroker.ComputerUseBroker)({}),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadShell: () => Effect.succeed(shell as never),
+      listProjectThreads: () => Effect.succeed([]),
+      getThreadRecords: () => Effect.succeed(runningTurnRecords()),
+    }),
+    Layer.mock(ThreadIncrementProgressService.ThreadIncrementProgressService)({
+      read: (input) =>
+        Effect.succeed({ projectId: input.projectId, threads: [...(options.bound ?? [])] }),
     }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({}),
     Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
@@ -88,7 +110,7 @@ const stubServices = (shell: StubShell | null) =>
   );
 
 /** Serves `/mcp`; the calling thread's shell is `shell` (null: no such thread). */
-export const serveFullLayer = (shell: StubShell | null) =>
+export const serveFullLayer = (shell: StubCaller, options: StubOptions = {}) =>
   HttpRouter.serve(McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)), {
     disableListenLog: true,
     disableLogger: true,
@@ -107,7 +129,7 @@ export const serveFullLayer = (shell: StubShell | null) =>
         BrowserExtension.makeBrowserExtension({ stateDir: "/nonexistent-state", port: 1 }),
       ),
     ),
-    Layer.provide(stubServices(shell)),
+    Layer.provide(stubServices(shell, options)),
     Layer.build,
   );
 

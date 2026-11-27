@@ -65,6 +65,25 @@ export const liveThreadShell = (
 };
 
 /**
+ * The run and attempt records of a turn in progress, started in
+ * `runtimeMode`: what a check of the running turn's own mode reads (1497).
+ */
+export const runningTurnRecords = (
+  runId: RunId = RunId.make("run:mcp-test"),
+  runtimeMode: RuntimeMode = "full-access",
+) =>
+  ({
+    runs: [{ id: runId, activeAttemptId: "attempt:mcp-test" }],
+    attempts: [
+      {
+        id: "attempt:mcp-test",
+        status: "running",
+        startedModes: { runtimeMode, interactionMode: "default" },
+      },
+    ],
+  }) as never;
+
+/**
  * `ThreadManagementService` that answers only the access gate's lookups,
  * every thread a live full-access one. For tests of a tool rather than of who
  * may call it.

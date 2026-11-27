@@ -70,6 +70,9 @@ it.effect("a thread whose worktree holds .specweave/ is offered the SpecWeave to
       yield* serveFullLayer({ projectId: "p", worktreePath: workspace, deletedAt: null });
       expect(specweaveNames(yield* listToolsAsThread).sort()).toEqual([
         "specweave_next_task",
+        "specweave_task_block",
+        "specweave_task_claim",
+        "specweave_task_release",
         "specweave_task_status",
       ]);
     }),
