@@ -96,6 +96,27 @@ const estimateBytes = (
 };
 
 /**
+ * The project a saved copy holds, from its `swc_copy_info` row, or undefined
+ * when the file is not such a copy (another database, a whole-database copy
+ * from before 1505, an unreadable file). Opens only the saved copy, read-only.
+ */
+export function copiedProjectOf(path: string): string | undefined {
+  let copy: NodeSqlite.DatabaseSync | undefined;
+  try {
+    copy = new NodeSqlite.DatabaseSync(path, { readOnly: true });
+    const rows = copy
+      .prepare(`SELECT project_id FROM ${COPY_INFO_TABLE}`)
+      .all() as unknown as ReadonlyArray<{ project_id: unknown }>;
+    const only = rows.length === 1 ? rows[0]?.project_id : undefined;
+    return typeof only === "string" ? only : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    copy?.close();
+  }
+}
+
+/**
  * Saves `projectId`'s rows of the live database at `dbPath` into
  * `outputPath`. Before any file is made the destination must have the rows'
  * size plus `snapshotHeadroom` free. The copy is checked with `quick_check`
