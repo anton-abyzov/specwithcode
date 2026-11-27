@@ -46,16 +46,6 @@ export const uninstallArtifactApp = DesktopIpc.makeIpcMethod({
   }),
 });
 
-export const revealArtifactApp = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.REVEAL_ARTIFACT_APP_CHANNEL,
-  payload: DesktopArtifactAppUninstallInputSchema,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.artifactApps.reveal")(function* (input) {
-    const installer = yield* ArtifactAppInstaller.ArtifactAppInstaller;
-    return yield* installer.reveal(input.installId);
-  }),
-});
-
 export const listArtifactApps = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.LIST_ARTIFACT_APPS_CHANNEL,
   payload: Schema.Void,

@@ -10,7 +10,7 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@specweave-studio/shared/htmlRender";
-import { FolderOpenIcon, Trash2Icon } from "lucide-react";
+import { Trash2Icon } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
@@ -327,7 +327,7 @@ function InstalledPageDocument(props: {
   );
 }
 
-/** The window's chrome: a draggable strip with the app's name, its permissions and its two actions. */
+/** The window's chrome: a draggable strip with the app's name, its permissions and Uninstall. */
 function ArtifactAppFrame(props: {
   readonly name: string | null;
   readonly installId?: string;
@@ -342,15 +342,7 @@ function ArtifactAppFrame(props: {
   }, [name]);
   const [busy, setBusy] = useState(false);
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
-  const reveal = bridge?.revealArtifactApp;
   const uninstall = bridge?.uninstallArtifactApp;
-  const onReveal = async () => {
-    if (installId === undefined || typeof reveal !== "function") return;
-    const shown = await reveal({ installId }).catch(() => false);
-    if (!shown) {
-      toastManager.add({ type: "error", title: tx("Could not show the app in its folder") });
-    }
-  };
   const onUninstall = async () => {
     if (installId === undefined || typeof uninstall !== "function" || busy) return;
     setBusy(true);
@@ -380,11 +372,6 @@ function ArtifactAppFrame(props: {
         </h1>
         {props.permissions != null && props.onPermissions !== undefined ? (
           <ArtifactAppPermissions permissions={props.permissions} onChange={props.onPermissions} />
-        ) : null}
-        {installId !== undefined && typeof reveal === "function" ? (
-          <Button variant="ghost" size="sm" onClick={() => void onReveal()}>
-            <FolderOpenIcon aria-hidden className="size-4" /> {tx("Show in folder")}
-          </Button>
         ) : null}
         {installId !== undefined && typeof uninstall === "function" ? (
           <Button variant="ghost" size="sm" onClick={() => void onUninstall()} disabled={busy}>

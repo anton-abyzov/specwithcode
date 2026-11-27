@@ -1836,7 +1836,6 @@ export interface ChatComposerProps {
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
-  setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
 }
@@ -1950,7 +1949,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleInteractionModeChange,
     focusComposer,
     scheduleComposerFocus,
-    setThreadError,
     onExpandImage,
     onFileOpen,
     editingQueuedAttachments,
@@ -6462,12 +6460,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
     }
-    // Only failures are reported. Success must not pass `null`: other work (a
-    // failed send, an overlapping paste) may have set a thread error this call
-    // knows nothing about, and clearing it would swallow that message.
+    // A file the composer did not take is a note about this draft, not a failure of the
+    // thread's provider: it goes in a toast, so the thread's error banner (titled
+    // "Provider error", with Switch model) stays for real provider failures.
+    const reportAttachmentProblems = (message: string) => {
+      toastManager.add({ type: "warning", title: "Not attached", description: message });
+    };
     const reportedProblems = attachmentProblems();
     if (reportedProblems !== null) {
-      setThreadError(threadId, reportedProblems);
+      reportAttachmentProblems(reportedProblems);
     }
     if (acceptedImages.length === 0) return insertedAny;
 
@@ -6538,7 +6539,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // then with the whole batch so the earlier problems stay visible.
       const problems = attachmentProblems();
       if (problems !== null && problems !== reportedProblems) {
-        setThreadError(threadId, problems);
+        reportAttachmentProblems(problems);
       }
     } finally {
       const remaining =

@@ -65,8 +65,6 @@ export interface DesktopArtifactAppsBridge extends DesktopArtifactAppPowersBridg
   listArtifactApps?: () => Promise<ReadonlyArray<DesktopArtifactApp>>;
   /** The install this window shows; null outside an installed-page window. */
   getArtifactApp?: () => Promise<DesktopArtifactApp | null>;
-  /** Shows the launcher in Finder, Explorer or the file manager. */
-  revealArtifactApp?: (input: DesktopArtifactAppUninstallInput) => Promise<boolean>;
 }
 
 /**
