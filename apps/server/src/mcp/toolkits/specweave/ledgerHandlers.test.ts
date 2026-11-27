@@ -9,6 +9,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   OrchestratorMcpFailure,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type ThreadIncrementProgress,
@@ -57,7 +58,7 @@ if (action === "list") {
   process.stdout.write(JSON.stringify({ increment: argv[at + 2], agent, tasks: state.tasks }));
   process.exit(0);
 }
-fs.appendFileSync(path.join(dir, "writes.jsonl"), JSON.stringify({ argv, thread: process.env.SPECWEAVE_STUDIO_THREAD_ID, tool: process.env.SPECWEAVE_TOOL, agentSet: process.env.SPECWEAVE_AGENT !== undefined, session: process.env.CLAUDE_CODE_SESSION_ID }) + "\\n");
+fs.appendFileSync(path.join(dir, "writes.jsonl"), JSON.stringify({ argv, thread: process.env.SPECWEAVE_STUDIO_THREAD_ID, tool: process.env.SPECWEAVE_TOOL, agentSet: process.env.SPECWEAVE_AGENT !== undefined, agentValue: process.env.SPECWEAVE_AGENT, session: process.env.CLAUDE_CODE_SESSION_ID }) + "\\n");
 if (state.exit && state.exit[action]) { process.stderr.write("refused by the CLI"); process.exit(state.exit[action]); }
 const task = state.tasks.find((t) => t.id === argv[at + 2]);
 if (action === "claim") Object.assign(task, { status: "claimed", by: agent, since: new Date().toISOString() });
@@ -77,6 +78,7 @@ interface Scratch {
     thread: string;
     tool: string;
     agentSet: boolean;
+    agentValue?: string;
     session: string;
   }>;
   readonly setTasks: (tasks: ReadonlyArray<FoldedTask>, exit?: Record<string, number>) => void;
@@ -152,6 +154,9 @@ const services = (
     readonly threadIdOverride?: ThreadId;
     /** Other live threads in the same checkout. */
     readonly siblings?: ReadonlyArray<ThreadId>;
+    /** The project's thread list cannot be read. */
+    readonly listFails?: boolean;
+    readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
   } = {},
 ) => {
   const caller = options.threadIdOverride ?? threadId;
@@ -181,12 +186,20 @@ const services = (
       getThreadShell: (id) =>
         Effect.succeed({ ...liveThreadShell(id), worktreePath: fixture.worktree }),
       listProjectThreads: () =>
-        Effect.succeed(
-          [threadId, ...(options.siblings ?? [])].map((id) => ({
-            ...liveThreadShell(id),
-            worktreePath: fixture.worktree,
-          })),
-        ),
+        options.listFails
+          ? Effect.fail(
+              new ThreadManagement.ThreadManagementProjectionLoadError({
+                projectId: liveThreadShell(threadId).projectId,
+                threadId,
+                cause: new Error("list failed"),
+              }),
+            )
+          : Effect.succeed(
+              [threadId, ...(options.siblings ?? [])].map((id) => ({
+                ...liveThreadShell(id),
+                worktreePath: fixture.worktree,
+              })),
+            ),
     }),
     Layer.mock(IncrementProgress.ThreadIncrementProgressService)({
       read: (input) =>
@@ -198,7 +211,7 @@ const services = (
               : [{ ...(options.bound ?? progressEntry(fixture.increment)), threadId: caller }],
         }),
     }),
-    ServerSettings.layerTest({}),
+    ServerSettings.layerTest(options.settings ?? {}),
     Layer.succeed(SpecweaveCommandOverride, fixture.cli),
     ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)),
     NodeServices.layer,
@@ -248,6 +261,10 @@ describe("SpecWeave ledger tools (1497)", () => {
             status: "blocked",
           });
           expect(yield* call("block", "waiting on the API key")).toMatchObject({ changed: false });
+          // The same reason with other spacing is the same reason.
+          expect(yield* call("block", "  waiting  on the\tAPI key ")).toMatchObject({
+            changed: false,
+          });
           expect(yield* call("block", "waiting on review")).toMatchObject({ changed: true });
 
           expect(yield* call("release")).toMatchObject({ changed: true, status: "open", by: null });
@@ -256,9 +273,25 @@ describe("SpecWeave ledger tools (1497)", () => {
           const writes = fixture.writes();
           expect(writes.map((write) => write.argv.slice(2))).toEqual([
             ["task", "claim", "T-01", INCREMENT, "--no-commit", "--json"],
-            ["task", "block", "T-01", INCREMENT, "--reason=waiting on the API key", "--no-commit"],
-            ["task", "block", "T-01", INCREMENT, "--reason=waiting on review", "--no-commit"],
-            ["task", "release", "T-01", INCREMENT, "--no-commit"],
+            [
+              "task",
+              "block",
+              "T-01",
+              INCREMENT,
+              "--reason=waiting on the API key",
+              "--no-commit",
+              "--json",
+            ],
+            [
+              "task",
+              "block",
+              "T-01",
+              INCREMENT,
+              "--reason=waiting on review",
+              "--no-commit",
+              "--json",
+            ],
+            ["task", "release", "T-01", INCREMENT, "--no-commit", "--json"],
           ]);
           for (const write of writes) {
             expect(write.argv.slice(0, 2)).toEqual(["--workspace", fixture.worktree]);
@@ -416,6 +449,64 @@ describe("SpecWeave ledger tools (1497)", () => {
     ),
   );
 
+  skipOnWindows("refuses when the checkout's other threads cannot be listed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* scratch;
+        const error = yield* refusal(
+          runLedgerCall({ action: "claim", increment: "1497", task: "T-01" }).pipe(
+            Effect.provide(services(fixture, { listFails: true })),
+          ),
+        );
+        expect(error.code).toBe("capability_denied");
+        expect(error.message).toContain("could not list the other threads");
+        expect(fixture.writes()).toEqual([]);
+      }),
+    ),
+  );
+
+  skipOnWindows("writes as the SpecWeave agent the provider instance sets for its shell", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* scratch;
+        const layer = services(fixture, {
+          settings: {
+            providerInstances: {
+              [ProviderInstanceId.make("claudeAgent")]: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                environment: [{ name: "SPECWEAVE_AGENT", value: "claude@work-laptop" }],
+              },
+            },
+          },
+        });
+        const claimed = yield* runLedgerCall({
+          action: "claim",
+          increment: "1497",
+          task: "T-01",
+        }).pipe(Effect.provide(layer));
+        expect(claimed).toMatchObject({ changed: true, by: "claude@work-laptop" });
+        expect(fixture.writes()[0]).toMatchObject({ agentValue: "claude@work-laptop" });
+      }),
+    ),
+  );
+
+  skipOnWindows("checks the files again under the lock, just before writing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* scratch;
+        // A leftover temporary file: the CLI writes through that name.
+        NodeFS.writeFileSync(NodePath.join(fixture.increment, "metadata.json.tmp"), "{}");
+        const error = yield* refusal(
+          runLedgerCall({ action: "claim", increment: "1497", task: "T-01" }).pipe(
+            Effect.provide(services(fixture)),
+          ),
+        );
+        expect(error.message).toContain("left over from an interrupted write");
+        expect(fixture.writes()).toEqual([]);
+      }),
+    ),
+  );
+
   skipOnWindows("two claims at once write one event", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -512,7 +603,7 @@ describe("ledgerWriteArgs (1497)", () => {
         incrementId: INCREMENT,
         reason: "--force it",
       }),
-    ).toEqual(["task", "block", "T-01", INCREMENT, "--reason=--force it", "--no-commit"]);
+    ).toEqual(["task", "block", "T-01", INCREMENT, "--reason=--force it", "--no-commit", "--json"]);
   });
 });
 

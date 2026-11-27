@@ -191,6 +191,10 @@ it.effect.skipIf(CLI === null)(
         expect(yield* call("block", "waiting on the scratch API")).toMatchObject({
           changed: false,
         });
+        // Other spacing is the same reason: still one block event.
+        expect(yield* call("block", "waiting  on the\tscratch API ")).toMatchObject({
+          changed: false,
+        });
         expect(yield* call("release")).toMatchObject({ changed: true, status: "open" });
         expect(yield* call("release")).toMatchObject({ changed: false });
 

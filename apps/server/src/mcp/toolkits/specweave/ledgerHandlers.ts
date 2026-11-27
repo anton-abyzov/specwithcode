@@ -15,14 +15,18 @@
  * live claim wins, Files overlap, unmet dependencies, template tasks) still
  * run on every write.
  *
- * Fixed argument lists, always `--no-commit`, never `--force`, `--all-mine`
- * or `--run`: the CLI writes `ledger.jsonl` and `metadata.json` in the
- * increment folder and SpecWeave's binding file for this thread, and nothing
- * else.
+ * Fixed argument lists, always `--no-commit` and `--json`, never `--force`,
+ * `--all-mine` or `--run`: the CLI writes the ledger, metadata.json (and on a
+ * planned-to-active move spec.md and `.specweave/state/active-increment.json`)
+ * and SpecWeave's binding file for this thread, and nothing else. Every one of
+ * those paths in the worktree is checked again under the lock, just before
+ * the write (ownership.ts).
  */
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import { OrchestratorMcpFailure, type ThreadId } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
@@ -34,7 +38,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { runSpecweave, type SpecweaveRunResult } from "./cli.ts";
 import { ledgerWriteEnvironment, specweaveToolForInstance } from "./identity.ts";
-import { decideOwnership, type LedgerTarget } from "./ownership.ts";
+import { decideOwnership, recheckTarget, type LedgerTarget } from "./ownership.ts";
 
 const WRITE_TIMEOUT = Duration.minutes(1);
 /** Sibling threads whose binding files are read to name a holder; more is not a real checkout. */
@@ -98,6 +102,17 @@ export type LedgerPlan =
     };
 
 const HELD = new Set(["claimed", "blocked"]);
+
+/** A block reason as it is written and compared: one line, single spaces. */
+export const normalizeReason = (reason: string | undefined) =>
+  (reason ?? "").replace(/\s+/gu, " ").trim();
+
+/**
+ * Characters cmd.exe acts on. On Windows an npm-installed `specweave` is a
+ * `.cmd` file that runs through cmd.exe, where these could start another
+ * command, so a reason holding one is refused there.
+ */
+const CMD_SPECIAL = /[%!"^&|<>`]/u;
 
 const describeHold = (task: FoldedTask) =>
   `${task.status} by ${task.by ?? "someone"}${task.since === undefined ? "" : ` since ${task.since}`}${task.status === "blocked" && task.note ? ` (${task.note})` : ""}`;
@@ -163,7 +178,7 @@ export function planLedgerCall(input: {
     action === "block" &&
     mine &&
     task.status === "blocked" &&
-    task.note?.trim() === input.reason?.trim()
+    normalizeReason(task.note) === normalizeReason(input.reason)
   ) {
     return { kind: "unchanged" };
   }
@@ -182,10 +197,10 @@ export function ledgerWriteArgs(input: {
     case "claim":
       return [...base, "--no-commit", "--json"];
     case "release":
-      return [...base, "--no-commit"];
+      return [...base, "--no-commit", "--json"];
     case "block":
       // `=` keeps a reason that starts with a dash a value, not a flag.
-      return [...base, `--reason=${(input.reason ?? "").trim()}`, "--no-commit"];
+      return [...base, `--reason=${normalizeReason(input.reason)}`, "--no-commit", "--json"];
   }
 }
 
@@ -302,37 +317,72 @@ const callerContext = Effect.gen(function* () {
     return yield* failure("thread_not_found", "The calling thread was not found.");
   }
   const settings = yield* ServerSettings.ServerSettingsService;
-  const tool = yield* settings.getSettings.pipe(
-    Effect.map((value) => specweaveToolForInstance(value, scope.thread!.providerInstanceId)),
-    Effect.orElseSucceed(() => null),
+  const instanceId = scope.thread.providerInstanceId;
+  const identity = yield* settings.getSettings.pipe(
+    Effect.map((value) => ({
+      tool: specweaveToolForInstance(value, instanceId),
+      instanceEnvironment: value.providerInstances[instanceId]?.environment,
+    })),
+    Effect.orElseSucceed(() => ({ tool: null, instanceEnvironment: undefined })),
   );
+  const tool = identity.tool;
   if (tool === null) {
     return yield* failure(
       "capability_denied",
       `SpecWithCode does not know which SpecWeave agent this thread's provider (${scope.thread.providerInstanceId}) writes as, so it will not write for it. Use \`specweave task claim|release|block\` in your shell instead.`,
     );
   }
-  return { threadId: scope.thread.threadId, shell, tool };
+  return {
+    threadId: scope.thread.threadId,
+    shell,
+    tool,
+    instanceEnvironment: identity.instanceEnvironment,
+  };
 });
 
+const realPathOrNull = (path: string) => NodeFSP.realpath(path).catch(() => null);
+
+/**
+ * The project's other live threads in the caller's checkout, by recorded or
+ * real path. When the list cannot be read the call is refused: an empty list
+ * would make every hold under the caller's agent id look like its own.
+ */
 const siblingThreadsOf = (input: {
   readonly projectId: string;
   readonly threadId: ThreadId;
   readonly worktreePath: string | null;
+  readonly workspace: string;
 }) =>
   Effect.gen(function* () {
     if (input.worktreePath === null) return [];
     const threads = yield* ThreadManagement.ThreadManagementService;
     const all = yield* threads
       .listProjectThreads({ projectId: input.projectId as never, includeSubagents: true })
-      .pipe(Effect.orElseSucceed(() => []));
-    return all
-      .filter(
-        (thread) =>
-          thread.id !== input.threadId &&
-          thread.deletedAt === null &&
-          thread.worktreePath === input.worktreePath,
-      )
+      .pipe(
+        Effect.mapError(() =>
+          failure(
+            "capability_denied",
+            "SpecWithCode could not list the other threads in this checkout, so it cannot tell whose hold is whose. Try again, or use `specweave task claim|release|block` in your shell.",
+          ),
+        ),
+      );
+    const base = NodePath.basename(input.workspace);
+    const candidates = all.filter(
+      (thread) =>
+        thread.id !== input.threadId &&
+        thread.deletedAt === null &&
+        thread.worktreePath !== null &&
+        NodePath.basename(thread.worktreePath) === base,
+    );
+    const same = yield* Effect.forEach(candidates, (thread) =>
+      thread.worktreePath === input.worktreePath
+        ? Effect.succeed(true)
+        : Effect.promise(() => realPathOrNull(thread.worktreePath!)).pipe(
+            Effect.map((real) => real === input.workspace),
+          ),
+    );
+    return candidates
+      .filter((_, index) => same[index])
       .slice(0, SIBLINGS_READ)
       .map((thread) => ({ threadId: thread.id as string, title: thread.title }));
   });
@@ -367,6 +417,7 @@ export const runLedgerCall = Effect.fn("specweaveTools.ledger")(function* (input
   const owned = yield* Effect.promise(() =>
     decideOwnership({
       worktreePath: caller.shell.worktreePath,
+      branch: caller.shell.branch,
       folder: input.folder,
       requested: input.increment,
       bound,
@@ -374,7 +425,21 @@ export const runLedgerCall = Effect.fn("specweaveTools.ledger")(function* (input
   );
   if (!owned.ok) return yield* failure(owned.code, owned.message);
   const target = owned.target;
-  const writeAs = ledgerWriteEnvironment({ threadId: caller.threadId, tool: caller.tool });
+  if (
+    input.action === "block" &&
+    HostProcessPlatform.defaultValue() === "win32" &&
+    CMD_SPECIAL.test(normalizeReason(input.reason))
+  ) {
+    return yield* failure(
+      "invalid_request",
+      'On Windows a block reason may not contain % ! " ^ & | < > or `: the SpecWeave command runs through cmd.exe there. Reword the reason without them.',
+    );
+  }
+  const writeAs = ledgerWriteEnvironment({
+    threadId: caller.threadId,
+    tool: caller.tool,
+    instanceEnvironment: caller.instanceEnvironment,
+  });
   const run = (args: ReadonlyArray<string>) =>
     runSpecweave({ specweaveRoot: target.specweaveRoot, args, timeout: WRITE_TIMEOUT, writeAs });
   const fold = Effect.gen(function* () {
@@ -392,6 +457,7 @@ export const runLedgerCall = Effect.fn("specweaveTools.ledger")(function* (input
     projectId: caller.shell.projectId,
     threadId: caller.threadId,
     worktreePath: caller.shell.worktreePath,
+    workspace: target.workspace,
   });
 
   return yield* lockFor(target.incrementDir).withPermit(
@@ -421,6 +487,8 @@ export const runLedgerCall = Effect.fn("specweaveTools.ledger")(function* (input
       let command: string | null = null;
       let text = "";
       if (plan.kind === "write") {
+        const checked = yield* Effect.promise(() => recheckTarget(target));
+        if (!checked.ok) return yield* failure(checked.code, checked.message);
         const wrote = yield* run(
           ledgerWriteArgs({
             action: input.action,

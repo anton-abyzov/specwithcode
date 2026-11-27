@@ -11,6 +11,7 @@
  */
 import {
   ProviderDriverKind,
+  type ProviderInstanceEnvironment,
   type ProviderInstanceId,
   type ServerSettings,
 } from "@specweave-studio/contracts";
@@ -50,16 +51,31 @@ export function specweaveToolForInstance(
 }
 
 /**
- * The variables a ledger write runs with: the caller's own thread and tool, an
- * unknown model, and no session id, so the CLI records no session marker for a
- * session the server does not have.
+ * SpecWeave identity variables a provider instance can set for its own
+ * processes (Settings > Providers > environment). The thread's shell gets them
+ * on top of the server's environment, so the write must get them too.
+ */
+const IDENTITY_OVERRIDES: ReadonlySet<string> = new Set(["SPECWEAVE_AGENT", "SPECWEAVE_HOST"]);
+
+/**
+ * The variables a ledger write runs with: the caller's own thread and tool,
+ * any SpecWeave identity its provider instance sets, an unknown model, and no
+ * session id, so the CLI records no session marker for a session the server
+ * does not have. The rest comes from the server's environment, which the
+ * thread's own processes inherit too.
  */
 export function ledgerWriteEnvironment(input: {
   readonly threadId: string;
   readonly tool: string;
+  readonly instanceEnvironment?: ProviderInstanceEnvironment | undefined;
 }): Readonly<Record<string, string>> {
+  const overrides: Record<string, string> = {};
+  for (const variable of input.instanceEnvironment ?? []) {
+    if (IDENTITY_OVERRIDES.has(variable.name)) overrides[variable.name] = variable.value;
+  }
   return {
     ...specweaveAgentEnvironment({ threadId: input.threadId, tool: input.tool }),
+    ...overrides,
     SPECWEAVE_SESSION_ID: "",
     CLAUDE_CODE_SESSION_ID: "",
     CODEX_SESSION_ID: "",

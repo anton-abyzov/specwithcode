@@ -6,13 +6,15 @@
  * The increment is the one the thread's plan card follows
  * (ThreadIncrementProgressService), but only through a binding someone gave
  * it or it made itself: a link made by hand, the seed a launch with
- * `increment` writes, the thread's own ledger write or worktree branch, or a
- * spec the thread wrote (reported as `claim`). A number in the title or a
- * session checkpoint is a guess and does not count. Nobody's role matters: a
- * coordinator is held to the same rules.
+ * `increment` writes, the thread's own ledger write, an `inc/NNNN-*` branch,
+ * or a spec the thread wrote (reported as `claim`). A number in the title, a
+ * session checkpoint or an old ledger line naming the branch is a guess and
+ * does not count. Nobody's role matters: a coordinator is held to the same
+ * rules.
  *
- * Every file the CLI writes must resolve inside the real worktree, so an
- * `increments` folder or ledger linked into another checkout is refused.
+ * Every path the CLI writes must be a real folder or file inside the real
+ * worktree: a link (even one inside the worktree), a second hard link or a
+ * leftover temporary file is refused.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -28,8 +30,24 @@ export const ASSIGNING_BINDINGS: ReadonlySet<ThreadIncrementProgress["binding"]>
   "branch",
 ]);
 
-/** The files `specweave task claim|release|block` writes in the increment folder. */
-export const LEDGER_FILES = ["ledger.jsonl", "metadata.json"] as const;
+/**
+ * An `inc/NNNN-*` branch names its increment. A `branch` binding found only
+ * because an old ledger line mentions the branch is a guess for writes.
+ */
+const INCREMENT_BRANCH = /^inc\/(\d{4,}[A-Za-z]?)-/u;
+
+/**
+ * The files `specweave task claim|release|block` may write in the increment
+ * folder: the ledger, metadata.json (`updated`, or a planned-to-active move)
+ * and spec.md (the status mirror of a spec written before 3.0).
+ */
+export const LEDGER_FILES = ["ledger.jsonl", "metadata.json", "spec.md"] as const;
+
+/** What a planned-to-active move writes under `.specweave/` besides the increment. */
+const STATE_FILE = ["state", "active-increment.json"] as const;
+
+/** The CLI writes `<file>.tmp`, then renames it over `<file>`. */
+const TEMP_SUFFIX = ".tmp";
 
 export interface LedgerTarget {
   /** The thread's worktree, real path. */
@@ -61,10 +79,76 @@ const realPath = (path: string) => NodeFSP.realpath(path).catch(() => null);
 
 const lstatOrNull = (path: string) => NodeFSP.lstat(path).catch(() => null);
 
+type PathCheck = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+const OUTSIDE = (path: string, workspace: string) =>
+  `${path} leads outside this thread's worktree ${workspace}. SpecWeave write tools change only files inside it.`;
+
+/** A folder the CLI writes through: absent, or a real folder (never a link) inside the worktree. */
+async function plainFolder(path: string, workspace: string, required: boolean): Promise<PathCheck> {
+  const stat = await lstatOrNull(path);
+  if (stat === null) return required ? { ok: false, message: `${path} is missing.` } : { ok: true };
+  if (stat.isSymbolicLink()) {
+    const real = await realPath(path);
+    if (real !== null && !isInside(workspace, real)) {
+      return { ok: false, message: OUTSIDE(path, workspace) };
+    }
+    return {
+      ok: false,
+      message: `${path} is a link. SpecWeave write tools write only through real folders, so a link cannot send a write to another increment.`,
+    };
+  }
+  if (!stat.isDirectory()) return { ok: false, message: `${path} is not a folder.` };
+  const real = await realPath(path);
+  return real !== null && isInside(workspace, real)
+    ? { ok: true }
+    : { ok: false, message: OUTSIDE(path, workspace) };
+}
+
 /**
- * The increment folder and the files the CLI writes there, checked to resolve
- * inside the worktree. A file that does not exist yet is fine (the CLI creates
- * `ledger.jsonl` on the first event) unless a dangling link stands in its place.
+ * A file the CLI writes: absent, or one plain file with no other hard link,
+ * and no leftover `<file>.tmp` (the CLI writes that name through any link).
+ */
+async function plainFile(path: string, workspace: string): Promise<PathCheck> {
+  const temp = `${path}${TEMP_SUFFIX}`;
+  if ((await lstatOrNull(temp)) !== null) {
+    return {
+      ok: false,
+      message: `${temp} is left over from an interrupted write. Remove it first; SpecWeave writes through that name.`,
+    };
+  }
+  const stat = await lstatOrNull(path);
+  if (stat === null) return { ok: true };
+  if (stat.isSymbolicLink()) {
+    const real = await realPath(path);
+    if (real === null) return { ok: false, message: `${path} is a link that points nowhere. Fix it first.` };
+    if (!isInside(workspace, real)) return { ok: false, message: OUTSIDE(path, workspace) };
+    return {
+      ok: false,
+      message: `${path} is a link. SpecWeave write tools write only to real files; replace the link with the file.`,
+    };
+  }
+  if (!stat.isFile()) return { ok: false, message: `${path} is not a file.` };
+  if (stat.nlink > 1) {
+    return {
+      ok: false,
+      message: `${path} has another hard link, which may lie outside this thread's worktree. Replace it with a copy first.`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * The increment folder and every path the CLI writes there, checked: each
+ * folder on the way is real (no link, not even one inside the worktree, which
+ * could lead to another increment) and inside the worktree, and each file is
+ * absent or one plain file. A file that does not exist yet is fine (the CLI
+ * creates `ledger.jsonl` on the first event).
+ *
+ * This narrows, but cannot close, the gap between this check and the CLI's
+ * own writes: the CLI opens names and follows links, so a process that swaps
+ * a file in that moment (the thread's own shell, in its own worktree) could
+ * still redirect one write. Run it again just before writing.
  */
 export async function ledgerPathsInside(input: {
   readonly workspace: string;
@@ -74,7 +158,9 @@ export async function ledgerPathsInside(input: {
   | { readonly ok: true; readonly incrementDir: string }
   | { readonly ok: false; readonly message: string }
 > {
-  const folder = NodePath.join(input.specweaveRoot, ".specweave", "increments", input.incrementId);
+  const marker = NodePath.join(input.specweaveRoot, ".specweave");
+  const increments = NodePath.join(marker, "increments");
+  const folder = NodePath.join(increments, input.incrementId);
   const incrementDir = await realPath(folder);
   if (incrementDir === null) {
     return {
@@ -83,35 +169,43 @@ export async function ledgerPathsInside(input: {
     };
   }
   if (!isInside(input.workspace, incrementDir)) {
-    return {
-      ok: false,
-      message: `${folder} leads outside this thread's worktree ${input.workspace}. SpecWeave write tools change only files inside it.`,
-    };
+    return { ok: false, message: OUTSIDE(folder, input.workspace) };
   }
-  for (const name of LEDGER_FILES) {
-    const file = NodePath.join(incrementDir, name);
-    const real = await realPath(file);
-    if (real === null) {
-      // Missing is fine; a link that points nowhere is not.
-      if ((await lstatOrNull(file)) === null) continue;
-      return { ok: false, message: `${file} is a link that points nowhere. Fix it first.` };
-    }
-    if (!isInside(input.workspace, real)) {
-      return {
-        ok: false,
-        message: `${file} leads outside this thread's worktree ${input.workspace}. SpecWeave write tools change only files inside it.`,
-      };
-    }
+  for (const [path, required] of [
+    [marker, true],
+    [increments, true],
+    [folder, true],
+    [NodePath.join(marker, STATE_FILE[0]), false],
+  ] as const) {
+    const checked = await plainFolder(path, input.workspace, required);
+    if (!checked.ok) return checked;
+  }
+  for (const file of [
+    ...LEDGER_FILES.map((name) => NodePath.join(folder, name)),
+    NodePath.join(marker, ...STATE_FILE),
+  ]) {
+    const checked = await plainFile(file, input.workspace);
+    if (!checked.ok) return checked;
   }
   return { ok: true, incrementDir };
 }
 
+/** Whether the thread's branch is `inc/NNNN-*` for this increment. */
+export function branchNamesIncrement(branch: string | null, incrementId: string): boolean {
+  const number = INCREMENT_BRANCH.exec(branch?.trim() ?? "")?.[1];
+  return number !== undefined && namesIncrement(number, incrementId);
+}
+
 /**
  * Decides whether the caller owns `requested`. `bound` is the caller's entry
- * from the plan-card read, or undefined when nothing binds it.
+ * from the plan-card read, or undefined when nothing binds it. There is one
+ * copy to write: the bound copy when it lies inside the worktree (a nested
+ * SpecWeave folder included), otherwise the copy at the worktree's own
+ * SpecWeave folder. A `folder` naming any other copy is refused, never taken.
  */
 export async function decideOwnership(input: {
   readonly worktreePath: string | null;
+  readonly branch?: string | null | undefined;
   readonly folder?: string | undefined;
   readonly requested: string;
   readonly bound: ThreadIncrementProgress | undefined;
@@ -141,22 +235,40 @@ export async function decideOwnership(input: {
       `This thread's increment ${bound.incrementId} is only guessed from its ${bound.binding === "name" ? "title or branch name" : "session checkpoint"}, which does not make it the owner. Link the increment on the thread's plan card, or launch the thread with increment set.`,
     );
   }
+  if (bound.binding === "branch" && !branchNamesIncrement(input.branch ?? null, bound.incrementId)) {
+    return denied(
+      `This thread's increment ${bound.incrementId} is only guessed from a ledger line that names its branch, which does not make it the owner. Link the increment on the thread's plan card, or launch the thread with increment set.`,
+    );
+  }
   if (!namesIncrement(input.requested, bound.incrementId)) {
     return denied(
       `This thread owns increment ${bound.incrementId}, not ${input.requested}. SpecWeave write tools change only the calling thread's own increment; whoever owns ${input.requested} changes it.`,
     );
   }
-  // The bound copy, when it lies inside the worktree (a nested SpecWeave
-  // folder included); otherwise the copy in the folder the caller named.
   const boundDir = await realPath(bound.incrementPath);
-  let specweaveRoot = where.specweaveRoot;
-  if (input.folder === undefined && boundDir !== null && isInside(where.workspace, boundDir)) {
+  let specweaveRoot: string;
+  if (boundDir !== null && isInside(where.workspace, boundDir)) {
+    if (NodePath.basename(boundDir) !== bound.incrementId) {
+      return denied(
+        `${bound.incrementPath} leads to ${boundDir}, another folder than increment ${bound.incrementId}. SpecWeave write tools write only to the increment's own folder.`,
+      );
+    }
     const root = NodePath.dirname(NodePath.dirname(NodePath.dirname(boundDir)));
-    const nested = await resolveCallerWorkspace({
-      worktreePath: input.worktreePath,
-      folder: root,
-    });
-    if (nested.ok) specweaveRoot = nested.specweaveRoot;
+    const nested = await resolveCallerWorkspace({ worktreePath: input.worktreePath, folder: root });
+    if (!nested.ok) return denied(nested.message);
+    specweaveRoot = nested.specweaveRoot;
+  } else {
+    const home =
+      input.folder === undefined
+        ? where
+        : await resolveCallerWorkspace({ worktreePath: input.worktreePath });
+    if (!home.ok) return denied(home.message);
+    specweaveRoot = home.specweaveRoot;
+  }
+  if (input.folder !== undefined && where.specweaveRoot !== specweaveRoot) {
+    return denied(
+      `${input.folder} holds another copy than this thread's increment ${bound.incrementId}, which is in ${specweaveRoot}. Leave folder out; SpecWeave write tools change only that copy.`,
+    );
   }
   const paths = await ledgerPathsInside({
     workspace: where.workspace,
@@ -173,4 +285,14 @@ export async function decideOwnership(input: {
       incrementDir: paths.incrementDir,
     },
   };
+}
+
+/** Checks a decided target again, just before the write, under the increment's lock. */
+export async function recheckTarget(target: LedgerTarget): Promise<Ownership> {
+  const paths = await ledgerPathsInside(target);
+  if (!paths.ok) return denied(paths.message);
+  if (paths.incrementDir !== target.incrementDir) {
+    return denied(`${target.incrementDir} moved since this call checked it. Try again.`);
+  }
+  return { ok: true, target };
 }

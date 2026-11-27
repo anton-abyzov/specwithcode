@@ -7,7 +7,13 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { ThreadId, type ThreadIncrementProgress } from "@specweave-studio/contracts";
 
-import { decideOwnership, ledgerPathsInside, namesIncrement } from "./ownership.ts";
+import {
+  branchNamesIncrement,
+  decideOwnership,
+  ledgerPathsInside,
+  namesIncrement,
+  recheckTarget,
+} from "./ownership.ts";
 
 const isWindows = HostProcessPlatform.defaultValue() === "win32";
 const INCREMENT = "1497-ledger-tools";
@@ -65,6 +71,7 @@ describe("decideOwnership (1497)", () => {
     for (const binding of ["manual", "claim", "branch"] as const) {
       const result = await decideOwnership({
         worktreePath: worktree,
+        branch: "inc/1497-ledger-tools",
         requested: "1497",
         bound: bound(increment, binding),
       });
@@ -164,6 +171,104 @@ describe("decideOwnership (1497)", () => {
       ok: true,
       target: { specweaveRoot: nested, incrementDir: nestedIncrement },
     });
+  });
+});
+
+describe("decideOwnership: one copy, assigned for real (1497 review)", () => {
+  it("takes a branch binding only from an inc/NNNN branch, not from old ledger text", async () => {
+    const { worktree, increment } = scratch();
+    const guessed = await decideOwnership({
+      worktreePath: worktree,
+      branch: "feature/ledger",
+      requested: "1497",
+      bound: bound(increment, "branch"),
+    });
+    expect(guessed).toMatchObject({ ok: false, code: "capability_denied" });
+    expect(!guessed.ok && guessed.message).toContain("ledger line that names its branch");
+    expect(branchNamesIncrement("inc/1497-ledger-tools", INCREMENT)).toBe(true);
+    expect(branchNamesIncrement("inc/1498-other", INCREMENT)).toBe(false);
+    expect(branchNamesIncrement(null, INCREMENT)).toBe(false);
+  });
+
+  it("refuses a folder that holds another copy of the same increment", async () => {
+    const { worktree, increment } = scratch();
+    const nested = NodePath.join(worktree, "vendor", "other");
+    NodeFS.mkdirSync(NodePath.join(nested, ".specweave", "increments", INCREMENT), {
+      recursive: true,
+    });
+    NodeFS.writeFileSync(NodePath.join(nested, ".specweave", "config.json"), "{}\n");
+    const result = await decideOwnership({
+      worktreePath: worktree,
+      folder: "vendor/other",
+      requested: "1497",
+      bound: bound(increment),
+    });
+    expect(result).toMatchObject({ ok: false, code: "capability_denied" });
+    expect(!result.ok && result.message).toContain("holds another copy");
+    // Naming the bound copy's own folder is fine.
+    expect(
+      await decideOwnership({
+        worktreePath: worktree,
+        folder: ".",
+        requested: "1497",
+        bound: bound(increment),
+      }),
+    ).toMatchObject({ ok: true, target: { incrementDir: increment } });
+  });
+});
+
+describe("ledgerPathsInside: real folders and plain files (1497 review)", () => {
+  const check = (worktree: string, incrementId = INCREMENT) =>
+    ledgerPathsInside({ workspace: worktree, specweaveRoot: worktree, incrementId });
+
+  it.skipIf(isWindows)("refuses a link inside the worktree to another increment", async () => {
+    const { worktree, increment } = scratch();
+    NodeFS.symlinkSync(
+      increment,
+      NodePath.join(worktree, ".specweave", "increments", "1502-alias"),
+    );
+    const result = await check(worktree, "1502-alias");
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain("is a link");
+  });
+
+  it.skipIf(isWindows)("refuses a linked state folder or a ledger with a second hard link", async () => {
+    const { root, worktree, increment } = scratch();
+    const outside = NodePath.join(root, "outside");
+    NodeFS.mkdirSync(outside);
+    NodeFS.symlinkSync(outside, NodePath.join(worktree, ".specweave", "state"));
+    const linkedState = await check(worktree);
+    expect(!linkedState.ok && linkedState.message).toContain("leads outside");
+    NodeFS.rmSync(NodePath.join(worktree, ".specweave", "state"));
+
+    NodeFS.linkSync(NodePath.join(increment, "ledger.jsonl"), NodePath.join(outside, "copy"));
+    const hard = await check(worktree);
+    expect(!hard.ok && hard.message).toContain("another hard link");
+  });
+
+  it("refuses a leftover temporary file the CLI would write through", async () => {
+    const { worktree, increment } = scratch();
+    NodeFS.writeFileSync(NodePath.join(increment, "spec.md.tmp"), "x");
+    const result = await check(worktree);
+    expect(!result.ok && result.message).toContain("left over from an interrupted write");
+  });
+
+  it.skipIf(isWindows)("checks again just before the write", async () => {
+    const { root, worktree, increment } = scratch();
+    const decided = await decideOwnership({
+      worktreePath: worktree,
+      requested: "1497",
+      bound: bound(increment),
+    });
+    expect(decided.ok).toBe(true);
+    if (!decided.ok) return;
+    expect(await recheckTarget(decided.target)).toMatchObject({ ok: true });
+    // Swapped for a link after the first check.
+    const outside = NodePath.join(root, "outside-ledger.jsonl");
+    NodeFS.writeFileSync(outside, "");
+    NodeFS.rmSync(NodePath.join(increment, "ledger.jsonl"));
+    NodeFS.symlinkSync(outside, NodePath.join(increment, "ledger.jsonl"));
+    expect(await recheckTarget(decided.target)).toMatchObject({ ok: false });
   });
 });
 
