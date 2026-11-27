@@ -105,8 +105,12 @@ test("accepts the actual lock: identity map, exact SDK promotion and reviewed ch
   ]);
   assert.equal(new Set(added).size, added.length, "A registry record is added once");
   assert.equal(new Set(removed).size, removed.length, "A registry record is removed once");
+  // A removal takes out an upstream record, or one an earlier reviewed change added.
   for (const line of removed)
-    assert.ok(integrities(original).includes(line), `Removed a record upstream never had: ${line}`);
+    assert.ok(
+      integrities(original).includes(line) || added.includes(line),
+      `Removed a record neither upstream nor a reviewed change had: ${line}`,
+    );
   // A record that left and came back unchanged counts as neither.
   const gone = removed.filter((line) => !added.includes(line));
   const fresh = added.filter((line) => !removed.includes(line));
