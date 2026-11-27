@@ -56,6 +56,9 @@ const pad = (value: number, size = 2) => String(Math.trunc(Math.abs(value))).pad
  * time, as RFC 3339 with their offset (`2026-11-25T10:00:00-08:00`). A value
  * that already has a zone is returned unchanged; anything else is undefined.
  * `offsetMinutes` is for tests; it defaults to the local offset at that time.
+ * A local time the clocks repeat takes the earlier offset; one they skip is
+ * written as the time it became (02:30 on a spring-forward day is 03:30), so
+ * the time and offset always name the same instant.
  */
 export function localInputToRfc3339(local: string, offsetMinutes?: number): string | undefined {
   const value = local.trim();
@@ -71,11 +74,23 @@ export function localInputToRfc3339(local: string, offsetMinutes?: number): stri
   ];
   const second = match[6] === undefined ? 0 : Number(match[6]);
   if (!realDateAndTime([year, month, day, hour, minute, second])) return undefined;
-  // getTimezoneOffset is minutes behind UTC; RFC 3339 writes minutes ahead.
-  const ahead =
-    offsetMinutes ?? -new Date(year, month - 1, day, hour, minute, second).getTimezoneOffset();
+  let wall = [year, month, day, hour, minute];
+  let ahead = offsetMinutes ?? 0;
+  if (offsetMinutes === undefined) {
+    const instant = new Date(year, month - 1, day, hour, minute, second);
+    // getTimezoneOffset is minutes behind UTC; RFC 3339 writes minutes ahead.
+    ahead = -instant.getTimezoneOffset();
+    wall = [
+      instant.getFullYear(),
+      instant.getMonth() + 1,
+      instant.getDate(),
+      instant.getHours(),
+      instant.getMinutes(),
+    ];
+  }
+  const [y, mo, d, h, mi] = wall as [number, number, number, number, number];
   const zone = `${ahead < 0 ? "-" : "+"}${pad(ahead / 60)}:${pad(ahead % 60)}`;
-  return `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${pad(second)}${match[7] ?? ""}${zone}`;
+  return `${pad(y, 4)}-${pad(mo)}-${pad(d)}T${pad(h)}:${pad(mi)}:${pad(second)}${match[7] ?? ""}${zone}`;
 }
 
 /**
@@ -115,8 +130,10 @@ export function mcpElicitationCardValues(
 
 /**
  * The card's values with each date-time entry as RFC 3339 in the person's
- * offset, ready to check and send. An entry that isn't a date and time is left
- * as typed, so the check reports it.
+ * offset, ready to check and send. A default the person left as shown is sent
+ * exactly as the server gave it, so a repeated local hour or a dropped
+ * fraction never moves it. An entry that isn't a date and time is left as
+ * typed, so the check reports it.
  */
 export function mcpElicitationSentValues(
   fields: ReadonlyArray<McpElicitationField>,
@@ -126,8 +143,12 @@ export function mcpElicitationSentValues(
   for (const field of fields) {
     if (!isDateTimeField(field)) continue;
     const value = sent[field.key];
-    if (typeof value === "string" && value.trim() !== "")
-      sent[field.key] = localInputToRfc3339(value) ?? value;
+    if (typeof value !== "string" || value.trim() === "") continue;
+    const given = field.kind === "text" ? field.default : undefined;
+    sent[field.key] =
+      given !== undefined && value === rfc3339ToLocalInput(given)
+        ? given
+        : (localInputToRfc3339(value) ?? value);
   }
   return sent;
 }

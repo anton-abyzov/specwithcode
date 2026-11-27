@@ -377,7 +377,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         }
         remember(id);
         if (committed) {
-          // The answer never arrived: the call ends, and the note says so.
+          // The answer never arrived: the call ends, and the note says so. If
+          // its commit failed meanwhile, its mark is gone and nothing was
+          // recorded, so the card closes too (1493); a recorded one stays.
+          if (beginClosingClaudeForm(artifacts.request.id)) yield* closeCard(artifacts);
           yield* notice(
             context,
             `${nativeRequestId}:undelivered`,

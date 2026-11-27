@@ -79,3 +79,54 @@ describe("mcpElicitationDateTime (1493)", () => {
     expect(sent.note).toBe("x");
   });
 });
+
+describe("mcpElicitationDateTime across a clock change (1493)", () => {
+  const inZone = <A>(zone: string, run: () => A): A => {
+    const before = process.env.TZ;
+    process.env.TZ = zone;
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.TZ;
+      else process.env.TZ = before;
+    }
+  };
+
+  it("sends an untouched default exactly as the server gave it", () =>
+    inZone("America/New_York", () => {
+      // 01:30 happens twice on November 1, 2026 in New York; this is the second.
+      const fields = fieldsOf({
+        type: "object",
+        properties: {
+          late: { type: "string", format: "date-time", default: "2026-11-01T01:30:00-05:00" },
+          fine: { type: "string", format: "date-time", default: "2026-12-01T09:00:00.250Z" },
+        },
+      });
+      const shown = mcpElicitationCardValues(fields, {
+        late: "2026-11-01T01:30:00-05:00",
+        fine: "2026-12-01T09:00:00.250Z",
+      });
+      expect(shown.late).toBe("2026-11-01T01:30");
+      expect(mcpElicitationSentValues(fields, shown)).toEqual({
+        late: "2026-11-01T01:30:00-05:00",
+        fine: "2026-12-01T09:00:00.250Z",
+      });
+      // An edit is read as local time again.
+      expect(mcpElicitationSentValues(fields, { ...shown, late: "2026-11-01T02:00" }).late).toBe(
+        "2026-11-01T02:00:00-05:00",
+      );
+    }));
+
+  it("writes a time and offset that name the same instant", () =>
+    inZone("America/New_York", () => {
+      expect(new Date(2026, 6, 1, 12).getTimezoneOffset()).toBe(240);
+      // Repeated hour: the earlier offset.
+      const repeated = localInputToRfc3339("2026-11-01T01:30")!;
+      expect(repeated).toMatch(/^2026-11-01T01:30:00-0[45]:00$/);
+      expect(new Date(repeated).getTime()).toBe(new Date(2026, 10, 1, 1, 30).getTime());
+      // Skipped hour: the time it became.
+      const skipped = localInputToRfc3339("2026-03-08T02:30")!;
+      expect(skipped).toBe("2026-03-08T03:30:00-04:00");
+      expect(isRfc3339DateTime(skipped)).toBe(true);
+    }));
+});

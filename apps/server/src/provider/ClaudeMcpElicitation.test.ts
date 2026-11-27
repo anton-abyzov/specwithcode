@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 import {
+  forgetUncommittedFormAnswer,
   handOffClaudeFormAnswers,
   redactClaudeFormAnswers,
   takeClaudeFormAnswers,
@@ -399,6 +400,28 @@ describe("ClaudeMcpElicitation", () => {
             (event.type === "turn_item.updated" && event.turnItem.status === "cancelled"),
         ),
       ).toEqual([]);
+  });
+
+  it("closes the card when the answer's commit failed during the wait (1493)", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    // The commit of that answer fails: nothing was recorded.
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    h.endGrace();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    expect(
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+    expect(handOffClaudeFormAnswers(h.requestId, { handOff: { name: "late" } })).toBe(false);
   });
 
   it("keeps a watched thread's card open past the timer", async () => {
