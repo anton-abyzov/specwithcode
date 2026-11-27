@@ -61,6 +61,8 @@ public nonisolated enum MermaidConfig {
       startOnLoad: false,
       securityLevel: "strict",
       suppressErrorRendering: true,
+      maxTextSize: 50000,
+      maxEdges: 500,
       secure: secure,
       htmlLabels: false,
       flowchart: { htmlLabels: false, useMaxWidth: false },
@@ -197,8 +199,28 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
   private func perform(_ key: Key) async -> MermaidOutcome {
     guard key.source.count <= MermaidConfig.maxSource else { return .failure("This diagram is too long to draw here.") }
     guard await ensureLoaded(), let webView else { return .failure("The diagram renderer couldn't start.") }
-    do {
-      let value = try await webView.callAsyncJavaScript(
+    return await evaluate(key, on: webView)
+  }
+
+  /// The longest one layout may take before the renderer gives up on it.
+  static let renderTimeout: Duration = .seconds(12)
+
+  private struct Timeout: LocalizedError {
+    var errorDescription: String? { "The diagram took too long to draw." }
+  }
+
+  /// Settles once, from whichever comes first: the page's answer or the timeout.
+  private final class Once {
+    var done = false
+  }
+
+  /// One layout, with the source passed as an argument (never spliced into
+  /// script). A diagram that hangs the page fails after `renderTimeout`, and
+  /// the page is thrown away so the next diagram starts on a fresh one.
+  private func evaluate(_ key: Key, on webView: WKWebView) async -> MermaidOutcome {
+    await withCheckedContinuation { (continuation: CheckedContinuation<MermaidOutcome, Never>) in
+      let once = Once()
+      webView.callAsyncJavaScript(
         "return await window.__swcRender(source, dark, vars, secure);",
         arguments: [
           "source": key.source,
@@ -207,15 +229,42 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
           "secure": MermaidConfig.secureKeys,
         ],
         in: nil,
-        contentWorld: Self.world
-      )
+        in: Self.world
+      ) { result in
+        guard !once.done else { return }
+        once.done = true
+        continuation.resume(returning: Self.outcome(result))
+      }
+      Task { @MainActor [weak self] in
+        try? await Task.sleep(for: Self.renderTimeout)
+        guard !once.done else { return }
+        once.done = true
+        self?.recycle()
+        continuation.resume(returning: .failure(Self.message(Timeout())))
+      }
+    }
+  }
+
+  /// The page's answer as a diagram, or Mermaid's error.
+  private static func outcome(_ result: Result<Any, Error>) -> MermaidOutcome {
+    switch result {
+    case let .failure(error):
+      return .failure(message(error))
+    case let .success(value):
       guard let result = value as? [String: Any], let svg = result["svg"] as? String,
             let width = (result["width"] as? NSNumber)?.doubleValue, let height = (result["height"] as? NSNumber)?.doubleValue,
             width > 0, height > 0 else { return .failure("Mermaid returned no picture.") }
       return .diagram(MermaidDiagram(svg: svg, size: CGSize(width: width, height: height)))
-    } catch {
-      return .failure(Self.message(error))
     }
+  }
+
+  /// Drops the page; the next diagram loads a new one.
+  private func recycle() {
+    webView?.stopLoading()
+    webView?.navigationDelegate = nil
+    webView = nil
+    isLoaded = false
+    loadFailed = false
   }
 
   /// Mermaid's own error text, first line, without WebKit's wrapping.
@@ -289,9 +338,7 @@ public final class MermaidRenderer: NSObject, WKNavigationDelegate {
 
   public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     // Start over on the next diagram.
-    self.webView = nil
-    isLoaded = false
-    loadFailed = false
+    recycle()
   }
 }
 

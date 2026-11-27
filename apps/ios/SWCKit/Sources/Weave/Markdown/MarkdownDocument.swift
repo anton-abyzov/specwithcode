@@ -34,6 +34,19 @@ public nonisolated struct MarkdownDocument: Hashable, Sendable {
     self.body = body
   }
 
+  /// A file as its own page: frontmatter files as `parse` reads them, and a
+  /// file with none takes its opening `# heading` as the title, the way the
+  /// desktop's `markdownOpeningTitle` does, so plain notes get the same title.
+  public static func page(_ text: String) -> MarkdownDocument {
+    let document = parse(text)
+    guard !document.hasFrontmatter, document.body == text else { return document }
+    let body = withoutLeadingBlankLines(normalized(text))
+    guard let opening = openingHeading(body) else { return document }
+    let title = headingText(opening.text)
+    guard !title.isEmpty else { return document }
+    return MarkdownDocument(title: title, properties: [], body: withoutLeadingBlankLines(String(body.dropFirst(opening.length))))
+  }
+
   /// True when the file opened with frontmatter this view understood.
   public var hasFrontmatter: Bool { title != nil || !properties.isEmpty }
 

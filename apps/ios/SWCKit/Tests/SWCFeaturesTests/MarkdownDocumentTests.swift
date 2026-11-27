@@ -182,4 +182,14 @@ struct MarkdownDocumentTests {
     #expect(resolved.contains("[folder](/Users/me/work/.specweave/reports/My%20Notes/plan.md)"))
     #expect(HostFileLink.hostPath("/Users/me/work/.specweave/reports/My%20Notes/plan.md") == "/Users/me/work/.specweave/reports/My Notes/plan.md")
   }
+  @Test("A file with no frontmatter takes its opening heading as the page title")
+  func pageTitle() {
+    let notes = MarkdownDocument.page("# Notes\n\nShort notes.\n\n---\n\nMore.")
+    #expect(notes.title == "Notes")
+    #expect(notes.body == "Short notes.\n\n---\n\nMore.")
+    let plain = MarkdownDocument.page("Just text.\n\n# Later")
+    #expect(plain.title == nil)
+    #expect(plain.body == "Just text.\n\n# Later")
+    #expect(MarkdownDocument.page("---\ntitle: A\n---\n\nBody.").title == "A")
+  }
 }

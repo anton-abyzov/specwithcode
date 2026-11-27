@@ -163,6 +163,7 @@ struct HostFileViewer: View {
       }
       switch kind {
       case .page, .image, .pdf:
+        if url.isFileURL, !Self.isFixtureFile(url) { throw HostFileError.missing }
         state = .web(url)
       case .markdown, .text:
         let text = try await Self.fetchText(url)
@@ -172,7 +173,7 @@ struct HostFileViewer: View {
         let separator: Character = (file.path as NSString).pathExtension.lowercased() == "tsv" ? "\t" : ","
         state = .sheet(CSVTable.parse(text, separator: separator))
       case .whiteboard:
-        let text = try await Self.fetchText(url)
+        let text = try await Self.fetchText(url, limit: 16 * 1024 * 1024)
         guard let scene = ExcalidrawScene.decode(text) else {
           state = .failed("This whiteboard couldn't be read.")
           return
@@ -185,16 +186,18 @@ struct HostFileViewer: View {
     }
   }
 
-  /// Text from the machine, at most 2 MB, over a session that keeps no cookies or cache.
-  private static func fetchText(_ url: URL) async throws -> String {
-    // Only the sample data's engine hands out a file URL.
+  /// Text from the machine, at most `limit` bytes (2 MB; whiteboards 16 MB,
+  /// the desktop's own cap, since a cut scene is unreadable), over a session
+  /// that keeps no cookies or cache.
+  private static func fetchText(_ url: URL, limit: Int = 2 * 1024 * 1024) async throws -> String {
+    // Only the sample data's engine hands out a file URL, inside its own folder.
     if url.isFileURL {
+      guard isFixtureFile(url) else { throw HostFileError.missing }
       let data = try Data(contentsOf: url)
       return String(decoding: data, as: UTF8.self)
     }
     let session = URLSession(configuration: .ephemeral)
     defer { session.finishTasksAndInvalidate() }
-    let limit = 2 * 1024 * 1024
     // One byte past the limit tells a cut file from one that just fits.
     var request = URLRequest(url: url)
     request.setValue("bytes=0-\(limit)", forHTTPHeaderField: "Range")
@@ -205,7 +208,14 @@ struct HostFileViewer: View {
     if http.statusCode == 416 { return "" }
     guard http.statusCode == 200 || http.statusCode == 206 else { throw HostFileError.missing }
     let text = String(decoding: data.prefix(limit), as: UTF8.self)
-    return data.count > limit ? text + "\n\n… (showing the first 2 MB)" : text
+    return data.count > limit ? text + "\n\n… (showing the first \(limit / 1024 / 1024) MB)" : text
+  }
+
+  /// A file the sample data wrote to its temporary folder; no other local file is read.
+  static func isFixtureFile(_ url: URL) -> Bool {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("swc-fixture-artifacts").standardizedFileURL.path
+    let path = url.standardizedFileURL.path
+    return path.hasPrefix(folder + "/") && !path.split(separator: "/").contains("..")
   }
 
   /// JSON is pretty-printed when it parses; everything else is shown as written.

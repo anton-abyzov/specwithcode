@@ -160,7 +160,7 @@ public struct MarkdownDocumentView: View {
   let onOpenLink: ((URL) -> Void)?
 
   public init(_ text: String, onOpenLink: ((URL) -> Void)? = nil) {
-    self.document = MarkdownDocument.parse(text)
+    self.document = MarkdownDocument.page(text)
     self.onOpenLink = onOpenLink
   }
 
