@@ -69,14 +69,17 @@ export const snapshotFileName = (operationId: string) =>
 
 /**
  * Whether `target` is an earlier complete copy for the same operation: a
- * regular file that is a database passing `quick_check`. Opens only the saved
- * copy, read-only and off the event loop, never the live database.
+ * regular, non-empty file that is a database passing `quick_check`. An empty
+ * file (the claim of a copy stopped before it was published) also passes
+ * `quick_check`, so it needs pages. Opens only the saved copy, read-only and
+ * off the event loop, never the live database.
  */
 const existingCopyIsSound = async (target: string): Promise<boolean> => {
   const stat = NodeFS.lstatSync(target, { throwIfNoEntry: false });
-  if (stat === undefined || !stat.isFile()) return false;
+  if (stat === undefined || !stat.isFile() || stat.size === 0) return false;
   try {
-    return (await checkDatabaseCopy(target)).quickCheck === "ok";
+    const checked = await checkDatabaseCopy(target);
+    return checked.quickCheck === "ok" && checked.pages > 0;
   } catch {
     return false;
   }
@@ -180,7 +183,10 @@ export const makePersonalLinkSnapshotter = (
       // A retry of the same operation after a restart: reuse its copy only when it is sound.
       if (!(await existingCopyIsSound(target)))
         throw new PersonalLinkSnapshotFailure({
-          message: `An unusable file is in the way of the database copy at ${target}.`,
+          message:
+            NodeFS.statSync(target, { throwIfNoEntry: false })?.size === 0
+              ? `An empty file left by a copy that was stopped is in the way of the database copy at ${target}. Remove it and the join tries again.`
+              : `An unusable file is in the way of the database copy at ${target}.`,
         });
       return target;
     }

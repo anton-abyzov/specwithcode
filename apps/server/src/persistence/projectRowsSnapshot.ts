@@ -128,15 +128,18 @@ export async function snapshotProjectRows(
       const userVersion = Number(
         Object.values(source.prepare("PRAGMA user_version").get() ?? {})[0] ?? 0,
       );
-      const encoding = String(
-        Object.values(source.prepare("PRAGMA encoding").get() ?? {})[0] ?? "UTF-8",
-      );
+      // Text crosses as raw bytes, which only round-trips between UTF-8 files.
+      // The service creates its database UTF-8; anything else is refused unread.
+      const encoding = String(Object.values(source.prepare("PRAGMA encoding").get() ?? {})[0]);
+      if (encoding !== "UTF-8") {
+        throw new Error(
+          `The database is ${encoding}, not UTF-8; its project rows cannot be copied byte for byte.`,
+        );
+      }
       NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
       // References to tables left out of the copy must not refuse its rows.
       const copy = new NodeSqlite.DatabaseSync(partial, { enableForeignKeyConstraints: false });
       try {
-        // Same text encoding as the source, so text bytes copy unchanged.
-        copy.exec(`PRAGMA encoding = '${encoding.replaceAll("'", "''")}'`);
         copy.exec("PRAGMA journal_mode = DELETE; BEGIN");
         for (const table of tables) {
           copy.exec(table.sql);

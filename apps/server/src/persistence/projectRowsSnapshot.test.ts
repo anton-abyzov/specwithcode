@@ -169,4 +169,28 @@ describe("snapshotProjectRows", () => {
       );
     });
   });
+  it("refuses a database that is not UTF-8 instead of corrupting its text", async () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-project-rows-"));
+    try {
+      const dbPath = NodePath.join(directory, "utf16.sqlite");
+      const holder = new NodeSqlite.DatabaseSync(dbPath);
+      try {
+        holder.exec(`
+          PRAGMA encoding = 'UTF-16le';
+          CREATE TABLE project_memory (project_id TEXT NOT NULL, content TEXT);
+        `);
+        holder.prepare("INSERT INTO project_memory VALUES (?, ?)").run(PERCY, "Elena");
+      } finally {
+        holder.close();
+      }
+      const output = NodePath.join(directory, "copies", "percy.sqlite");
+      await snapshotProjectRows(dbPath, output, PERCY, ample).then(
+        () => assert.fail("a UTF-16 database must not be copied"),
+        (cause: Error) => assert.match(cause.message, /UTF-16le, not UTF-8/),
+      );
+      assert.isFalse(NodeFS.existsSync(NodePath.dirname(output)));
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
