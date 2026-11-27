@@ -381,6 +381,17 @@ describe("heldGrantCounts: the caller's half of an own grant (1448 D-13)", () =>
     expect(heldGrantCounts({ status: "expired", renewable: false })).toBe(false);
   });
 
+  it("counts an in-date grant it cannot renew only for a machine the owner confirmed here", () => {
+    expect(heldGrantCounts({ status: "allowed", renewable: false }, true)).toBe(true);
+    expect(heldGrantCounts({ status: "expiring", renewable: false }, true)).toBe(true);
+    // Out of date, revoked or none never counts, ticked or not.
+    expect(heldGrantCounts({ status: "expired", renewable: false }, true)).toBe(false);
+    expect(heldGrantCounts({ status: "revoked", renewable: false }, true)).toBe(false);
+    expect(heldGrantCounts({ status: "not_allowed", renewable: false }, true)).toBe(false);
+    // A machine only vouched for keeps the narrow rule.
+    expect(heldGrantCounts({ status: "allowed", renewable: false }, false)).toBe(false);
+  });
+
   it("never counts a revoked grant or none", () => {
     expect(heldGrantCounts({ status: "revoked", renewable: true })).toBe(false);
     expect(heldGrantCounts({ status: "not_allowed", renewable: true })).toBe(false);
