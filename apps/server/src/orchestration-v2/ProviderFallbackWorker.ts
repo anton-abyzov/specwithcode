@@ -1881,6 +1881,8 @@ export const makeSweep = Effect.gen(function* () {
       let routine: boolean | null = null;
       for (let hop = 0; hop < 16 && routine === null && run !== undefined; hop++) {
         const messageId = orchestrationV2RunStartMessageId(run);
+        // A run with no start message cannot be traced: treated as a routine's.
+        if (typeof messageId !== "string") break;
         const previous = continuedRunId(messageId, thread.id);
         const records = yield* projections
           .getThreadRecords(
