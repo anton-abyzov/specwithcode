@@ -3,12 +3,6 @@ import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
 import {
-  continuedRunId,
-  messageOrigin,
-  routineThreadIds,
-  skipsRowUltracode,
-} from "./routineThreads.ts";
-import {
   CommandId,
   type ManualCodexCreditIntent,
   MessageId,
@@ -21,7 +15,6 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
-  RunId,
   type ServerProvider,
   type ServerSettings as ServerSettingsValue,
   ThreadId,
@@ -56,7 +49,6 @@ import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -256,8 +248,6 @@ export function providerFallbackCommand(
   limited?: ReadonlySet<string>,
   /** Fallback order entries whose continuation of this stop failed to dispatch. */
   failed?: ReadonlySet<string>,
-  /** False for a routine's own thread: a track row's Ultracode is not for it (1506). */
-  rowUltracode = true,
 ): OrchestrationV2ServerCommand | null {
   if (rule.providerLimitAction !== "switch") return null;
   if (!threadIsFree(thread)) return null;
@@ -271,7 +261,6 @@ export function providerFallbackCommand(
       currentModel: thread.modelSelection.model,
       currentOptions: thread.modelSelection.options,
       rule,
-      rowUltracode,
       nowMs,
       belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
       anyReady: true,
@@ -312,7 +301,6 @@ export function providerFallbackCommand(
     currentModel: thread.modelSelection.model,
     currentOptions: thread.modelSelection.options,
     rule,
-    rowUltracode,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent,
     anyReady: true,
@@ -567,8 +555,6 @@ function limitStep(
     readonly openWindow?: number;
     /** The thread's chain of limit stops used its hops: no automatic switch (1460). */
     readonly parked?: boolean;
-    /** A routine runs in this thread (`routineThreadIds`) or it is the coordinator. */
-    readonly noRowUltracode?: boolean;
   },
 ):
   | {
@@ -595,7 +581,6 @@ function limitStep(
       proven: options.proven ?? null,
       limited: options.limited,
       failed: options.failedTargets,
-      rowUltracode: options.noRowUltracode !== true,
     });
     return command === null ? null : { type: "switch", command };
   }
@@ -712,7 +697,6 @@ function limitStep(
     options.proven ?? null,
     options.limited,
     options.failedTargets,
-    options.noRowUltracode !== true,
   );
   return command === null ? null : { type: "switch", command };
 }
@@ -839,7 +823,6 @@ function idlePreswitchCommand(
     readonly openWindow?: number;
     /** Sources a limit stop holds, among others (see `withHeldSources`). */
     readonly failedTargets?: ReadonlySet<string> | undefined;
-    readonly noRowUltracode?: boolean;
   },
 ): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
   const id = idlePreswitchId(thread, providers, rule, nowMs, options.openWindow);
@@ -852,7 +835,6 @@ function idlePreswitchCommand(
     lockedProven(thread.routing, providers, options.proven),
     options.limited,
     options.failedTargets,
-    options.noRowUltracode !== true,
   );
   return command?.type === "thread.model-selection.set"
     ? (lockedStep(thread, providers, { command: { ...command, commandId: CommandId.make(id) } })
@@ -885,8 +867,6 @@ export const makeSweep = Effect.gen(function* () {
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const instances = yield* ProviderInstances.ProviderInstanceRegistry;
   const projects = yield* Projects.ProjectService;
-  // Read at construction: the scheduler's fiber may not carry the database.
-  const routineSql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const env = yield* ProviderFallbackEnv;
   const machineHandoff = yield* MachineLimitHandoff;
@@ -1873,68 +1853,6 @@ export const makeSweep = Effect.gen(function* () {
     );
   });
   const holdRuns = new Map<string, OrchestrationV2Run>();
-  // Whether a stopped run began as a routine's message, read once per run and
-  // followed back through automatic continuations: a routine moved or deleted
-  // mid-turn leaves no binding to go by (1506 D-04).
-  const routineRuns = new Map<string, boolean>();
-  const startedByRoutine = (
-    thread: Pick<OrchestrationV2ThreadShell, "id" | "status" | "latestRunId">,
-    stopped: OrchestrationV2Run | undefined,
-  ) =>
-    Effect.gen(function* () {
-      if (thread.status !== "failed" || thread.latestRunId === null) return false;
-      const known = routineRuns.get(thread.latestRunId);
-      if (known !== undefined) return known;
-      let run: OrchestrationV2Run | undefined = stopped;
-      let runId: string = thread.latestRunId;
-      let routine: boolean | null = null;
-      for (let hop = 0; hop < 16 && routine === null; hop++) {
-        // A run the hold read did not load (another kind of stop) is read here.
-        if (run === undefined)
-          run = yield* projections
-            .getThreadRecords(thread.id, ["runs"], { runIds: [RunId.make(runId)] })
-            .pipe(
-              Effect.map((records) => records.runs.find((entry) => entry.id === runId)),
-              Effect.catchCause(() => Effect.succeed(undefined)),
-            );
-        if (run === undefined) break;
-        const messageId = orchestrationV2RunStartMessageId(run);
-        // A run with no start message cannot be traced: treated as a routine's.
-        if (typeof messageId !== "string") break;
-        const previous = continuedRunId(messageId, thread.id);
-        const records = yield* projections
-          .getThreadRecords(
-            thread.id,
-            ["messages", "runs"],
-            previous === null
-              ? { messageIds: [messageId] }
-              : { messageIds: [messageId], runIds: [RunId.make(previous)] },
-          )
-          .pipe(
-            Effect.map((found) =>
-              Option.some({
-                origin: messageOrigin(
-                  found.messages.find((message) => message.id === messageId),
-                  previous,
-                ),
-                previous: found.runs.find((entry) => entry.id === previous),
-              }),
-            ),
-            Effect.catchCause(() => Effect.succeedNone),
-          );
-        if (Option.isNone(records) || records.value.origin === "unknown") break;
-        if (records.value.origin === "routine") routine = true;
-        else if (records.value.origin === "person") routine = false;
-        else {
-          runId = previous ?? "";
-          run = records.value.previous;
-        }
-      }
-      // Unreadable, untraceable or too long a chain: off is the safe side.
-      if (routine === null) return true;
-      routineRuns.set(thread.latestRunId, routine);
-      return routine;
-    });
   // A model a person picked since the latest run, as opposed to one a
   // pre-switch moved the thread to (its way back is still owed, 1075).
   const pickedSinceRun = (
@@ -1947,7 +1865,6 @@ export const makeSweep = Effect.gen(function* () {
     if (!wake && now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
     yield* Ref.set(lastRunAt, now);
     const preferences = yield* settings.getSettings;
-    const routineThreads = yield* routineThreadIds(routineSql);
     let providers = withSimulatedUsage(yield* registry.getProviders, now, env);
     // The way back does not depend on a rule: a thread the rule moved must
     // not keep spending after the rule is turned off. Nor does the retry of a
@@ -2008,7 +1925,6 @@ export const makeSweep = Effect.gen(function* () {
       if (evidence !== null) holdThreads.push(evidence);
     }
     for (const runId of holdRuns.keys()) if (!retainedHoldRuns.has(runId)) holdRuns.delete(runId);
-    for (const runId of routineRuns.keys()) if (!holdRuns.has(runId)) routineRuns.delete(runId);
     const outlivedHolds = new Set<string>();
     for (const thread of holdThreads)
       if (yield* planLimitOutlived(thread, providers)) outlivedHolds.add(thread.id);
@@ -2159,13 +2075,6 @@ export const makeSweep = Effect.gen(function* () {
         limited,
         failedTargets: withHeldSources(triedTargets, heldSources),
         parked: limitChainParked(chainsNow.get(thread.id)),
-        // A routine's thread and the coordinator never take a row's Ultracode (1506).
-        noRowUltracode:
-          skipsRowUltracode(thread.id, routineThreads, project) ||
-          (yield* startedByRoutine(
-            thread,
-            thread.latestRunId === null ? undefined : holdRuns.get(thread.latestRunId),
-          )),
         unopenable: failedOpen,
         planLimitOutlived: outlived.has(thread.id),
         stoppedRun: thread.latestRunId === null ? null : (holdRuns.get(thread.latestRunId) ?? null),
@@ -2238,10 +2147,7 @@ export const makeSweep = Effect.gen(function* () {
               ),
               rule,
               DateTime.toEpochMillis(yield* DateTime.now),
-              // Read again under the lock: a routine may have bound it since the sweep began.
-              skipsRowUltracode(current.id, yield* routineThreadIds(routineSql), currentProject)
-                ? { ...options, noRowUltracode: true }
-                : options,
+              options,
             );
             const commandOf = (step: NonNullable<typeof next>) => {
               const command = step.type === "redeem-reset" ? step.continuation : step.command;

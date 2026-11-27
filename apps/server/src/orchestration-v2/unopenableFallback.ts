@@ -326,8 +326,6 @@ export function unopenableFallbackCommand(
     readonly proven?: ModelSelection | null;
     readonly limited?: ReadonlySet<string> | undefined;
     readonly failed?: ReadonlySet<string> | undefined;
-    /** False for a routine's own thread (1506). */
-    readonly rowUltracode?: boolean;
   } = {},
 ): Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }> | null {
   if (rule.providerLimitAction !== "switch" || !unopenableStopIsLive(thread, stop, nowMs))
@@ -338,13 +336,12 @@ export function unopenableFallbackCommand(
     currentModel: thread.modelSelection.model,
     currentOptions: thread.modelSelection.options,
     rule,
-    rowUltracode: options.rowUltracode !== false,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
     anyReady: true,
     proven: options.proven ?? null,
     review: isReviewWork(thread),
-    lane: thread.routing?.lane,
+      lane: thread.routing?.lane,
     // The instance that failed is out, whatever its snapshot still says.
     limitedInstanceIds: new Set([...(options.limited ?? []), stop.instanceId]),
     ...(options.failed === undefined ? {} : { excludedSelections: options.failed }),

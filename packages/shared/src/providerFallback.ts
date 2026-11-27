@@ -839,7 +839,9 @@ export function resolveProviderFallback(
     resolveProviderFallbackPass({ ...input, verifiedOnly: false, allowLastResort: true });
   if (target === null) return null;
   const moved = withMovedEffort(target, input);
-  return input.rowUltracode === true ? withMovedRowUltracode(moved, input) : moved;
+  return input.rowUltracode === true
+    ? withMovedRowUltracode(moved, input)
+    : withKeptUltracodeOff(moved, input);
 }
 
 /**
@@ -878,21 +880,30 @@ function withMovedEffort(
   return { ...target, options: withEffortSelection(target.options, resolved) };
 }
 
+/** An off the thread chose stays off on any model that offers the switch (1506). */
+function withKeptUltracodeOff(
+  target: ModelSelection,
+  input: Pick<ResolveProviderFallbackInput, "providers" | "currentOptions">,
+): ModelSelection {
+  if (!input.currentOptions?.some((option) => option.id === "ultracode" && option.value === false))
+    return target;
+  if (!trackEntryOffersUltracode(target, input.providers)) return target;
+  const others = (target.options ?? []).filter((option) => option.id !== "ultracode");
+  return { ...target, options: [...others, { id: "ultracode", value: false }] };
+}
+
 /**
- * A thread or worker moved onto a Daily or Complex row takes the row's
- * Ultracode on a Tracks project (1506). An off the thread chose stays off on
- * any model that offers the switch; a review move takes nothing.
+ * A worker launched onto a Daily or Complex row takes the row's Ultracode on
+ * a Tracks project (1506); a review launch takes nothing. Only launches read
+ * the rows: the fallback sweep keeps a thread's own options (D-05).
  */
 function withMovedRowUltracode(
   target: ModelSelection,
   input: Pick<ResolveProviderFallbackInput, "providers" | "rule" | "currentOptions" | "review">,
 ): ModelSelection {
   if (input.rule.threadModelMode !== "tracks" || input.review === true) return target;
-  if (input.currentOptions?.some((option) => option.id === "ultracode" && option.value === false)) {
-    if (!trackEntryOffersUltracode(target, input.providers)) return target;
-    const others = (target.options ?? []).filter((option) => option.id !== "ultracode");
-    return { ...target, options: [...others, { id: "ultracode", value: false }] };
-  }
+  if (input.currentOptions?.some((option) => option.id === "ultracode" && option.value === false))
+    return withKeptUltracodeOff(target, input);
   return withTrackRowUltracode(
     target,
     input.rule.modelLanes,
@@ -954,8 +965,8 @@ function resolveProviderFallbackPass(input: {
   readonly verifiedOnly?: boolean;
   readonly allowLastResort?: boolean;
   /**
-   * A thread or worker moving onto a Daily or Complex row takes the row's
-   * Ultracode (1506). Off for a routine's own thread and a coordinator turn.
+   * A worker launch moving onto a Daily or Complex row takes the row's
+   * Ultracode (1506). Only `resolveWorkerLaunchSelection` sets it.
    */
   readonly rowUltracode?: boolean;
 }): ModelSelection | null {

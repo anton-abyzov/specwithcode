@@ -1,6 +1,7 @@
 /**
- * A thread that falls back along its track onto a row with Ultracode on runs
- * with it, unless the thread itself turned Ultracode off (1506).
+ * The fallback sweep keeps a thread's own Ultracode: it never reads a row's
+ * (1506 D-05), and an off the thread chose stays off. A worker launch moved to
+ * the same model on another account takes the row's, as launches do.
  */
 import * as DateTime from "effect/DateTime";
 import {
@@ -102,38 +103,8 @@ const rule = (opusRow: ModelSelection): ProviderFallbackRule => ({
   modelLanes: { routine: [sol, opusRow], complex: [] },
 });
 
-const fallBack = (opusRow: ModelSelection) =>
-  resolveProviderFallback({
-    providers,
-    currentInstanceId: id("codex"),
-    currentModel: SOL,
-    currentOptions: sol.options,
-    rule: rule(opusRow),
-    nowMs: now,
-    belowPercent: 100,
-    anyReady: true,
-    lane: "routine",
-    rowUltracode: true,
-  });
-
 describe("falling back onto a track row", () => {
-  it("takes the row's Ultracode when the row has it on", () => {
-    const target = fallBack({
-      instanceId: id("claudeAgent"),
-      model: OPUS,
-      options: [medium, ultracodeOn],
-    });
-    expect(target?.model).toBe(OPUS);
-    expect(target?.options).toContainEqual(ultracodeOn);
-  });
-
-  it("adds nothing when the row has it off", () => {
-    const target = fallBack({ instanceId: id("claudeAgent"), model: OPUS, options: [medium] });
-    expect(target?.model).toBe(OPUS);
-    expect(target?.options?.some((option) => option.id === "ultracode")).toBe(false);
-  });
-
-  it("gives a thread that set none the row's Ultracode on the same model elsewhere", () => {
+  it("keeps the thread's own options on the same model elsewhere, reading no row", () => {
     const spent = provider("claudeAgent", "claudeAgent", [OPUS], 100, claudeOptions);
     const second = provider("claudeAgent_work", "claudeAgent", [OPUS], 10, claudeOptions);
     const opusRow = { instanceId: id("claudeAgent"), model: OPUS, options: [medium, ultracodeOn] };
@@ -148,32 +119,15 @@ describe("falling back onto a track row", () => {
         belowPercent: 100,
         anyReady: true,
         lane: "routine",
-        rowUltracode: true,
       });
-    const target = move([medium]);
-    expect(target?.instanceId).toBe("claudeAgent_work");
-    expect(target?.options).toContainEqual(ultracodeOn);
-    // A thread that turned it off keeps it off.
+    // A thread that never had it (a routine, the coordinator) gains nothing.
+    const unset = move([medium]);
+    expect(unset?.instanceId).toBe("claudeAgent_work");
+    expect(unset?.options).toEqual([medium]);
+    // One launched from the row keeps it; one that turned it off keeps it off.
+    expect(move([medium, ultracodeOn])?.options).toContainEqual(ultracodeOn);
     const off = { id: "ultracode", value: false };
     expect(move([medium, off])?.options).toContainEqual(off);
-  });
-
-  it("adds nothing for a caller the rows do not apply to (a routine, a coordinator turn)", () => {
-    const spent = provider("claudeAgent", "claudeAgent", [OPUS], 100, claudeOptions);
-    const second = provider("claudeAgent_work", "claudeAgent", [OPUS], 10, claudeOptions);
-    const target = resolveProviderFallback({
-      providers: [spent, second, codex],
-      currentInstanceId: id("claudeAgent"),
-      currentModel: OPUS,
-      currentOptions: [medium],
-      rule: rule({ instanceId: id("claudeAgent"), model: OPUS, options: [medium, ultracodeOn] }),
-      nowMs: now,
-      belowPercent: 100,
-      anyReady: true,
-      lane: "routine",
-    });
-    expect(target?.instanceId).toBe("claudeAgent_work");
-    expect(target?.options).toEqual([medium]);
   });
 
   it("keeps a thread's own off when it moves to another model with the row on", () => {
@@ -204,7 +158,6 @@ describe("falling back onto a track row", () => {
       belowPercent: 100,
       anyReady: true,
       lane: "routine",
-      rowUltracode: true,
     });
     expect(target?.model).toBe(OPUS);
     expect(target?.options).toContainEqual(off);
