@@ -116,8 +116,8 @@ export function isHtmlRenderStagePage(html: string): boolean {
       if (!HEAD_TAGS.has(tag.name)) return false;
       if (
         tag.name === "meta" &&
-        tag.attributes.get("name")?.trim().toLowerCase() === "specwithcode-page" &&
-        tag.attributes.get("content")?.trim().toLowerCase() === "stage"
+        markerValue(tag.attributes.get("name")) === "specwithcode-page" &&
+        markerValue(tag.attributes.get("content")) === "stage"
       )
         return true;
     }
@@ -143,6 +143,21 @@ const HEAD_ENDING_END_TAGS = new Set(["head", "body", "html", "br"]);
 const HTML_WHITESPACE_ONLY = /^[\t\n\f\r ]*$/;
 const HTML_WHITESPACE = /[\t\n\f\r ]/;
 const ASCII_ALPHA = /[a-z]/i;
+
+/**
+ * Lower case for ASCII letters only, as HTML folds tag and attribute names: JavaScript's
+ * `toLowerCase` also folds the Kelvin sign to `k`, which would read `<linK>` as a link.
+ */
+function asciiLowerCase(text: string): string {
+  return text.replace(/[A-Z]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32));
+}
+
+/** An attribute value as the marker compares it: HTML whitespace trimmed, ASCII folded. */
+function markerValue(value: string | undefined): string | undefined {
+  return value === undefined
+    ? undefined
+    : asciiLowerCase(value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, ""));
+}
 
 /** The index just after the next `char` from `from`, or -1 when there is none. */
 function indexAfter(html: string, char: string, from: number): number {
@@ -178,7 +193,7 @@ function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
   if (!ASCII_ALPHA.test(html[index] ?? "")) return undefined;
   const nameStart = index;
   while (index < html.length && !/[\t\n\f\r />]/.test(html[index]!)) index += 1;
-  const name = html.slice(nameStart, index).toLowerCase();
+  const name = asciiLowerCase(html.slice(nameStart, index));
   const attributes = new Map<string, string>();
   while (index < html.length) {
     const char = html[index]!;
@@ -191,7 +206,7 @@ function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
     const attributeStart = index;
     index += 1;
     while (index < html.length && !/[\t\n\f\r />=]/.test(html[index]!)) index += 1;
-    const attribute = html.slice(attributeStart, index).toLowerCase();
+    const attribute = asciiLowerCase(html.slice(attributeStart, index));
     while (index < html.length && HTML_WHITESPACE.test(html[index]!)) index += 1;
     let value = "";
     if (html[index] === "=") {
