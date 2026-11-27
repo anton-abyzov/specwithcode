@@ -16,6 +16,10 @@ public nonisolated enum MarkdownBlock: Hashable, Sendable {
   case code(language: String?, text: String)
   case table(header: [String], rows: [[String]])
   case rule
+  /// The flat frontmatter a reply opened with, as a property card.
+  case properties([MarkdownProperty])
+  /// A closed ```` ```mermaid ```` fence. One still streaming stays `.code`.
+  case diagram(source: String)
 }
 
 public nonisolated struct MarkdownListItem: Hashable, Sendable {
@@ -52,9 +56,21 @@ public nonisolated enum MarkdownParser {
 
   public static func parse(_ source: String) -> [MarkdownBlock] {
     let normalized = source.unicodeScalars.contains("\r") ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : source
-    let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    var head: [MarkdownBlock] = []
+    var text = normalized
+    // A reply or file that opens with frontmatter shows its title and a
+    // property card, never a rule and one heading made of every key.
+    if text.hasPrefix("---") || text.hasPrefix("\u{FEFF}---") {
+      let document = MarkdownDocument.parse(text)
+      if document.hasFrontmatter || document.body != text {
+        if let title = document.title { head.append(.heading(level: 1, text: title)) }
+        if !document.properties.isEmpty { head.append(.properties(document.properties)) }
+        text = document.body
+      }
+    }
+    let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     var parser = Parser(lines: lines)
-    return parser.parseBlocks()
+    return head + parser.parseBlocks()
   }
 
   private struct Parser {
@@ -171,18 +187,24 @@ public nonisolated enum MarkdownParser {
     mutating func parseFence(_ fence: Fence) -> MarkdownBlock {
       i += 1
       var body: [String] = []
+      var closed = false
       while i < lines.count {
         let line = lines[i]
         let rest = line.drop(while: { $0 == " " || $0 == "\t" })
         let run = rest.prefix(while: { $0 == fence.char }).count
         if run >= fence.length, rest.dropFirst(run).allSatisfy({ $0 == " " || $0 == "\t" }) {
           i += 1
+          closed = true
           break
         }
         body.append(removeIndent(line, upTo: fence.indent))
         i += 1
       }
-      return .code(language: fence.language, text: body.joined(separator: "\n"))
+      let text = body.joined(separator: "\n")
+      if closed, fence.language?.lowercased() == "mermaid", !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return .diagram(source: text.trimmingCharacters(in: .whitespacesAndNewlines))
+      }
+      return .code(language: fence.language, text: text)
     }
 
     // MARK: Headings and rules

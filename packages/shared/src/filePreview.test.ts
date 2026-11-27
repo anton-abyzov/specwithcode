@@ -5,6 +5,7 @@ import {
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
   hostPreviewMimeTypeFromExtension,
+  hostTextPreviewMimeTypeFromExtension,
   isWorkspaceAudioPreviewPath,
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
@@ -112,4 +113,17 @@ describe("attachment preview classification", () => {
     expect(preview.text.endsWith("�")).toBe(false);
     expect(preview.text.length).toBe(FILE_TEXT_PREVIEW_MAX_BYTES - 1);
   });
+});
+
+describe("host text previews", () => {
+  it.each([".md", ".csv", ".excalidraw", ".EXCALIDRAW"])("serves %s as plain text", (extension) => {
+    expect(hostTextPreviewMimeTypeFromExtension(extension)).toBe("text/plain");
+  });
+
+  it.each([".ts", ".swift", ".env", ".sqlite", "excalidraw", ".exca lidraw"])(
+    "refuses %s",
+    (extension) => {
+      expect(hostTextPreviewMimeTypeFromExtension(extension)).toBeNull();
+    },
+  );
 });

@@ -143,7 +143,7 @@ public nonisolated enum MarkdownMedia {
       case let .list(items): texts.append(contentsOf: items.map(\.text))
       case let .quote(inner): if !collect(inner, into: &texts) { return false }
       case let .table(header, rows): texts.append(contentsOf: header + rows.flatMap { $0 })
-      case .code, .rule: continue
+      case .code, .rule, .diagram, .properties: continue
       }
     }
     return true

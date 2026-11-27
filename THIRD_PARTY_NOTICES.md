@@ -42,6 +42,10 @@ With the user's consent, the app downloads these on first use. They are not dist
 
 The whiteboard editor embeds [Excalidraw](https://github.com/excalidraw/excalidraw) `@excalidraw/excalidraw` 0.18.1 (MIT License, Copyright (c) 2020 Excalidraw), with its bundled fonts served from the app, and the [Radix UI primitives](https://github.com/radix-ui/primitives) it depends on (MIT License, Copyright (c) 2022 WorkOS). Each license text is in its repository's `LICENSE` file; the full list of bundled packages and their notices is in Settings, under open source licenses.
 
+## iPhone diagrams
+
+The iPhone and iPad app bundles the browser build of [Mermaid](https://github.com/mermaid-js/mermaid) `mermaid` 11.17.2 (MIT License, Copyright (c) 2014 - 2022 Knut Sveidqvist), unchanged, to draw diagrams on the device with no network. Its license text ships beside it (`apps/ios/SWCKit/Sources/Weave/Resources/Mermaid/MERMAID-LICENSE.txt`), and the notices of the packages it bundles stay inside the file.
+
 ## Live documents
 
 Live editing of sheets merges changes with [Yjs](https://github.com/yjs/yjs) `yjs` 13.6.33 (MIT License, Copyright (c) 2023 Kevin Jahns and the Yjs contributors), and the packages it depends on: [lib0](https://github.com/dmonad/lib0) 0.2.120 (MIT License, Copyright (c) 2019 Kevin Jahns) and [isomorphic.js](https://github.com/dmonad/isomorphic.js) 0.2.5 (MIT License, Copyright (c) 2020 Kevin Jahns). Each license text is in its repository's `LICENSE` file; the full list of bundled packages and their notices is in Settings, under open source licenses.

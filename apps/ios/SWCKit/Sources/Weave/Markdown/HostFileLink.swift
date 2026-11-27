@@ -10,12 +10,16 @@ public nonisolated enum HostFileLink {
 
   public enum Kind: Equatable, Sendable {
     case page, markdown, text, image, pdf
+    /// Comma- or tab-separated values, shown as a table.
+    case sheet
+    /// An Excalidraw scene, drawn natively.
+    case whiteboard
   }
 
   private static let kinds: [String: Kind] = [
     "html": .page, "htm": .page, "svg": .image,
     "md": .markdown, "markdown": .markdown,
-    "txt": .text, "log": .text, "json": .text, "jsonl": .text, "csv": .text, "tsv": .text,
+    "txt": .text, "log": .text, "json": .text, "jsonl": .text, "csv": .sheet, "tsv": .sheet, "excalidraw": .whiteboard,
     "yaml": .text, "yml": .text, "xml": .text, "toml": .text,
     "png": .image, "jpg": .image, "jpeg": .image, "gif": .image, "webp": .image, "avif": .image,
     "pdf": .pdf,

@@ -25,6 +25,7 @@ struct HostFileViewer: View {
   @Environment(\.dismiss) private var dismiss
   @State private var state: LoadState = .loading
   @State private var attempt = 0
+  @State private var linked: HostFileRoute?
 
   enum LoadState: Equatable {
     case loading
@@ -32,6 +33,8 @@ struct HostFileViewer: View {
     case web(URL)
     case markdown(String)
     case text(String)
+    case sheet(CSVTable)
+    case whiteboard(ExcalidrawScene)
   }
 
   var body: some View {
@@ -45,6 +48,9 @@ struct HostFileViewer: View {
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("hostFile.viewer")
     .task(id: attempt) { await load() }
+    .sheet(item: $linked) { file in
+      HostFileViewer(file: file, target: target)
+    }
   }
 
   private var header: some View {
@@ -108,10 +114,21 @@ struct HostFileViewer: View {
         .accessibilityIdentifier("hostFile.content")
     case let .markdown(text):
       ScrollView {
-        MarkdownText(text)
-          .padding(WeaveSpacing.s4)
+        MarkdownDocumentView(text) { url in
+          // A report that links another file opens it on top; thread links stay in the chat.
+          if let path = HostFileLink.path(url) { linked = HostFileRoute(path: path) }
+        }
+        .padding(.horizontal, WeaveSpacing.s4)
+        .padding(.top, WeaveSpacing.s4)
+        .padding(.bottom, WeaveSpacing.s8)
       }
       .accessibilityIdentifier("hostFile.content")
+    case let .sheet(table):
+      CSVTableView(table: table)
+        .accessibilityIdentifier("hostFile.content")
+    case let .whiteboard(scene):
+      ExcalidrawView(scene: scene)
+        .accessibilityIdentifier("hostFile.content")
     case let .text(text):
       ScrollView([.vertical, .horizontal]) {
         Text(text)
@@ -143,6 +160,17 @@ struct HostFileViewer: View {
       case .markdown, .text:
         let text = try await Self.fetchText(url)
         state = kind == .markdown ? .markdown(text) : .text(Self.readable(text, path: file.path))
+      case .sheet:
+        let text = try await Self.fetchText(url)
+        let separator: Character = (file.path as NSString).pathExtension.lowercased() == "tsv" ? "\t" : ","
+        state = .sheet(CSVTable.parse(text, separator: separator))
+      case .whiteboard:
+        let text = try await Self.fetchText(url)
+        guard let scene = ExcalidrawScene.decode(text) else {
+          state = .failed("This whiteboard couldn't be read.")
+          return
+        }
+        state = .whiteboard(scene)
       }
     } catch is CancellationError {
     } catch {
