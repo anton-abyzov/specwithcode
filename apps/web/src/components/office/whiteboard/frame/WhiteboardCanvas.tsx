@@ -1,9 +1,9 @@
 import {
   Excalidraw,
-  exportToBlob,
-  exportToSvg,
+  exportScene,
   getSceneVersion,
-  restore,
+  restoreAppState,
+  restoreElements,
   serializeAsJSON,
 } from "@excalidraw/excalidraw";
 import type {
@@ -38,22 +38,32 @@ function changeKey(
 function sceneFrom(text: string): ExcalidrawInitialDataState {
   const parsed = parseWhiteboard(text);
   if (!parsed.ok) throw new Error(parsed.error);
-  const restored = restore(
-    {
-      elements: parsed.file.elements as never,
-      appState: parsed.file.appState as never,
-      // Only images the file carries as data URLs; the rest stay in the file untouched.
-      files: parsed.file.files as never,
-    },
-    null,
-    null,
-  );
+  const elements = restoreElements(parsed.file.elements as never, null, { repairBindings: true });
+  const appState = restoreAppState(parsed.file.appState as never, null);
   return {
-    elements: restored.elements,
-    appState: { ...restored.appState, isLoading: false },
-    files: restored.files,
+    elements,
+    appState: { ...appState, isLoading: false },
+    // Only images the file carries as data URLs; the rest stay in the file untouched.
+    files: parsed.file.files as unknown as BinaryFiles,
     scrollToContent: true,
   };
+}
+
+/** The scene and settings an export draws: the background on, 16 px around, the editor's theme. */
+function exportInput(api: ExcalidrawImperativeAPI) {
+  const appState = api.getAppState();
+  return {
+    data: {
+      elements: api.getSceneElements(),
+      appState: { viewBackgroundColor: appState.viewBackgroundColor },
+      files: api.getFiles(),
+    },
+    config: {
+      padding: 16,
+      canvasBackgroundColor: appState.viewBackgroundColor,
+      theme: appState.theme,
+    },
+  } as const;
 }
 
 export function WhiteboardCanvas(props: { readonly host: WhiteboardFrameHost }): ReactNode {
@@ -97,21 +107,9 @@ export function WhiteboardCanvas(props: { readonly host: WhiteboardFrameHost }):
           api.getFiles(),
           "local",
         ),
-      exportPng: () =>
-        exportToBlob({
-          elements: api.getSceneElements(),
-          appState: { ...api.getAppState(), exportBackground: true },
-          files: api.getFiles(),
-          mimeType: "image/png",
-          exportPadding: 16,
-        }),
+      exportPng: () => exportScene({ ...exportInput(api), type: "png" }),
       exportSvg: async () => {
-        const svg = await exportToSvg({
-          elements: api.getSceneElements(),
-          appState: { ...api.getAppState(), exportBackground: true },
-          files: api.getFiles(),
-          exportPadding: 16,
-        });
+        const svg = await exportScene({ ...exportInput(api), type: "svg" });
         return new XMLSerializer().serializeToString(svg);
       },
       focus: () => {
@@ -124,7 +122,7 @@ export function WhiteboardCanvas(props: { readonly host: WhiteboardFrameHost }):
   if (initialData === null) return null;
   return (
     <Excalidraw
-      excalidrawAPI={setApi}
+      onExcalidrawAPI={setApi}
       initialData={initialData}
       theme={theme}
       viewModeEnabled={viewOnly}

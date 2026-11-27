@@ -181,6 +181,41 @@
       }
     },
     {
+      "name": "@excalidraw/common",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/excalidraw/excalidraw",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020 Excalidraw"]
+      }
+    },
+    {
+      "name": "@excalidraw/element",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/excalidraw/excalidraw",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020 Excalidraw"]
+      }
+    },
+    {
+      "name": "@excalidraw/math",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/excalidraw/excalidraw",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020 Excalidraw"]
+      }
+    },
+    {
+      "name": "@excalidraw/fractional-indexing",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://github.com/excalidraw/excalidraw",
+      "generatedNotice": {
+        "licenseId": "CC0-1.0"
+      }
+    },
+    {
       "repositoryUrl": "https://github.com/radix-ui/primitives",
       "generatedNotice": {
         "licenseId": "MIT",
