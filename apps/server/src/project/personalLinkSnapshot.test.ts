@@ -7,12 +7,18 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import { LiveDatabaseSpaceError } from "../persistence/liveDatabaseSnapshot.ts";
 import {
   PersonalLinkSnapshot,
+  SNAPSHOT_RETRY_MAX_MS,
   layerLive,
+  makePersonalLinkSnapshotter,
+  makeSnapshotState,
+  snapshotRetryDelayMs,
   memoryDigestBeforeRenames,
   personalMemoryDigest,
   snapshotFileName,
@@ -333,3 +339,183 @@ describe("PersonalLinkSnapshot layerLive", () => {
     ),
   );
 });
+
+const GIB = 1024 ** 3;
+
+/** A copy the test finishes by hand, counting how often one starts. */
+const manualCopy = () => {
+  const calls: Array<string> = [];
+  let finish: (result: { readonly quickCheck: string }) => void = () => {};
+  let fail: (error: Error) => void = () => {};
+  const copy = (_dbPath: string, target: string) => {
+    calls.push(target);
+    return new Promise<{ readonly quickCheck: string }>((resolve, reject) => {
+      finish = (result) => {
+        NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
+        new NodeSqlite.DatabaseSync(target).close();
+        resolve(result);
+      };
+      fail = reject;
+    });
+  };
+  return {
+    calls,
+    copy,
+    finish: () => finish({ quickCheck: "ok" }),
+    fail: (error: Error) => fail(error),
+  };
+};
+
+const waitFor = (check: () => boolean) =>
+  Effect.gen(function* () {
+    for (let i = 0; i < 1000 && !check(); i++) yield* Effect.yieldNow;
+    assert.isTrue(check());
+  });
+
+describe("makePersonalLinkSnapshotter", () => {
+  it.effect("runs one copy per target; a caller after an interrupted one waits for it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dir = NodePath.join(yield* makeScratchBase(), "backups", "personal-link");
+        const manual = manualCopy();
+        const deps = { dir, dbPath: "/scratch/none.sqlite", copy: manual.copy };
+        // The layer is provided twice in the runtime: two snapshotters share the process state.
+        const first = makePersonalLinkSnapshotter(deps);
+        const second = makePersonalLinkSnapshotter(deps);
+        const interrupted = yield* Effect.forkChild(first.snapshot("percy-join-op"));
+        yield* waitFor(() => manual.calls.length === 1);
+        // A peer's call timed out: its handler is interrupted while the copy goes on.
+        yield* Fiber.interrupt(interrupted);
+        const waiting = yield* Effect.forkChild(second.snapshot("percy-join-op"));
+        const alsoWaiting = yield* Effect.forkChild(first.snapshot("percy-join-op"));
+        yield* Effect.yieldNow;
+        assert.strictEqual(manual.calls.length, 1);
+        manual.finish();
+        const path = yield* Fiber.join(waiting);
+        assert.strictEqual(yield* Fiber.join(alsoWaiting), path);
+        assert.strictEqual(path, NodePath.join(dir, snapshotFileName("percy-join-op")));
+        assert.strictEqual(manual.calls.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("removes a stopped process's partials before it copies, never during a copy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dir = NodePath.join(yield* makeScratchBase(), "backups", "personal-link");
+        const target = NodePath.join(dir, snapshotFileName("percy-join-stale"));
+        NodeFS.mkdirSync(dir, { recursive: true });
+        NodeFS.writeFileSync(`${target}.partial-4242`, "left by a stopped process");
+        const manual = manualCopy();
+        const snapshotter = makePersonalLinkSnapshotter({
+          dir,
+          dbPath: "/scratch/none.sqlite",
+          copy: async (dbPath, path) => {
+            assert.isFalse(NodeFS.existsSync(`${target}.partial-4242`));
+            // The running copy's own partial.
+            NodeFS.writeFileSync(`${path}.partial-1-aaaa`, "running");
+            return manual.copy(dbPath, path);
+          },
+          state: makeSnapshotState(),
+        });
+        const running = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale"));
+        yield* waitFor(() => manual.calls.length === 1);
+        const joining = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale"));
+        yield* Effect.yieldNow;
+        assert.isTrue(NodeFS.existsSync(`${target}.partial-1-aaaa`));
+        manual.finish();
+        yield* Fiber.join(running);
+        yield* Fiber.join(joining);
+      }),
+    ),
+  );
+
+  it("waits a minute after a failure, doubling, at most an hour", () => {
+    assert.deepStrictEqual(
+      [1, 2, 3, 4, 5, 6, 7, 8, 20, 400].map(snapshotRetryDelayMs),
+      [
+        60_000,
+        120_000,
+        240_000,
+        480_000,
+        960_000,
+        1_920_000,
+        3_600_000,
+        3_600_000,
+        3_600_000,
+        SNAPSHOT_RETRY_MAX_MS,
+      ],
+    );
+  });
+
+  it.effect("fails at once with the last reason until the wait is over, then tries again", () =>
+    Effect.gen(function* () {
+      let clock = 1_000_000;
+      let calls = 0;
+      const snapshotter = makePersonalLinkSnapshotter({
+        dir: "/scratch/backups/personal-link",
+        dbPath: "/scratch/none.sqlite",
+        now: () => clock,
+        copy: async () => {
+          calls += 1;
+          throw new Error("database or disk is full");
+        },
+        state: makeSnapshotState(),
+      });
+      const attempt = () => Effect.flip(snapshotter.snapshot("percy-join-backoff"));
+      assert.match((yield* attempt()).message, /disk is full/);
+      assert.strictEqual(calls, 1);
+      clock += 30_000;
+      const early = yield* attempt();
+      assert.match(early.message, /disk is full\. It tries again in about a minute\./);
+      assert.strictEqual(calls, 1);
+      clock += 31_000;
+      yield* attempt();
+      assert.strictEqual(calls, 2);
+      clock += 119_000;
+      assert.match((yield* attempt()).message, /about 1 minute|about a minute/);
+      assert.strictEqual(calls, 2);
+      clock += 1_000;
+      yield* attempt();
+      assert.strictEqual(calls, 3);
+      // However many failures, the wait never passes an hour.
+      for (let i = 0; i < 12; i++) {
+        clock += SNAPSHOT_RETRY_MAX_MS;
+        yield* attempt();
+      }
+      assert.strictEqual(calls, 15);
+      clock += SNAPSHOT_RETRY_MAX_MS - 1;
+      assert.match((yield* attempt()).message, /about 1 minute|about a minute/);
+      assert.strictEqual(calls, 15);
+    }),
+  );
+
+  it.effect("tries again at once when the space a copy lacked is free again", () =>
+    Effect.gen(function* () {
+      let free = 1 * GIB;
+      let calls = 0;
+      const dir = "/scratch/backups/personal-link";
+      const snapshotter = makePersonalLinkSnapshotter({
+        dir,
+        dbPath: "/scratch/none.sqlite",
+        now: () => 5_000,
+        freeBytes: () => free,
+        copy: async () => {
+          calls += 1;
+          throw new LiveDatabaseSpaceError({ databaseBytes: 18 * GIB, free, dir });
+        },
+        state: makeSnapshotState(),
+      });
+      const first = yield* Effect.flip(snapshotter.snapshot("percy-join-space"));
+      assert.match(first.message, /Not enough free disk space.*1\.0 GB is free/);
+      free = 10 * GIB;
+      const stillShort = yield* Effect.flip(snapshotter.snapshot("percy-join-space"));
+      assert.match(stillShort.message, /It tries again in about a minute/);
+      assert.strictEqual(calls, 1);
+      free = 30 * GIB;
+      yield* Effect.flip(snapshotter.snapshot("percy-join-space"));
+      assert.strictEqual(calls, 2);
+    }),
+  );
+});
+
