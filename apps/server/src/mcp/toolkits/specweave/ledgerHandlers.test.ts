@@ -469,7 +469,9 @@ describe("SpecWeave ledger tools (1497)", () => {
             ),
           );
           expect(error.code).toBe("capability_denied");
-          expect(error.message).toContain(`full-access mode, and this thread runs in ${runtimeMode}`);
+          expect(error.message).toContain(
+            `full-access mode, and this thread runs in ${runtimeMode}`,
+          );
         }
         expect(fixture.writes()).toEqual([]);
       }),
