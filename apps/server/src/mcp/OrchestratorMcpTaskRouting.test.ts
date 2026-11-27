@@ -392,11 +392,7 @@ describe("OrchestratorMcpService task routing", () => {
         complex: [],
       },
     } as const;
-    const named = (
-      target: Record<string, unknown>,
-      clientRequestId: string,
-      role?: "review",
-    ) =>
+    const named = (target: Record<string, unknown>, clientRequestId: string, role?: "review") =>
       run(tracks, (service, dispatched) =>
         Effect.gen(function* () {
           launchedOrThrow(

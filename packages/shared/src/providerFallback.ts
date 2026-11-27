@@ -36,11 +36,7 @@ import {
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { namedReviewSourceKeys, reviewerChain, usageNeverRead } from "./adversarialReview.ts";
-import {
-  isHeldSource,
-  trackEntryOffersUltracode,
-  withTrackRowUltracode,
-} from "./modelTracks.ts";
+import { isHeldSource, trackEntryOffersUltracode, withTrackRowUltracode } from "./modelTracks.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 import {
   denialSparesModel,
@@ -892,9 +888,7 @@ function withMovedRowUltracode(
   input: Pick<ResolveProviderFallbackInput, "providers" | "rule" | "currentOptions" | "review">,
 ): ModelSelection {
   if (input.rule.threadModelMode !== "tracks" || input.review === true) return target;
-  if (
-    input.currentOptions?.some((option) => option.id === "ultracode" && option.value === false)
-  ) {
+  if (input.currentOptions?.some((option) => option.id === "ultracode" && option.value === false)) {
     if (!trackEntryOffersUltracode(target, input.providers)) return target;
     const others = (target.options ?? []).filter((option) => option.id !== "ultracode");
     return { ...target, options: [...others, { id: "ultracode", value: false }] };

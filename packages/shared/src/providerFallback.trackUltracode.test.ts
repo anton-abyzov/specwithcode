@@ -187,7 +187,11 @@ describe("falling back onto a track row", () => {
       currentModel: SONNET,
       currentOptions: [medium, off],
       rule: {
-        ...rule({ instanceId: id("claudeAgent_work"), model: OPUS, options: [medium, ultracodeOn] }),
+        ...rule({
+          instanceId: id("claudeAgent_work"),
+          model: OPUS,
+          options: [medium, ultracodeOn],
+        }),
         modelLanes: {
           routine: [
             { instanceId: id("claudeAgent"), model: SONNET, options: [medium] },
