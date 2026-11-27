@@ -11,7 +11,10 @@ import {
   branchLanded,
   branchReadyForPullRequest,
   checkoutSignature,
+  FAILURE_RETRY_AFTER_MS,
+  failureAlreadyReported,
   failureNotice,
+  failureNoticeDue,
   latestStartedRun,
   mergeStep,
   threadFinished,
@@ -202,7 +205,43 @@ describe("checkoutSignature", () => {
   });
 });
 
+describe("set failure reporting", () => {
+  const previous = { checkout: "a\0b", detail: "refused", at: 1_000 };
+
+  it("skips a retry for the same checkout state inside the window", () => {
+    expect(failureAlreadyReported(previous, "a\0b", 1_000 + FAILURE_RETRY_AFTER_MS - 1)).toBe(true);
+    expect(failureAlreadyReported(previous, "a\0b", 1_000 + FAILURE_RETRY_AFTER_MS)).toBe(false);
+    expect(failureAlreadyReported(previous, "a\0c", 1_001)).toBe(false);
+    expect(failureAlreadyReported(undefined, "a\0b", 1_001)).toBe(false);
+  });
+
+  it("notices only a new failure text or a changed checkout state", () => {
+    expect(failureNoticeDue(previous, "a\0b", "refused")).toBe(false);
+    expect(failureNoticeDue(previous, "a\0b", "archived")).toBe(true);
+    expect(failureNoticeDue(previous, "a\0c", "refused")).toBe(true);
+    expect(failureNoticeDue(undefined, "a\0b", "refused")).toBe(true);
+  });
+});
+
 describe("failureNotice", () => {
+  it("shows the push command the app ran and the refusal reason", () => {
+    const error = new GitCommandError({
+      operation: "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
+      command: "git push origin HEAD:refs/heads/feat/x",
+      cwd: "/tmp/wt",
+      exitCode: 128,
+      reason: "authentication_failed",
+      detail:
+        "Git command exited with a non-zero status: fatal: unable to access 'https://github.com/acme/repo.git/': The requested URL returned error: 403 GitHub refused the push for gh login \"other\".",
+    });
+    const message = failureNotice("Could not open a pull request", error, {
+      branch: "feat/x",
+      worktree: "/tmp/wt",
+    });
+    expect(message).toContain("Command: git push origin HEAD:refs/heads/feat/x");
+    expect(message).toContain("Reason: authentication_failed");
+    expect(message).toContain('gh login "other"');
+  });
   it("says what to do when the branch has no history in common with the base", () => {
     const error = new GitManagerError({
       operation: "runPrStep",
