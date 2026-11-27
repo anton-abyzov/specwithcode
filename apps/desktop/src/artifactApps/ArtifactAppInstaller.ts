@@ -433,7 +433,8 @@ const make = Effect.gen(function* () {
         // withoutVolatileLines) while the entry stays this install's.
         const onDisk = yield* fileSystem.readFileString(path).pipe(readOrMissing(path));
         return (
-          onDisk !== null && withoutVolatileLines(onDisk) === withoutVolatileLines(location.contents)
+          onDisk !== null &&
+          withoutVolatileLines(onDisk) === withoutVolatileLines(location.contents)
         );
       }
     }

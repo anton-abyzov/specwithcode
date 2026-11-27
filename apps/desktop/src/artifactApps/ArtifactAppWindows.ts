@@ -299,29 +299,29 @@ const make = Effect.gen(function* () {
     const identity = yield* linuxIdentity(installId);
     const window = yield* electronWindow.create(
       {
-      ...DEFAULT_SIZE,
-      minWidth: MINIMUM_SIZE.width,
-      minHeight: MINIMUM_SIZE.height,
-      show: false,
-      autoHideMenuBar: true,
-      title,
-      ...titleBarOptions(environment.platform, shouldUseDarkColors),
-      backgroundColor: shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
-      ...iconOption(iconPaths, environment.platform),
-      ...(appShim === undefined ? {} : { appShim }),
-      webPreferences: {
-        preload: environment.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        // The page itself sits in a sandboxed iframe; this window never hosts a browser tab.
-        webviewTag: false,
-        additionalArguments: [
-          `${DESKTOP_WINDOW_ROLE_ARGUMENT}${ARTIFACT_APP_WINDOW_ROLE}`,
-          `${ARTIFACT_APP_WINDOW_ARGUMENT}${installId}`,
-        ],
+        ...DEFAULT_SIZE,
+        minWidth: MINIMUM_SIZE.width,
+        minHeight: MINIMUM_SIZE.height,
+        show: false,
+        autoHideMenuBar: true,
+        title,
+        ...titleBarOptions(environment.platform, shouldUseDarkColors),
+        backgroundColor: shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+        ...iconOption(iconPaths, environment.platform),
+        ...(appShim === undefined ? {} : { appShim }),
+        webPreferences: {
+          preload: environment.preloadPath,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          // The page itself sits in a sandboxed iframe; this window never hosts a browser tab.
+          webviewTag: false,
+          additionalArguments: [
+            `${DESKTOP_WINDOW_ROLE_ARGUMENT}${ARTIFACT_APP_WINDOW_ROLE}`,
+            `${ARTIFACT_APP_WINDOW_ARGUMENT}${installId}`,
+          ],
+        },
       },
-    },
       identity,
     );
     const webContentsId = window.webContents.id;
