@@ -740,6 +740,14 @@ describe("stage pages", () => {
     expect(isHtmlRenderStagePage(`<link x=a"b> Intro <meta x=" >${marker}`)).toBe(false);
     // An end tag inside a script's text is its end only with the script's name.
     expect(isHtmlRenderStagePage(`<script>a("</scripts>")</script >${marker}`)).toBe(true);
+    // Many long attribute names cost no more than reading them.
+    const namesStarted = performance.now();
+    const longNames = Array.from(
+      { length: 1_500 },
+      (_, index) => `a${String(index).padStart(16_403, "0")}`,
+    ).join(" ");
+    expect(isHtmlRenderStagePage(`<link ${longNames}>${marker}`)).toBe(true);
+    expect(performance.now() - namesStarted).toBeLessThan(1_000);
     // HTML folds ASCII letters only: the Kelvin sign in `linK` makes an unknown tag.
     expect(isHtmlRenderStagePage(`<head><lin\u212a>${marker}`)).toBe(false);
     expect(isHtmlRenderStagePage(`<met\u212a name="specwithcode-page" content="stage">`)).toBe(

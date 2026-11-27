@@ -161,13 +161,18 @@ function commentEnd(html: string, from: number): number {
 interface ReadTag {
   readonly closing: boolean;
   readonly name: string;
+  /** Only the marker's attributes, `name` and `content`, are kept. */
   readonly attributes: ReadonlyMap<string, string>;
   readonly end: number;
 }
 
+const MARKER_ATTRIBUTES = new Set(["name", "content"]);
+
 /**
  * The tag at `at`, read as a browser reads it: a quoted value may hold `>`, an unquoted
- * one runs to whitespace or `>`, and the first of a repeated attribute wins. Undefined
+ * one runs to whitespace or `>`, and the first of a repeated attribute wins. Only the
+ * marker's attributes are kept, so a tag with many long names costs no more than
+ * reading it (a map of every name would hash long ones by length alone). Undefined
  * when `<` starts no tag there, and "unclosed" when the tag runs to the end of the page.
  */
 function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
@@ -189,7 +194,10 @@ function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
     const attributeStart = index;
     index += 1;
     while (index < html.length && !/[\t\n\f\r />=]/.test(html[index]!)) index += 1;
-    const attribute = asciiLowerCase(html.slice(attributeStart, index));
+    const attribute =
+      index - attributeStart <= "content".length
+        ? asciiLowerCase(html.slice(attributeStart, index))
+        : undefined;
     while (index < html.length && HTML_WHITESPACE.test(html[index]!)) index += 1;
     let value = "";
     if (html[index] === "=") {
@@ -207,7 +215,8 @@ function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
         value = html.slice(valueStart, index);
       }
     }
-    if (!attributes.has(attribute)) attributes.set(attribute, value);
+    if (attribute !== undefined && MARKER_ATTRIBUTES.has(attribute) && !attributes.has(attribute))
+      attributes.set(attribute, value);
   }
   return "unclosed";
 }
