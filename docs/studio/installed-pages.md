@@ -7,9 +7,9 @@ A page from a chat can be installed as an app. It gets a launcher in the system'
 | System                   | Launcher                                                                             | How it opens                                                                                |
 | ------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | macOS, packaged app      | `~/Applications/SpecWithCode Apps/<Name>.app`, built from Electron's app shim loader | The page runs as its own app: its own Dock icon, app switcher entry, menu bar and Command-Q |
-| macOS, development build | the same folder, a shell script that opens `specwithcode-app://<id>`                 | A window of SpecWithCode                                                                    |
+| macOS, development build | the same folder, a shell script that opens `studio-dev://app/artifact-app/<id>`      | A window of SpecWithCode                                                                    |
 | Windows                  | a Start menu shortcut                                                                | A window of SpecWithCode, grouped under the page's own taskbar id                           |
-| Linux                    | a `.desktop` entry                                                                   | A window of SpecWithCode                                                                    |
+| Linux                    | a `.desktop` entry that runs `xdg-open studio://app/artifact-app/<id>`               | A window of SpecWithCode                                                                    |
 
 ## macOS: one app per page
 
