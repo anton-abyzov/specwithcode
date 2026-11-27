@@ -160,12 +160,27 @@ const databaseBytesOf = (source: NodeSqlite.DatabaseSync): number => {
 
 const PARTIAL_MARK = ".partial-";
 
+/** Whether a process with this id is running (a process we may not signal still counts). */
+export const processIsRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 /**
- * Removes the partial files an earlier copy into `target` left behind (a
- * crashed or killed process). Call it only while no copy into `target` runs:
- * a running copy's partial would be unlinked under it.
+ * Removes the partial files an earlier copy into `target` left behind: those
+ * of a process that is no longer running, and this process's own. Call it
+ * only while this process runs no copy into `target`. A partial of another
+ * running process (a `db snapshot` into the same file) is left alone, as is a
+ * name that carries no process id.
  */
-export function removeStalePartials(target: string): ReadonlyArray<string> {
+export function removeStalePartials(
+  target: string,
+  isRunning: (pid: number) => boolean = processIsRunning,
+): ReadonlyArray<string> {
   const resolved = NodePath.resolve(target);
   const dir = NodePath.dirname(resolved);
   const prefix = `${NodePath.basename(resolved)}${PARTIAL_MARK}`;
@@ -178,6 +193,9 @@ export function removeStalePartials(target: string): ReadonlyArray<string> {
   const removed: Array<string> = [];
   for (const name of names) {
     if (!name.startsWith(prefix)) continue;
+    const pid = Number(/^(\d+)(?:-|$)/.exec(name.slice(prefix.length))?.[1] ?? Number.NaN);
+    if (!Number.isSafeInteger(pid) || pid <= 0) continue;
+    if (pid !== process.pid && isRunning(pid)) continue;
     NodeFS.rmSync(NodePath.join(dir, name), { force: true });
     removed.push(name);
   }

@@ -141,9 +141,10 @@ export interface PersonalLinkSnapshotterDeps {
  * `<state>/backups/personal-link/<operation>.sqlite`, beside the database and
  * outside every project folder. Never opens the live files through `node:fs`.
  *
- * One copy per target runs at a time: a caller that comes while it runs waits
- * for it, even when the caller that started it was interrupted (a peer's call
- * that timed out), because the copy itself cannot be stopped. After a failure
+ * One copy runs at a time in the process: a caller for the same target that
+ * comes while it runs waits for it, even when the caller that started it was
+ * interrupted (a peer's call that timed out), because the copy itself cannot
+ * be stopped; a caller for another target fails at once without a backoff. After a failure
  * the next copy waits `snapshotRetryDelayMs`; until then a call fails at once
  * with the last reason. A copy that failed for space tries again as soon as
  * the space is there.
@@ -196,6 +197,16 @@ export const makePersonalLinkSnapshotter = (
       return Promise.reject(
         new PersonalLinkSnapshotFailure({
           message: `${withFullStop(failure.message)} It tries again in ${inMinutes(failure.nextAt - now())}.`,
+        }),
+      );
+    // One database copy at a time in this process, whatever its target: a join series that
+    // began again (the switch turned off and on) must not start a second multi-gigabyte copy
+    // beside one a timed-out call left running. Not a failure of this target: no backoff.
+    if (state.running.size > 0)
+      return Promise.reject(
+        new PersonalLinkSnapshotFailure({
+          message:
+            "Another copy of the database is still being saved; it tries again once that copy ends.",
         }),
       );
     const run = attempt(target);

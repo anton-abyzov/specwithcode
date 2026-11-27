@@ -405,15 +405,15 @@ describe("makePersonalLinkSnapshotter", () => {
         const dir = NodePath.join(yield* makeScratchBase(), "backups", "personal-link");
         const target = NodePath.join(dir, snapshotFileName("percy-join-stale"));
         NodeFS.mkdirSync(dir, { recursive: true });
-        NodeFS.writeFileSync(`${target}.partial-4242`, "left by a stopped process");
+        NodeFS.writeFileSync(`${target}.partial-${process.pid}`, "left by an earlier copy");
         const manual = manualCopy();
         const snapshotter = makePersonalLinkSnapshotter({
           dir,
           dbPath: "/scratch/none.sqlite",
           copy: async (dbPath, path) => {
-            assert.isFalse(NodeFS.existsSync(`${target}.partial-4242`));
+            assert.isFalse(NodeFS.existsSync(`${target}.partial-${process.pid}`));
             // The running copy's own partial.
-            NodeFS.writeFileSync(`${path}.partial-1-aaaa`, "running");
+            NodeFS.writeFileSync(`${path}.partial-${process.pid}-aaaa`, "running");
             return manual.copy(dbPath, path);
           },
           state: makeSnapshotState(),
@@ -422,10 +422,38 @@ describe("makePersonalLinkSnapshotter", () => {
         yield* waitFor(() => manual.calls.length === 1);
         const joining = yield* Effect.forkChild(snapshotter.snapshot("percy-join-stale"));
         yield* Effect.yieldNow;
-        assert.isTrue(NodeFS.existsSync(`${target}.partial-1-aaaa`));
+        assert.isTrue(NodeFS.existsSync(`${target}.partial-${process.pid}-aaaa`));
         manual.finish();
         yield* Fiber.join(running);
         yield* Fiber.join(joining);
+      }),
+    ),
+  );
+
+  it.effect("starts no second copy for another target while one runs, and records no backoff", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dir = NodePath.join(yield* makeScratchBase(), "backups", "personal-link");
+        const manual = manualCopy();
+        const snapshotter = makePersonalLinkSnapshotter({
+          dir,
+          dbPath: "/scratch/none.sqlite",
+          copy: manual.copy,
+          state: makeSnapshotState(),
+        });
+        // A timed-out call left the first series' copy running; the switch went off and on.
+        const first = yield* Effect.forkChild(snapshotter.snapshot("percy-join-p-series-1"));
+        yield* waitFor(() => manual.calls.length === 1);
+        const refused = yield* Effect.flip(snapshotter.snapshot("percy-join-p-series-2"));
+        assert.match(refused.message, /Another copy of the database is still being saved/);
+        assert.strictEqual(manual.calls.length, 1);
+        manual.finish();
+        yield* Fiber.join(first);
+        // Once it ends, the new series copies at once: the refusal left no wait behind.
+        const second = yield* Effect.forkChild(snapshotter.snapshot("percy-join-p-series-2"));
+        yield* waitFor(() => manual.calls.length === 2);
+        manual.finish();
+        yield* Fiber.join(second);
       }),
     ),
   );
