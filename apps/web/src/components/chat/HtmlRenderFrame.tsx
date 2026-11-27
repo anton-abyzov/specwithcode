@@ -6,7 +6,7 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@specweave-studio/shared/htmlRender";
-import { ArrowUpRightIcon, FileTextIcon } from "lucide-react";
+import { ArrowUpRightIcon, FileTextIcon, PlayIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -33,6 +33,8 @@ export function useHtmlRenderSrc(
   environmentId: EnvironmentId,
   attachmentId: string,
   title: string,
+  /** False until the page is needed: no URL is minted, so none can expire unused. */
+  enabled = true,
 ) {
   const fileName = htmlRenderFileName(title);
   const resource = useMemo(
@@ -47,7 +49,7 @@ export function useHtmlRenderSrc(
   );
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const assetUrl = useAssetUrlState(src === null ? environmentId : null, resource);
+  const assetUrl = useAssetUrlState(src === null && enabled ? environmentId : null, resource);
   const cachedUrl = assetUrl._tag === "Success" ? assetUrl.url : null;
   const cachedExpiresAt = assetUrl._tag === "Success" ? assetUrl.expiresAt : 0;
   const cacheFailed = assetUrl._tag === "Failure";
@@ -55,8 +57,19 @@ export function useHtmlRenderSrc(
   // At most one mint per mount: expiry is server time and the check uses the
   // client clock, so a skewed clock must not mint again on every update.
   const minting = useRef(false);
+  // Bumped when the page is let go, so a link that arrives after that is ignored.
+  const generation = useRef(0);
+  // Once the page is not needed, its link is let go, so opening it again gets a fresh one.
   useEffect(() => {
-    if (src !== null || minting.current) return;
+    if (enabled) return;
+    generation.current += 1;
+    minting.current = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Drops the link the closed page used.
+    setSrc(null);
+    setFailed(false);
+  }, [enabled]);
+  useEffect(() => {
+    if (!enabled || src !== null || minting.current) return;
     if (cacheFailed) {
       // oxlint-disable-next-line react/set-state-in-effect -- Mirrors the cached URL's failure.
       setFailed(true);
@@ -68,11 +81,18 @@ export function useHtmlRenderSrc(
       return;
     }
     minting.current = true;
+    const asked = generation.current;
     void refresh().then(
-      (url) => (url === null ? setFailed(true) : setSrc(url)),
-      () => setFailed(true),
+      (url) => {
+        if (asked !== generation.current) return;
+        if (url === null) setFailed(true);
+        else setSrc(url);
+      },
+      () => {
+        if (asked === generation.current) setFailed(true);
+      },
     );
-  }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
+  }, [cacheFailed, cachedExpiresAt, cachedUrl, enabled, refresh, src]);
 
   return { src, failed };
 }
@@ -83,14 +103,93 @@ interface HtmlRenderFrameProps {
   readonly threadRef?: ScopedThreadRef | null;
   /** The thread's folder; with `threadRef` it lets the report's evidence links open files. */
   readonly cwd?: string | undefined;
+  /** A later page in this thread has the same title: show this one as an earlier version. */
+  readonly replaced?: boolean | undefined;
 }
 
-/** A published page in the thread: a `show_visual` diagram in full, or a report preview. */
+/** A published page in the thread: a `show_visual` diagram in full, a stage card, or a report preview. */
 export function HtmlRenderFrame(props: HtmlRenderFrameProps) {
-  return props.htmlRender.kind === "visual" ? (
-    <HtmlVisualFrame {...props} />
-  ) : (
-    <HtmlReportFrame {...props} />
+  if (props.htmlRender.kind === "visual") return <HtmlVisualFrame {...props} />;
+  if (props.htmlRender.stage === true) return <HtmlStageFrame {...props} />;
+  return <HtmlReportFrame {...props} />;
+}
+
+/**
+ * A stage page (a presentation or animation) in the thread: a card that runs
+ * nothing, since a WebGL page with sound must not start in the timeline. Play
+ * opens it full size in the reader, focused, so its keys work at once; closing
+ * the reader unloads it, which stops its sound and frees the GPU.
+ */
+function HtmlStageFrame(props: HtmlRenderFrameProps) {
+  const tx = useTx();
+  const { attachmentId, title } = props.htmlRender;
+  const { threadRef } = props;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const close = () => {
+    setExpanded(false);
+    requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
+  };
+  const slots = useViewerOverlay({
+    open: expanded,
+    title,
+    kind: "Presentation",
+    badge: null,
+    threadRef,
+    onClose: close,
+  });
+  const { src, failed } = useHtmlRenderSrc(props.environmentId, attachmentId, title);
+  const open = () => {
+    useViewerOverlayStore.getState().setThreadCollapsed(true);
+    setExpanded(true);
+  };
+  return (
+    <section className="html-report-card" aria-label={title} data-html-render-stage="true">
+      <header className="html-report-card-head">
+        <PlayIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <h3 className="html-report-card-title">{title}</h3>
+          <p className="html-report-card-kind">
+            {props.replaced
+              ? tx("Earlier version. The newest is further down.")
+              : tx("Motion presentation")}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {threadRef && !props.replaced ? (
+            <InstallAsAppButton
+              environmentId={threadRef.environmentId}
+              threadId={threadRef.threadId}
+              attachmentId={attachmentId}
+              title={title}
+            />
+          ) : null}
+          <Button ref={triggerRef} size="sm" onClick={open} disabled={src === null}>
+            <PlayIcon aria-hidden className="size-4" /> {tx("Play")}
+          </Button>
+        </div>
+      </header>
+      <p className="html-report-card-foot">
+        {src === null && failed
+          ? `Unable to load ${title}`
+          : tx("Plays full size with sound. Press Escape to close.")}
+      </p>
+      {expanded && src !== null && slots?.content
+        ? createPortal(
+            <div className="html-report-reader" style={{ padding: 0, overflow: "hidden" }}>
+              <HtmlRenderDocument
+                src={src}
+                title={title}
+                className="block size-full bg-black"
+                onEscape={close}
+                stage
+                autoFocus
+              />
+            </div>,
+            slots.content,
+          )
+        : null}
+    </section>
   );
 }
 
@@ -243,7 +342,13 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
   // left short would scroll inside the thread and take the reader's scroll.
   const [contentHeight, setContentHeight] = useState<number>();
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
-  const { src, failed } = useHtmlRenderSrc(props.environmentId, attachmentId, title);
+  // An earlier version asks for its page only once it is opened, so the link it opens is fresh.
+  const { src, failed } = useHtmlRenderSrc(
+    props.environmentId,
+    attachmentId,
+    title,
+    expanded || props.replaced !== true,
+  );
 
   const previewHeight = Math.min(height, 360);
   const documentHeight = expanded ? Math.min(50_000, contentHeight ?? height) : height;
@@ -253,11 +358,13 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
         <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h3 className="html-report-card-title">{title}</h3>
-          <p className="html-report-card-kind">{tx("Interactive report")}</p>
+          <p className="html-report-card-kind">
+            {props.replaced ? tx("Earlier version. The newest is further down.") : tx("Report")}
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* An installed page follows this thread, so it needs the thread to follow. */}
-          {threadRef ? (
+          {threadRef && !props.replaced ? (
             <InstallAsAppButton
               environmentId={threadRef.environmentId}
               threadId={threadRef.threadId}
@@ -270,13 +377,18 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
             variant="outline"
             size="sm"
             onClick={open}
-            disabled={src === null}
+            disabled={src === null && props.replaced !== true}
           >
             {tx("Open report")} <ArrowUpRightIcon aria-hidden className="size-4" />
           </Button>
         </div>
       </header>
-      <div className="html-report-preview" style={{ height: previewHeight }}>
+      {/* An earlier version keeps only its header; its page loads only if it is opened. */}
+      <div
+        className="html-report-preview"
+        style={{ height: previewHeight }}
+        hidden={props.replaced === true}
+      >
         <div ref={inlineRef} />
         {expanded ? <p className="html-report-placeholder">{tx("Open in reader")}</p> : null}
         {!expanded && src !== null ? (
@@ -288,9 +400,11 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
           </p>
         ) : null}
       </div>
-      <p className="html-report-card-foot">
-        {tx("Open the report to explore its diagrams, details and evidence.")}
-      </p>
+      {props.replaced ? null : (
+        <p className="html-report-card-foot">
+          {tx("A preview. Open the report to click its links, tabs and evidence files.")}
+        </p>
+      )}
       {createPortal(
         <div
           ref={readerRef}
@@ -302,7 +416,8 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
             inert={!expanded}
             style={{ height: documentHeight }}
           >
-            {src !== null ? (
+            {/* An earlier version mounts no page, and so runs nothing, until it is opened. */}
+            {src !== null && (expanded || props.replaced !== true) ? (
               <HtmlRenderDocument
                 src={src}
                 title={title}

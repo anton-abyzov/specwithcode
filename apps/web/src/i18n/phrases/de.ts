@@ -3209,12 +3209,18 @@ export const de: PhraseCatalog = {
     "Modelle und Fähigkeiten stammen aus dieser Laufzeit. Lokale, Abo- und API-Modelle unterstützen Tools, Bilder und Abrechnung unter Umständen unterschiedlich.",
   "Made a visual": "Hat eine Visualisierung erstellt",
   "Loading visual…": "Visualisierung wird geladen…",
-  "Interactive report": "Interaktiver Bericht",
+  Report: "Bericht",
+  "Earlier version. The newest is further down.":
+    "Frühere Version. Die neueste steht weiter unten.",
+  "Motion presentation": "Bewegte Präsentation",
+  Play: "Abspielen",
+  "Plays full size with sound. Press Escape to close.":
+    "Läuft in voller Größe mit Ton. Mit Escape schließen.",
   "Open report": "Bericht öffnen",
   "Open in reader": "Im Reader öffnen",
   "Loading report…": "Bericht wird geladen…",
-  "Open the report to explore its diagrams, details and evidence.":
-    "Öffne den Bericht, um Diagramme, Details und Belege anzusehen.",
+  "A preview. Open the report to click its links, tabs and evidence files.":
+    "Eine Vorschau. Öffnen Sie den Bericht, um seine Links, Tabs und Belegdateien anzuklicken.",
   "Stop command": "Befehl stoppen",
   "Run command": "Befehl ausführen",
   "Stop the command": "Den Befehl stoppen",

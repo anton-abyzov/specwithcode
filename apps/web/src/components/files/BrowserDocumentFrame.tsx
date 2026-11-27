@@ -4,6 +4,8 @@ import {
   HTML_RENDER_OPEN_FILE_METHOD,
   htmlRenderError,
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
+  HTML_RENDER_STAGE_ALLOW,
+  htmlRenderPageFragment,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -209,12 +211,19 @@ export function HtmlRenderDocument(props: {
   readonly title: string;
   readonly className?: string;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
-  readonly onContentHeight?: (height: number) => void;
+  readonly onContentHeight?: ((height: number) => void) | undefined;
   readonly onEscape?: (() => void) | undefined;
   /** Lets the page's evidence links open and copy files; without it they are refused. */
   readonly fileTarget?: HtmlRenderFileTarget | undefined;
   /** For a frame inline in the chat: the page's `scrollIntoView` moves only the page, never the thread. */
   readonly containScroll?: boolean | undefined;
+  /**
+   * A stage page (a presentation or animation that fills its frame): the frame may
+   * play sound and go fullscreen, and loads at once. Never set it on an inline frame.
+   */
+  readonly stage?: boolean | undefined;
+  /** Focuses the frame once the page loads, so its keys work without a click first. */
+  readonly autoFocus?: boolean | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -224,7 +233,7 @@ export function HtmlRenderDocument(props: {
   });
   const [src] = useState(
     () =>
-      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
+      `${props.src.split("#", 1)[0]}${htmlRenderPageFragment(props.src)}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
   );
   const [loaded, setLoaded] = useState(false);
   const postTheme = () => {
@@ -368,11 +377,15 @@ export function HtmlRenderDocument(props: {
       title={props.title}
       // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
       sandbox="allow-scripts allow-forms"
-      loading="lazy"
+      // Only a stage frame, shown full size after the reader asked for it, may play
+      // sound or go fullscreen; inline and report frames stay without either.
+      allow={props.stage ? HTML_RENDER_STAGE_ALLOW : undefined}
+      loading={props.stage ? "eager" : "lazy"}
       onLoad={() => {
         setLoaded(true);
         // Covers a theme change that landed while the page was loading.
         postTheme();
+        if (props.autoFocus) frameRef.current?.focus({ preventScroll: true });
       }}
       // A frame whose color scheme differs from its document's paints an opaque
       // canvas, so the blank document a frame starts with would flash white in

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  HTML_RENDER_DEFAULT_FONTS,
   HTML_RENDER_EXACT_COPY_SCRIPT,
   HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
@@ -8,7 +9,10 @@ import {
   htmlRenderTheme,
   htmlRenderThemeFragment,
   htmlVisualDocument,
+  HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   injectHtmlRenderBootstrap,
+  isHtmlRenderStagePage,
+  htmlRenderPageFragment,
   isHtmlVisualDocument,
   isHtmlVisualSvg,
   htmlRenderThemeMessage,
@@ -563,5 +567,229 @@ describe("injectHtmlRenderBootstrap on unclosed tags", () => {
     );
     expect(bare).toContain('<meta charset="utf-8">');
     expect(bare).toContain('<meta name="viewport"');
+  });
+});
+
+describe("stage pages", () => {
+  // Runs the injected bootstrap with just enough of a top-level window to read its fragment.
+  function bootWithHash(hash: string) {
+    const scripts = /<script>([\s\S]*?)<\/script>/.exec(injectHtmlRenderBootstrap("<p>x</p>"))![1]!;
+    // The bootstrap comes first; the copy and evidence scripts after it need a real DOM.
+    const script = scripts.slice(0, scripts.indexOf(HTML_RENDER_EXACT_COPY_SCRIPT));
+    const replaced: string[] = [];
+    const location = { hash, pathname: "/page.html", search: "?sig=1" };
+    const fakeWindow: Record<string, unknown> = { addEventListener() {}, getSelection: () => null };
+    fakeWindow.parent = fakeWindow;
+    const fakeDocument = {
+      getElementById: (id: string) => (id === "studio-theme" ? { textContent: "" } : null),
+      addEventListener() {},
+      querySelectorAll: () => [],
+      createElement: () => ({ style: {}, setAttribute() {}, appendChild() {} }),
+      head: { appendChild() {} },
+      documentElement: {},
+    };
+    const history = {
+      state: null,
+      replaceState: (_state: unknown, _title: string, url: string) => replaced.push(url),
+    };
+    new Function("window", "document", "location", "history", "navigator", script)(
+      fakeWindow,
+      fakeDocument,
+      location,
+      history,
+      {},
+    );
+    return replaced;
+  }
+  const theme = htmlRenderThemeFragment(
+    htmlRenderTheme(STUDIO_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_DEFAULT_FONTS),
+  );
+
+  it("keeps the page's own fragment after reading the theme", () => {
+    expect(bootWithHash(`#deck-2${theme}`)).toEqual(["/page.html?sig=1#deck-2"]);
+    expect(bootWithHash(`#deck-2${theme}${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toEqual([
+      "/page.html?sig=1#deck-2",
+    ]);
+  });
+
+  it("still leaves no fragment on a page that has none of its own", () => {
+    expect(bootWithHash(theme)).toEqual(["/page.html?sig=1"]);
+    expect(bootWithHash(`${theme}${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toEqual([
+      "/page.html?sig=1",
+    ]);
+  });
+
+  it("keeps the page's own fragment and drops the host's", () => {
+    const theme = htmlRenderThemeFragment({ appearance: "dark", variables: {} });
+    expect(htmlRenderPageFragment("/a/page.html?sig=1")).toBe("");
+    expect(htmlRenderPageFragment("/a/page.html#")).toBe("");
+    expect(htmlRenderPageFragment("/a/page.html#deck-2")).toBe("#deck-2");
+    expect(htmlRenderPageFragment(`/a/page.html#deck-2${theme}`)).toBe("#deck-2");
+    expect(htmlRenderPageFragment(`/a/page.html${theme}`)).toBe("");
+    expect(htmlRenderPageFragment(`/a/page.html#x${HTML_RENDER_CONTAIN_SCROLL_FRAGMENT}`)).toBe(
+      "#x",
+    ); // A page's own id that starts with studio- is kept.
+    expect(htmlRenderPageFragment(`/a/page.html#studio-overview${theme}`)).toBe("#studio-overview");
+    expect(htmlRenderPageFragment("/a/page.html#studio-contain-scrolling")).toBe(
+      "#studio-contain-scrolling",
+    );
+  });
+
+  it("detects the stage meta tag only in markup", () => {
+    expect(
+      isHtmlRenderStagePage('<head><meta name="specwithcode-page" content="stage"></head>'),
+    ).toBe(true);
+    expect(isHtmlRenderStagePage("<meta content='stage' name='specwithcode-page'/>")).toBe(true);
+    expect(isHtmlRenderStagePage("<meta name=specwithcode-page content=stage>")).toBe(true);
+    expect(isHtmlRenderStagePage('<meta name="specwithcode-page" content="report">')).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<script>"<meta name=specwithcode-page content=stage>"</script>'),
+    ).toBe(false);
+    expect(isHtmlRenderStagePage("<!-- <meta name=specwithcode-page content=stage> -->")).toBe(
+      false,
+    );
+    // Only the real attributes count, and only in the head.
+    expect(isHtmlRenderStagePage('<meta data-name="specwithcode-page" data-content="stage">')).toBe(
+      false,
+    );
+    expect(
+      isHtmlRenderStagePage('<meta name="specwithcode-page" data-content="stage" content="x">'),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(
+        '<head><title>r</title></head><body><meta name="specwithcode-page" content="stage"></body>',
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<META NAME="SpecWithCode-Page" CONTENT=" stage "><body></body>'),
+    ).toBe(true); // A quoted > does not end the tag.
+    expect(
+      isHtmlRenderStagePage(
+        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Deck</title><meta title="Q > A" name="specwithcode-page" content="stage"></head>',
+      ),
+    ).toBe(true);
+    // Without a written <body>, the first body tag or text ends the head.
+    expect(
+      isHtmlRenderStagePage(
+        '<iframe src="a.html"></iframe><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<textarea></textarea><meta name="specwithcode-page" content="stage">'),
+    ).toBe(false);
+    // A marker inside a template, even after a nested one, is not the page's.
+    expect(
+      isHtmlRenderStagePage(
+        '<template><template></template><meta name="specwithcode-page" content="stage"></template>',
+      ),
+    ).toBe(false);
+    // Elements a browser keeps in the head do not end it; a template before the marker
+    // makes the page a report, as its content is parsed in modes of its own.
+    expect(
+      isHtmlRenderStagePage(
+        '<noframes>x</noframes><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(true);
+    expect(
+      isHtmlRenderStagePage(
+        '<noframes>x</noframes><template><p>y</p></template><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage('<main>x</main><meta name="specwithcode-page" content="stage">'),
+    ).toBe(false);
+    expect(isHtmlRenderStagePage('Hello <meta name="specwithcode-page" content="stage">')).toBe(
+      false,
+    );
+    expect(
+      isHtmlRenderStagePage('<head></head><meta name="specwithcode-page" content="stage">'),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(
+        '<link rel="icon" href="a.png"><script>var a="<main>"</script><style>p{}</style><meta name="specwithcode-page" content="stage">',
+      ),
+    ).toBe(true);
+  });
+
+  it("reads a page's head front to back, as a browser does", () => {
+    const marker = '<meta name="specwithcode-page" content="stage">';
+    // Text before a template still ends the head.
+    expect(isHtmlRenderStagePage(`Intro<template></template>${marker}`)).toBe(false);
+    // However a template's content would be read, one before the marker makes a report.
+    expect(
+      isHtmlRenderStagePage(`<head><template><textarea><template></textarea></template>${marker}`),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(
+        `<head><template><col><textarea><template></textarea></template>${marker}`,
+      ),
+    ).toBe(false);
+    expect(
+      isHtmlRenderStagePage(`<head><template><svg><use href="#i"/></svg></template>${marker}`),
+    ).toBe(false);
+    // Trimming a long run of inner spaces stays linear.
+    const trimStarted = performance.now();
+    expect(
+      isHtmlRenderStagePage(`<meta name="specwithcode-page" content="x${" ".repeat(200_000)}x">`),
+    ).toBe(false);
+    expect(performance.now() - trimStarted).toBeLessThan(500);
+    // A raw-text tag name inside a quoted attribute is part of the value.
+    expect(isHtmlRenderStagePage(`<head data-note="<noframes>">${marker}`)).toBe(true);
+    expect(isHtmlRenderStagePage(`<head data-note="</head>">${marker}`)).toBe(true);
+    // An unquoted value runs to whitespace, so a quote in it opens nothing.
+    expect(isHtmlRenderStagePage(`<link x=a"b> Intro <meta x=" >${marker}`)).toBe(false);
+    // An end tag inside a script's text is its end only with the script's name.
+    expect(isHtmlRenderStagePage(`<script>a("</scripts>")</script >${marker}`)).toBe(true);
+    // Many long attribute names cost no more than reading them.
+    const namesStarted = performance.now();
+    const longNames = Array.from(
+      { length: 1_500 },
+      (_, index) => `a${String(index).padStart(16_403, "0")}`,
+    ).join(" ");
+    expect(isHtmlRenderStagePage(`<link ${longNames}>${marker}`)).toBe(true);
+    expect(performance.now() - namesStarted).toBeLessThan(1_000);
+    // HTML folds ASCII letters only: the Kelvin sign in `linK` makes an unknown tag.
+    expect(isHtmlRenderStagePage(`<head><lin\u212a>${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<met\u212a name="specwithcode-page" content="stage">`)).toBe(
+      false,
+    );
+    expect(isHtmlRenderStagePage('<meta name="specwithcode-page" content="\u00a0stage">')).toBe(
+      false,
+    );
+    // A non-breaking space is text to a browser.
+    expect(isHtmlRenderStagePage(`\u00a0${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`\ufeff<!doctype html>${marker}`)).toBe(true);
+    // What this reading does not follow makes the page a report.
+    expect(isHtmlRenderStagePage(`<script><!--<script></script>${marker}</script>`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<template><svg><style></template>${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<link href="a.css${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<title>x${marker}`)).toBe(false);
+    // A tag left open in a template swallows the rest, the apparent marker with it.
+    expect(isHtmlRenderStagePage(`<head><template><div data-note="</template>${marker}`)).toBe(
+      false,
+    );
+    // Read once, front to back: a page of tags that never close is refused at once.
+    const started = performance.now();
+    expect(isHtmlRenderStagePage(`<template>${"<x ".repeat(200_000)}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`<template>${"<".repeat(200_000)}${marker}`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    // Comments end where a browser ends them.
+    expect(isHtmlRenderStagePage(`<!-->${marker}`)).toBe(true);
+    expect(isHtmlRenderStagePage(`<!-- a --!>${marker}`)).toBe(true);
+    expect(isHtmlRenderStagePage(`</br>${marker}`)).toBe(false);
+    expect(isHtmlRenderStagePage(`</p>${marker}`)).toBe(true);
+  });
+
+  it("carries the stage flag through a reference", () => {
+    const stage = { attachmentId: "a-html", title: "Deck", height: 600, stage: true };
+    expect(readHtmlRenderReference(stage)?.stage).toBe(true);
+    expect(readHtmlRenderReference({ ...stage, stage: "yes" })?.stage).toBeUndefined();
+    expect(
+      htmlRenderReferencesEqual(readHtmlRenderReference(stage)!, {
+        attachmentId: "a-html",
+        title: "Deck",
+        height: 600,
+      }),
+    ).toBe(false);
   });
 });

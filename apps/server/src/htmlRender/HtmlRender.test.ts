@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain local servers stand in for LAN services.
+import * as NodeChildProcess from "node:child_process";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@specweave-studio/contracts";
@@ -238,6 +240,120 @@ describe("HtmlRender", () => {
       expect(html).toContain('<style id="studio-theme">');
       expect(html).toContain("<p>Quarterly revenue</p>");
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("publishes a stage page flagged and never measures it", () =>
+    Effect.gen(function* () {
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const reference = yield* htmlRender.publish({
+        threadId: ThreadId.make("thread-html-stage"),
+        html: '<!doctype html><html><head><meta name="specwithcode-page" content="stage"></head><body><canvas></canvas></body></html>',
+        title: "Deck",
+        height: 600,
+      });
+      expect(reference).toEqual({
+        attachmentId: expect.any(String),
+        title: "Deck",
+        height: 600,
+        stage: true,
+      });
+      // A report still goes to the measuring browser, which this layer refuses.
+      const report = yield* htmlRender
+        .publish({
+          threadId: ThreadId.make("thread-html-stage"),
+          html: "<p>report</p>",
+          title: "Report",
+          height: 600,
+        })
+        .pipe(Effect.exit);
+      expect(report._tag).toBe("Failure");
+    }).pipe(
+      Effect.provide(layerHtmlRender(undefined, Effect.die("A stage page must not be measured."))),
+    ),
+  );
+
+  it.effect("inlines SpecWithCode libraries and refuses unknown ones", () =>
+    Effect.gen(function* () {
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const prepared = yield* htmlRender.prepare(
+        '<script src="specwithcode:three"></script><script src="specwithcode:three"></script><p>x</p>',
+      );
+      expect(prepared).toContain('<script data-local-artifact-lib="three">');
+      expect(prepared).toContain("window.THREE=module.exports");
+      expect(prepared).toContain("MIT License");
+      expect(prepared).not.toContain('src="specwithcode:three"');
+
+      const error = yield* htmlRender
+        .prepare('<script src="specwithcode:gsap"></script>')
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("HtmlRenderLibraryError");
+      expect(error.message).toContain("specwithcode:gsap is not a SpecWithCode library");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("reads a page from an absolute .html path the agent may read", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-html-file-" });
+      const page = path.join(directory, "deck.html");
+      yield* fileSystem.writeFileString(page, "<p>large deck</p>");
+      expect(yield* htmlRender.readPageFile(page)).toBe("<p>large deck</p>");
+
+      const notes = path.join(directory, "notes.txt");
+      yield* fileSystem.writeFileString(notes, "x");
+      yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+      const secret = path.join(config.secretsDir, "keys.html");
+      yield* fileSystem.writeFileString(secret, "<p>secret</p>");
+      // A link named *.html to the secret, and a path that goes back up through a link.
+      const linked = path.join(directory, "linked.html");
+      yield* fileSystem.symlink(secret, linked);
+      const nested = path.join(config.secretsDir, "nested");
+      yield* fileSystem.makeDirectory(nested, { recursive: true });
+      const hop = path.join(directory, "hop");
+      yield* fileSystem.symlink(nested, hop);
+      const throughLink = `${hop}/../keys.html`;
+      const large = path.join(directory, "large.html");
+      yield* fileSystem.writeFile(large, new Uint8Array(25 * 1024 * 1024 + 1));
+      const folder = path.join(directory, "folder.html");
+      yield* fileSystem.makeDirectory(folder);
+      const reasons = yield* Effect.forEach(
+        [
+          "deck.html",
+          notes,
+          secret,
+          path.join(directory, "missing.html"),
+          linked,
+          throughLink,
+          large,
+          folder,
+        ],
+        (candidate) =>
+          htmlRender.readPageFile(candidate).pipe(
+            Effect.flip,
+            Effect.map((error) => error.reason),
+          ),
+      );
+      expect(reasons).toEqual([
+        "the path must be absolute.",
+        "only .html and .htm files can be shown.",
+        "SpecWithCode keeps this path away from agents.",
+        "the file does not exist or cannot be read.",
+        "SpecWithCode keeps this path away from agents.",
+        "the path must not have . or .. parts.",
+        "it is 26214401 bytes, over the 25.0 MiB limit.",
+        "it is not a file.",
+      ]);
+      // A pipe is refused at once instead of waiting for a writer.
+      if (HostProcessPlatform.defaultValue() !== "win32") {
+        const pipe = path.join(directory, "pipe.html");
+        NodeChildProcess.execFileSync("mkfifo", [pipe]);
+        const error = yield* htmlRender.readPageFile(pipe).pipe(Effect.flip);
+        expect(error.reason).toBe("it is not a file.");
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("removes the page when publishing is interrupted", () =>
@@ -482,6 +598,59 @@ describe("HtmlRender", () => {
         }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
+  );
+
+  it.live(
+    "captures a stage page at 16:9 once it says it is ready",
+    (ctx) =>
+      Effect.gen(function* () {
+        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+        yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          const preview = yield* htmlRender.preview({
+            html: [
+              '<meta name="specwithcode-page" content="stage">',
+              '<body style="margin:0;background:#000"><p id="p">loading</p>',
+              '<script>setTimeout(() => { p.textContent = "ready at " + location.hash.length; ',
+              'console.log("hash:" + location.hash); window.specwithcodeReady = true; }, 400);</script>',
+            ].join(""),
+          });
+          expect(preview.width).toBe(1_280);
+          expect(preview.capturedHeight).toBe(720);
+          const texts = preview.consoleMessages.map((message) => message.text);
+          // Ready was seen (no warning), and the theme fragment did not stay in the page's hash.
+          expect(texts).toContain("hash:");
+          expect(texts.join(" ")).not.toContain("specwithcodeReady");
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
+      }),
+    60_000,
+  );
+
+  it.live(
+    "stops waiting for a stage page as soon as it shows its error",
+    (ctx) =>
+      Effect.gen(function* () {
+        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+        yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          const started = yield* Clock.currentTimeMillis;
+          const preview = yield* htmlRender.preview({
+            html: [
+              '<meta name="specwithcode-page" content="stage">',
+              '<body><script>setTimeout(() => { const e = document.createElement("div");',
+              'e.className = "swc-error"; e.textContent = "no WebGL 2"; document.body.append(e);',
+              'window.specwithcodeFailed = "no WebGL 2"; }, 200);</script>',
+            ].join(""),
+          });
+          expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(30_000);
+          expect(preview.consoleMessages.map((message) => message.text).join(" ")).toContain(
+            "showed its error instead of becoming ready",
+          );
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
+      }),
+    60_000,
   );
 
   it.live(

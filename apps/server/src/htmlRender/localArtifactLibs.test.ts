@@ -4,7 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { rewriteLocalArtifactLibraries } from "./localArtifactLibs.ts";
+import {
+  inlineArtifactLibraries,
+  rewriteLocalArtifactLibraries,
+  wrapThreeCommonJs,
+} from "./localArtifactLibs.ts";
 
 const tempDirs: string[] = [];
 
@@ -30,13 +34,13 @@ describe("rewriteLocalArtifactLibraries", () => {
       "<!doctype html><html><head>",
       '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
       '<script src="https://unpkg.com/mermaid@11.4.0/dist/mermaid.min.js"></script>',
-      "</head><body><div class=\"mermaid\">graph TD; A-->B;</div></body></html>",
+      '</head><body><div class="mermaid">graph TD; A-->B;</div></body></html>',
     ].join("\n");
 
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
     expect(result).toContain('<script data-local-artifact-lib="mermaid">');
     // Escapes embedded </script> safely and only injects once
-    expect(result).toContain('<\\/script>');
+    expect(result).toContain("<\\/script>");
     expect(result.match(/data-local-artifact-lib="mermaid"/g)).toHaveLength(1);
     expect(result).not.toContain("cdn.jsdelivr.net");
     expect(result).not.toContain("unpkg.com");
@@ -57,7 +61,8 @@ describe("rewriteLocalArtifactLibraries", () => {
 
   it("leaves the CDN tag untouched when inlining would exceed maxPageBytes", () => {
     const staticDir = makeTempStaticDir("x".repeat(500));
-    const html = '<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.0/mermaid.min.js"></script>';
+    const html =
+      '<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.0/mermaid.min.js"></script>';
 
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 200 });
     expect(result).toBe(html);
@@ -71,8 +76,12 @@ describe("rewriteLocalArtifactLibraries", () => {
     ].join("\n");
 
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
-    expect(result).toContain('<!-- <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script> -->');
-    expect(result).toContain('<script data-local-artifact-lib="mermaid" nonce="abc123">window.mermaid={ok:true};</script>');
+    expect(result).toContain(
+      '<!-- <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script> -->',
+    );
+    expect(result).toContain(
+      '<script data-local-artifact-lib="mermaid" nonce="abc123">window.mermaid={ok:true};</script>',
+    );
   });
 
   it("ignores data-src, defer/async, and non-classic script types", () => {
@@ -85,10 +94,18 @@ describe("rewriteLocalArtifactLibraries", () => {
     ].join("\n");
 
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
-    expect(result).toContain('data-src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"');
-    expect(result).toContain('<script defer src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>');
-    expect(result).toContain('<script type="application/json" src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>');
-    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).toContain(
+      'data-src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"',
+    );
+    expect(result).toContain(
+      '<script defer src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+    );
+    expect(result).toContain(
+      '<script type="application/json" src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>',
+    );
+    expect(result).toContain(
+      '<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>',
+    );
   });
 
   it("ignores inert <template> scripts and handles spaced src= and attribute values containing async", () => {
@@ -99,8 +116,12 @@ describe("rewriteLocalArtifactLibraries", () => {
     ].join("\n");
 
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
-    expect(result).toContain('<template><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></template>');
-    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).toContain(
+      '<template><script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script></template>',
+    );
+    expect(result).toContain(
+      '<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>',
+    );
   });
 
   it("handles Unicode case folding (İ), long/Unicode custom-element names, NBSP false close tags, iframe fallback, and comments/raw-text/quoted attrs inside <template>", () => {
@@ -118,7 +139,9 @@ describe("rewriteLocalArtifactLibraries", () => {
     expect(result).toContain("<h1>İstanbul Roadmap</h1>");
     expect(result).toContain("/* </style\u00A0><template> */");
     expect(result).toContain('<iframe src="about:blank"><template>unclosed fallback</iframe>');
-    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).toContain(
+      '<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>',
+    );
     expect(result).not.toContain("https://cdn.jsdelivr.net");
   });
 
@@ -134,7 +157,9 @@ describe("rewriteLocalArtifactLibraries", () => {
 
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 100_000 });
     expect(result).toContain("<!-- comment closed with bang --!>");
-    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).toContain(
+      '<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>',
+    );
     expect(result).not.toContain("https://cdn.jsdelivr.net");
   });
 
@@ -146,7 +171,72 @@ describe("rewriteLocalArtifactLibraries", () => {
     const result = rewriteLocalArtifactLibraries(html, { staticDir, maxPageBytes: 500_000 });
     const elapsedMs = performance.now() - t0;
     expect(elapsedMs).toBeLessThan(500);
-    expect(result).toContain('<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>');
+    expect(result).toContain(
+      '<script data-local-artifact-lib="mermaid">window.mermaid={ok:true};</script>',
+    );
     expect(result).not.toContain("https://cdn.jsdelivr.net");
+  });
+});
+
+describe("inlineArtifactLibraries", () => {
+  const sources = {
+    three: "window.THREE={};",
+    "motion-deck": 'window.SpecWithCodeDeck={x:"</script>"};',
+  };
+  const options = (maxPageBytes = 100_000) => ({
+    maxPageBytes,
+    resolveLibrarySource: (name: keyof typeof sources) => sources[name],
+  });
+
+  it("inlines each specwithcode library once, whatever its script type", () => {
+    const html =
+      '<head><script src="specwithcode:three"></script><script type="module" src="specwithcode:motion-deck"></script><script src="SPECWITHCODE:three"></script></head>';
+    const result = inlineArtifactLibraries(html, options());
+    expect(result.unknown).toEqual([]);
+    expect(result.unavailable).toEqual([]);
+    expect(result.html.match(/data-local-artifact-lib="three"/g)).toHaveLength(1);
+    expect(result.html).toContain("<!-- specwithcode:three already inlined -->");
+    expect(result.html).toContain('<script data-local-artifact-lib="motion-deck">');
+    expect(result.html).toContain('x:"<\\/script>"');
+    expect(result.html).not.toContain("src=");
+  });
+
+  it("reports unknown and unavailable names and leaves scripts in comments alone", () => {
+    const result = inlineArtifactLibraries(
+      '<!-- <script src="specwithcode:gone"></script> --><script src="specwithcode:gsap"></script><script src="specwithcode:three"></script>',
+      { maxPageBytes: 100_000, resolveLibrarySource: () => null },
+    );
+    expect(result.unknown).toEqual(["gsap"]);
+    expect(result.unavailable).toEqual(["three"]);
+  });
+
+  it("inlines Mermaid beside a SpecWithCode library, in either order", () => {
+    const mermaid =
+      '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>';
+    const three = '<script src="specwithcode:three"></script>';
+    for (const html of [`${three}${mermaid}`, `${mermaid}${three}`]) {
+      const result = inlineArtifactLibraries(html, {
+        ...options(),
+        resolveMermaidSource: () => "window.mermaid={};",
+      });
+      expect(result.html).toContain('<script data-local-artifact-lib="mermaid">');
+      expect(result.html).toContain('<script data-local-artifact-lib="three">');
+      expect(result.html).not.toContain("already inlined");
+    }
+  });
+
+  it("says when the inlined page would pass the size limit", () => {
+    const html = '<script src="specwithcode:three"></script>';
+    const result = inlineArtifactLibraries(html, options(10));
+    expect(result.tooLarge).toBe(true);
+    expect(result.html).toBe(html);
+  });
+
+  it("wraps three.js's CommonJS build as a classic script with its notice", () => {
+    const wrapped = wrapThreeCommonJs("'use strict';exports.REVISION='180';");
+    const scope: { THREE?: { REVISION?: string } } = {};
+    new Function("window", wrapped)(scope);
+    expect(scope.THREE?.REVISION).toBe("180");
+    expect(wrapped.startsWith("/*! three.js r180 | MIT License")).toBe(true);
   });
 });

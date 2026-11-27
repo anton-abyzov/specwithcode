@@ -3190,12 +3190,17 @@ export const ru: PhraseCatalog = {
     "Модели и возможности берутся из этой среды выполнения. Локальные, подписочные и API-модели могут по-разному поддерживать инструменты, изображения и оплату.",
   "Made a visual": "Создал визуал",
   "Loading visual…": "Загрузка визуала…",
-  "Interactive report": "Интерактивный отчёт",
+  Report: "Отчёт",
+  "Earlier version. The newest is further down.": "Более ранняя версия. Самая новая ниже.",
+  "Motion presentation": "Анимированная презентация",
+  Play: "Воспроизвести",
+  "Plays full size with sound. Press Escape to close.":
+    "Открывается во весь размер со звуком. Нажмите Escape, чтобы закрыть.",
   "Open report": "Открыть отчёт",
   "Open in reader": "Открыть в режиме чтения",
   "Loading report…": "Загрузка отчёта…",
-  "Open the report to explore its diagrams, details and evidence.":
-    "Откройте отчёт, чтобы изучить диаграммы, подробности и доказательства.",
+  "A preview. Open the report to click its links, tabs and evidence files.":
+    "Предпросмотр. Откройте отчёт, чтобы пользоваться его ссылками, вкладками и файлами с доказательствами.",
   "Stop command": "Остановить команду",
   "Run command": "Выполнить команду",
   "Stop the command": "Остановить команду",

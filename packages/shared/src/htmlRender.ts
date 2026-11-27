@@ -38,6 +38,201 @@ export interface HtmlRenderReference {
    * collapsible "Made a visual" header; absent for a report page.
    */
   readonly kind?: "visual";
+  /**
+   * A presentation that declared itself with {@link HTML_RENDER_STAGE_META}: the
+   * thread shows a card and runs it only when opened, at the full viewer size.
+   */
+  readonly stage?: true;
+}
+
+/** The head tag a page uses to declare itself a stage page (a motion presentation). */
+export const HTML_RENDER_STAGE_META = '<meta name="specwithcode-page" content="stage">';
+/** What a stage page's frame may use: sound before a click, and fullscreen. Reports get none. */
+export const HTML_RENDER_STAGE_ALLOW = "autoplay; fullscreen";
+/** The global a stage page sets once its scenes are built and its shaders compiled. */
+export const HTML_RENDER_STAGE_READY_GLOBAL = "specwithcodeReady";
+
+/**
+ * Whether a page declares itself a stage page: a `<meta name="specwithcode-page"
+ * content="stage">` in its head, attributes in any order and quoting, outside
+ * scripts, styles and comments. Only the `name` and `content` attributes count
+ * (not `data-name`), and a tag in the body does not, so a report never turns
+ * into a stage page with its permissions by quoting the tag.
+ *
+ * The page is read once, front to back, the way a browser tokenizes it, until the
+ * marker or the end of the head. Anything this reading does not follow exactly
+ * (a template before the marker, a script holding `<!--`, a tag left open) makes
+ * the page a report, the side without the stage's permissions.
+ */
+export function isHtmlRenderStagePage(html: string): boolean {
+  let at = html.startsWith("\uFEFF") ? 1 : 0;
+  while (at < html.length) {
+    const open = html.indexOf("<", at);
+    const text = html.slice(at, open === -1 ? html.length : open);
+    // Text ends the head.
+    if (!HTML_WHITESPACE_ONLY.test(text)) return false;
+    if (open === -1) return false;
+    if (html.startsWith("<!--", open)) {
+      at = commentEnd(html, open + 4);
+    } else if (html[open + 1] === "!" || html[open + 1] === "?") {
+      at = indexAfter(html, ">", open);
+    } else if (html.startsWith("</", open) && !ASCII_ALPHA.test(html[open + 2] ?? "")) {
+      // `</>` is dropped; `</` and anything else but a letter is a bogus comment.
+      at = html[open + 2] === ">" ? open + 3 : indexAfter(html, ">", open);
+    } else {
+      const tag = readTag(html, open);
+      // A tag left open swallows the rest of the page, the marker with it, and a `<`
+      // that starts no tag is text.
+      if (tag === "unclosed" || tag === undefined) return false;
+      at = tag.end;
+      if (tag.closing) {
+        // Other end tags are dropped in a head.
+        if (HEAD_ENDING_END_TAGS.has(tag.name)) return false;
+        continue;
+      }
+      if (HEAD_RAW_TEXT_TAGS.has(tag.name)) {
+        // Its contents are text up to its own end tag.
+        const close = rawTextEnd(html, at, tag.name);
+        if (close === undefined) return false;
+        if (tag.name === "script" && html.slice(at, close.start).includes("<!--")) return false;
+        at = close.end;
+        continue;
+      }
+      // Anything else, a template too (its content is parsed in modes of its own), ends
+      // the reading before the marker.
+      if (!HEAD_TAGS.has(tag.name)) return false;
+      if (
+        tag.name === "meta" &&
+        markerValue(tag.attributes.get("name")) === "specwithcode-page" &&
+        markerValue(tag.attributes.get("content")) === "stage"
+      )
+        return true;
+    }
+    if (at === -1) return false;
+  }
+  return false;
+}
+
+// Start tags a browser keeps in the head without contents of their own.
+const HEAD_TAGS = new Set(["html", "head", "meta", "link", "base", "basefont", "bgsound"]);
+// Elements a head may hold whose contents are text (noscript as it is read with
+// scripting on).
+const HEAD_RAW_TEXT_TAGS = new Set(["script", "style", "title", "noscript", "noframes"]);
+const HEAD_ENDING_END_TAGS = new Set(["head", "body", "html", "br"]);
+const HTML_WHITESPACE_ONLY = /^[\t\n\f\r ]*$/;
+const HTML_WHITESPACE = /[\t\n\f\r ]/;
+const ASCII_ALPHA = /[a-z]/i;
+
+/**
+ * Lower case for ASCII letters only, as HTML folds tag and attribute names: JavaScript's
+ * `toLowerCase` also folds the Kelvin sign to `k`, which would read `<linK>` as a link.
+ */
+function asciiLowerCase(text: string): string {
+  return text.replace(/[A-Z]/g, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32));
+}
+
+/** An attribute value as the marker compares it: HTML whitespace trimmed, ASCII folded. */
+function markerValue(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  // By index, not a regular expression: a long run of inner spaces stays linear.
+  let start = 0;
+  let end = value.length;
+  while (start < end && HTML_WHITESPACE.test(value[start]!)) start += 1;
+  while (end > start && HTML_WHITESPACE.test(value[end - 1]!)) end -= 1;
+  return asciiLowerCase(value.slice(start, end));
+}
+
+/** The index just after the next `char` from `from`, or -1 when there is none. */
+function indexAfter(html: string, char: string, from: number): number {
+  const index = html.indexOf(char, from);
+  return index === -1 ? -1 : index + 1;
+}
+
+/** Where a comment whose `<!--` ends just before `from` ends, as a browser ends it. */
+function commentEnd(html: string, from: number): number {
+  if (html[from] === ">") return from + 1;
+  if (html.startsWith("->", from)) return from + 2;
+  const end = /--!?>/g;
+  end.lastIndex = from;
+  const match = end.exec(html);
+  return match === null ? -1 : match.index + match[0].length;
+}
+
+interface ReadTag {
+  readonly closing: boolean;
+  readonly name: string;
+  /** Only the marker's attributes, `name` and `content`, are kept. */
+  readonly attributes: ReadonlyMap<string, string>;
+  readonly end: number;
+}
+
+const MARKER_ATTRIBUTES = new Set(["name", "content"]);
+
+/**
+ * The tag at `at`, read as a browser reads it: a quoted value may hold `>`, an unquoted
+ * one runs to whitespace or `>`, and the first of a repeated attribute wins. Only the
+ * marker's attributes are kept, so a tag with many long names costs no more than
+ * reading it (a map of every name would hash long ones by length alone). Undefined
+ * when `<` starts no tag there, and "unclosed" when the tag runs to the end of the page.
+ */
+function readTag(html: string, at: number): ReadTag | "unclosed" | undefined {
+  const closing = html[at + 1] === "/";
+  let index = at + (closing ? 2 : 1);
+  if (!ASCII_ALPHA.test(html[index] ?? "")) return undefined;
+  const nameStart = index;
+  while (index < html.length && !/[\t\n\f\r />]/.test(html[index]!)) index += 1;
+  const name = asciiLowerCase(html.slice(nameStart, index));
+  const attributes = new Map<string, string>();
+  while (index < html.length) {
+    const char = html[index]!;
+    if (char === ">") return { closing, name, attributes, end: index + 1 };
+    if (char === "/" || HTML_WHITESPACE.test(char)) {
+      index += 1;
+      continue;
+    }
+    // A name may start with `=`; after that it runs to whitespace, `/`, `>` or `=`.
+    const attributeStart = index;
+    index += 1;
+    while (index < html.length && !/[\t\n\f\r />=]/.test(html[index]!)) index += 1;
+    const attribute =
+      index - attributeStart <= "content".length
+        ? asciiLowerCase(html.slice(attributeStart, index))
+        : undefined;
+    while (index < html.length && HTML_WHITESPACE.test(html[index]!)) index += 1;
+    let value = "";
+    if (html[index] === "=") {
+      index += 1;
+      while (index < html.length && HTML_WHITESPACE.test(html[index]!)) index += 1;
+      const quote = html[index];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, index + 1);
+        if (close === -1) return "unclosed";
+        value = html.slice(index + 1, close);
+        index = close + 1;
+      } else {
+        const valueStart = index;
+        while (index < html.length && !/[\t\n\f\r >]/.test(html[index]!)) index += 1;
+        value = html.slice(valueStart, index);
+      }
+    }
+    if (attribute !== undefined && MARKER_ATTRIBUTES.has(attribute) && !attributes.has(attribute))
+      attributes.set(attribute, value);
+  }
+  return "unclosed";
+}
+
+/** Where a raw-text element's own end tag starts and ends, or undefined when it has none. */
+function rawTextEnd(
+  html: string,
+  from: number,
+  name: string,
+): { readonly start: number; readonly end: number } | undefined {
+  const endTag = new RegExp(`</${name}[\\t\\n\\f\\r />]`, "gi");
+  endTag.lastIndex = from;
+  const match = endTag.exec(html);
+  if (match === null) return undefined;
+  const tag = readTag(html, match.index);
+  return tag === undefined || tag === "unclosed" ? undefined : { start: match.index, end: tag.end };
 }
 
 /** Frame widths the server measures a page at, from phones to the wide chat setting. */
@@ -73,7 +268,7 @@ function readMeasuredHeights(value: unknown) {
 
 export function readHtmlRenderReference(value: unknown): HtmlRenderReference | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { attachmentId, title, height, heights, kind } = value as Record<string, unknown>;
+  const { attachmentId, title, height, heights, kind, stage } = value as Record<string, unknown>;
   if (
     typeof attachmentId !== "string" ||
     attachmentId.length === 0 ||
@@ -91,6 +286,7 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
     ...(kind === "visual" ? { kind } : {}),
+    ...(stage === true ? { stage } : {}),
   };
 }
 
@@ -101,6 +297,7 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
     left.title === right.title &&
     left.height === right.height &&
     left.kind === right.kind &&
+    left.stage === right.stage &&
     (left.heights ?? []).length === (right.heights ?? []).length &&
     (left.heights ?? []).every(
       ([width, height], index) =>
@@ -554,6 +751,24 @@ export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
 const CONTAIN_SCROLL_FRAGMENT_KEY = "studio-contain-scroll";
 
 /**
+ * The page's own fragment in `src` (`#deck-2` for a deck's second scene), with
+ * any host fragment the app added dropped, or "" when there is none. A frame
+ * puts it in front of the theme fragment so the page opens where it was linked.
+ */
+export function htmlRenderPageFragment(src: string): string {
+  const hashAt = src.indexOf("#");
+  if (hashAt === -1) return "";
+  // Only the app's own keys are dropped; a page's `#studio-overview` is the page's.
+  const own = src
+    .slice(hashAt)
+    .split(
+      new RegExp(`[#&](?:${THEME_FRAGMENT_KEY}=|${CONTAIN_SCROLL_FRAGMENT_KEY}(?=[&#]|$))`),
+      1,
+    )[0]!;
+  return own.length > 1 ? own : "";
+}
+
+/**
  * Goes after {@link htmlRenderThemeFragment} for a frame that sits inline in
  * the chat: the page's `scrollIntoView` then moves only what is inside the
  * page, never the thread around it.
@@ -667,7 +882,7 @@ function rootRule(theme: HtmlRenderTheme): string {
 // so its client can fit the frame to the page. A framed page whose fragment
 // carries the contain-scroll flag gets the contained `scrollIntoView` first,
 // read before the fragment is dropped.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;if(P&&window.parent!==window)${CONTAINED_SCROLL_INTO_VIEW}var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;if(P&&window.parent!==window)${CONTAINED_SCROLL_INTO_VIEW}var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&#]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));var q=location.hash.replace(/[#&]${THEME_FRAGMENT_KEY}=[^&#]*/,"").replace(/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?=[&#]|$)/,"").replace(/^&/,"#");history.replaceState(history.state,"",location.pathname+location.search+(q.length>1?q:""));}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
 
 // A page's Copy buttons and selections put exactly the text shown on the
 // clipboard: no newline a textarea or <pre> ends with, no trailing spaces, no

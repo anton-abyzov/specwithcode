@@ -3166,12 +3166,17 @@ export const ko: PhraseCatalog = {
     "모델과 기능은 이 런타임에서 가져옵니다. 로컬, 구독, API 모델은 도구, 이미지, 과금 지원이 서로 다를 수 있습니다.",
   "Made a visual": "시각 자료를 만들었습니다",
   "Loading visual…": "시각 자료를 불러오는 중…",
-  "Interactive report": "대화형 보고서",
+  Report: "보고서",
+  "Earlier version. The newest is further down.": "이전 버전입니다. 최신 버전은 아래에 있습니다.",
+  "Motion presentation": "모션 프레젠테이션",
+  Play: "재생",
+  "Plays full size with sound. Press Escape to close.":
+    "소리와 함께 전체 크기로 재생됩니다. Esc 키로 닫습니다.",
   "Open report": "보고서 열기",
   "Open in reader": "리더에서 열기",
   "Loading report…": "보고서를 불러오는 중…",
-  "Open the report to explore its diagrams, details and evidence.":
-    "보고서를 열어 다이어그램, 세부 정보, 근거를 살펴보세요.",
+  "A preview. Open the report to click its links, tabs and evidence files.":
+    "미리 보기입니다. 링크, 탭, 증거 파일을 사용하려면 보고서를 여세요.",
   "Stop command": "명령 중지",
   "Run command": "명령 실행",
   "Stop the command": "명령 중지",

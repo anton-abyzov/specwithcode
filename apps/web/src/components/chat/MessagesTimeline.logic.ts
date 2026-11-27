@@ -903,6 +903,8 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       htmlRender: HtmlRenderReference;
+      /** A later page in this thread has the same title: this one is an earlier version. */
+      replaced?: true;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -1723,6 +1725,25 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+/**
+ * Reports republished under the same title: every entry but the newest of each title.
+ * An agent that revises a page calls html_render again, which stores a new page; the
+ * thread then shows the earlier ones as versions instead of as more full cards.
+ * Diagrams (`kind: "visual"`) are left alone, since a thread may hold several alike.
+ */
+export function replacedHtmlRenderEntryIds(entries: ReadonlyArray<TimelineEntry>): Set<string> {
+  const newestByTitle = new Map<string, string>();
+  const replaced = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind !== "html-render" || entry.htmlRender.kind === "visual") continue;
+    const title = entry.htmlRender.title.trim().toLowerCase();
+    const previous = newestByTitle.get(title);
+    if (previous !== undefined && previous !== entry.id) replaced.add(previous);
+    newestByTitle.set(title, entry.id);
+  }
+  return replaced;
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
@@ -1780,6 +1801,7 @@ export function deriveMessagesTimelineRows(input: {
         checkpoints: input.turnDiffSummaries,
       })
     : new Map<MessageId, number>();
+  const replacedHtmlRenderIds = replacedHtmlRenderEntryIds(unfilteredEntries);
   const nextRows: MessagesTimelineRow[] = [];
   // Settled tool rows a "Used N tools" summary may fold, with the calls each stands for.
   const foldableToolEntriesByRowId = new Map<string, ReadonlyArray<WorkLogEntry>>();
@@ -2231,6 +2253,7 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         htmlRender: timelineEntry.htmlRender,
+        ...(replacedHtmlRenderIds.has(timelineEntry.id) ? { replaced: true as const } : {}),
       });
       continue;
     }
@@ -3012,7 +3035,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "html-render": {
       // Entries rebuild on any tool update; an equal page must keep its mounted frame.
       const bh = b as typeof a;
-      return a.createdAt === bh.createdAt && htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender);
+      return (
+        a.createdAt === bh.createdAt &&
+        a.replaced === bh.replaced &&
+        htmlRenderReferencesEqual(a.htmlRender, bh.htmlRender)
+      );
     }
 
     case "event":

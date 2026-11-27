@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeModule from "node:module";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,6 +15,7 @@ import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-execu
 import { isUnresolvedFirstPartyCliImport } from "../../../scripts/lib/cli-external-packages.ts";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import {
+  ServerCliArtifactLibraryMinifyError,
   ServerCliBuildAssetMissingError,
   ServerCliCommandExitError,
   ServerCliDevelopmentIconSourceMissingError,
@@ -22,6 +24,7 @@ import {
   ServerCliUnresolvedImportError,
 } from "./cliErrors.ts";
 import { publishPlatformsThenLauncher } from "./publishOrder.ts";
+import { wrapThreeCommonJs } from "../src/htmlRender/localArtifactLibs.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -96,12 +99,16 @@ const buildCmd = Command.make(
       // returning success. Reject those imports in every emitted chunk before
       // declaring this normal Node bundle usable.
       const serverDist = path.join(serverDir, "dist");
-      for (const file of (yield* fs.readDirectory(serverDist)).filter((file) => file.endsWith(".mjs"))) {
+      for (const file of (yield* fs.readDirectory(serverDist)).filter((file) =>
+        file.endsWith(".mjs"),
+      )) {
         const bundlePath = path.join(serverDist, file);
-        const unresolved = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath))
-          .filter(isUnresolvedFirstPartyCliImport);
+        const unresolved = findEsmImportsOfExternalPackages(
+          yield* fs.readFileString(bundlePath),
+        ).filter(isUnresolvedFirstPartyCliImport);
         if (unresolved.length > 0) {
-          return yield* Effect.fail(new ServerCliUnresolvedImportError({ file, specifiers: unresolved }),
+          return yield* Effect.fail(
+            new ServerCliUnresolvedImportError({ file, specifiers: unresolved }),
           );
         }
       }
@@ -111,13 +118,46 @@ const buildCmd = Command.make(
 
       if (yield* fs.exists(webDist)) {
         yield* fs.copy(webDist, clientTarget);
-        const mermaidSource = path.join(repoRoot, "apps/web/node_modules/mermaid/dist/mermaid.min.js");
+        const mermaidSource = path.join(
+          repoRoot,
+          "apps/web/node_modules/mermaid/dist/mermaid.min.js",
+        );
         if (yield* fs.exists(mermaidSource)) {
           const artifactLibsDir = path.join(clientTarget, "artifact-libs");
           yield* fs.makeDirectory(artifactLibsDir, { recursive: true });
           yield* fs.copyFile(mermaidSource, path.join(artifactLibsDir, "mermaid.min.js"));
           yield* Effect.log("[cli] Bundled offline artifact-libs/mermaid.min.js");
         }
+        // Pages name SpecWithCode's own libraries as specwithcode:<name>; publishing inlines them.
+        const ownLibsDir = path.join(clientTarget, "artifact-libs");
+        yield* fs.makeDirectory(ownLibsDir, { recursive: true });
+        yield* fs.copyFile(
+          path.join(serverDir, "src/htmlRender/artifact-libs/motion-deck.js"),
+          path.join(ownLibsDir, "motion-deck.js"),
+        );
+        const threeCommonJs = NodeModule.createRequire(
+          path.join(repoRoot, "packages/client-runtime/package.json"),
+        ).resolve("three");
+        const wrappedThree = wrapThreeCommonJs(yield* fs.readFileString(threeCommonJs));
+        const minifiedThree = yield* Effect.promise(() =>
+          import("vite-plus").then(({ minify }) =>
+            minify("three.js", wrappedThree, { compress: true, mangle: true }),
+          ),
+        );
+        if (minifiedThree.errors.length > 0) {
+          return yield* new ServerCliArtifactLibraryMinifyError({
+            library: "three.js",
+            detail: minifiedThree.errors[0]?.message ?? "unknown error",
+          });
+        }
+        const threeNotice = wrappedThree.slice(0, wrappedThree.indexOf("\n") + 1);
+        yield* fs.writeFileString(
+          path.join(ownLibsDir, "three.js"),
+          minifiedThree.code.startsWith("/*!")
+            ? minifiedThree.code
+            : threeNotice + minifiedThree.code,
+        );
+        yield* Effect.log("[cli] Bundled artifact-libs/three.js and artifact-libs/motion-deck.js");
         yield* applyDevelopmentIconOverrides(repoRoot, serverDir);
         yield* Effect.log("[cli] Bundled web app into dist/client");
       } else {
@@ -139,7 +179,8 @@ const buildExeCmd = Command.make(
         "Cross-build for <platform>-<arch> in nodejs.org naming (for example darwin-x64); defaults to the host.",
       ),
       Flag.optional,
-    )},
+    ),
+  },
   (config) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

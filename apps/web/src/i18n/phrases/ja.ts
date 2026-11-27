@@ -3197,12 +3197,18 @@ export const ja: PhraseCatalog = {
     "モデルと機能はこのランタイムから取得されます。ローカル、サブスクリプション、API のモデルでは、ツール、画像、課金への対応が異なる場合があります。",
   "Made a visual": "ビジュアルを作成しました",
   "Loading visual…": "ビジュアルを読み込み中…",
-  "Interactive report": "インタラクティブレポート",
+  Report: "レポート",
+  "Earlier version. The newest is further down.":
+    "以前のバージョンです。最新版はこの下にあります。",
+  "Motion presentation": "モーションプレゼンテーション",
+  Play: "再生",
+  "Plays full size with sound. Press Escape to close.":
+    "音声付きで全面表示します。Escape キーで閉じます。",
   "Open report": "レポートを開く",
   "Open in reader": "リーダーで開く",
   "Loading report…": "レポートを読み込み中…",
-  "Open the report to explore its diagrams, details and evidence.":
-    "レポートを開いて図、詳細、根拠を確認してください。",
+  "A preview. Open the report to click its links, tabs and evidence files.":
+    "プレビューです。リンク、タブ、証拠ファイルを使うにはレポートを開いてください。",
   "Stop command": "コマンドを停止",
   "Run command": "コマンドを実行",
   "Stop the command": "コマンドを停止",

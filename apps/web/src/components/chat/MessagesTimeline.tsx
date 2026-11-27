@@ -3622,6 +3622,7 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
         htmlRender={row.htmlRender}
         threadRef={ctx.threadRef}
         cwd={ctx.markdownCwd}
+        replaced={row.replaced === true}
       />
     </div>
   );

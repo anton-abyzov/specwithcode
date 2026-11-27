@@ -3213,12 +3213,18 @@ export const es: PhraseCatalog = {
     "Los modelos y sus capacidades vienen de este runtime. Los modelos locales, de suscripción y de API pueden admitir herramientas, imágenes y facturación de forma distinta.",
   "Made a visual": "Creó un visual",
   "Loading visual…": "Cargando visual…",
-  "Interactive report": "Informe interactivo",
+  Report: "Informe",
+  "Earlier version. The newest is further down.":
+    "Versión anterior. La más reciente está más abajo.",
+  "Motion presentation": "Presentación animada",
+  Play: "Reproducir",
+  "Plays full size with sound. Press Escape to close.":
+    "Se reproduce a tamaño completo con sonido. Pulsa Escape para cerrar.",
   "Open report": "Abrir informe",
   "Open in reader": "Abrir en el lector",
   "Loading report…": "Cargando informe…",
-  "Open the report to explore its diagrams, details and evidence.":
-    "Abre el informe para explorar sus diagramas, detalles y pruebas.",
+  "A preview. Open the report to click its links, tabs and evidence files.":
+    "Una vista previa. Abre el informe para usar sus enlaces, pestañas y archivos de evidencia.",
   "Stop command": "Detener comando",
   "Run command": "Ejecutar comando",
   "Stop the command": "Detener el comando",
