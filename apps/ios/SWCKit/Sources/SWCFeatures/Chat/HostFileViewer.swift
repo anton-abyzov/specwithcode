@@ -152,6 +152,11 @@ struct HostFileViewer: View {
 
   /// Text from the machine, at most 2 MB, over a session that keeps no cookies or cache.
   private static func fetchText(_ url: URL) async throws -> String {
+    // Only the sample data's engine hands out a file URL.
+    if url.isFileURL {
+      let data = try Data(contentsOf: url)
+      return String(decoding: data, as: UTF8.self)
+    }
     let session = URLSession(configuration: .ephemeral)
     defer { session.finishTasksAndInvalidate() }
     let limit = 2 * 1024 * 1024
@@ -209,7 +214,11 @@ private struct HostFileWebView: UIViewRepresentable {
     view.allowsBackForwardNavigationGestures = false
     view.isOpaque = false
     view.backgroundColor = .clear
-    view.load(URLRequest(url: url))
+    if url.isFileURL {
+      view.loadFileURL(url, allowingReadAccessTo: url)
+    } else {
+      view.load(URLRequest(url: url))
+    }
     return view
   }
 

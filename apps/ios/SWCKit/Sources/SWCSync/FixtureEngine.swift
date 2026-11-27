@@ -66,6 +66,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// The Office Mac has two devices waiting and this phone may allow them; the
   /// build box answers like an older server, which has no such list.
   case allowDevice = "allow-device"
+  /// Replies with Mermaid diagrams and links to a saved report, a page, a
+  /// sheet, a picture and a whiteboard, served from a temporary folder, for
+  /// checks of how the phone shows what agents hand over.
+  case artifacts
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
   var isOnePercy: Bool { self == .onePercy || self == .onePercyAway }
@@ -911,6 +915,7 @@ public final class FixtureEngine: AppEngine {
   private func initialTranscript(for target: ChatTarget) -> [TranscriptRow] {
     if scenario == .checkOutput { return Self.checkOutputRows.map { row("check-output", $0) } }
     if scenario == .readability { return Self.readabilityRows.map { row("readability", $0) } }
+    if scenario == .artifacts { return FixtureArtifacts.rows.map { row("artifacts", $0) } }
     switch target {
     case .aide:
       let rows = scenario.isOnePercy ? FixtureOnePercy.transcript : scenario == .long ? FixtureSample.longAideTranscript : FixtureSample.aideTranscript
