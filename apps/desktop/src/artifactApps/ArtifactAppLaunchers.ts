@@ -22,11 +22,24 @@ export type LauncherFile =
       readonly contents: string;
       readonly mode: number;
     }
-  | { readonly relativePath: string; readonly kind: "app-icon" };
+  | { readonly relativePath: string; readonly kind: "app-icon" }
+  /** A copy of Electron's `app_shim_loader`, which runs the page as its own app. */
+  | { readonly relativePath: string; readonly kind: "shim-loader" };
+
+/** Where a shim launcher connects: the running app and the name of its shim server. */
+export interface ArtifactAppShimHost {
+  readonly hostAppPath: string;
+  readonly hostBundleId: string;
+  readonly serverName: string;
+}
+
+/** What a shim passes when it has to start SpecWithCode itself. */
+export const ARTIFACT_APP_SHIM_LAUNCH_ARGUMENT = "--specwithcode-artifact-app-launch";
 
 const DEFAULT_MINIMUM_SYSTEM_VERSION = "12.0";
 const BUNDLE_ID_PREFIX_PATTERN = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$/;
 const SYSTEM_VERSION_PATTERN = /^[0-9]+(\.[0-9]+){0,2}$/;
+const SHIM_SERVER_NAME_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const APP_USER_MODEL_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 // oxlint-disable-next-line no-control-regex -- Paths written into launchers must not carry control characters.
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f\u2028\u2029]/u;
@@ -71,10 +84,31 @@ function singleQuoteShell(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function plistEntry(key: string, value: string | boolean): string {
+function plistEntry(key: string, value: string | boolean | ReadonlyArray<string>): string {
   const rendered =
-    typeof value === "boolean" ? `<${value}/>` : `<string>${escapeXml(value)}</string>`;
+    typeof value === "boolean"
+      ? `<${value}/>`
+      : typeof value === "string"
+        ? `<string>${escapeXml(value)}</string>`
+        : [
+            "<array>",
+            ...value.map((item) => `\t\t<string>${escapeXml(item)}</string>`),
+            "\t</array>",
+          ].join("\n");
   return `\t<key>${escapeXml(key)}</key>\n\t${rendered}`;
+}
+
+function assertShimHost(shim: ArtifactAppShimHost): void {
+  assertPlainPath(shim.hostAppPath, "host app path");
+  if (!shim.hostAppPath.startsWith("/") || !shim.hostAppPath.endsWith(".app")) {
+    throw new Error("The host must be an absolute path to an app bundle.");
+  }
+  if (!BUNDLE_ID_PREFIX_PATTERN.test(shim.hostBundleId)) {
+    throw new Error("Invalid host bundle identifier.");
+  }
+  if (!SHIM_SERVER_NAME_PATTERN.test(shim.serverName)) {
+    throw new Error("Invalid shim server name.");
+  }
 }
 
 export function macArtifactAppBundle(input: {
@@ -83,6 +117,8 @@ export function macArtifactAppBundle(input: {
   readonly launchUrl: string;
   readonly bundleIdPrefix: string;
   readonly minimumSystemVersion?: string;
+  /** Builds the bundle around Electron's shim loader, so the page runs as its own app. */
+  readonly shim?: ArtifactAppShimHost;
 }): { readonly bundleName: string; readonly files: ReadonlyArray<LauncherFile> } {
   assertLaunchUrl(input.installId, input.launchUrl);
   assertName(input.name);
@@ -93,6 +129,9 @@ export function macArtifactAppBundle(input: {
   if (!SYSTEM_VERSION_PATTERN.test(minimumSystemVersion)) {
     throw new Error("Invalid minimum system version.");
   }
+  const shim = input.shim;
+  if (shim !== undefined) assertShimHost(shim);
+  const executable = shim === undefined ? "launcher" : "page";
 
   const infoPlist = [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -101,7 +140,7 @@ export function macArtifactAppBundle(input: {
     "<dict>",
     plistEntry("CFBundleDevelopmentRegion", "en"),
     plistEntry("CFBundleDisplayName", input.name),
-    plistEntry("CFBundleExecutable", "launcher"),
+    plistEntry("CFBundleExecutable", executable),
     plistEntry("CFBundleIconFile", "AppIcon"),
     plistEntry("CFBundleIdentifier", `${input.bundleIdPrefix}.artifactapp.${input.installId}`),
     plistEntry("CFBundleInfoDictionaryVersion", "6.0"),
@@ -113,10 +152,32 @@ export function macArtifactAppBundle(input: {
     plistEntry("LSUIElement", false),
     plistEntry("NSHighResolutionCapable", true),
     plistEntry("SpecWithCodeArtifactAppInstallId", input.installId),
+    ...(shim === undefined
+      ? []
+      : [
+          plistEntry("ElectronAppShimHostPath", shim.hostAppPath),
+          plistEntry("ElectronAppShimHostBundleIdentifier", shim.hostBundleId),
+          plistEntry("ElectronAppShimServerName", shim.serverName),
+          plistEntry("ElectronAppShimHostArguments", [ARTIFACT_APP_SHIM_LAUNCH_ARGUMENT]),
+        ]),
     "</dict>",
     "</plist>",
     "",
   ].join("\n");
+
+  if (shim !== undefined) {
+    // The shim connects to SpecWithCode's shim server; SpecWithCode checks it and opens
+    // the page's window inside it, so the page has its own Dock icon and menu bar.
+    return {
+      bundleName: `${input.name}.app`,
+      files: [
+        { relativePath: "Contents/Info.plist", kind: "text", contents: infoPlist, mode: 0o644 },
+        { relativePath: "Contents/MacOS/page", kind: "shim-loader" },
+        { relativePath: "Contents/Resources/AppIcon.icns", kind: "app-icon" },
+        { relativePath: "Contents/PkgInfo", kind: "text", contents: "APPL????", mode: 0o644 },
+      ],
+    };
+  }
 
   // The launcher hands the install id to SpecWithCode and exits; the app owns the window.
   const launcher = [

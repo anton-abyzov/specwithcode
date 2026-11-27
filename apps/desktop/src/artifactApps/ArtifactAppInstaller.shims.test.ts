@@ -1,0 +1,206 @@
+import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
+
+vi.mock("electron", () => ({}));
+
+import type * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
+import { harness, hostPath, input, withHome } from "./artifactAppInstallerTestHarness.ts";
+
+const shimConfig = (loaderPath: string): ArtifactAppInstaller.ArtifactAppShimConfig => ({
+  loaderPath,
+  hostAppPath: "/Applications/SpecWithCode.app",
+  hostBundleId: "com.specweave.studio",
+  serverName: "com.specweave.studio.artifact-apps",
+  minimumSystemVersion: "13.0",
+});
+
+const writeLoader = (fileSystem: FileSystem.FileSystem, path: Path.Path, home: string) =>
+  Effect.gen(function* () {
+    const loaderPath = path.join(home, "app_shim_loader");
+    yield* fileSystem.writeFileString(loaderPath, "MACH-O LOADER");
+    return loaderPath;
+  });
+
+describe("ArtifactAppInstaller with app shims", () => {
+  it.effect("writes a signed shim bundle, keeps its hash privately and starts it", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const appShim = shimConfig(yield* writeLoader(fileSystem, path, home));
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        assert.equal(result.status, "installed");
+        if (result.status !== "installed") return;
+        const bundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Morning dashboard.app",
+        );
+        // The executable is the loader itself; there is no script.
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(bundle, "Contents", "MacOS", "page")),
+          "MACH-O LOADER",
+        );
+        assert.isFalse(
+          yield* fileSystem.exists(path.join(bundle, "Contents", "MacOS", "launcher")),
+        );
+        const plist = yield* fileSystem.readFileString(path.join(bundle, "Contents", "Info.plist"));
+        assert.include(plist, "<key>ElectronAppShimServerName</key>");
+        assert.include(plist, "<string>/Applications/SpecWithCode.app</string>");
+        // Signed and hashed before it was moved into place, then started instead of a window here.
+        assert.equal(h.calls.codesigned.length, 1);
+        assert.deepEqual(h.calls.cdHashReads, h.calls.codesigned);
+        assert.deepEqual(h.calls.openedApps, [hostPath(bundle)]);
+        assert.deepEqual(h.opened, []);
+        const record = yield* h.shimRecords.get(result.app.installId);
+        assert.deepEqual(
+          record,
+          Option.some({ ...appShimWithoutLoader(appShim), cdHash: "a".repeat(39) + "1" }),
+        );
+        // The client record carries no paths or hashes.
+        assert.notProperty(result.app, "cdHash");
+        assert.deepEqual(
+          yield* h.installer.shimInstallFor(bundle),
+          Option.some({ installId: result.app.installId, cdHash: "a".repeat(39) + "1" }),
+        );
+        assert.deepEqual(
+          yield* h.installer.shimInstallFor(path.join(home, "Elsewhere.app")),
+          Option.none(),
+        );
+
+        // Installing the same page again starts the app again.
+        const again = yield* h.installer.install(input);
+        assert.equal(again.status, "already-installed");
+        assert.equal(h.calls.openedApps.length, 2);
+        assert.isTrue(yield* h.installer.launch(result.app.installId));
+        assert.equal(h.calls.openedApps.length, 3);
+
+        // A bundle whose plist was changed is no longer this install's.
+        yield* fileSystem.writeFileString(
+          path.join(bundle, "Contents", "Info.plist"),
+          plist.replace("SpecWithCode.app", "Other.app"),
+        );
+        assert.deepEqual(yield* h.installer.shimInstallFor(bundle), Option.none());
+        assert.isFalse(yield* h.installer.launch(result.app.installId));
+      }),
+    ),
+  );
+
+  it.effect("fails the install and leaves nothing when the hash cannot be read", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const appShim = shimConfig(yield* writeLoader(fileSystem, path, home));
+        const h = yield* harness(
+          { platform: "darwin", appShim, fileSystem, cdHashFails: true },
+          home,
+          recordsPath,
+        );
+        const result = yield* h.installer.install(input);
+        assert.equal(result.status, "failed");
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => !entry.startsWith(".")),
+          [],
+        );
+        assert.deepEqual(yield* h.records.list, []);
+        assert.deepEqual(h.calls.openedApps, []);
+      }),
+    ),
+  );
+
+  it.effect("uninstall forgets the shim's hash", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const appShim = shimConfig(yield* writeLoader(fileSystem, path, home));
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        if (result.status !== "installed") return assert.fail(result.status);
+        assert.isTrue(yield* h.installer.uninstall(result.app.installId));
+        assert.deepEqual(yield* h.shimRecords.get(result.app.installId), Option.none());
+        assert.deepEqual(h.closed, [result.app.installId]);
+      }),
+    ),
+  );
+
+  it.effect("upgrades an owned script launcher to a shim and leaves a changed one alone", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        // Installed by a build without shims.
+        const before = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const first = yield* before.installer.install(input);
+        const second = yield* before.installer.install({ ...input, title: "Evening board" });
+        if (first.status !== "installed" || second.status !== "installed") {
+          return assert.fail("not installed");
+        }
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const firstBundle = path.join(folder, "Morning dashboard.app");
+        const secondScript = path.join(
+          folder,
+          "Evening board.app",
+          "Contents",
+          "MacOS",
+          "launcher",
+        );
+        yield* fileSystem.writeFileString(secondScript, "#!/bin/sh\nexec /bin/sh -c 'evil'\n");
+
+        const appShim = shimConfig(yield* writeLoader(fileSystem, path, home));
+        const after = yield* harness(
+          { platform: "darwin", appShim, fileSystem },
+          home,
+          recordsPath,
+        );
+        yield* after.installer.upgradeLaunchers;
+
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(firstBundle, "Contents", "MacOS", "page")),
+          "MACH-O LOADER",
+        );
+        assert.isFalse(
+          yield* fileSystem.exists(path.join(firstBundle, "Contents", "MacOS", "launcher")),
+        );
+        assert.isTrue(Option.isSome(yield* after.shimRecords.get(first.app.installId)));
+        assert.isTrue(Option.isSome(yield* after.installer.shimInstallFor(firstBundle)));
+        // The old bundle went to the Trash from its private removal name.
+        assert.equal(after.calls.trashed.length, 1);
+        assert.include(after.calls.trashed[0]!, ".removing-");
+        // Nothing is left under a removal name, so uninstall still works.
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.includes(".removing-")),
+          [],
+        );
+        // The changed bundle was not rebuilt or recorded.
+        assert.include(yield* fileSystem.readFileString(secondScript), "evil");
+        assert.deepEqual(yield* after.shimRecords.get(second.app.installId), Option.none());
+
+        // A second pass has nothing to do.
+        yield* after.installer.upgradeLaunchers;
+        assert.equal(after.calls.trashed.length, 1);
+        assert.isTrue(yield* after.installer.uninstall(first.app.installId));
+      }),
+    ),
+  );
+
+  it.effect("does nothing off macOS or without a loader", () =>
+    withHome(({ home, recordsPath, fileSystem }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const result = yield* h.installer.install(input);
+        assert.equal(result.status, "installed");
+        yield* h.installer.upgradeLaunchers;
+        assert.deepEqual(h.calls.cdHashReads, []);
+        // Without a shim the page opens in a window here, as before.
+        assert.equal(h.opened.length, 1);
+        assert.deepEqual(h.calls.openedApps, []);
+      }),
+    ),
+  );
+});
+
+function appShimWithoutLoader(config: ArtifactAppInstaller.ArtifactAppShimConfig) {
+  const { loaderPath: _loaderPath, ...rest } = config;
+  return rest;
+}

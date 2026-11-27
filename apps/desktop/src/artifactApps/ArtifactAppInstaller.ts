@@ -13,7 +13,6 @@ import type {
   DesktopArtifactAppInstallInput,
   DesktopArtifactAppInstallResult,
 } from "@specweave-studio/contracts";
-import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,14 +23,9 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Electron from "electron";
 
-import * as DesktopAssets from "../app/DesktopAssets.ts";
-import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
-import { getDesktopScheme } from "../electron/ElectronProtocol.ts";
 import {
   artifactAppInstallFolders,
   linuxArtifactAppDesktopEntry,
@@ -42,20 +36,35 @@ import {
 import { resolveArtifactAppName } from "./ArtifactAppName.ts";
 import * as ArtifactAppGrants from "./ArtifactAppGrants.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
+import * as ArtifactAppShimRecords from "./ArtifactAppShimRecords.ts";
 import {
   artifactAppLaunchUrl,
   artifactAppUserModelId,
   isArtifactAppInstallId,
   newArtifactAppInstallId,
 } from "./ArtifactAppUrl.ts";
+import {
+  ArtifactAppInstallerHost,
+  type ArtifactAppHostFolders,
+  type ArtifactAppHostIcons,
+} from "./ArtifactAppInstallerHost.ts";
 import * as ArtifactAppWindows from "./ArtifactAppWindows.ts";
+
+export {
+  ArtifactAppInstallerHost,
+  layerElectronHost,
+  type ArtifactAppHostFolders,
+  type ArtifactAppHostIcons,
+  type ArtifactAppShimConfig,
+  type ArtifactAppShortcutReadBack,
+} from "./ArtifactAppInstallerHost.ts";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-artifact-app-installer");
 
 const FOLDER_MODE = 0o755;
 const LINUX_ENTRY_MODE = 0o644;
 const ICON_MODE = 0o644;
-const COMMAND_TIMEOUT = "20 seconds";
+const LOADER_MODE = 0o755;
 // oxlint-disable-next-line no-control-regex -- Arguments written into a shortcut must not carry quotes or control characters.
 const UNSAFE_SHORTCUT_ARGUMENT = /["\u0000-\u001f\u007f]/u;
 
@@ -94,6 +103,7 @@ class ArtifactAppLauncherWriteError extends Schema.TaggedError<ArtifactAppLaunch
       "write-shortcut",
       "remove-launcher",
       "read-launcher",
+      "copy-loader",
     ]),
     path: Schema.String,
     cause: Schema.Defect(),
@@ -102,99 +112,6 @@ class ArtifactAppLauncherWriteError extends Schema.TaggedError<ArtifactAppLaunch
   override get message(): string {
     return `Installed page launcher step ${this.operation} failed at ${this.path}.`;
   }
-}
-
-class ArtifactAppHostCommandError extends Schema.TaggedError<ArtifactAppHostCommandError>()(
-  "ArtifactAppHostCommandError",
-  {
-    command: Schema.Literals(["codesign", "update-desktop-database"]),
-    exitCode: Schema.optionalKey(Schema.Number),
-    cause: Schema.optionalKey(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    const exit = this.exitCode === undefined ? "" : ` with exit code ${this.exitCode}`;
-    return `${this.command} failed${exit}.`;
-  }
-}
-
-const isHostCommandError = Schema.is(ArtifactAppHostCommandError);
-
-class ArtifactAppTrashError extends Schema.TaggedError<ArtifactAppTrashError>()(
-  "ArtifactAppTrashError",
-  { path: Schema.String, cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return `Moving ${this.path} to the Trash failed.`;
-  }
-}
-
-export interface ArtifactAppHostFolders {
-  readonly home: string;
-  readonly appData: string;
-  readonly desktop: string;
-}
-
-export interface ArtifactAppHostIcons {
-  readonly macIcns: Option.Option<string>;
-  readonly windowsIcon: Option.Option<string>;
-  readonly linuxIcon: Option.Option<string>;
-}
-
-/**
- * What the installer needs from the operating system and Electron. A port so
- * tests install into a private temp home with the platform, dialogs, code
- * signing and shortcuts faked; the app uses `layerElectronHost`.
- */
-export class ArtifactAppInstallerHost extends Context.Service<
-  ArtifactAppInstallerHost,
-  {
-    readonly platform: NodeJS.Platform;
-    /** "SpecWithCode", or the development build's name; the folder is "<displayName> Apps". */
-    readonly displayName: string;
-    readonly scheme: string;
-    readonly bundleIdPrefix: string;
-    readonly appUserModelId: string;
-    readonly linuxApplicationsDir: string;
-    /** What a Windows shortcut starts; an unpackaged build also passes its app folder first. */
-    readonly windowsExecutable: {
-      readonly path: string;
-      readonly leadingArgs: ReadonlyArray<string>;
-    };
-    readonly folders: Effect.Effect<ArtifactAppHostFolders>;
-    readonly icons: Effect.Effect<ArtifactAppHostIcons>;
-    /**
-     * Names of apps already on the computer, so a page can never pass for one.
-     * Best effort: a folder that cannot be read adds nothing.
-     */
-    readonly installedAppNames: Effect.Effect<ReadonlyArray<string>>;
-    /** The index of the button the person chose. */
-    readonly showMessageBox: (
-      owner: Option.Option<Electron.BrowserWindow>,
-      options: Electron.MessageBoxOptions,
-    ) => Effect.Effect<number>;
-    readonly codesign: (bundlePath: string) => Effect.Effect<void, ArtifactAppHostCommandError>;
-    readonly refreshLinuxApplications: (
-      directory: string,
-    ) => Effect.Effect<void, ArtifactAppHostCommandError>;
-    readonly writeShortcutLink: (
-      shortcutPath: string,
-      options: Electron.ShortcutDetails,
-    ) => Effect.Effect<boolean>;
-    /** What a Windows shortcut starts; none when it cannot be read. */
-    readonly readShortcut: (
-      shortcutPath: string,
-    ) => Effect.Effect<Option.Option<ArtifactAppShortcutReadBack>>;
-    readonly trashItem: (path: string) => Effect.Effect<void, ArtifactAppTrashError>;
-    readonly showItemInFolder: (path: string) => Effect.Effect<void>;
-  }
->()("@specweave-studio/desktop/artifactApps/ArtifactAppInstaller/ArtifactAppInstallerHost") {}
-
-/** The fields of a Windows shortcut that decide what it starts. */
-export interface ArtifactAppShortcutReadBack {
-  readonly target: string;
-  readonly args: string;
-  readonly appUserModelId: string;
 }
 
 export interface ArtifactAppInstallOptions {
@@ -213,6 +130,20 @@ export class ArtifactAppInstaller extends Context.Service<
     readonly uninstall: (installId: string) => Effect.Effect<boolean>;
     /** Shows the launcher in the file manager; false when it is gone. */
     readonly reveal: (installId: string) => Effect.Effect<boolean>;
+    /**
+     * The install whose shim launcher is at `bundlePath`, with the code hash it was
+     * signed with; none for any other bundle or one that is no longer this install's.
+     */
+    readonly shimInstallFor: (
+      bundlePath: string,
+    ) => Effect.Effect<Option.Option<{ readonly installId: string; readonly cdHash: string }>>;
+    /**
+     * Opens an install the way its launcher does: a shim install starts its app,
+     * which connects back; any other opens its window here.
+     */
+    readonly launch: (installId: string) => Effect.Effect<boolean>;
+    /** Rebuilds every owned macOS launcher that is not a shim for the running app as one. */
+    readonly upgradeLaunchers: Effect.Effect<void>;
   }
 >()("@specweave-studio/desktop/artifactApps/ArtifactAppInstaller") {}
 
@@ -232,12 +163,18 @@ export function artifactAppInstallConfirmation(name: string): Electron.MessageBo
 
 const GENERIC_FAILURE = "SpecWithCode could not install this page as an app. Try again.";
 
+type LauncherLocationShim = Option.Option<
+  Omit<ArtifactAppShimRecords.ArtifactAppShimRecord, "cdHash">
+>;
+
 type LauncherLocation =
   | {
       readonly kind: "mac-bundle";
       readonly folder: string;
       readonly path: string;
       readonly files: ReadonlyArray<LauncherFile>;
+      /** The shim the bundle was built for; none for a script launcher. */
+      readonly shim: LauncherLocationShim;
     }
   | {
       readonly kind: "windows-shortcuts";
@@ -274,6 +211,7 @@ const make = Effect.gen(function* () {
   const host = yield* ArtifactAppInstallerHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const records = yield* ArtifactAppRecords.ArtifactAppRecords;
+  const shimRecords = yield* ArtifactAppShimRecords.ArtifactAppShimRecords;
   const grants = yield* ArtifactAppGrants.ArtifactAppGrants;
   const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
   // One install at a time, so the same page asked twice cannot be installed twice.
@@ -297,10 +235,21 @@ const make = Effect.gen(function* () {
       displayName: host.displayName,
     });
 
+  // What a new macOS launcher is built for now: the running app's shim, when it has one.
+  const currentShim = Option.map(host.appShim, (config) => ({
+    hostAppPath: config.hostAppPath,
+    hostBundleId: config.hostBundleId,
+    serverName: config.serverName,
+    minimumSystemVersion: config.minimumSystemVersion,
+  }));
+
   // Throws when the name or id is not one a generator accepts (a hand-edited record).
+  // A macOS launcher is rebuilt from `shim`, the one it was written for, so an owned
+  // bundle is recognised exactly; none means a script launcher.
   const locateLauncher = (
     app: Pick<DesktopArtifactApp, "installId" | "name">,
     context: LauncherContext,
+    shim: LauncherLocationShim = Option.none(),
   ): LauncherLocation => {
     const launchUrl = artifactAppLaunchUrl(host.scheme, app.installId);
     if (context.platform === "darwin") {
@@ -310,12 +259,24 @@ const make = Effect.gen(function* () {
         name: app.name,
         launchUrl,
         bundleIdPrefix: host.bundleIdPrefix,
+        ...Option.match(shim, {
+          onNone: () => ({}),
+          onSome: (value) => ({
+            minimumSystemVersion: value.minimumSystemVersion,
+            shim: {
+              hostAppPath: value.hostAppPath,
+              hostBundleId: value.hostBundleId,
+              serverName: value.serverName,
+            },
+          }),
+        }),
       });
       return {
         kind: "mac-bundle",
         folder,
         path: rules.join(folder, bundle.bundleName),
         files: bundle.files,
+        shim,
       };
     }
     if (context.platform === "win32") {
@@ -360,10 +321,20 @@ const make = Effect.gen(function* () {
     };
   };
 
+  // The shim an install's launcher was written for, from the private shim record.
+  const recordedShim = (installId: string) =>
+    shimRecords
+      .get(installId)
+      .pipe(
+        Effect.map((record): LauncherLocationShim =>
+          Option.map(record, ({ cdHash: _cdHash, ...shim }) => shim),
+        ),
+      );
+
   const locateRecorded = (app: DesktopArtifactApp, context: LauncherContext) =>
-    Effect.suspend(() => {
+    Effect.flatMap(recordedShim(app.installId), (shim) => {
       try {
-        return Effect.succeedSome(locateLauncher(app, context));
+        return Effect.succeedSome(locateLauncher(app, context, shim));
       } catch {
         return logWarning("installed page record does not name a valid launcher", {
           installId: app.installId,
@@ -525,6 +496,84 @@ const make = Effect.gen(function* () {
       }
     });
 
+  // A private staging folder beside the apps folder, so Finder never shows a half-written app.
+  const stagingFolder = (location: { readonly folder: string }, installId: string) =>
+    rules.join(rules.dirname(location.folder), `.${host.displayName} Apps staging ${installId}`);
+
+  /**
+   * Builds the bundle in `staging` and signs it. A shim bundle must be signed, and
+   * its code hash is returned so a connecting shim can be checked against it; a
+   * script launcher that could not be signed still opens.
+   */
+  const buildMacBundle = Effect.fn("desktop.artifactApps.buildMacBundle")(function* (
+    location: Extract<LauncherLocation, { kind: "mac-bundle" }>,
+    staging: string,
+    icons: ArtifactAppHostIcons,
+  ) {
+    const stagedBundle = rules.join(staging, rules.basename(location.path));
+    yield* fileSystem
+      .makeDirectory(stagedBundle, { recursive: true, mode: FOLDER_MODE })
+      .pipe(Effect.mapError(writeError("create-folder", stagedBundle)));
+    const directories = new Set<string>([stagedBundle]);
+    for (const file of location.files) {
+      const target = rules.join(stagedBundle, file.relativePath);
+      const directory = rules.dirname(target);
+      directories.add(directory);
+      yield* fileSystem
+        .makeDirectory(directory, { recursive: true, mode: FOLDER_MODE })
+        .pipe(Effect.mapError(writeError("create-folder", directory)));
+      if (file.kind === "text") {
+        yield* fileSystem
+          .writeFileString(target, file.contents, { mode: file.mode })
+          .pipe(Effect.mapError(writeError("write-file", target)));
+        // The create mode is masked by the umask; the launcher must end up executable.
+        yield* fileSystem
+          .chmod(target, file.mode)
+          .pipe(Effect.mapError(writeError("set-mode", target)));
+      } else if (file.kind === "shim-loader") {
+        const loader = Option.map(host.appShim, (config) => config.loaderPath);
+        if (Option.isNone(loader)) {
+          return yield* new ArtifactAppLauncherWriteError({
+            operation: "copy-loader",
+            path: target,
+            cause: new Error("This build has no app shim loader."),
+          });
+        }
+        yield* fileSystem
+          .copyFile(loader.value, target)
+          .pipe(
+            Effect.andThen(fileSystem.chmod(target, LOADER_MODE)),
+            Effect.mapError(writeError("copy-loader", target)),
+          );
+      } else if (Option.isSome(icons.macIcns)) {
+        yield* fileSystem
+          .copyFile(icons.macIcns.value, target)
+          .pipe(
+            Effect.andThen(fileSystem.chmod(target, ICON_MODE)),
+            Effect.mapError(writeError("copy-icon", target)),
+          );
+      }
+    }
+    for (const directory of directories) {
+      yield* fileSystem
+        .chmod(directory, FOLDER_MODE)
+        .pipe(Effect.mapError(writeError("set-mode", directory)));
+    }
+    if (Option.isSome(location.shim)) {
+      // The hash covers the plist and the loader; SpecWithCode trusts only a process with it.
+      yield* host.codesign(stagedBundle);
+      return { stagedBundle, cdHash: Option.some(yield* host.readCdHash(stagedBundle)) };
+    }
+    // Ad-hoc signing keeps Gatekeeper from calling the bundle damaged; an unsigned one still opens.
+    yield* host.codesign(stagedBundle).pipe(
+      Effect.catchTags({
+        ArtifactAppHostCommandError: (error) =>
+          logWarning("installed page bundle was not signed", { error: error.message }),
+      }),
+    );
+    return { stagedBundle, cdHash: Option.none<string>() };
+  });
+
   const writeMacBundle = Effect.fn("desktop.artifactApps.writeMacBundle")(function* (
     location: Extract<LauncherLocation, { kind: "mac-bundle" }>,
     installId: string,
@@ -532,58 +581,14 @@ const make = Effect.gen(function* () {
   ) {
     yield* ensureOwnedFolder(location.folder);
     yield* refuseExisting(location.path);
-    // Built beside the folder and moved in whole, so Finder never shows a half-written app.
-    const staging = rules.join(
-      rules.dirname(location.folder),
-      `.${host.displayName} Apps staging ${installId}`,
-    );
-    const stagedBundle = rules.join(staging, rules.basename(location.path));
-    const build = Effect.gen(function* () {
+    const staging = stagingFolder(location, installId);
+    return yield* Effect.gen(function* () {
+      const built = yield* buildMacBundle(location, staging, icons);
       yield* fileSystem
-        .makeDirectory(stagedBundle, { recursive: true, mode: FOLDER_MODE })
-        .pipe(Effect.mapError(writeError("create-folder", stagedBundle)));
-      const directories = new Set<string>([stagedBundle]);
-      for (const file of location.files) {
-        const target = rules.join(stagedBundle, file.relativePath);
-        const directory = rules.dirname(target);
-        directories.add(directory);
-        yield* fileSystem
-          .makeDirectory(directory, { recursive: true, mode: FOLDER_MODE })
-          .pipe(Effect.mapError(writeError("create-folder", directory)));
-        if (file.kind === "text") {
-          yield* fileSystem
-            .writeFileString(target, file.contents, { mode: file.mode })
-            .pipe(Effect.mapError(writeError("write-file", target)));
-          // The create mode is masked by the umask; the launcher must end up executable.
-          yield* fileSystem
-            .chmod(target, file.mode)
-            .pipe(Effect.mapError(writeError("set-mode", target)));
-        } else if (Option.isSome(icons.macIcns)) {
-          yield* fileSystem
-            .copyFile(icons.macIcns.value, target)
-            .pipe(
-              Effect.andThen(fileSystem.chmod(target, ICON_MODE)),
-              Effect.mapError(writeError("copy-icon", target)),
-            );
-        }
-      }
-      for (const directory of directories) {
-        yield* fileSystem
-          .chmod(directory, FOLDER_MODE)
-          .pipe(Effect.mapError(writeError("set-mode", directory)));
-      }
-      // Ad-hoc signing keeps Gatekeeper from calling the bundle damaged; an unsigned one still opens.
-      yield* host.codesign(stagedBundle).pipe(
-        Effect.catchTags({
-          ArtifactAppHostCommandError: (error) =>
-            logWarning("installed page bundle was not signed", { error: error.message }),
-        }),
-      );
-      yield* fileSystem
-        .rename(stagedBundle, location.path)
+        .rename(built.stagedBundle, location.path)
         .pipe(Effect.mapError(writeError("move-into-place", location.path)));
-    });
-    yield* build.pipe(
+      return built.cdHash;
+    }).pipe(
       Effect.ensuring(
         fileSystem.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore),
       ),
@@ -650,9 +655,9 @@ const make = Effect.gen(function* () {
       case "mac-bundle":
         return writeMacBundle(location, installId, icons);
       case "windows-shortcuts":
-        return writeWindowsShortcuts(location);
+        return writeWindowsShortcuts(location).pipe(Effect.as(Option.none<string>()));
       case "linux-entry":
-        return writeLinuxEntry(location);
+        return writeLinuxEntry(location).pipe(Effect.as(Option.none<string>()));
     }
   };
 
@@ -746,6 +751,22 @@ const make = Effect.gen(function* () {
       }
     });
 
+  // A shim install opens by starting its app, so its window is the app's; a window
+  // opened here instead would stay SpecWithCode's.
+  const openInstall = Effect.fn("desktop.artifactApps.openInstall")(function* (
+    installId: string,
+    location: LauncherLocation,
+  ) {
+    if (location.kind === "mac-bundle" && Option.isSome(location.shim)) {
+      yield* host.openApp(location.path);
+      return;
+    }
+    const opened = yield* windows.open(installId);
+    if (opened !== "opened" && opened !== "focused") {
+      yield* logWarning("installed page window did not open", { installId, result: opened });
+    }
+  });
+
   const sameInstall = (app: DesktopArtifactApp, input: DesktopArtifactAppInstallInput) =>
     app.environmentId === input.environmentId &&
     app.threadId === input.threadId &&
@@ -763,7 +784,7 @@ const make = Effect.gen(function* () {
         Option.isSome(location) &&
         (yield* launcherPathOwned(location.value, location.value.path, existing.installId))
       ) {
-        yield* windows.open(existing.installId);
+        yield* openInstall(existing.installId, location.value);
         return { status: "already-installed", app: existing } as const;
       }
       // A removal a failed Trash left pending is finished first; when it cannot
@@ -798,8 +819,19 @@ const make = Effect.gen(function* () {
     if (choice !== 0) return { status: "cancelled" } as const;
 
     const installId = newArtifactAppInstallId();
-    const location = locateLauncher({ installId, name }, context);
-    yield* writeLauncher(location, installId, context.icons);
+    const location = locateLauncher({ installId, name }, context, currentShim);
+    const cdHash = yield* writeLauncher(location, installId, context.icons);
+    // A shim launcher without its hash would be turned away, so it is taken back when the
+    // hash cannot be kept.
+    if (location.kind === "mac-bundle" && Option.isSome(location.shim)) {
+      if (Option.isNone(cdHash)) {
+        yield* removeLauncher(location, installId).pipe(Effect.ignore);
+        return failed(GENERIC_FAILURE);
+      }
+      yield* shimRecords
+        .set(installId, { ...location.shim.value, cdHash: cdHash.value })
+        .pipe(Effect.tapError(() => removeLauncher(location, installId).pipe(Effect.ignore)));
+    }
     const app: DesktopArtifactApp = {
       installId,
       name,
@@ -812,12 +844,20 @@ const make = Effect.gen(function* () {
     // A launcher without a record opens nothing, so it is taken back when the record fails.
     yield* records
       .add(app)
-      .pipe(Effect.tapError(() => removeLauncher(location, installId).pipe(Effect.ignore)));
-    yield* logInfo("installed page", { installId, platform: host.platform });
-    const opened = yield* windows.open(installId);
-    if (opened !== "opened" && opened !== "focused") {
-      yield* logWarning("installed page window did not open", { installId, result: opened });
-    }
+      .pipe(
+        Effect.tapError(() =>
+          removeLauncher(location, installId).pipe(
+            Effect.andThen(shimRecords.remove(installId)),
+            Effect.ignore,
+          ),
+        ),
+      );
+    yield* logInfo("installed page", {
+      installId,
+      platform: host.platform,
+      shim: location.kind === "mac-bundle" && Option.isSome(location.shim),
+    });
+    yield* openInstall(installId, location);
     return { status: "installed", app } as const;
   });
 
@@ -868,6 +908,15 @@ const make = Effect.gen(function* () {
       }
     }
     yield* records.remove(installId);
+    // Without its hash, no shim can connect for this install again.
+    yield* shimRecords.remove(installId).pipe(
+      Effect.catchCause((cause) =>
+        logWarning("installed page shim record could not be forgotten", {
+          installId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
     // The install is gone and its id is never used again; its answers go with it. A failure
     // here leaves answers nothing can use: every power needs a recorded install.
     yield* grants.forget(installId).pipe(
@@ -898,7 +947,152 @@ const make = Effect.gen(function* () {
     return true;
   });
 
+  // Paths compared as the system resolves them; a path that cannot be resolved is kept as is.
+  const resolvedPath = (path: string) =>
+    fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
+
+  const shimInstallFor = Effect.fn("desktop.artifactApps.shimInstallFor")(function* (
+    bundlePath: string,
+  ) {
+    if (host.platform !== "darwin") return Option.none();
+    const context = yield* launcherContext;
+    const wanted = yield* resolvedPath(bundlePath);
+    for (const app of yield* records.list) {
+      const shim = yield* shimRecords.get(app.installId);
+      if (Option.isNone(shim)) continue;
+      const location = yield* locateRecorded(app, context);
+      if (Option.isNone(location) || location.value.kind !== "mac-bundle") continue;
+      if ((yield* resolvedPath(location.value.path)) !== wanted) continue;
+      // A bundle whose plist was changed is not this install's any more, whatever it is called.
+      if (!(yield* launcherPathOwned(location.value, location.value.path, app.installId))) {
+        return Option.none();
+      }
+      return Option.some({ installId: app.installId, cdHash: shim.value.cdHash });
+    }
+    return Option.none();
+  });
+
+  const launch = Effect.fn("desktop.artifactApps.launch")(function* (installId: string) {
+    if (!isArtifactAppInstallId(installId)) return false;
+    const app = yield* records.get(installId);
+    if (Option.isNone(app)) return false;
+    const location = yield* locateRecorded(app.value, yield* launcherContext);
+    if (
+      Option.isNone(location) ||
+      !(yield* launcherPathOwned(location.value, location.value.path, installId))
+    ) {
+      return false;
+    }
+    yield* openInstall(installId, location.value);
+    return true;
+  });
+
+  const sameShim = (
+    recorded: LauncherLocationShim,
+    wanted: Omit<ArtifactAppShimRecords.ArtifactAppShimRecord, "cdHash">,
+  ) =>
+    Option.isSome(recorded) &&
+    recorded.value.hostAppPath === wanted.hostAppPath &&
+    recorded.value.hostBundleId === wanted.hostBundleId &&
+    recorded.value.serverName === wanted.serverName &&
+    recorded.value.minimumSystemVersion === wanted.minimumSystemVersion;
+
+  /**
+   * Replaces one owned launcher with a shim for the running app. The new bundle is
+   * built and signed aside first; the old one moves to a private removal name, the
+   * new one takes its place, and only then is the hash recorded and the old one
+   * trashed. A failure before the swap leaves the old launcher working.
+   */
+  const upgradeOne = Effect.fn("desktop.artifactApps.upgradeLauncher")(function* (
+    app: DesktopArtifactApp,
+    wanted: Omit<ArtifactAppShimRecords.ArtifactAppShimRecord, "cdHash">,
+    context: LauncherContext,
+  ) {
+    const current = yield* locateRecorded(app, context);
+    if (Option.isNone(current) || current.value.kind !== "mac-bundle") return;
+    if (sameShim(current.value.shim, wanted)) return;
+    if (!(yield* launcherPathOwned(current.value, current.value.path, app.installId))) {
+      yield* logInfo("left a launcher that is not this page's own; not upgraded", {
+        installId: app.installId,
+      });
+      return;
+    }
+    const next = locateLauncher(app, context, Option.some(wanted));
+    if (next.kind !== "mac-bundle") return;
+    const staging = stagingFolder(next, app.installId);
+    yield* Effect.gen(function* () {
+      const built = yield* buildMacBundle(next, staging, context.icons);
+      if (Option.isNone(built.cdHash)) return;
+      const claimed = rules.join(
+        next.folder,
+        `.${rules.basename(next.path)}.removing-${app.installId}.${newArtifactAppInstallId()}`,
+      );
+      yield* fileSystem
+        .rename(current.value.path, claimed)
+        .pipe(Effect.mapError(writeError("remove-launcher", current.value.path)));
+      yield* fileSystem.rename(built.stagedBundle, next.path).pipe(
+        Effect.mapError(writeError("move-into-place", next.path)),
+        // Nothing took the old launcher's place yet, so it goes back.
+        Effect.tapError(() => fileSystem.rename(claimed, current.value.path).pipe(Effect.ignore)),
+      );
+      yield* shimRecords.set(app.installId, { ...wanted, cdHash: built.cdHash.value });
+      // The old copy must not stay under a removal name: it is no longer what uninstall
+      // recognises, so it would hold every later uninstall back.
+      if (yield* launcherPathOwned(current.value, claimed, app.installId)) {
+        yield* host
+          .trashItem(claimed)
+          .pipe(
+            Effect.catchCause(() =>
+              fileSystem.remove(claimed, { recursive: true, force: true }).pipe(Effect.ignore),
+            ),
+          );
+      }
+      yield* logInfo("upgraded installed page launcher to an app shim", {
+        installId: app.installId,
+      });
+    }).pipe(
+      Effect.ensuring(
+        fileSystem.remove(staging, { recursive: true, force: true }).pipe(Effect.ignore),
+      ),
+    );
+  });
+
+  const upgradeLaunchers = Effect.gen(function* () {
+    if (host.platform !== "darwin" || Option.isNone(currentShim)) return;
+    const context = yield* launcherContext;
+    for (const app of yield* records.list) {
+      yield* installLock
+        .withPermits(1)(upgradeOne(app, currentShim.value, context))
+        .pipe(
+          Effect.catchCause((cause) =>
+            logWarning("installed page launcher was not upgraded", {
+              installId: app.installId,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+    }
+  }).pipe(Effect.withSpan("desktop.artifactApps.upgradeLaunchers"));
+
+  const quietly =
+    <A>(label: string, fallback: A) =>
+    <E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          logWarning(label, { cause: Cause.pretty(cause) }).pipe(Effect.as(fallback)),
+        ),
+      );
+
   return ArtifactAppInstaller.of({
+    shimInstallFor: (bundlePath) =>
+      shimInstallFor(bundlePath).pipe(
+        quietly(
+          "installed page shim lookup failed",
+          Option.none<{ readonly installId: string; readonly cdHash: string }>(),
+        ),
+      ),
+    launch: (installId) => launch(installId).pipe(quietly("installed page launch failed", false)),
+    upgradeLaunchers,
     install,
     // One install or uninstall at a time, so two never race over one launcher.
     uninstall: (installId) =>
@@ -923,228 +1117,3 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ArtifactAppInstaller, make);
-
-const makeElectronHost = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const assets = yield* DesktopAssets.DesktopAssets;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-  const runCommand = (
-    command: ArtifactAppHostCommandError["command"],
-    args: string[],
-    file: string = command,
-  ) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const handle = yield* spawner.spawn(
-          ChildProcess.make(file, args, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
-        );
-        const exitCode = Number(yield* handle.exitCode.pipe(Effect.timeout(COMMAND_TIMEOUT)));
-        if (exitCode !== 0) return yield* new ArtifactAppHostCommandError({ command, exitCode });
-      }),
-    ).pipe(
-      Effect.mapError((error) =>
-        isHostCommandError(error)
-          ? error
-          : new ArtifactAppHostCommandError({ command, cause: error }),
-      ),
-    );
-
-  const processEnvironment = yield* HostProcessEnvironment;
-  const join = environment.path.join;
-
-  const folderEntries = (folder: string) =>
-    fileSystem.readDirectory(folder).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-
-  // Entries of `folder` ending in `extension`, without it ("Notes.app" is "Notes").
-  const namesWithExtension = (folder: string, extension: string) =>
-    folderEntries(folder).pipe(
-      Effect.map((entries) =>
-        entries
-          .filter((entry) => entry.toLowerCase().endsWith(extension))
-          .map((entry) => entry.slice(0, -extension.length)),
-      ),
-    );
-
-  const ownAppsFolder = `${environment.displayName} Apps`;
-
-  // Start menu folders hold shortcuts at the top and one folder deep; this app's own folder
-  // holds installed pages, which are counted as taken names instead.
-  const startMenuNames = (programs: string) =>
-    Effect.gen(function* () {
-      const entries = yield* folderEntries(programs);
-      const nested = yield* Effect.forEach(
-        // Anything that is not a shortcut may be a folder ("Node.js" is); a file reads as empty.
-        entries.filter((entry) => !/\.(lnk|ini|url)$/iu.test(entry) && entry !== ownAppsFolder),
-        (entry) => namesWithExtension(join(programs, entry), ".lnk"),
-        { concurrency: 8 },
-      );
-      return [...(yield* namesWithExtension(programs, ".lnk")), ...nested.flat()];
-    });
-
-  // The Name= of the [Desktop Entry] group, which is what launchers show.
-  const desktopEntryName = (file: string) =>
-    fileSystem.readFileString(file).pipe(
-      Effect.map((contents) => {
-        const group = contents.split(/^\[Desktop Entry\]$/mu)[1]?.split(/^\[/mu)[0] ?? "";
-        return group.match(/^Name=(.+)$/mu)?.[1]?.trim() ?? null;
-      }),
-      Effect.orElseSucceed(() => null),
-    );
-
-  const linuxEntryNames = (folder: string) =>
-    folderEntries(folder).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(
-          entries
-            .filter((entry) => entry.endsWith(".desktop"))
-            // This app's own installed pages are taken names, not other apps.
-            .filter((entry) => !entry.startsWith("specwithcode-app-"))
-            .slice(0, 2000),
-          (entry) => desktopEntryName(join(folder, entry)),
-          { concurrency: 16 },
-        ),
-      ),
-      Effect.map((names) => names.filter((name): name is string => name !== null)),
-    );
-
-  const installedAppNames = Effect.gen(function* () {
-    const home = Electron.app.getPath("home");
-    if (environment.platform === "darwin") {
-      const folders = [
-        "/Applications",
-        "/Applications/Utilities",
-        "/System/Applications",
-        "/System/Applications/Utilities",
-        join(home, "Applications"),
-      ];
-      return (yield* Effect.forEach(folders, (folder) =>
-        namesWithExtension(folder, ".app"),
-      )).flat();
-    }
-    if (environment.platform === "win32") {
-      const startMenu = ["Microsoft", "Windows", "Start Menu", "Programs"] as const;
-      const programData = processEnvironment.ProgramData ?? processEnvironment.PROGRAMDATA;
-      const folders = [
-        join(Electron.app.getPath("appData"), ...startMenu),
-        ...(programData === undefined ? [] : [join(programData, ...startMenu)]),
-      ];
-      return (yield* Effect.forEach(folders, startMenuNames)).flat();
-    }
-    const folders = [
-      environment.linuxApplicationsDir,
-      "/usr/share/applications",
-      "/usr/local/share/applications",
-      "/var/lib/flatpak/exports/share/applications",
-      join(home, ".local", "share", "flatpak", "exports", "share", "applications"),
-    ];
-    return (yield* Effect.forEach(folders, linuxEntryNames)).flat();
-  }).pipe(
-    Effect.catchCause((cause) =>
-      logWarning("installed apps could not be listed", { cause: Cause.pretty(cause) }).pipe(
-        Effect.as<ReadonlyArray<string>>([]),
-      ),
-    ),
-  );
-
-  const iconPaths = yield* assets.iconPaths;
-  // An AppImage's own resources sit on a mount that is gone after it quits; the URL handler
-  // installs a copy of the icon beside the desktop entries, which outlives it.
-  const appImageIcon = environment.path.join(
-    environment.linuxApplicationsDir,
-    "..",
-    "icons",
-    `${environment.linuxDesktopEntryName}.png`,
-  );
-  const linuxIcon =
-    environment.platform !== "linux"
-      ? Effect.succeed(Option.none<string>())
-      : Option.isSome(environment.appImagePath)
-        ? fileSystem.exists(appImageIcon).pipe(
-            Effect.map((found) => (found ? Option.some(appImageIcon) : Option.none<string>())),
-            Effect.orElseSucceed(() => Option.none<string>()),
-          )
-        : Effect.succeed(iconPaths.png);
-
-  return ArtifactAppInstallerHost.of({
-    platform: environment.platform,
-    displayName: environment.displayName,
-    scheme: getDesktopScheme(environment.isDevelopment),
-    bundleIdPrefix: environment.appUserModelId,
-    appUserModelId: environment.appUserModelId,
-    linuxApplicationsDir: environment.linuxApplicationsDir,
-    // As for the URL scheme: the packaged app starts itself; Electron in development needs the app folder.
-    windowsExecutable: {
-      path: process.execPath,
-      leadingArgs: environment.isPackaged ? [] : [environment.appPath],
-    },
-    folders: Effect.sync(() => ({
-      home: Electron.app.getPath("home"),
-      appData: Electron.app.getPath("appData"),
-      desktop: Electron.app.getPath("desktop"),
-    })),
-    installedAppNames,
-    icons: linuxIcon.pipe(
-      Effect.map((linux) => ({
-        macIcns: iconPaths.icns,
-        // The packaged executable carries the app icon; development points at the source icon.
-        windowsIcon: environment.isPackaged ? Option.some(process.execPath) : iconPaths.ico,
-        linuxIcon: linux,
-      })),
-    ),
-    showMessageBox: (owner, options) =>
-      Effect.promise(() =>
-        (Option.isSome(owner) && !owner.value.isDestroyed()
-          ? Electron.dialog.showMessageBox(owner.value, options)
-          : Electron.dialog.showMessageBox(options)
-        ).then(
-          (result) => result.response,
-          () => options.cancelId ?? -1,
-        ),
-      ),
-    codesign: (bundlePath) =>
-      Effect.gen(function* () {
-        const codesignPath = "/usr/bin/codesign";
-        if (!(yield* fileSystem.exists(codesignPath).pipe(Effect.orElseSucceed(() => false)))) {
-          return yield* new ArtifactAppHostCommandError({ command: "codesign" });
-        }
-        yield* runCommand(
-          "codesign",
-          ["--force", "--sign", "-", "--timestamp=none", bundlePath],
-          codesignPath,
-        );
-      }),
-    refreshLinuxApplications: (directory) => runCommand("update-desktop-database", [directory]),
-    writeShortcutLink: (shortcutPath, options) =>
-      Effect.sync(() => {
-        try {
-          return Electron.shell.writeShortcutLink(shortcutPath, "create", options);
-        } catch {
-          return false;
-        }
-      }),
-    readShortcut: (shortcutPath) =>
-      Effect.sync(() => {
-        try {
-          const shortcut = Electron.shell.readShortcutLink(shortcutPath);
-          return Option.some({
-            target: shortcut.target,
-            args: shortcut.args ?? "",
-            appUserModelId: shortcut.appUserModelId ?? "",
-          });
-        } catch {
-          return Option.none<ArtifactAppShortcutReadBack>();
-        }
-      }),
-    trashItem: (path) =>
-      Effect.tryPromise({
-        try: () => Electron.shell.trashItem(path),
-        catch: (cause) => new ArtifactAppTrashError({ path, cause }),
-      }),
-    showItemInFolder: (path) => Effect.sync(() => Electron.shell.showItemInFolder(path)),
-  });
-});
-
-/** The installer's host backed by Electron, the app's assets and the system's commands. */
-export const layerElectronHost = Layer.effect(ArtifactAppInstallerHost, makeElectronHost);

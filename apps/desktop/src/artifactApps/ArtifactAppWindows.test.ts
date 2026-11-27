@@ -176,6 +176,7 @@ interface FakeWindow {
   openHandler: ((details: { url: string }) => { action: string }) | undefined;
   destroyed: boolean;
   closed: number;
+  shown: number;
 }
 
 let nextWebContentsId = 100;
@@ -195,6 +196,7 @@ const fakeWindow = (options: Electron.BrowserWindowConstructorOptions): FakeWind
     openHandler: undefined,
     destroyed: false,
     closed: 0,
+    shown: 0,
     window: undefined as unknown as Electron.BrowserWindow,
   };
   const webContents = {
@@ -215,6 +217,10 @@ const fakeWindow = (options: Electron.BrowserWindowConstructorOptions): FakeWind
       fake.loaded.push(url);
       return Promise.resolve();
     },
+    show: () => {
+      fake.shown += 1;
+    },
+    focus: () => undefined,
     close: () => {
       fake.closed += 1;
       fake.destroyed = true;
@@ -628,6 +634,77 @@ describe("ArtifactAppWindows", () => {
       // Closing one makes room.
       fixture.created[0]?.window.close();
       assert.equal(yield* windows.open(ids[10]!), "opened");
+    }).pipe(Effect.provide(fixture.layer));
+  });
+});
+
+describe("ArtifactAppWindows in app shims", () => {
+  const fakeShim = () => {
+    const shim = {
+      connected: true,
+      quits: 0,
+      isConnected: () => shim.connected,
+      quit: () => {
+        shim.quits += 1;
+        shim.connected = false;
+      },
+    };
+    return shim;
+  };
+
+  it.effect("opens the window in the shim, shows it there and quits the shim with it", () => {
+    const fixture = setup({ known: [ID] });
+    return Effect.gen(function* () {
+      const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
+      const shim = fakeShim();
+      const appShim = shim as unknown as Electron.AppShimHost;
+      assert.equal(yield* windows.open(ID, { appShim }), "opened");
+      const [fake] = fixture.created;
+      if (fake === undefined) return assert.fail("no window");
+      assert.strictEqual(fake.options.appShim, appShim);
+      // The shim's own menu owns Command-Q there.
+      assert.isUndefined(fake.contentsListeners.get("before-input-event"));
+      emit(fake.windowListeners, "ready-to-show");
+      yield* Effect.yieldNow;
+      assert.equal(fake.shown, 1);
+      // Shown by the shim, never through app.focus, which would bring SpecWithCode forward.
+      assert.deepEqual(fixture.revealed, []);
+      assert.deepEqual(yield* windows.shimInstallIds, [ID]);
+
+      // The same shim again (its Dock icon clicked) brings the window forward.
+      assert.equal(yield* windows.open(ID, { appShim }), "focused");
+      assert.equal(fixture.created.length, 1);
+      assert.equal(fake.shown, 2);
+
+      fake.window.close();
+      assert.equal(shim.quits, 1);
+      assert.deepEqual(yield* windows.shimInstallIds, []);
+    }).pipe(Effect.provide(fixture.layer));
+  });
+
+  it.effect("replaces a window open outside the shim and releases it at once", () => {
+    const fixture = setup({ known: [ID] });
+    return Effect.gen(function* () {
+      const windows = yield* ArtifactAppWindows.ArtifactAppWindows;
+      const closed: Array<string> = [];
+      yield* windows.onClosed((installId) => closed.push(installId));
+      assert.equal(yield* windows.open(ID), "opened");
+      const shim = fakeShim();
+      assert.equal(
+        yield* windows.open(ID, { appShim: shim as unknown as Electron.AppShimHost }),
+        "opened",
+      );
+      const [outside, inside] = fixture.created;
+      assert.equal(outside?.closed, 1);
+      assert.isDefined(inside?.options.appShim);
+      assert.deepEqual(closed, [ID]);
+      assert.deepEqual(yield* windows.windowForInstall(ID), Option.some(inside!.window));
+      // A shim that went away is not reopened after a restart.
+      shim.connected = false;
+      assert.deepEqual(yield* windows.shimInstallIds, []);
+      // A plain open still focuses the shim's window rather than making a second one.
+      assert.equal(yield* windows.open(ID), "focused");
+      assert.equal(fixture.created.length, 2);
     }).pipe(Effect.provide(fixture.layer));
   });
 });
