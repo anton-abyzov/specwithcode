@@ -1055,9 +1055,11 @@ const make = Effect.gen(function* () {
       const built = yield* buildMacBundle(next, staging, context.icons);
       if (Option.isNone(built.cdHash)) return Option.none<string>();
       const previous = yield* shimRecords.get(app.installId);
+      // Its own private name, apart from uninstall's: a copy uninstall could not trash
+      // must never be put back by the next start.
       const claimed = rules.join(
         next.folder,
-        `.${rules.basename(next.path)}.removing-${app.installId}.${newArtifactAppInstallId()}`,
+        `${upgradePrefix(next, app.installId)}${newArtifactAppInstallId()}`,
       );
       const putBack = fileSystem.rename(claimed, from.path).pipe(
         Effect.catchCause((cause) =>
@@ -1087,12 +1089,14 @@ const make = Effect.gen(function* () {
         );
       // The old copy must not stay under a removal name: it is no longer what uninstall
       // recognises, so it would hold every later uninstall back.
-      if (yield* launcherPathOwned(from, claimed, app.installId)) {
+      // Every copy under the upgrade name goes, including one an earlier upgrade that
+      // stopped part way left behind: only an upgrade makes them, and the Trash keeps them.
+      for (const left of yield* upgradeLeftovers(next, app.installId)) {
         yield* host
-          .trashItem(claimed)
+          .trashItem(left)
           .pipe(
             Effect.catchCause(() =>
-              fileSystem.remove(claimed, { recursive: true, force: true }).pipe(Effect.ignore),
+              fileSystem.remove(left, { recursive: true, force: true }).pipe(Effect.ignore),
             ),
           );
       }
@@ -1107,20 +1111,35 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // An upgrade stopped between its two renames leaves the launcher under its removal
+  const upgradePrefix = (location: { readonly path: string }, installId: string) =>
+    `.${rules.basename(location.path)}.upgrading-${installId}.`;
+
+  // Copies an upgrade moved aside: exactly `.<name>.app.upgrading-<installId>.<32 hex>`.
+  const upgradeLeftovers = (
+    location: Extract<LauncherLocation, { kind: "mac-bundle" }>,
+    installId: string,
+  ) =>
+    fileSystem.readDirectory(location.folder).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.map((entries) => {
+        const prefix = upgradePrefix(location, installId);
+        return entries
+          .filter(
+            (entry) =>
+              entry.startsWith(prefix) && /^[0-9a-f]{32}$/.test(entry.slice(prefix.length)),
+          )
+          .map((entry) => rules.join(location.folder, entry));
+      }),
+    );
+
+  // An upgrade stopped between its two renames leaves the launcher under its upgrade
   // name and nothing in its place; it goes back before anything else looks at it.
   const restoreInterruptedLauncher = Effect.fn("desktop.artifactApps.restoreInterruptedLauncher")(
     function* (location: Extract<LauncherLocation, { kind: "mac-bundle" }>, installId: string) {
       if (yield* fileSystem.exists(location.path).pipe(Effect.orElseSucceed(() => true))) return;
-      const prefix = `.${rules.basename(location.path)}.removing-${installId}.`;
-      const entries = yield* fileSystem
-        .readDirectory(location.folder)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      const left = entries.find((entry) => entry.startsWith(prefix));
+      const left = (yield* upgradeLeftovers(location, installId))[0];
       if (left === undefined) return;
-      yield* fileSystem
-        .rename(rules.join(location.folder, left), location.path)
-        .pipe(Effect.ignore);
+      yield* fileSystem.rename(left, location.path).pipe(Effect.ignore);
       yield* logInfo("put back a launcher an interrupted upgrade left aside", { installId });
     },
   );

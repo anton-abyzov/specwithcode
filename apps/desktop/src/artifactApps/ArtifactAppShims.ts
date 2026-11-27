@@ -18,7 +18,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Electron from "electron";
 
@@ -190,7 +189,6 @@ const make = Effect.gen(function* () {
   // Hashes of shims rebuilt at this start: one already running when SpecWithCode was
   // started by it (or moved) still has the old hash and is still this install's.
   let replacedHashes: ReadonlyMap<string, string> = new Map();
-  const reopenLock = yield* Semaphore.make(1);
   const mismatchShown = new Set<string>();
 
   // As for every launch: page windows wait for the main window (see ArtifactAppRouting).
@@ -207,32 +205,28 @@ const make = Effect.gen(function* () {
   );
   yield* electronApp.on("browser-window-focus", () => runFork(checkMainWindow));
 
-  // The pages open in shims now, kept current so a crash still reopens them. The list
-  // is taken when a window opens or closes, so a page closed just before quitting is
-  // left out even if its write runs late. Once the app has started to quit (the updater
-  // closes every window before before-quit), closing windows no longer changes the list.
-  // Writes go one at a time, in the order the lists were taken.
+  // The pages open in shims now, kept current so a crash still reopens them. The list is
+  // written inside the window's close event, synchronously, so a page closed just before
+  // quitting is never brought back by a write still waiting at exit. Once the app has
+  // started to quit (the updater closes every window before before-quit), closing
+  // windows no longer changes the list.
   const runSync = Effect.runSyncWith(yield* Effect.context<never>());
-  const takeOpenPages = Effect.gen(function* () {
-    if (yield* Ref.get(desktopState.shutdownBegun)) return Option.none<ReadonlyArray<string>>();
-    return Option.some(yield* windows.shimInstallIds);
-  });
-  const writeOpenPages = (ids: ReadonlyArray<string>) =>
-    reopenLock.withPermits(1)(
-      shimRecords
-        .writeReopen(ids)
-        .pipe(
-          Effect.catchCause((cause) =>
-            logWarning("reopen list not written", { cause: Cause.pretty(cause) }),
-          ),
+  const rememberOpenPages = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.shutdownBegun)) return;
+    yield* shimRecords
+      .writeReopen(yield* windows.shimInstallIds)
+      .pipe(
+        Effect.catchCause((cause) =>
+          logWarning("reopen list not written", { cause: Cause.pretty(cause) }),
         ),
-    );
-  const rememberOpenPages = Effect.flatMap(takeOpenPages, (ids) =>
-    Option.isSome(ids) ? writeOpenPages(ids.value) : Effect.void,
-  );
+      );
+  });
   yield* windows.onClosed(() => {
-    const ids = runSync(takeOpenPages);
-    if (Option.isSome(ids)) runFork(writeOpenPages(ids.value));
+    try {
+      runSync(rememberOpenPages);
+    } catch {
+      runFork(rememberOpenPages);
+    }
   });
 
   const turnAway = (shim: Electron.AppShimHost, reason: string) =>

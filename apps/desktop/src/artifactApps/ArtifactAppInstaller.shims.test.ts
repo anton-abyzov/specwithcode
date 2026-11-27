@@ -173,10 +173,10 @@ describe("ArtifactAppInstaller with app shims", () => {
         assert.isTrue(Option.isSome(yield* after.installer.shimInstallFor(firstBundle)));
         // The old bundle went to the Trash from its private removal name.
         assert.equal(after.calls.trashed.length, 1);
-        assert.include(after.calls.trashed[0]!, ".removing-");
+        assert.include(after.calls.trashed[0]!, ".upgrading-");
         // Nothing is left under a removal name, so uninstall still works.
         assert.deepEqual(
-          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.includes(".removing-")),
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.startsWith(".")),
           [],
         );
         // The changed bundle was not rebuilt or recorded.
@@ -268,7 +268,7 @@ describe("ArtifactAppInstaller with app shims", () => {
         // Stopped between the renames: the old launcher sits under its removal name.
         const aside = path.join(
           folder,
-          `.Morning dashboard.app.removing-${first.app.installId}.${"0".repeat(32)}`,
+          `.Morning dashboard.app.upgrading-${first.app.installId}.${"0".repeat(32)}`,
         );
         yield* fileSystem.rename(bundle, aside);
         const loader = yield* writeLoader(fileSystem, path, home);
@@ -284,11 +284,17 @@ describe("ArtifactAppInstaller with app shims", () => {
         );
         assert.isTrue(Option.isSome(yield* after.installer.shimInstallFor(bundle)));
         assert.deepEqual(
-          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.includes(".removing-")),
+          (yield* fileSystem.readDirectory(folder)).filter((entry) => entry.startsWith(".")),
           [],
         );
 
-        // Stopped after the swap, before the record: the new bundle is rebuilt, not trusted.
+        // Stopped after the swap, before the record: the new bundle is rebuilt, not trusted,
+        // and the old one it had moved aside goes too, so nothing hidden is left.
+        const oldAside = path.join(
+          folder,
+          `.Morning dashboard.app.upgrading-${first.app.installId}.${"1".repeat(32)}`,
+        );
+        yield* fileSystem.makeDirectory(path.join(oldAside, "Contents"), { recursive: true });
         const recorded = Option.getOrThrow(yield* after.shimRecords.get(first.app.installId));
         yield* after.shimRecords.set(first.app.installId, {
           ...recorded,
@@ -301,6 +307,37 @@ describe("ArtifactAppInstaller with app shims", () => {
         const rebuilt = Option.getOrThrow(yield* after.shimRecords.get(first.app.installId));
         assert.equal(rebuilt.hostAppPath, "/Applications/SpecWithCode.app");
         assert.isTrue(Option.isSome(yield* after.installer.shimInstallFor(bundle)));
+        assert.include(after.calls.trashed, hostPath(oldAside));
+        assert.isTrue(yield* after.installer.uninstall(first.app.installId));
+      }),
+    ),
+  );
+
+  it.effect("never puts back a copy a failed uninstall left aside", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const before = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const first = yield* before.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const folder = path.join(home, "Applications", "SpecWithCode Apps");
+        const bundle = path.join(folder, "Morning dashboard.app");
+        // An uninstall moved it aside, then the Trash failed: the record stays.
+        yield* fileSystem.rename(
+          bundle,
+          path.join(
+            folder,
+            `.Morning dashboard.app.removing-${first.app.installId}.${"2".repeat(32)}`,
+          ),
+        );
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const after = yield* harness(
+          { platform: "darwin", appShim: shimConfig(loader), fileSystem },
+          home,
+          recordsPath,
+        );
+        yield* after.installer.upgradeLaunchers;
+        assert.isFalse(yield* fileSystem.exists(bundle));
+        assert.isTrue(yield* after.installer.uninstall(first.app.installId));
       }),
     ),
   );

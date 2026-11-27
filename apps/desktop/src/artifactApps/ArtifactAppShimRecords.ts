@@ -6,6 +6,9 @@
  * pages to open again after a restart. Both are 0600 files in the desktop state
  * folder; a bad file reads as empty and a bad entry is dropped.
  */
+// @effect-diagnostics nodeBuiltinImport:off - the reopen list is written synchronously, so a quit right after a close cannot outrun it.
+import * as NodeFS from "node:fs";
+
 import { ArtifactAppInstallIdSchema } from "@specweave-studio/contracts";
 import { fromLenientJson } from "@specweave-studio/shared/schemaJson";
 import * as Context from "effect/Context";
@@ -18,9 +21,10 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  ArtifactAppPrivateFileWriteError,
   makeArtifactAppPrivateFileWriter,
-  type ArtifactAppPrivateFileWriteError,
 } from "./ArtifactAppPrivateFile.ts";
+import { newArtifactAppInstallId } from "./ArtifactAppUrl.ts";
 
 export const ARTIFACT_APP_SHIMS_FILE = "artifact-app-shims.json";
 export const ARTIFACT_APP_REOPEN_FILE = "artifact-apps-reopen.json";
@@ -65,7 +69,11 @@ export class ArtifactAppShimRecords extends Context.Service<
       record: ArtifactAppShimRecord,
     ) => Effect.Effect<void, ArtifactAppPrivateFileWriteError>;
     readonly remove: (installId: string) => Effect.Effect<void, ArtifactAppPrivateFileWriteError>;
-    /** Remembers the pages open at quit, replacing the previous list. */
+    /**
+     * Remembers the pages open now, replacing the previous list. It is written before
+     * the effect returns, with no asynchronous step, so it can run inside a window's
+     * close event and be on disk before the app goes on to quit.
+     */
     readonly writeReopen: (
       installIds: ReadonlyArray<string>,
     ) => Effect.Effect<void, ArtifactAppPrivateFileWriteError>;
@@ -80,11 +88,27 @@ const make = Effect.fnUntraced(function* (stateDir: string) {
   const shimsPath = path.join(stateDir, ARTIFACT_APP_SHIMS_FILE);
   const reopenPath = path.join(stateDir, ARTIFACT_APP_REOPEN_FILE);
   const writeShims = makeArtifactAppPrivateFileWriter({ fileSystem, path, filePath: shimsPath });
-  const writeReopenFile = makeArtifactAppPrivateFileWriter({
-    fileSystem,
-    path,
-    filePath: reopenPath,
-  });
+  // The same 0600, exclusive temporary file and rename as the private file writer.
+  const writeReopenFile = (contents: string) =>
+    Effect.try({
+      try: () => {
+        NodeFS.mkdirSync(stateDir, { recursive: true });
+        const temporaryPath = `${reopenPath}.${process.pid}.${newArtifactAppInstallId()}.tmp`;
+        try {
+          NodeFS.writeFileSync(temporaryPath, contents, { mode: 0o600, flag: "wx" });
+          NodeFS.renameSync(temporaryPath, reopenPath);
+        } catch (error) {
+          NodeFS.rmSync(temporaryPath, { force: true });
+          throw error;
+        }
+      },
+      catch: (cause) =>
+        new ArtifactAppPrivateFileWriteError({
+          operation: "replace-file",
+          path: reopenPath,
+          cause,
+        }),
+    });
   const writeLock = yield* Semaphore.make(1);
 
   const readText = (filePath: string) =>
