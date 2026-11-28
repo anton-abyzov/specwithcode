@@ -112,6 +112,7 @@ import {
   wslRuntimeArchiveStem,
   withBuildToolsOnPath,
 } from "./build-desktop-artifact.ts";
+import { MAC_SCREEN_CONTROL_EXTRA_RESOURCES } from "./lib/mac-screen-control-helper.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { symlinksSupported } from "@specweave-studio/shared/testing/symlinks";
@@ -697,6 +698,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // The update agent is run by /usr/bin/python3, which cannot read app.asar.
       ...MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
       ...MAC_VOICE_EXTRA_RESOURCES,
+      ...MAC_SCREEN_CONTROL_EXTRA_RESOURCES,
       ...POSIX_CLI_SHIM_EXTRA_RESOURCES,
     ]) {
       assert.include(
@@ -725,6 +727,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/studio-updater/**/*",
       "!apps/desktop/prod-resources/voice",
       "!apps/desktop/prod-resources/voice/**/*",
+      "!apps/desktop/prod-resources/screen-control",
+      "!apps/desktop/prod-resources/screen-control/**/*",
       "!apps/desktop/prod-resources/cli",
       "!apps/desktop/prod-resources/cli/**/*",
       "!apps/desktop/prod-resources/icon.icon",
@@ -798,6 +802,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...POSIX_CLI_SHIM_EXTRA_RESOURCES,
         ...MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
         ...MAC_VOICE_EXTRA_RESOURCES,
+        ...MAC_SCREEN_CONTROL_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
