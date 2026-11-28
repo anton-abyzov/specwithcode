@@ -104,6 +104,17 @@ export const SCREEN_SHARE_RECORD = {
    * on any record it does not know.
    */
   viewport: 20,
+  /**
+   * Viewer to machine, 1519 control: `{}`, asks to control the screen. Sent
+   * only to a machine whose `live` state lists `control`, and only from a live view.
+   */
+  controlRequest: 21,
+  /** Viewer to machine, while controlling: `ScreenShareInputRecord`. */
+  input: 22,
+  /** Viewer to machine: `{}`, back to viewing. Held keys and buttons are let go. */
+  controlEnd: 23,
+  /** Machine to viewer, only after a `controlRequest`: `ScreenShareControlState`. */
+  control: 34,
 } as const;
 
 /**
@@ -111,7 +122,90 @@ export const SCREEN_SHARE_RECORD = {
  * record of a feature only to a machine that named it, and the machine sends
  * new frame fields only once it heard a new record from that viewer.
  */
-export const SCREEN_SHARE_FEATURES = { viewport: "viewport" } as const;
+export const SCREEN_SHARE_FEATURES = { viewport: "viewport", control: "control" } as const;
+
+/** Input records a machine reads per second while controlled; more are dropped. */
+export const SCREEN_SHARE_INPUT_PER_SECOND = 120;
+/** Events in one input record. */
+export const SCREEN_SHARE_INPUT_MAX_EVENTS = 64;
+/** With a key or button held and no word from the viewer for this long, the machine lets go of it. */
+export const SCREEN_SHARE_HELD_SILENCE_MS = 5_000;
+/** The input helper exits after this long without a command. */
+export const SCREEN_SHARE_HELPER_SILENCE_MS = 2 * 60_000;
+/** Times one session may put the control prompt up. */
+export const SCREEN_SHARE_CONTROL_ASKS = 2;
+
+/**
+ * One input event, viewer to machine. Pointer places are fractions (0 to 1) of
+ * the frame, so a picture sized to the viewer's window maps the same way; the
+ * machine maps them onto its own display. Keys are physical key codes
+ * (`KeyboardEvent.code`), never text.
+ */
+export const ScreenShareInputEvent = Schema.Union([
+  Schema.Struct({ t: Schema.Literal("move"), x: Schema.Number, y: Schema.Number }),
+  Schema.Struct({
+    t: Schema.Literal("button"),
+    button: Schema.Literals(["left", "right", "middle"]),
+    down: Schema.Boolean,
+    x: Schema.Number,
+    y: Schema.Number,
+  }),
+  Schema.Struct({
+    t: Schema.Literal("scroll"),
+    dx: Schema.Number,
+    dy: Schema.Number,
+    x: Schema.Number,
+    y: Schema.Number,
+  }),
+  Schema.Struct({ t: Schema.Literal("key"), code: Schema.String, down: Schema.Boolean }),
+]);
+export type ScreenShareInputEvent = typeof ScreenShareInputEvent.Type;
+
+export const ScreenShareInputRecord = Schema.Struct({
+  /** The display the events are on; events for another display than the one shown are dropped. */
+  displayId: Schema.String,
+  events: Schema.Array(ScreenShareInputEvent),
+});
+export type ScreenShareInputRecord = typeof ScreenShareInputRecord.Type;
+
+/**
+ * Why typing is off while controlling: macOS secure input (a password field
+ * has focus), a system prompt is up, a browser is the front app (1490 D-04),
+ * or the machine is locked. `system_prompt` and `locked` stop clicks too.
+ */
+export const ScreenShareTypingBlock = Schema.Literals([
+  "secure_input",
+  "system_prompt",
+  "browser",
+  "locked",
+]);
+export type ScreenShareTypingBlock = typeof ScreenShareTypingBlock.Type;
+
+/** Why a request to control ended without control, or control ended. */
+export const ScreenShareControlReason = Schema.Literals([
+  "denied",
+  "prompt_timeout",
+  "no_permission",
+  "unavailable",
+  "asked_too_often",
+  "ended",
+]);
+export type ScreenShareControlReason = typeof ScreenShareControlReason.Type;
+
+/** Machine to viewer (`SCREEN_SHARE_RECORD.control`), only to a viewer that asked for control. */
+export const ScreenShareControlState = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("asking") }),
+  Schema.Struct({
+    mode: Schema.Literal("controlling"),
+    /** Present while typing (and for some, clicks) is off on the machine. */
+    blocked: Schema.optionalKey(ScreenShareTypingBlock),
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("viewing"),
+    reason: Schema.optionalKey(ScreenShareControlReason),
+  }),
+]);
+export type ScreenShareControlState = typeof ScreenShareControlState.Type;
 
 /** The picture a viewer asks for: sized to its window, small for slow links, or as slice 1 sent it. */
 export const ScreenSharePicture = Schema.Literals(["auto", "low", "classic"]);
@@ -417,6 +511,17 @@ export const ScreenShareAuditEntry = Schema.Struct({
   endedAt: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(ScreenShareEndReason),
   frames: Schema.optionalKey(Schema.Int),
+  /**
+   * 1519: the device controlled the screen in this session. An optional key,
+   * so an older app that opens the list ignores it; `mode` stays "view".
+   */
+  control: Schema.optionalKey(
+    Schema.Struct({
+      outcome: ScreenShareAuditOutcome,
+      startedAt: Schema.optionalKey(Schema.String),
+      endedAt: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 export type ScreenShareAuditEntry = typeof ScreenShareAuditEntry.Type;
 
@@ -440,9 +545,17 @@ export const ScreenShareLocalState = Schema.Struct({
   /** False while a change could not be written: a choice may not have been kept. */
   storeWritable: Schema.Boolean,
   grants: Schema.Array(ScreenShareGrant),
+  /** 1519: devices that may also control this screen with nobody here. */
+  controlGrants: Schema.optionalKey(Schema.Array(ScreenShareGrant)),
   audit: Schema.Array(ScreenShareAuditEntry),
   active: Schema.NullOr(
-    Schema.Struct({ label: Schema.String, shortId: Schema.String, startedAt: Schema.String }),
+    Schema.Struct({
+      label: Schema.String,
+      shortId: Schema.String,
+      startedAt: Schema.String,
+      /** 1519: the device controls the screen right now. */
+      controlling: Schema.optionalKey(Schema.Boolean),
+    }),
   ),
 });
 export type ScreenShareLocalState = typeof ScreenShareLocalState.Type;

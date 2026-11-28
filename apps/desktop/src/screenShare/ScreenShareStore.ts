@@ -51,6 +51,13 @@ interface Stored {
    * says about itself is not asked.
    */
   readonly known: ReadonlyArray<string>;
+  /**
+   * 1519: devices a person here chose to always allow to control this screen.
+   * Optional, so the file stays `v: 1`: an older app opens it as it always did
+   * and drops this list the next time it writes, which takes control away and
+   * nothing else.
+   */
+  readonly controlGrants?: ReadonlyArray<ScreenShareGrant>;
 }
 
 interface Strikes {
@@ -120,6 +127,11 @@ const parseStored = (text: string): Stored | null => {
   const grants = stored.grants.map(parseGrant);
   // One bad grant spoils the file: a half-read list is not a list a person approved.
   if (grants.some((grant) => grant === null)) return null;
+  // A control list that does not read is dropped whole: control is asked for again.
+  const controlGrants = Array.isArray(stored.controlGrants)
+    ? stored.controlGrants.map(parseGrant)
+    : [];
+  const controlReadable = controlGrants.every((grant) => grant !== null);
   return {
     v: 1,
     enabled: stored.enabled,
@@ -130,6 +142,7 @@ const parseStored = (text: string): Stored | null => {
     ),
     strikes: parseStrikes(stored.strikes),
     known: Array.isArray(stored.known) ? stored.known.filter(isString) : [],
+    controlGrants: controlReadable ? (controlGrants as ReadonlyArray<ScreenShareGrant>) : [],
   };
 };
 
@@ -156,6 +169,7 @@ export class ScreenShareStore {
       audit: [],
       strikes: {},
       known: [],
+      controlGrants: [],
     };
   }
 
@@ -259,12 +273,61 @@ export class ScreenShareStore {
     });
   }
 
-  /** Removing a device also forgets that it was here before: it is asked, and types the code, again. */
+  /**
+   * Removing a device also forgets that it was here before: it is asked, and
+   * types the code, again. Its control grant goes with it.
+   */
   removeGrant(thumbprint: string): boolean {
     return this.save({
       ...this.state,
       grants: this.state.grants.filter((grant) => grant.thumbprint !== thumbprint),
+      controlGrants: (this.state.controlGrants ?? []).filter(
+        (grant) => grant.thumbprint !== thumbprint,
+      ),
       known: this.state.known.filter((known) => known !== thumbprint),
+    });
+  }
+
+  private liveControlGrants(): ReadonlyArray<ScreenShareGrant> {
+    const now = this.io.now();
+    return (this.state.controlGrants ?? []).filter(
+      (grant) => now - Date.parse(grant.lastUsedAt) < SCREEN_SHARE_GRANT_IDLE_MS,
+    );
+  }
+
+  /** 1519: devices that may control this screen without asking. */
+  get controlGrants(): ReadonlyArray<ScreenShareGrant> {
+    return this.liveControlGrants();
+  }
+
+  hasControlGrant(thumbprint: string): boolean {
+    return this.liveControlGrants().some((grant) => grant.thumbprint === thumbprint);
+  }
+
+  /** A person here chose "Always allow control" and authenticated. False when it could not be kept. */
+  addControlGrant(device: {
+    readonly thumbprint: string;
+    readonly label: string;
+    readonly shortId: string;
+  }): boolean {
+    const at = new Date(this.io.now()).toISOString();
+    const others = this.liveControlGrants().filter(
+      (grant) => grant.thumbprint !== device.thumbprint,
+    );
+    return this.save({
+      ...this.state,
+      controlGrants: [...others, { ...device, grantedAt: at, lastUsedAt: at }].slice(-MAX_GRANTS),
+    });
+  }
+
+  /** False when the use could not be written; the grant then ends on its old date. */
+  touchControlGrant(thumbprint: string): boolean {
+    const at = new Date(this.io.now()).toISOString();
+    return this.save({
+      ...this.state,
+      controlGrants: this.liveControlGrants().map((grant) =>
+        grant.thumbprint === thumbprint ? { ...grant, lastUsedAt: at } : grant,
+      ),
     });
   }
 

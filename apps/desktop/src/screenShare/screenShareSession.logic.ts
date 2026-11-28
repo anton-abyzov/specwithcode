@@ -30,10 +30,19 @@
  *   1519 adds a fifth, `viewport`, which this machine announces in its `live`
  *   state; only a viewer that saw that sends it, and only after it arrived do
  *   frames carry anything slice 1 did not.
+ * - Control (1519) is asked for from a live view, only when this machine
+ *   announced `control`: its own prompt, its own grant ("Always allow
+ *   control" plus the system's authentication), its own banner wording. A
+ *   view grant never allows control; a control grant counts only inside a
+ *   view that the view rules already let start. The banner says
+ *   "is controlling" and the list records it before the helper starts, and
+ *   every end of control lets go of every key and button held.
  */
 import {
   SCREEN_SHARE_CODE_TRIES,
+  SCREEN_SHARE_CONTROL_ASKS,
   SCREEN_SHARE_FEATURES,
+  SCREEN_SHARE_HELD_SILENCE_MS,
   SCREEN_SHARE_HANDSHAKE_MS,
   SCREEN_SHARE_PROMPT_MS,
   SCREEN_SHARE_RECORD,
@@ -46,10 +55,13 @@ import {
   encodeScreenShareWireJson,
   type ScreenShareAuditEntry,
   type ScreenShareAuditOutcome,
+  type ScreenShareControlReason,
+  type ScreenShareControlState,
   type ScreenShareDisplay,
   type ScreenShareEndReason,
   type ScreenShareHostStatus,
   type ScreenShareSessionState,
+  type ScreenShareTypingBlock,
   type ScreenShareViewerDevice,
 } from "@specweave-studio/contracts";
 import {
@@ -63,6 +75,15 @@ import {
   type ScreenShareTargetStart,
 } from "@specweave-studio/shared/screenShareChannel";
 
+import {
+  HeldInput,
+  parseInputRecord,
+  takeInputTurn,
+  toHelperEvents,
+  type DisplayBounds,
+  type ScreenControlLink,
+  type ScreenControlStart,
+} from "./screenControl.logic.ts";
 import {
   fastLooksAfter,
   nextLookDelay,
@@ -110,6 +131,8 @@ export interface ScreenSharePromptView {
   readonly shortId: string;
   /** `ask`: Deny, Allow once, Always allow. `code`: allowed; the code is being typed on the device. */
   readonly stage: "ask" | "code";
+  /** 1519: the device asks to control the screen, not to view it. */
+  readonly kind?: "control";
   /** First use only: the six digits to type on the device. */
   readonly code?: string;
   readonly expiresAt: number;
@@ -119,6 +142,8 @@ export interface ScreenShareBannerView {
   readonly label: string;
   readonly shortId: string;
   readonly startedAt: number;
+  /** 1519: the device controls the screen. */
+  readonly controlling?: boolean;
 }
 
 export interface ScreenShareSessionDeps {
@@ -153,6 +178,50 @@ export interface ScreenShareSessionDeps {
   };
   /** Something a window or the server shows has changed. */
   readonly changed: () => void;
+  /** 1519: control of this screen. Absent where it cannot be controlled. */
+  readonly control?: ScreenShareControlDeps;
+}
+
+export interface ScreenShareControlDeps {
+  /** Whether control can work now: the helper is here and the app has Accessibility. */
+  readonly available: () => Promise<boolean>;
+  /** Starts the helper for one control session. */
+  readonly start: (events: {
+    readonly onBlocked: (blocked: ScreenShareTypingBlock | null) => void;
+    /** The helper went away on its own. */
+    readonly onExit: () => void;
+  }) => Promise<ScreenControlStart>;
+  /** A display's place in global points, or null when it is gone. */
+  readonly bounds: (displayId: string) => DisplayBounds | null;
+  /** Lets go of keys and buttons a helper that went away still held. */
+  readonly releaseOrphaned: (held: {
+    readonly keys: ReadonlyArray<string>;
+    readonly buttons: ReadonlyArray<string>;
+  }) => void;
+  /** Computer use on this machine holds off while true. */
+  readonly controlled: (on: boolean) => void;
+}
+
+type ControlMode = "off" | "asking" | "authenticating" | "starting" | "on";
+
+interface Control {
+  mode: ControlMode;
+  /** The viewer asked at least once, so it reads control records. */
+  requested: boolean;
+  /** Times this session put the control prompt up. */
+  asks: number;
+  /** System dialogs for this control prompt that ended without a person. */
+  authTries: number;
+  outcome?: ScreenShareAuditOutcome;
+  grantOnStart: boolean;
+  startedAt?: number;
+  endedAt?: number;
+  link?: ScreenControlLink;
+  held: HeldInput;
+  inputTimes: Array<number>;
+  blocked: ScreenShareTypingBlock | null;
+  cancelAsk?: () => void;
+  cancelHeld?: () => void;
 }
 
 type Phase = "hello" | "proof" | "prompt" | "authenticating" | "code" | "live";
@@ -194,6 +263,9 @@ interface Session {
   unconfirmedAt: number | null;
   /** From the start of the last confirmed frame's capture to its "frame received". */
   lastConfirmMs?: number;
+  /** 1519: whether this machine can be controlled, once it was found out. */
+  controlAvailable: boolean;
+  control: Control;
   /** A sealed record was held back after the end, so nothing sealed after it would open. */
   gap?: true;
   /** Cancels for the timers this session holds: the stage's deadline, the time limit, the next frame. */
@@ -283,6 +355,7 @@ export class ScreenShareSessions {
     readonly label: string;
     readonly shortId: string;
     readonly startedAt: string;
+    readonly controlling?: boolean;
   } | null {
     const session = this.session;
     return session === null || session.startedAt === undefined
@@ -291,6 +364,7 @@ export class ScreenShareSessions {
           label: session.device.label,
           shortId: session.device.shortId,
           startedAt: new Date(session.startedAt).toISOString(),
+          ...(session.control.mode === "on" ? { controlling: true } : {}),
         };
   }
 
@@ -334,9 +408,33 @@ export class ScreenShareSessions {
       pendingViewport: null,
       fastLooks: 0,
       unconfirmedAt: null,
+      controlAvailable: false,
+      control: {
+        mode: "off",
+        requested: false,
+        asks: 0,
+        authTries: 0,
+        grantOnStart: false,
+        held: new HeldInput(),
+        inputTimes: [],
+        blocked: null,
+      },
       inbox: Promise.resolve(),
     };
     this.session = session;
+    const control = this.deps.control;
+    if (control !== undefined)
+      void this.track(
+        control.available().then(
+          (available) => {
+            if (this.session !== session || !available) return;
+            session.controlAvailable = true;
+            // A view that went live before the answer hears of control now.
+            if (session.phase === "live" && !session.showingLocked) this.sendLive(session);
+          },
+          () => undefined,
+        ),
+      );
     session.cancelStage = this.deps.after(SCREEN_SHARE_HANDSHAKE_MS, () =>
       this.end(session, "handshake_failed"),
     );
@@ -395,11 +493,10 @@ export class ScreenShareSessions {
   async answerPrompt(sid: string, answer: "deny" | "once" | "always"): Promise<void> {
     const session = this.session;
     if (session === null || session.sid !== sid) return;
+    // While live, the only prompt up is the one asking about control.
+    if (session.phase === "live") return this.answerControlPrompt(session, answer);
     // Deny needs nothing and wins at any point before the screen is shown.
-    if (answer === "deny") {
-      if (session.phase !== "live") this.end(session, "denied");
-      return;
-    }
+    if (answer === "deny") return this.end(session, "denied");
     if (session.phase !== "prompt" || this.asking) return;
     session.phase = "authenticating";
     const { label, shortId } = session.device;
@@ -614,9 +711,21 @@ export class ScreenShareSessions {
           return this.end(session, "protocol_error");
         session.lastHeard = this.deps.now();
         if (session.displayId === body.displayId) return;
+        // Keys held on one display are let go before the picture moves to another.
+        this.releaseHeld(session);
         session.displayId = body.displayId;
         session.lastDigest = null;
         return this.sendLive(session);
+      }
+      // 1519 control: only from a viewer that saw `control` in this machine's live state.
+      if (session.controlAvailable) {
+        if (type === SCREEN_SHARE_RECORD.controlRequest) return this.requestControl(session);
+        if (type === SCREEN_SHARE_RECORD.input) return this.input(session, body);
+        if (type === SCREEN_SHARE_RECORD.controlEnd) {
+          session.lastHeard = this.deps.now();
+          if (session.control.mode !== "off") void this.stopControl(session, "ended");
+          return;
+        }
       }
     }
     this.end(session, "protocol_error");
@@ -668,7 +777,9 @@ export class ScreenShareSessions {
       displays: session.displays,
       displayId: session.displayId,
       endsAt: session.startedAt! + SCREEN_SHARE_SESSION_MAX_MS,
-      features: [SCREEN_SHARE_FEATURES.viewport],
+      features: session.controlAvailable
+        ? [SCREEN_SHARE_FEATURES.viewport, SCREEN_SHARE_FEATURES.control]
+        : [SCREEN_SHARE_FEATURES.viewport],
     });
   }
 
@@ -713,6 +824,7 @@ export class ScreenShareSessions {
           session.fastLooks = fastLooksAfter(session.fastLooks, false);
           if (!session.showingLocked) {
             session.showingLocked = true;
+            this.releaseHeld(session);
             session.lastDigest = null;
             this.sendState(session, { phase: "locked" });
           }
@@ -809,6 +921,8 @@ export class ScreenShareSessions {
     session.cancelLimit?.();
     session.cancelTick?.();
     const wasLive = session.phase === "live";
+    // Control ends first: every key let go, computer use back, before the banner goes.
+    this.endControl(session);
     if (wasLive) {
       capture.keepAwake(false);
       banner.hide();
@@ -826,6 +940,7 @@ export class ScreenShareSessions {
       ...(session.startedAt === undefined ? {} : { startedAt: session.startedAt }),
       endedAt: this.deps.now(),
       frames: session.frames,
+      ...this.controlAudit(session),
     });
     // The last word goes inside the sealed session; the plain close follows it.
     void this.track(
@@ -841,6 +956,298 @@ export class ScreenShareSessions {
     this.deps.changed();
   }
 
+  // -------------------------------------------------------------------------
+  // Control (1519).
+
+  private sendControl(session: Session, state: ScreenShareControlState): void {
+    // Only a viewer that asked reads this record; a slice-1 viewer never gets one.
+    if (!session.control.requested) return;
+    void this.sendSealed(
+      session,
+      SCREEN_SHARE_RECORD.control,
+      encoder.encode(JSON.stringify(state)),
+    );
+  }
+
+  private controlAudit(session: Session): {
+    readonly control?: ScreenShareAuditEntry["control"];
+  } {
+    const { control } = session;
+    if (control.outcome === undefined) return {};
+    const iso = (at: number) => new Date(at).toISOString();
+    return {
+      control: {
+        outcome: control.outcome,
+        ...(control.startedAt === undefined ? {} : { startedAt: iso(control.startedAt) }),
+        ...(control.endedAt === undefined ? {} : { endedAt: iso(control.endedAt) }),
+      },
+    };
+  }
+
+  private auditLive(session: Session): boolean {
+    return this.audit({
+      id: session.sid,
+      device: session.device,
+      outcome: session.outcome,
+      ...(session.startedAt === undefined ? {} : { startedAt: session.startedAt }),
+      ...this.controlAudit(session),
+    });
+  }
+
+  private bannerView(session: Session, controlling: boolean): ScreenShareBannerView {
+    return {
+      label: session.device.label,
+      shortId: session.device.shortId,
+      startedAt: session.startedAt ?? this.deps.now(),
+      ...(controlling ? { controlling: true } : {}),
+    };
+  }
+
+  private requestControl(session: Session): void {
+    const control = session.control;
+    const now = this.deps.now();
+    session.lastHeard = now;
+    control.requested = true;
+    // Asked again while asking or controlling: nothing new.
+    if (control.mode !== "off") return;
+    if (session.showingLocked)
+      return this.sendControl(session, { mode: "viewing", reason: "unavailable" });
+    const { thumbprint, label, claimedLabel, shortId } = session.device;
+    if (this.deps.store.hasControlGrant(thumbprint))
+      return void this.track(this.startControl(session, "allowed_by_grant"));
+    // The prompt is a person's attention: a few times a session, never during a quiet time.
+    if (this.deps.store.inCooldown(thumbprint) || control.asks >= SCREEN_SHARE_CONTROL_ASKS)
+      return this.sendControl(session, { mode: "viewing", reason: "asked_too_often" });
+    control.asks += 1;
+    control.authTries = 0;
+    control.mode = "asking";
+    const expiresAt = now + SCREEN_SHARE_PROMPT_MS;
+    control.cancelAsk = this.deps.after(SCREEN_SHARE_PROMPT_MS, () =>
+      this.refuseControl(session, "prompt_timeout", true),
+    );
+    this.deps.prompt.show({
+      sid: session.sid,
+      label,
+      ...(claimedLabel === undefined ? {} : { claimedLabel }),
+      shortId,
+      stage: "ask",
+      kind: "control",
+      expiresAt,
+    });
+    this.sendControl(session, { mode: "asking" });
+    this.deps.changed();
+  }
+
+  /** The control prompt's answer. Deny needs nothing; Always allow needs the system's authentication. */
+  private async answerControlPrompt(
+    session: Session,
+    answer: "deny" | "once" | "always",
+  ): Promise<void> {
+    const control = session.control;
+    if (answer === "deny") return this.refuseControl(session, "denied", true);
+    // Control has no "once": the first time is the choice to allow it for good (D-05).
+    if (answer !== "always" || control.mode !== "asking" || this.asking) return;
+    control.mode = "authenticating";
+    const { label, shortId } = session.device;
+    const present = await this.personPresent(
+      `always allow "${label}" (${shortId}) to control this Mac, also with nobody at it`,
+    );
+    // Denied, timed out, ended or asked about again while the dialog was up: the answer is for nothing.
+    if (this.session !== session || session.phase !== "live" || control.mode !== "authenticating")
+      return;
+    if (present !== "present") {
+      if (present === "absent") control.authTries += 1;
+      if (control.authTries >= AUTHENTICATE_TRIES)
+        return this.refuseControl(session, "denied", true);
+      control.mode = "asking";
+      return;
+    }
+    control.cancelAsk?.();
+    delete control.cancelAsk;
+    this.deps.prompt.hide();
+    return this.startControl(session, "allowed_always");
+  }
+
+  private refuseControl(session: Session, reason: ScreenShareControlReason, strike: boolean): void {
+    if (this.session !== session) return;
+    const control = session.control;
+    if (control.mode !== "asking" && control.mode !== "authenticating") return;
+    control.cancelAsk?.();
+    delete control.cancelAsk;
+    control.mode = "off";
+    this.deps.prompt.hide();
+    if (strike) this.deps.store.addStrike(session.device.thumbprint);
+    this.sendControl(session, { mode: "viewing", reason });
+    this.deps.changed();
+  }
+
+  /**
+   * Control starts in this order, and stops at the first step that fails: the
+   * banner says "is controlling", the list records it, the grant is kept,
+   * computer use here holds off, then the helper starts. No event is posted
+   * before all of them.
+   */
+  private async startControl(session: Session, outcome: ScreenShareAuditOutcome): Promise<void> {
+    const control = session.control;
+    const deps = this.deps.control;
+    if (deps === undefined) return;
+    control.mode = "starting";
+    const backToViewing = (reason: ScreenShareControlReason) => {
+      control.mode = "off";
+      if (!this.deps.banner.show(this.bannerView(session, false)))
+        return this.end(session, "banner_lost");
+      this.sendControl(session, { mode: "viewing", reason });
+      this.deps.changed();
+    };
+    if (!this.deps.banner.show(this.bannerView(session, true)))
+      return this.end(session, "banner_lost");
+    control.outcome = outcome;
+    control.startedAt = this.deps.now();
+    delete control.endedAt;
+    if (!this.auditLive(session)) {
+      delete control.outcome;
+      delete control.startedAt;
+      return backToViewing("unavailable");
+    }
+    const { thumbprint, label, shortId } = session.device;
+    if (
+      outcome === "allowed_always" &&
+      !this.deps.store.addControlGrant({ thumbprint, label, shortId })
+    ) {
+      // "Always allow control" that could not be kept is control for this session, and the list says so.
+      control.outcome = "allowed_once";
+      this.auditLive(session);
+    } else if (outcome === "allowed_by_grant") this.deps.store.touchControlGrant(thumbprint);
+    deps.controlled(true);
+    let started: ScreenControlStart;
+    try {
+      started = await deps.start({
+        onBlocked: (blocked) => this.controlBlocked(session, blocked),
+        onExit: () => this.helperGone(session),
+      });
+    } catch {
+      started = { kind: "unavailable" };
+    }
+    // Ended, or control stopped, while the helper was starting.
+    if (this.session !== session || control.mode !== "starting") {
+      if (started.kind === "ok") started.link.stop();
+      return;
+    }
+    if (started.kind !== "ok") {
+      deps.controlled(false);
+      control.endedAt = this.deps.now();
+      this.auditLive(session);
+      return backToViewing(started.kind === "no_permission" ? "no_permission" : "unavailable");
+    }
+    control.link = started.link;
+    control.mode = "on";
+    this.sendControl(session, {
+      mode: "controlling",
+      ...(control.blocked === null ? {} : { blocked: control.blocked }),
+    });
+    this.deps.changed();
+  }
+
+  private input(session: Session, body: Record<string, unknown>): void {
+    const control = session.control;
+    // A viewer that never asked for control has nothing to send here.
+    if (!control.requested) return this.end(session, "protocol_error");
+    const record = parseInputRecord(body);
+    if (record === null) return this.end(session, "protocol_error");
+    const now = this.deps.now();
+    session.lastHeard = now;
+    // Events that crossed the end of control on the way are dropped, not an error.
+    if (control.mode !== "on" || control.link === undefined) return;
+    if (!takeInputTurn(control.inputTimes, now)) return;
+    if (session.showingLocked || record.displayId !== session.displayId) return;
+    const bounds = this.deps.control?.bounds(record.displayId) ?? null;
+    if (bounds === null) return;
+    const events = toHelperEvents(bounds, record.events);
+    control.held.note(events);
+    control.link.post(events);
+    control.cancelHeld?.();
+    delete control.cancelHeld;
+    // A viewer that goes quiet with a key down does not leave it down.
+    if (control.held.any)
+      control.cancelHeld = this.deps.after(SCREEN_SHARE_HELD_SILENCE_MS, () =>
+        this.releaseHeld(session),
+      );
+  }
+
+  /** Lets go of every key and button held, and stays in control. */
+  private releaseHeld(session: Session): void {
+    const control = session.control;
+    control.cancelHeld?.();
+    delete control.cancelHeld;
+    if (control.mode !== "on" || control.link === undefined || !control.held.any) return;
+    void this.track(control.link.release(control.held.take()));
+  }
+
+  private controlBlocked(session: Session, blocked: ScreenShareTypingBlock | null): void {
+    if (this.session !== session) return;
+    const control = session.control;
+    if (control.blocked === blocked) return;
+    control.blocked = blocked;
+    if (control.mode === "on")
+      this.sendControl(session, {
+        mode: "controlling",
+        ...(blocked === null ? {} : { blocked }),
+      });
+  }
+
+  /** The helper went away on its own: a fresh one lets go of what it held, and control ends. */
+  private helperGone(session: Session): void {
+    if (this.session !== session || session.control.mode !== "on") return;
+    delete session.control.link;
+    this.stopControl(session, "unavailable");
+  }
+
+  /** Back to viewing, and the viewer is told why. */
+  private stopControl(session: Session, reason: ScreenShareControlReason): void {
+    const control = session.control;
+    if (control.mode === "off") return;
+    if (control.mode === "asking" || control.mode === "authenticating")
+      return this.refuseControl(session, reason, false);
+    this.endControl(session);
+    if (!this.deps.banner.show(this.bannerView(session, false)))
+      return this.end(session, "banner_lost");
+    this.auditLive(session);
+    this.sendControl(session, { mode: "viewing", reason });
+    this.deps.changed();
+  }
+
+  /**
+   * Ends control at once, saying nothing to anyone: every held key and button
+   * let go, the helper gone, computer use here back.
+   */
+  private endControl(session: Session): void {
+    const control = session.control;
+    control.cancelAsk?.();
+    delete control.cancelAsk;
+    control.cancelHeld?.();
+    delete control.cancelHeld;
+    if (control.mode === "asking" || control.mode === "authenticating") {
+      control.mode = "off";
+      this.deps.prompt.hide();
+      return;
+    }
+    if (control.mode === "off") return;
+    const link = control.link;
+    delete control.link;
+    const held = control.held.take();
+    if (link !== undefined) {
+      // The release goes down the pipe before it closes; the helper also lets go as it exits.
+      void this.track(link.release(held));
+      link.stop();
+    } else if (held.keys.length > 0 || held.buttons.length > 0)
+      this.deps.control?.releaseOrphaned(held);
+    control.mode = "off";
+    control.blocked = null;
+    if (control.startedAt !== undefined && control.endedAt === undefined)
+      control.endedAt = this.deps.now();
+    this.deps.control?.controlled(false);
+  }
+
   private audit(input: {
     readonly id: string;
     readonly device: ScreenShareViewerDevice;
@@ -849,6 +1256,7 @@ export class ScreenShareSessions {
     readonly startedAt?: number;
     readonly endedAt?: number;
     readonly frames?: number;
+    readonly control?: ScreenShareAuditEntry["control"];
   }): boolean {
     const iso = (at: number) => new Date(at).toISOString();
     const previous = this.deps.store.audit.find((entry) => entry.id === input.id);
@@ -863,6 +1271,7 @@ export class ScreenShareSessions {
       ...(input.endedAt === undefined ? {} : { endedAt: iso(input.endedAt) }),
       ...(input.reason === undefined ? {} : { reason: input.reason }),
       ...(input.frames === undefined ? {} : { frames: input.frames }),
+      ...(input.control === undefined ? {} : { control: input.control }),
     };
     return this.deps.store.recordAudit(entry);
   }

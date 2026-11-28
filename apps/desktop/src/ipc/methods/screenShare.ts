@@ -42,6 +42,7 @@ import * as ElectronSafeStorage from "../../electron/ElectronSafeStorage.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import { makeScreenCapture, screenRecordingGranted } from "../../screenShare/ScreenCapture.ts";
+import { makeScreenControlDeps } from "../../screenShare/ScreenControlDeps.ts";
 import { ScreenShareHost, type HostSocket } from "../../screenShare/ScreenShareHost.ts";
 import {
   sealScreenShareStore,
@@ -65,6 +66,9 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 
 export const SCREEN_SHARE_STORE_FILE = "screen-share.bin";
 export const SCREEN_VIEWER_PLACES_FILE = "screen-viewer-windows.json";
+
+export const SCREEN_SHARE_CONTROLLED_REFUSAL =
+  "Someone is controlling this Mac's screen from another of your devices right now, so computer use is paused here. It resumes when they stop.";
 
 export const SCREEN_SHARE_VIEWING_REFUSAL =
   "SpecWithCode is showing another machine's screen on this Mac right now, so computer use is paused here. It resumes when that view is closed.";
@@ -345,6 +349,7 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
     banner: { show: (view) => windows.showBanner(view), hide: () => windows.hideBanner() },
     capture,
     changed: () => host.publishStatus(),
+    control: makeScreenControlDeps(environment),
   });
   const recordLink = (link: ScreenShareHostLink) => {
     if (link !== "refused" && link !== "replaced") return;
@@ -377,6 +382,7 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
     storeHealthy: store.storeHealthy,
     storeWritable: store.storeWritable,
     grants: [...store.grants],
+    controlGrants: [...store.controlGrants],
     audit: [...store.audit].reverse(),
     active: sessions.active(),
   });

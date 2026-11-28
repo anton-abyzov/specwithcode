@@ -3,6 +3,11 @@ import {
   SCREEN_SHARE_COOLDOWN_WINDOW_MS,
   SCREEN_SHARE_GRANT_IDLE_MS,
 } from "@specweave-studio/contracts";
+import {
+  isScreenShareMachineKey,
+  newScreenShareMachineKey,
+} from "@specweave-studio/shared/screenShareChannel";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { sealScreenShareStore, unsealScreenShareStore } from "./screenShareSeal.ts";
@@ -328,5 +333,149 @@ describe("ScreenShareStore", () => {
     expect(store.recordAudit(entry)).toBe(false);
     expect(store.touchGrant("t1")).toBe(false);
     expect(store.audit).toEqual([]);
+  });
+});
+
+/**
+ * What the app at 1.0.443 (slice 1) accepts when it opens the store, frozen
+ * here: `ScreenShareStore.ts` and its audit schema did not change from 1.0.443
+ * to 1519. An older app must open what this one writes.
+ */
+const Slice1AuditEntry = Schema.Struct({
+  id: Schema.String,
+  at: Schema.String,
+  label: Schema.String,
+  shortId: Schema.String,
+  mode: Schema.Literal("view"),
+  outcome: Schema.Literals(["allowed_once", "allowed_always", "allowed_by_grant", "refused"]),
+  startedAt: Schema.optionalKey(Schema.String),
+  endedAt: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.String),
+  frames: Schema.optionalKey(Schema.Int),
+});
+const slice1Opens = (text: string) => {
+  const stored = JSON.parse(text) as Record<string, unknown>;
+  const key = stored.machineKey as { secret: string; publicKey: string };
+  const isGrant = (value: unknown) => {
+    const grant = value as Record<string, unknown>;
+    return ["thumbprint", "label", "shortId", "grantedAt", "lastUsedAt"].every(
+      (name) => typeof grant[name] === "string",
+    );
+  };
+  return (
+    stored.v === 1 &&
+    typeof stored.enabled === "boolean" &&
+    isScreenShareMachineKey(key) &&
+    Array.isArray(stored.grants) &&
+    stored.grants.every(isGrant) &&
+    Array.isArray(stored.audit) &&
+    stored.audit.every((entry) => {
+      Schema.decodeUnknownSync(Slice1AuditEntry)(entry);
+      return true;
+    })
+  );
+};
+
+describe("ScreenShareStore and slice 1 (1519, AC-11)", () => {
+  it("opens a store written by 1.0.443 as it is", () => {
+    const { io, file } = disk();
+    const machineKey = newScreenShareMachineKey();
+    const written = {
+      v: 1,
+      enabled: true,
+      machineKey,
+      grants: [
+        {
+          ...DEVICE,
+          grantedAt: "2026-11-20T10:00:00.000Z",
+          lastUsedAt: "2026-11-24T10:00:00.000Z",
+        },
+      ],
+      audit: [
+        {
+          id: "s1",
+          at: "2026-11-24T10:00:00.000Z",
+          label: "Work laptop",
+          shortId: "7F3A",
+          mode: "view",
+          outcome: "allowed_always",
+          startedAt: "2026-11-24T10:00:01.000Z",
+          endedAt: "2026-11-24T10:20:00.000Z",
+          reason: "viewer_ended",
+          frames: 812,
+        },
+      ],
+      strikes: { t9: { at: [Date.parse("2026-11-25T11:58:00Z")], quietUntil: 0 } },
+      known: ["t1"],
+    };
+    file.bytes = new TextEncoder().encode(`m1:${JSON.stringify(written)}`);
+    const store = new ScreenShareStore(io);
+    expect(store.storeHealthy).toBe(true);
+    expect(store.enabled).toBe(true);
+    expect(store.machineKey).toEqual(machineKey);
+    expect(store.hasGrant("t1")).toBe(true);
+    expect(store.knowsDevice("t1")).toBe(true);
+    expect(store.audit).toEqual(written.audit);
+    expect(store.controlGrants).toEqual([]);
+    expect(store.hasControlGrant("t1")).toBe(false);
+    store.addStrike("t9");
+    store.addStrike("t9");
+    expect(store.inCooldown("t9")).toBe(true);
+  });
+
+  it("writes a store an older app still opens, with control left out of what it reads", () => {
+    const { io, file } = disk();
+    const store = new ScreenShareStore(io);
+    store.setEnabled(true);
+    store.addGrant(DEVICE);
+    store.addControlGrant(DEVICE);
+    store.recordAudit({
+      id: "s2",
+      at: "2026-11-25T12:00:00.000Z",
+      label: "Work laptop",
+      shortId: "7F3A",
+      mode: "view",
+      outcome: "allowed_by_grant",
+      startedAt: "2026-11-25T12:00:00.000Z",
+      control: { outcome: "allowed_always", startedAt: "2026-11-25T12:01:00.000Z" },
+    });
+    const text = new TextDecoder().decode(file.bytes!).slice("m1:".length);
+    expect(slice1Opens(text)).toBe(true);
+    expect(new ScreenShareStore(io).hasControlGrant("t1")).toBe(true);
+  });
+
+  it("a control list that does not read drops control only", () => {
+    const { io, file } = disk();
+    const first = new ScreenShareStore(io);
+    first.setEnabled(true);
+    first.addGrant(DEVICE);
+    const text = new TextDecoder().decode(file.bytes!).slice("m1:".length);
+    const stored = { ...JSON.parse(text), controlGrants: [{ thumbprint: 7 }] };
+    file.bytes = new TextEncoder().encode(`m1:${JSON.stringify(stored)}`);
+    const store = new ScreenShareStore(io);
+    expect(store.storeHealthy).toBe(true);
+    expect(store.hasGrant("t1")).toBe(true);
+    expect(store.controlGrants).toEqual([]);
+  });
+
+  it("removing a device removes its control grant too", () => {
+    const { io } = disk();
+    const store = new ScreenShareStore(io);
+    store.addGrant(DEVICE);
+    store.addControlGrant(DEVICE);
+    store.removeGrant("t1");
+    expect(store.hasControlGrant("t1")).toBe(false);
+  });
+
+  it("a control grant ends 30 days after its last use, and a use restarts it", () => {
+    const { io, advance } = disk();
+    const store = new ScreenShareStore(io);
+    store.addControlGrant(DEVICE);
+    advance(SCREEN_SHARE_GRANT_IDLE_MS - 1_000);
+    store.touchControlGrant("t1");
+    advance(SCREEN_SHARE_GRANT_IDLE_MS - 1_000);
+    expect(store.hasControlGrant("t1")).toBe(true);
+    advance(2_000);
+    expect(store.hasControlGrant("t1")).toBe(false);
   });
 });
