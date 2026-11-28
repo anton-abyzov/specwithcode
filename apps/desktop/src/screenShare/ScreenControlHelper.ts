@@ -53,9 +53,14 @@ export function startScreenControlHelper(input: {
     let stopped = false;
     let buffered = "";
     let releaseWaiters: Array<() => void> = [];
-    // Everything the app asked this helper to let go of that it has not said it did.
-    const unreleasedKeys = new Set<string>();
-    const unreleasedButtons = new Set<string>();
+    // Each release the helper has not answered yet, oldest first. It answers each one
+    // once and in order, so a reply settles only the oldest; a release that timed out
+    // stays here until its reply comes.
+    const unanswered: Array<{
+      readonly keys: ReadonlyArray<string>;
+      readonly buttons: ReadonlyArray<string>;
+      readonly settle: () => void;
+    }> = [];
     const write = (command: unknown) => {
       if (stopped || child.stdin.destroyed) return;
       try {
@@ -97,8 +102,7 @@ export function startScreenControlHelper(input: {
             done();
           }
           releaseWaiters.push(finish);
-          for (const key of held.keys) unreleasedKeys.add(key);
-          for (const button of held.buttons) unreleasedButtons.add(button);
+          unanswered.push({ keys: held.keys, buttons: held.buttons, settle: finish });
           write({ t: "release", keys: held.keys, buttons: held.buttons });
         }),
       stop,
@@ -131,11 +135,7 @@ export function startScreenControlHelper(input: {
               : null,
           );
         } else if (message.t === "released") {
-          unreleasedKeys.clear();
-          unreleasedButtons.clear();
-          const waiters = releaseWaiters;
-          releaseWaiters = [];
-          for (const waiter of waiters) waiter();
+          unanswered.shift()?.settle();
         }
       }
     });
@@ -146,19 +146,19 @@ export function startScreenControlHelper(input: {
     child.once("exit", () => {
       clearTimeout(readyTimer);
       const unexpected = !stopped;
-      // Stopped, then gone before it said it let go (killed when stuck): a fresh helper
-      // lets go of all it was asked to. An unexpected exit is the session's to handle.
-      if (
-        started &&
-        !unexpected &&
-        (input.rescue ?? true) &&
-        unreleasedKeys.size + unreleasedButtons.size > 0
-      )
+      // Gone, stopped or not, before it answered a release: the session no longer holds
+      // those keys, so a fresh helper lets go of them. What the session still holds it
+      // lets go of itself.
+      if (started && (input.rescue ?? true) && unanswered.length > 0) {
+        const keys = new Set(unanswered.flatMap((entry) => entry.keys));
+        const buttons = new Set(unanswered.flatMap((entry) => entry.buttons));
         void releaseWithFreshHelper(
           input.path,
-          { keys: [...unreleasedKeys], buttons: [...unreleasedButtons] },
+          { keys: [...keys], buttons: [...buttons] },
           input.spawn,
         ).catch(() => undefined);
+      }
+      unanswered.length = 0;
       stopped = true;
       for (const waiter of releaseWaiters) waiter();
       releaseWaiters = [];

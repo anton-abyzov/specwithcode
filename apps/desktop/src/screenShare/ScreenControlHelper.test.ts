@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { startScreenControlHelper } from "./ScreenControlHelper.ts";
 
 /** A helper process that answers as the real one does, and records what it was told. */
-const fakeHelper = (options: { answerRelease: boolean }) => {
+const fakeHelper = (options: { answerRelease: boolean; answerFirst?: number }) => {
+  let answered = 0;
   const child = new EventEmitter() as EventEmitter & {
     stdin: PassThrough;
     stdout: PassThrough;
@@ -23,8 +24,13 @@ const fakeHelper = (options: { answerRelease: boolean }) => {
     for (const line of chunk.split("\n").filter((text) => text !== "")) {
       const command = JSON.parse(line) as Record<string, unknown>;
       lines.push(command);
-      if (command.t === "release" && options.answerRelease)
+      if (
+        command.t === "release" &&
+        (options.answerRelease || answered < (options.answerFirst ?? 0))
+      ) {
+        answered += 1;
         child.stdout.write(`${JSON.stringify({ t: "released" })}\n`);
+      }
     }
   });
   child.stdin.on("finish", () => {
@@ -105,6 +111,66 @@ describe("screen control helper", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("one reply settles only the oldest release; a later unanswered one is still let go of", async () => {
+    vi.useFakeTimers();
+    try {
+      const helpers: Array<ReturnType<typeof fakeHelper>> = [];
+      const spawn = () => {
+        const helper =
+          helpers.length === 0
+            ? fakeHelper({ answerRelease: false, answerFirst: 1 })
+            : fakeHelper({ answerRelease: true });
+        helpers.push(helper);
+        return helper.child as never;
+      };
+      const started = await startScreenControlHelper({
+        path: "/helper",
+        onBlocked: () => {},
+        onExit: () => {},
+        spawn,
+      });
+      if (started.kind !== "ok") throw new Error("not started");
+      void started.link.release({ keys: ["MetaLeft"], buttons: [] });
+      void started.link.release({ keys: ["KeyA"], buttons: [] });
+      await vi.advanceTimersByTimeAsync(600);
+      started.link.stop();
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(helpers).toHaveLength(2);
+      expect(helpers[1]!.lines).toContainEqual({ t: "release", keys: ["KeyA"], buttons: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a helper that crashes before answering a release: a fresh one lets go, and the session hears", async () => {
+    const helpers: Array<ReturnType<typeof fakeHelper>> = [];
+    let exits = 0;
+    const started = await startScreenControlHelper({
+      path: "/helper",
+      onBlocked: () => {},
+      onExit: () => {
+        exits += 1;
+      },
+      spawn: () => {
+        const helper = fakeHelper({ answerRelease: helpers.length > 0 });
+        helpers.push(helper);
+        return helper.child as never;
+      },
+    });
+    if (started.kind !== "ok") throw new Error("not started");
+    void started.link.release({ keys: ["ShiftLeft"], buttons: ["left"] });
+    await new Promise<void>((done) => queueMicrotask(done));
+    helpers[0]!.child.emit("exit", 1, null);
+    await vi.waitFor(() =>
+      expect(helpers[1]?.lines).toContainEqual({
+        t: "release",
+        keys: ["ShiftLeft"],
+        buttons: ["left"],
+      }),
+    );
+    expect(exits).toBe(1);
   });
 
   it("a helper that let go and closed normally starts no other", async () => {

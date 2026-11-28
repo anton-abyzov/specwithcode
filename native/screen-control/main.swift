@@ -296,7 +296,7 @@ func finish() -> Never {
   exit(0)
 }
 
-/// Lines waiting for the main queue, at most `queueLimit`; past it new input is dropped.
+/// Lines waiting for the main queue. Past `queueLimit` new input is dropped.
 /// Input lines that let go of a key or button have room up to `letGoLimit`, so what was
 /// pressed is let go; release and config lines are never dropped. Each line keeps when it arrived.
 let queueLimit = 256
