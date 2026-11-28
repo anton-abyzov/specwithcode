@@ -1490,6 +1490,10 @@ run_clean_env() {
     TERM=xterm-256color \\
     "$@"
 }
+# run_isolated and run_isolated_clean record the child's start time with ps -p "$$".
+# The quotes matter: a bare $$ in open's list is read in the forked child, which
+# would record the ps process's own start time and, across a second boundary,
+# make teardown take the live block for a recycled pid and leave it running.
 run_isolated() {
   pidfile="$1"
   grab_tty="$2"
@@ -1500,7 +1504,7 @@ run_isolated() {
       _p5l_set="\${PERL5LIB+1}"; _p5l="\${PERL5LIB-}"
       _pl_set="\${PERLLIB+1}"; _pl="\${PERLLIB-}"
       unset PERL5OPT PERL5LIB PERLLIB PERL5DB PERL5DB_THREADED
-      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 13); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } exit 1 if $start eq ""; open my $f, ">", $pidfile or exit 1; print $f "$$ 1 $start\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
+      exec ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps, $p5os, $p5o, $p5ls, $p5l, $pls, $pl) = splice(@ARGV, 0, 13); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", "$$") { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } exit 1 if $start eq ""; open my $f, ">", $pidfile or exit 1; print $f "$$ 1 $start\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } $ENV{PERL5OPT} = $p5o if $p5os eq "1"; $ENV{PERL5LIB} = $p5l if $p5ls eq "1"; $ENV{PERLLIB} = $pl if $pls eq "1"; exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$_p5o_set" "$_p5o" "$_p5l_set" "$_p5l" "$_pl_set" "$_pl" "$@"
     )
   else
     return 1
@@ -1510,7 +1514,7 @@ run_isolated_clean() {
   pidfile="$1"
   grab_tty="$2"
   shift 2
-  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps) = splice(@ARGV, 0, 7); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", $$) { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } exit 1 if $start eq ""; open my $f, ">", $pidfile or exit 1; print $f "$$ 1 $start\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$@"
+  run_clean_env ${perl} -e 'use Fcntl qw(:DEFAULT :flock); use POSIX qw(setpgid tcsetpgrp isatty EPERM); my ($lock, $td, $cf, $wpid, $pidfile, $grab_tty, $ps) = splice(@ARGV, 0, 7); setpgid(0, 0); sysopen(my $lf, $lock, O_RDWR | O_NOFOLLOW) or exit 1; flock($lf, LOCK_EX) or exit 1; if (-e $td || -e $cf || !-e $lock || (!kill(0, $wpid) && $! != EPERM)) { exit 1; } my $start = ""; { local $ENV{TZ} = "UTC"; local $ENV{LC_ALL} = "C"; if (-x $ps && open my $pfh, "-|", $ps, "-o", "lstart=", "-p", "$$") { my $line = <$pfh>; close $pfh; if ($? == 0 && defined $line) { $line =~ s/^\\s+|\\s+$//g; $line =~ s/\\s+/_/g; $start = $line if $line =~ /^[A-Za-z0-9:._+-]+$/; } } } exit 1 if $start eq ""; open my $f, ">", $pidfile or exit 1; print $f "$$ 1 $start\\n"; close $f or exit 1; close $lf; if ($grab_tty && isatty(0)) { local $SIG{TTOU} = "IGNORE"; tcsetpgrp(0, $$); } exec @ARGV or exit 127' "$dir/launch.lock" "$dir/teardown" "$dir/cleanup-failed" "$wrapper_pid" "$pidfile" "$grab_tty" ${ps} "$@"
 }
 reclaim_tty() {
   if [ -x ${perl} ]; then
