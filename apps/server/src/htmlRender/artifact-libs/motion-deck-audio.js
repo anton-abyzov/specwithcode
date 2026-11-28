@@ -19,7 +19,14 @@
     var muted = false;
     var beds = [];
     var pendingBed; // asked for before the reader's first gesture; starts on unlock
-    var pausedByHide = false;
+    var pausedByHide = false; // the context is suspended because the page was hidden
+    var pageHidden = false;
+    function settle() {
+      if (!pausedByHide || ac.state === "closed") return;
+      if (pageHidden) {
+        if (ac.state === "running") ac.suspend().then(settle, function () {});
+      } else if (ac.state === "running") pausedByHide = false;
+    }
     var lastHit = {};
     function midi(m) {
       return 440 * Math.pow(2, (m - 69) / 12);
@@ -107,16 +114,18 @@
         return muted;
       },
       // Hiding the page pauses sound; showing it again resumes only what hiding paused,
-      // so a deck nobody has touched yet still waits for a gesture.
+      // so a deck nobody has touched yet still waits for a gesture. Suspend and resume
+      // settle later, so each one checks the page's latest state when it does.
       suspend: function () {
-        if (!ac || ac.state !== "running") return;
-        pausedByHide = true;
-        ac.suspend().catch(function () {});
+        pageHidden = true;
+        if (!ac) return;
+        if (ac.state === "running") pausedByHide = true;
+        if (pausedByHide) ac.suspend().then(settle, function () {});
       },
       wake: function () {
+        pageHidden = false;
         if (!ac || !pausedByHide) return;
-        pausedByHide = false;
-        ac.resume().catch(function () {});
+        ac.resume().then(settle, function () {});
       },
       // A sustained chord bed. notes: MIDI numbers. color: "warm", "glass", "dark" or "air".
       bed: function (spec) {
