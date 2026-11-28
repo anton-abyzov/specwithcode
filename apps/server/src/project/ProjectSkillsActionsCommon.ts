@@ -56,6 +56,7 @@ export type RunCli = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly timeout: Duration.Input;
+  readonly forceKillAfter?: Duration.Input | undefined;
   /** Added to the server's own environment; its `PATH` is where a bare command is found. */
   readonly env?: NodeJS.ProcessEnv | undefined;
 }) => Effect.Effect<CliRun>;
@@ -132,7 +133,7 @@ export const makeRunCli = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
-  const run: RunCli = ({ command, args, cwd, timeout, env }) => {
+  const run: RunCli = ({ command, args, cwd, timeout, forceKillAfter, env }) => {
     const basePath = env?.PATH ?? "";
     const pathEnv = path.isAbsolute(command)
       ? [path.dirname(command), basePath]
@@ -146,6 +147,7 @@ export const makeRunCli = Effect.gen(function* () {
         cwd,
         timeout,
         timeoutBehavior: "timedOutResult",
+        ...(forceKillAfter !== undefined ? { forceKillAfter } : {}),
         maxOutputBytes: 1024 * 1024,
         outputMode: "truncate",
         env: { ...env, PATH: pathEnv, NO_COLOR: "1" },

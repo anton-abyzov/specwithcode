@@ -98,7 +98,7 @@ export interface SkillUpdatesDeps {
     readonly cwd: string;
   }) => Effect.Effect<void>;
   readonly sources: Pick<SkillRepoSources, "readSkill" | "connected">;
-  readonly findVskill: Effect.Effect<string | null>;
+  readonly findVskill: Effect.Effect<string | null, Error>;
   readonly run: RunCli;
   /** Asks these agents to scan the other folders threads have open, so each composer offers the skill. */
   readonly rescanOpenFolders: (
@@ -433,8 +433,12 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         return failed(
           `${input.repo} keeps ${input.lockName} at ${input.source.path} on ${input.source.branch}, which vskill cannot install by itself. Install it with vskill directly.`,
         );
-      const vskill = yield* deps.findVskill;
-      if (vskill === null) return failed(VSKILL_MISSING);
+      const located = yield* deps.findVskill.pipe(
+        Effect.map((binary) => ({ binary, error: null as string | null })),
+        Effect.catch((error) => Effect.succeed({ binary: null, error: error.message })),
+      );
+      const vskill = located.binary;
+      if (vskill === null) return failed(located.error ?? VSKILL_MISSING);
       const env = vskillEnv(input.visibility);
       // Deep links and keeping private sources off the registry both need a recent vskill;
       // an older one would read the address as a whole repo and install every skill in it.
@@ -445,6 +449,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         timeout: VERSION_TIMEOUT,
         env,
       });
+      if (version.timedOut)
+        return failed("vskill version check did not finish in time. Try again.");
       if (version.exitCode !== 0 || !isVersionAtLeast(version.stdout, PRIVATE_SOURCE_MIN_VSKILL))
         return failed(
           input.visibility === "public"

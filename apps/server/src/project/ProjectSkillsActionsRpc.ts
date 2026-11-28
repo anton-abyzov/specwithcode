@@ -167,6 +167,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         environment: hostEnvironment,
         platform,
         stateDir: config.stateDir,
+        baseDir: config.baseDir,
         skills,
         registry,
         machineName: environment.getDescriptor.pipe(Effect.map((descriptor) => descriptor.label)),
