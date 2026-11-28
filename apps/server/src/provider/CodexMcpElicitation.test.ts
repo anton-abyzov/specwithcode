@@ -154,7 +154,7 @@ describe("Codex MCP elicitation approvals", () => {
     });
   });
 
-  it("declines required form fields that an approval prompt cannot collect", () => {
+  it("cancels required form fields that an approval prompt cannot collect", () => {
     const inputRequest = {
       ...request,
       requestedSchema: {
@@ -166,8 +166,10 @@ describe("Codex MCP elicitation approvals", () => {
       },
     } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
 
+    // A decline reads as the person's refusal, which a browser tool can save as a lasting
+    // site denial; the app could not ask, so it cancels instead.
     NodeAssert.deepStrictEqual(toMcpElicitationResponse(inputRequest, "accept"), {
-      action: "decline",
+      action: "cancel",
     });
   });
 
@@ -183,7 +185,7 @@ describe("Codex MCP elicitation approvals", () => {
     } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
 
     NodeAssert.deepStrictEqual(toMcpElicitationResponse(urlRequest, "accept"), {
-      action: "decline",
+      action: "cancel",
     });
   });
 
