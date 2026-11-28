@@ -10,6 +10,7 @@ import {
   parseSkillRepoRef,
   type ProjectSkillRepo,
   type ProjectSkillReposResult,
+  type ProjectSkillSourceStatus,
   type ProjectSkillUpdateOutcome,
   type SkillRepoRefusalReason,
   type SkillInstallScope,
@@ -28,6 +29,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import { PROGRESS_PHRASES } from "./skillInstallScope.logic";
+import { SkillRolloutAfter } from "./SkillRollout";
 import {
   REPO_REFUSAL_PHRASES,
   SKILL_CHANGE_PERMISSION,
@@ -64,6 +66,7 @@ export function SkillUpdateRepos({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outcomes, setOutcomes] = useState<ReadonlyArray<ProjectSkillUpdateOutcome>>([]);
+  const [statuses, setStatuses] = useState<ReadonlyArray<ProjectSkillSourceStatus>>([]);
 
   const data = changed ?? query.data;
   const repos: ReadonlyArray<ProjectSkillRepo> = data?.repos ?? [];
@@ -130,6 +133,7 @@ export function SkillUpdateRepos({
       return;
     }
     setOutcomes(done.value.outcomes ?? []);
+    setStatuses(done.value.statuses);
   };
 
   return (
@@ -224,7 +228,15 @@ export function SkillUpdateRepos({
         </p>
       ) : null}
       {outcomes.map((outcome) => (
-        <SkillUpdateOutcomeLine key={outcome.skill} outcome={outcome} />
+        <div key={outcome.skill} className="space-y-2">
+          <SkillUpdateOutcomeLine outcome={outcome} />
+          <SkillRolloutAfter
+            environmentId={environmentId}
+            projectId={projectId}
+            outcome={outcome}
+            statuses={statuses}
+          />
+        </div>
       ))}
       {repos.length > 0 ? (
         <ul className="space-y-2">
