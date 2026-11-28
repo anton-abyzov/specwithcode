@@ -27,4 +27,18 @@ export const machineLabelsJa: PhraseCatalog = {
     "各マシンは自分のコーディネーターを持ち続け、{machine} のワーカーは動き続けます。{main} から {machine} に作業を送るには、設定 > マシン で {machine} のカードの「許可」を選んでください。",
   "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.":
     "1 つのプロジェクトにします。各マシンは自分のコーディネーターを持ち続け、両方のワーカーは動き続けます。ファイルはコピーされません。",
+  // Why the machine menu cannot open a machine (1517).
+  "Could not connect to {machine}. Choose Connect… to try again.":
+    "{machine} に接続できませんでした。「接続…」を選んでもう一度お試しください。",
+  "Waiting for approval: type {code} on {machine} or on a device it allows":
+    "承認待ち: {machine}、または {machine} が許可しているデバイスで {code} を入力してください",
+  "{machine} is offline on SpecWithCode Connect":
+    "{machine} は SpecWithCode Connect でオフラインです",
+  "Choose Connect… to open {machine}": "「接続…」を選んで {machine} を開きます",
+  "Sign in to SpecWithCode Connect on this device to open {machine}":
+    "{machine} を開くには、このデバイスで SpecWithCode Connect にサインインしてください",
+  "Away from {machine}? Type the code in SpecWithCode on a phone or computer {machine} already allows.":
+    "{machine} の近くにいませんか？{machine} がすでに許可している電話やコンピューターの SpecWithCode でコードを入力してください。",
+  "Away from a machine? Type its code in SpecWithCode on a phone or computer that machine already allows.":
+    "マシンの近くにいませんか？そのマシンがすでに許可している電話やコンピューターの SpecWithCode でコードを入力してください。",
 };

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  MACHINE_ROW_REASONS,
   machineReach,
+  machineRowReason,
   machineRowState,
   machineSyncFact,
   type MachineRowRole,
@@ -206,5 +208,47 @@ describe("machineSyncFact", () => {
       text: "{k} of {n} repositories differ · as of {time}",
       values: { k: "1", n: "1", time: "14:02" },
     });
+  });
+});
+
+describe("machineRowReason (1517)", () => {
+  const reason = (extra: Partial<Parameters<typeof machineRowReason>[0]> = {}) =>
+    machineRowReason({ machine: "linux-mini", reach: "never-opened", relay: "unknown", ...extra });
+
+  it("says what a phone can do about a machine it cannot open", () => {
+    expect(reason({ relay: "online" })).toEqual({
+      text: MACHINE_ROW_REASONS.pressConnect,
+      values: { machine: "linux-mini" },
+    });
+    expect(reason({ relay: "offline" })?.text).toBe(MACHINE_ROW_REASONS.relayOffline);
+    expect(reason({ relay: "signed-out" })?.text).toBe(MACHINE_ROW_REASONS.signIn);
+    expect(reason({ relay: "online", connecting: true })?.text).toBe(
+      MACHINE_ROW_REASONS.connecting,
+    );
+    expect(reason({ relay: "online", failed: true })?.text).toBe(MACHINE_ROW_REASONS.failed);
+    // Nothing known: the row keeps "This window cannot open linux-mini".
+    expect(reason()).toBeNull();
+  });
+
+  it("puts a waiting approval code first, on a greyed row and on an offline one", () => {
+    const waiting = {
+      text: MACHINE_ROW_REASONS.approval,
+      values: { machine: "linux-mini", code: "482913" },
+    };
+    expect(reason({ approvalCode: "482913", relay: "online", connecting: true })).toEqual(waiting);
+    expect(reason({ reach: "refused", approvalCode: "482913" })).toEqual(waiting);
+    expect(reason({ reach: "offline", approvalCode: "482913" })).toEqual(waiting);
+    // An offline row already says it is offline; a connected one says nothing.
+    expect(reason({ reach: "offline", relay: "offline" })).toBeNull();
+    expect(reason({ reach: "open", approvalCode: "482913" })).toBeNull();
+  });
+
+  it("becomes the label of a greyed row and the first note of an offline one", () => {
+    const waiting = { text: MACHINE_ROW_REASONS.approval, values: { code: "1" } };
+    expect(row("linked", { reach: "never-opened", reason: waiting }).label).toEqual(waiting);
+    expect(row("linked", { reach: "offline", lastSeen: "2h ago", reason: waiting }).notes).toEqual([
+      waiting,
+      { text: "Offline · last seen {time}", values: { time: "2h ago" } },
+    ]);
   });
 });

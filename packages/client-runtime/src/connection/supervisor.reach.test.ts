@@ -222,7 +222,8 @@ describe("EnvironmentSupervisor reach facts", () => {
 });
 
 describe("EnvironmentSupervisor recovery of a machine that was just connected", () => {
-  it.effect("retries at most a minute apart for 30 minutes, then on the long ladder", () =>
+  // After 30 minutes a machine seen in the last week keeps a two-minute cap (1517 AC-06).
+  it.effect("retries at most a minute apart for 30 minutes, then every two minutes", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         setup: (attempt) => (attempt === 1 ? Effect.void : Effect.fail(silent)),
@@ -252,7 +253,11 @@ describe("EnvironmentSupervisor recovery of a machine that was just connected", 
       ]);
       expect(Math.max(...recent.map((wait) => wait.waitMs))).toBe(60_000);
       expect(later.length).toBeGreaterThan(0);
-      expect(later.every((wait) => wait.waitMs === 300_000)).toBe(true);
+      expect(
+        later.every(
+          (wait) => wait.waitMs === EnvironmentSupervisor.KNOWN_MACHINE_RETRY_MAX_DELAY_MS,
+        ),
+      ).toBe(true);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

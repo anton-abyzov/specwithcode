@@ -245,7 +245,25 @@ export function useConnectDevicesActions(
 export function DeviceApprovalPromptHost() {
   const environmentId = usePrimaryEnvironmentId();
   const supported = useDeviceApprovalSupported(environmentId);
-  const { snapshot, refresh } = useConnectDevices(environmentId, supported);
+  return <DeviceApprovalPromptOn environmentId={environmentId} enabled={supported} />;
+}
+
+/**
+ * The pop-up for one machine's waiting devices, shown where this window may approve
+ * there (`canApprove`): the window's own machine, and every other machine it is allowed
+ * on, so a code shown on a phone away from home can be typed from any device that
+ * machine already allows (1517, D-01). The pop-up names the machine.
+ */
+function DeviceApprovalPromptOn({
+  environmentId,
+  enabled,
+  poll,
+}: {
+  environmentId: EnvironmentId | null;
+  enabled: boolean;
+  poll?: { readonly visibleMs: number; readonly hiddenMs: number };
+}) {
+  const { snapshot, refresh } = useConnectDevices(environmentId, enabled, poll);
   // What Later put off on this machine. A machine that keeps Later is the only
   // word on it; for one that keeps none, this window's storage is read on each
   // render, so a restart keeps it and an entry past its 30 days lets the pop-up back.
@@ -410,15 +428,11 @@ function FloatingWaitingCard({
   );
 }
 
-function DeviceNoticesWatcher({ environmentId }: { environmentId: EnvironmentId }) {
-  useConnectDevices(environmentId, true, NOTICE_POLL);
-  return null;
-}
-
 /**
  * On this device, for each other machine it is approved on: shows that
- * machine's "New device approved" notices once each. The pop-up host already
- * covers this machine's own list.
+ * machine's "New device approved" notices once each, and its pop-up when a
+ * device waits there and this one may approve it (1517). The pop-up host
+ * already covers this machine's own list.
  */
 export function DeviceApprovalNoticesHost() {
   const { environments } = useEnvironments();
@@ -434,9 +448,11 @@ export function DeviceApprovalNoticesHost() {
   return (
     <>
       {watched.map((environment) => (
-        <DeviceNoticesWatcher
+        <DeviceApprovalPromptOn
           key={environment.environmentId}
           environmentId={environment.environmentId}
+          enabled
+          poll={NOTICE_POLL}
         />
       ))}
     </>

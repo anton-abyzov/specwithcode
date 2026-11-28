@@ -17,7 +17,12 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTx } from "../../i18n";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  useRelayEnvironmentDiscovery,
+} from "../../state/environments";
+import { useAccountAutoConnectStates } from "../../studio/grantedAccountMachines";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { formatAgo } from "../../studio/hostLimitsModel";
 import { sameRepositoryLinkOffers } from "../../studio/projectLink";
@@ -28,7 +33,9 @@ import {
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import {
   machineReach,
+  machineRowReason,
   machineRowState,
+  type MachineRelayState,
   type MachineReach,
   type MachineRowKind,
   type MachineRowText,
@@ -38,6 +45,7 @@ import { useMachineNickname, useMachineNicknames } from "../../studio/machineNic
 import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { ProjectSyncDialog } from "./ProjectSyncDialog";
+import { useConnectLinkedMachine } from "./ConnectLinkedMachine";
 import { useProjectSyncMenu, type SyncAsk } from "./useProjectSyncMenu";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { sayLinkReason, useLinkRefusals } from "../../studio/linkRefusals";
@@ -138,6 +146,8 @@ export function OrchestratorSwitcher({
   savedMachineMissing,
   onView,
   reachOf = () => OPEN,
+  reasonOf = () => null,
+  onConnect = null,
   onAllowWorkers,
   onMigrate = null,
   onSync = null,
@@ -171,6 +181,13 @@ export function OrchestratorSwitcher({
   onView: ((key: string) => void) | null;
   /** This window's reach of a listed machine; every machine is open when left out. */
   reachOf?: (key: string) => MachineRowReach;
+  /** Why this window cannot open a machine, or what it waits for there (`machineRowReason`). */
+  reasonOf?: (key: string, reach: MachineReach, machine: string) => MachineRowText | null;
+  /**
+   * Connect… on a row this window cannot open; `onAllowWorkers` when left out. The caller
+   * asks SpecWithCode Connect for the machine where it can (1517).
+   */
+  onConnect?: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the threads of the machine shown; null while it is offline. */
   onMigrate?: (() => void) | null;
@@ -278,6 +295,7 @@ export function OrchestratorSwitcher({
           lastSeen: reach.lastSeen ?? null,
           sync: copy.key === current ? null : files.sync,
           needsUpdate: files.needsUpdate ?? null,
+          reason: reasonOf(copy.key, reach.reach, name),
           window:
             windowEnvironmentId !== null &&
             checkoutKeyEnvironmentId(copy.key) === windowEnvironmentId,
@@ -295,7 +313,12 @@ export function OrchestratorSwitcher({
     ...unknown.map((ref) => ({
       key: ref.key,
       name: ref.machine,
-      state: machineRowState({ machine: ref.machine, role: "linked", reach: "never-opened" }),
+      state: machineRowState({
+        machine: ref.machine,
+        role: "linked",
+        reach: "never-opened",
+        reason: reasonOf(ref.key, "never-opened", ref.machine),
+      }),
       hint: ref.machine,
     })),
   ];
@@ -433,12 +456,12 @@ export function OrchestratorSwitcher({
                         <MenuRadioItemIndicator className="ms-auto ps-2" />
                       </span>
                     </MenuRadioItem>
-                    {row.state.action === "connect" && onAllowWorkers ? (
+                    {row.state.action === "connect" && (onConnect || onAllowWorkers) ? (
                       <MenuItem
                         className="shrink-0 rounded-md border border-border px-2 text-xs"
                         data-orchestrator-connect={row.key}
                         aria-label={tx("Connect {machine}", { machine: row.name })}
-                        onClick={onAllowWorkers}
+                        onClick={() => (onConnect ? onConnect(row.key) : onAllowWorkers?.())}
                       >
                         {tx("Connect…")}
                       </MenuItem>
@@ -634,9 +657,53 @@ export function ProjectOrchestratorSwitcher({
     const seen = reach === "offline" ? machineLastSeenAt(environmentId) : null;
     return { reach, lastSeen: seen === null ? null : formatAgo(seen, now) };
   };
+  const nickname = useMachineNicknames();
+  // Why a row cannot open its machine, and Connect… asking SpecWithCode Connect for it (1517).
+  const discovery = useRelayEnvironmentDiscovery();
+  const autoConnect = useAccountAutoConnectStates();
+  const connectLinked = useConnectLinkedMachine();
+  const [pressed, setPressed] = useState<ReadonlyMap<string, "connecting" | "failed">>(
+    () => new Map(),
+  );
+  const press = (environmentId: string, state: "connecting" | "failed" | null) =>
+    setPressed((current) => {
+      const next = new Map(current);
+      if (state === null) next.delete(environmentId);
+      else next.set(environmentId, state);
+      return next;
+    });
+  const relayOf = (environmentId: string): MachineRelayState => {
+    const found = discovery.environments.get(environmentId);
+    if (found) return found.availability === "offline" ? "offline" : "online";
+    return discovery.environments.size === 0 && !discovery.refreshing ? "signed-out" : "unknown";
+  };
+  const reasonOf = (key: string, reach: MachineReach, machine: string) => {
+    const environmentId = checkoutKeyEnvironmentId(key);
+    const known = environments.find((item) => item.environmentId === environmentId);
+    const auto = autoConnect.get(environmentId);
+    const mine = pressed.get(environmentId);
+    return machineRowReason({
+      machine,
+      reach,
+      approvalCode: known?.connection.deviceApprovalCode ?? null,
+      connecting: mine === "connecting" || auto?.phase === "connecting",
+      failed: mine === "failed" || auto?.phase === "failed",
+      relay: relayOf(environmentId),
+    });
+  };
+  const onConnect = (key: string) => {
+    const environmentId = checkoutKeyEnvironmentId(key);
+    const asked = connectLinked(environmentId, nickname(environmentId));
+    // Not on this device's Connect account: Settings > Machines says how to add it.
+    if (asked === null) {
+      void navigate({ to: "/settings/connections" });
+      return;
+    }
+    press(environmentId, "connecting");
+    void asked.then((error) => press(environmentId, error === null ? null : "failed"));
+  };
   const [linkTarget, setLinkTarget] = useState<ProjectLinkTarget | null>(null);
   const projects = useProjects();
-  const nickname = useMachineNicknames();
   // Linking needs what copying needs: a project this person can operate, not a private one.
   const offers = useMemo(
     // A machine's "No project" folder has no repository, so it never matches: no lookup needed.
@@ -669,6 +736,8 @@ export function ProjectOrchestratorSwitcher({
         hostLabel={label}
         projectTitle={projectTitle}
         reachOf={reachOf}
+        reasonOf={reasonOf}
+        onConnect={onConnect}
         connected={connected}
         // The line above the message box says the rest once; the chip names the state.
         statusDetail={disconnectedLabel}

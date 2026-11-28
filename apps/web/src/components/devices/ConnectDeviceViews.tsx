@@ -497,6 +497,11 @@ export function DeviceWaitingList({
         ))}
       </ul>
       <OwnDeviceIdLine deviceId={deviceId} />
+      <p className="mt-2 text-xs text-muted-foreground" data-device-waiting-elsewhere="">
+        {tx(
+          "Away from a machine? Type its code in SpecWithCode on a phone or computer that machine already allows.",
+        )}
+      </p>
       <p className="mt-2 text-xs text-muted-foreground">
         {tx("This device connects on its own once a machine allows it.")}
       </p>

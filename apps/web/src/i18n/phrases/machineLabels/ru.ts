@@ -27,4 +27,17 @@ export const machineLabelsRu: PhraseCatalog = {
     "Каждая машина сохраняет свой координатор, и исполнители на {machine} продолжают работу. Чтобы отправлять работу на {machine} с {main}, нажмите «Разрешить» на карточке {machine} в «Настройки > Машины».",
   "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.":
     "Сделать их одним проектом. Каждая машина сохраняет свой координатор, и исполнители на обеих продолжают работу. Файлы не копируются.",
+  // Why the machine menu cannot open a machine (1517).
+  "Could not connect to {machine}. Choose Connect… to try again.":
+    "Не удалось подключиться к {machine}. Выберите «Подключить…», чтобы попробовать снова.",
+  "Waiting for approval: type {code} on {machine} or on a device it allows":
+    "Ждёт одобрения: введите {code} на {machine} или на устройстве, которому {machine} доверяет",
+  "{machine} is offline on SpecWithCode Connect": "{machine} не в сети в SpecWithCode Connect",
+  "Choose Connect… to open {machine}": "Выберите «Подключить…», чтобы открыть {machine}",
+  "Sign in to SpecWithCode Connect on this device to open {machine}":
+    "Войдите в SpecWithCode Connect на этом устройстве, чтобы открыть {machine}",
+  "Away from {machine}? Type the code in SpecWithCode on a phone or computer {machine} already allows.":
+    "Вы не у {machine}? Введите код в SpecWithCode на телефоне или компьютере, которому {machine} уже доверяет.",
+  "Away from a machine? Type its code in SpecWithCode on a phone or computer that machine already allows.":
+    "Вы не у машины? Введите её код в SpecWithCode на телефоне или компьютере, которому эта машина уже доверяет.",
 };

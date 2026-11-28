@@ -59,6 +59,15 @@ export const OFFLINE_MACHINE_RETRY_MAX_DELAY_MS = 600_000;
  */
 export const RECENT_MACHINE_RETRY_MAX_DELAY_MS = 60_000;
 export const RECENT_CONNECTION_WINDOW_MS = 30 * 60_000;
+/**
+ * Cap for a machine this device had a session with in the last
+ * {@link KNOWN_CONNECTION_WINDOW_MS}, after the recent window. A home machine
+ * that slept or lost its tunnel while the owner is away comes back on its own;
+ * waiting up to ten minutes between tries left it reading offline long after
+ * it returned. Two minutes is about 30 relay requests an hour per window.
+ */
+export const KNOWN_MACHINE_RETRY_MAX_DELAY_MS = 120_000;
+export const KNOWN_CONNECTION_WINDOW_MS = 7 * 24 * 60 * 60_000;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const loopbackEstablishmentTimeout = Duration.fromInputUnsafe(
@@ -209,6 +218,9 @@ export function retryMaxDelayMs(
   if (prefersLoopback) return LOOPBACK_RETRY_MAX_DELAY_MS;
   if (sinceLastConnectedMs !== null && sinceLastConnectedMs < RECENT_CONNECTION_WINDOW_MS) {
     return RECENT_MACHINE_RETRY_MAX_DELAY_MS;
+  }
+  if (sinceLastConnectedMs !== null && sinceLastConnectedMs < KNOWN_CONNECTION_WINDOW_MS) {
+    return KNOWN_MACHINE_RETRY_MAX_DELAY_MS;
   }
   // Only the machine itself being away earns the long cap; a relay or
   // provisioning failure keeps the normal ladder so clients recover quickly.

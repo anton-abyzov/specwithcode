@@ -27,4 +27,17 @@ export const machineLabelsDe: PhraseCatalog = {
     "Jede Maschine behält ihren eigenen Koordinator, und die Worker auf {machine} laufen weiter. Um {machine} von {main} aus Arbeit zu schicken, wähle „Erlauben“ auf der Karte von {machine} unter Einstellungen > Rechner.",
   "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.":
     "Zu einem Projekt machen. Jede Maschine behält ihren eigenen Koordinator, und die Worker auf beiden laufen weiter. Dateien werden nicht kopiert.",
+  // Why the machine menu cannot open a machine (1517).
+  "Could not connect to {machine}. Choose Connect… to try again.":
+    "Verbindung zu {machine} fehlgeschlagen. Wähle „Verbinden…“, um es erneut zu versuchen.",
+  "Waiting for approval: type {code} on {machine} or on a device it allows":
+    "Wartet auf Freigabe: Gib {code} auf {machine} oder auf einem Gerät ein, das {machine} erlaubt",
+  "{machine} is offline on SpecWithCode Connect": "{machine} ist in SpecWithCode Connect offline",
+  "Choose Connect… to open {machine}": "Wähle „Verbinden…“, um {machine} zu öffnen",
+  "Sign in to SpecWithCode Connect on this device to open {machine}":
+    "Melde dich auf diesem Gerät bei SpecWithCode Connect an, um {machine} zu öffnen",
+  "Away from {machine}? Type the code in SpecWithCode on a phone or computer {machine} already allows.":
+    "Nicht bei {machine}? Gib den Code in SpecWithCode auf einem Telefon oder Computer ein, den {machine} bereits erlaubt.",
+  "Away from a machine? Type its code in SpecWithCode on a phone or computer that machine already allows.":
+    "Nicht bei einer Maschine? Gib ihren Code in SpecWithCode auf einem Telefon oder Computer ein, den diese Maschine bereits erlaubt.",
 };

@@ -290,6 +290,23 @@ it("greys a machine this window cannot open: never pressable, with its reason an
   expect(calls.onView).not.toHaveBeenCalled();
 });
 
+it("Connect… asks for that machine, and the greyed row says why (1517 AC-01, AC-02)", async () => {
+  const calls = handlers();
+  const onConnect = vi.fn<(key: string) => void>();
+  await renderSwitcher({
+    ...calls,
+    onConnect,
+    reasonOf: (key, _reach, machine) =>
+      key === "box-a:p" ? { text: "Choose Connect… to open {machine}", values: { machine } } : null,
+    copies: [copy("laptopE:p", "Laptop E"), member("deskB:p", "Desk B")],
+    unknown: [{ key: "box-a:p", machine: "box-a" }],
+  });
+  expect(textsIn(rowOf("box-a:p"), "[data-row-reason]")).toEqual(["Choose Connect… to open box-a"]);
+  await act(async () => item("menuitem", "Connect…")!.click());
+  expect(onConnect).toHaveBeenCalledWith("box-a:p");
+  expect(calls.onAllowWorkers).not.toHaveBeenCalled();
+});
+
 it("greys a listed machine that refuses this window, the same way", async () => {
   const calls = handlers();
   const reachOf = (key: string): MachineRowReach =>
@@ -435,10 +452,7 @@ it("offers Sync… and Add to another machine…, and keeps the names of Move ru
     onLeave: vi.fn(),
     onMigrate: vi.fn(),
   });
-  expect(rows().map((row) => row.textContent)).toEqual([
-    "Laptop E",
-    "Tower H",
-  ]);
+  expect(rows().map((row) => row.textContent)).toEqual(["Laptop E", "Tower H"]);
   // No "This project" label: the project's actions sit under its machines.
   expect(textsIn(document, '[data-slot="menu-label"]')).toEqual([
     "Atlas on your machines",
@@ -712,10 +726,7 @@ it("keeps that note off linked projects and off a group with a linked machine", 
     ...handlers(),
     copies: [copy("laptopE:p", "Laptop E"), copy("deskB:p", "Desk B", "independent")],
   });
-  expect(rows().map((row) => row.textContent)).toEqual([
-    "Laptop E",
-    "Desk BSeparate project",
-  ]);
+  expect(rows().map((row) => row.textContent)).toEqual(["Laptop E", "Desk BSeparate project"]);
   await showInfo();
   expect(unlinkedNote()).toBeNull();
 });

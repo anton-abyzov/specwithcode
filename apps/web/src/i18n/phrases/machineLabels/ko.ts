@@ -27,4 +27,18 @@ export const machineLabelsKo: PhraseCatalog = {
     "각 머신은 자체 코디네이터를 유지하며, {machine}의 워커는 계속 실행됩니다. {main}에서 {machine}(으)로 작업을 보내려면 설정 > 머신에서 {machine} 카드의 허용을 선택하세요.",
   "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.":
     "하나의 프로젝트로 만듭니다. 각 머신은 자체 코디네이터를 유지하며, 양쪽의 워커는 계속 실행됩니다. 파일은 복사되지 않습니다.",
+  // Why the machine menu cannot open a machine (1517).
+  "Could not connect to {machine}. Choose Connect… to try again.":
+    '{machine}에 연결하지 못했습니다. 다시 시도하려면 "연결…"을 선택하세요.',
+  "Waiting for approval: type {code} on {machine} or on a device it allows":
+    "승인 대기 중: {machine} 또는 {machine}이 허용한 기기에서 {code}를 입력하세요",
+  "{machine} is offline on SpecWithCode Connect":
+    "{machine}은 SpecWithCode Connect에서 오프라인입니다",
+  "Choose Connect… to open {machine}": '"연결…"을 선택하여 {machine}을 엽니다',
+  "Sign in to SpecWithCode Connect on this device to open {machine}":
+    "{machine}을 열려면 이 기기에서 SpecWithCode Connect에 로그인하세요",
+  "Away from {machine}? Type the code in SpecWithCode on a phone or computer {machine} already allows.":
+    "{machine}에서 멀리 있나요? {machine}이 이미 허용한 휴대폰이나 컴퓨터의 SpecWithCode에서 코드를 입력하세요.",
+  "Away from a machine? Type its code in SpecWithCode on a phone or computer that machine already allows.":
+    "기기에서 멀리 있나요? 그 기기가 이미 허용한 휴대폰이나 컴퓨터의 SpecWithCode에서 해당 코드를 입력하세요.",
 };

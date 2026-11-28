@@ -75,6 +75,13 @@ export function DeviceApprovalCode({
         <CopyCodeButton code={code} />
       </div>
       <OwnDeviceIdLine deviceId={deviceId} />
+      {/* 1517 D-01: away from {machine}, a phone or computer it already allows can type it. */}
+      <p className="mt-2 text-xs text-muted-foreground" data-device-waiting-elsewhere="">
+        {tx(
+          "Away from {machine}? Type the code in SpecWithCode on a phone or computer {machine} already allows.",
+          { machine },
+        )}
+      </p>
       <p className="mt-2 text-xs text-muted-foreground">
         {tx("This device connects on its own once {machine} allows it.", { machine })}
       </p>

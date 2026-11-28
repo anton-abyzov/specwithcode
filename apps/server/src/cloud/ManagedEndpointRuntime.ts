@@ -17,6 +17,11 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as RelayProcessOwnership from "./RelayProcessOwnership.ts";
+import {
+  EDGE_LOSS_RESTART_AFTER_MS,
+  EdgeConnections,
+  edgeConnectionEvent,
+} from "./edgeConnections.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -63,8 +68,13 @@ interface ActiveConnector {
   readonly config: RelayManagedEndpointRuntimeConfig;
   readonly startedAtMillis: number;
   readonly connected: Ref.Ref<boolean>;
+  /** Live edge connections by cloudflared's `connIndex`, from its output. */
+  readonly edge: EdgeConnections;
   readonly ownershipGeneration: string | null;
 }
+
+/** How often a running connector's edge connections are checked. */
+const EDGE_LOSS_CHECK_INTERVAL = Duration.seconds(15);
 
 // A connector that exits before running this long is treated as part of a
 // crash loop; one that stays up at least this long earns an immediate restart
@@ -294,8 +304,72 @@ export const make = Effect.gen(function* () {
       return false;
     }).pipe(Effect.repeat({ until: (connected) => connected }));
 
+  // A connector that registered and then lost every edge connection is left
+  // alone by cloudflared's own retries only while they work: after
+  // EDGE_LOSS_RESTART_AFTER_MS with none, stop it so the supervisor starts a
+  // fresh one, and ask the relay to confirm the tunnel (1517).
+  const watchEdgeLoss = (connector: ActiveConnector) =>
+    Effect.gen(function* () {
+      yield* Effect.sleep(EDGE_LOSS_CHECK_INTERVAL);
+      const now = yield* Clock.currentTimeMillis;
+      if (!connector.edge.lostFor(now)) return false;
+      yield* Effect.logWarning(
+        "Relay client lost every edge connection; restarting it and requesting recovery",
+        {
+          pid: Number(connector.child.pid),
+          lostForMillis: EDGE_LOSS_RESTART_AFTER_MS,
+          tunnelId: connector.config.tunnelId,
+          tunnelName: connector.config.tunnelName,
+        },
+      );
+      yield* Queue.offer(recoveryRequests, connector.config);
+      yield* connector.child
+        .kill()
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not stop the relay client after edge loss", { cause }),
+          ),
+        );
+      return true;
+    }).pipe(Effect.repeat({ until: (restarted) => restarted }));
+
   const observeConnectorOutput = (connector: ActiveConnector) => {
     let rejectedRegistrations = 0;
+
+    const classifyAndLog = (line: string, output: string) => {
+      const attributes = {
+        pid: Number(connector.child.pid),
+        tunnelId: connector.config.tunnelId,
+        tunnelName: connector.config.tunnelName,
+        output,
+      };
+      switch (classifyRelayClientOutput(line)) {
+        case "connected":
+          rejectedRegistrations = 0;
+          return Ref.set(connector.connected, true).pipe(
+            Effect.andThen(Effect.logInfo("Relay client tunnel connection registered", attributes)),
+            Effect.andThen(Queue.offer(tunnelConnections, undefined)),
+            Effect.asVoid,
+          );
+        case "warning":
+          if (isRejectedRelayClientTunnelOutput(line)) {
+            rejectedRegistrations += 1;
+            if (rejectedRegistrations >= TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY) {
+              rejectedRegistrations = 0;
+              return Effect.logWarning(
+                "Relay client tunnel was rejected; requesting recovery",
+                attributes,
+              ).pipe(
+                Effect.andThen(Queue.offer(recoveryRequests, connector.config)),
+                Effect.asVoid,
+              );
+            }
+          }
+          return Effect.logWarning("Relay client reported a transport warning", attributes);
+        case "debug":
+          return Effect.logDebug("Relay client output", attributes);
+      }
+    };
 
     return connector.child.all.pipe(
       Stream.decodeText(),
@@ -304,40 +378,14 @@ export const make = Effect.gen(function* () {
       Stream.filter((line) => line.length > 0),
       Stream.runForEach((line) => {
         const output = line.replaceAll(connector.config.connectorToken, "<redacted>");
-        const attributes = {
-          pid: Number(connector.child.pid),
-          tunnelId: connector.config.tunnelId,
-          tunnelName: connector.config.tunnelName,
-          output,
-        };
-        switch (classifyRelayClientOutput(line)) {
-          case "connected":
-            rejectedRegistrations = 0;
-            return Ref.set(connector.connected, true).pipe(
-              Effect.andThen(
-                Effect.logInfo("Relay client tunnel connection registered", attributes),
-              ),
-              Effect.andThen(Queue.offer(tunnelConnections, undefined)),
+        const edgeEvent = edgeConnectionEvent(line);
+        const countEdge = edgeEvent
+          ? Clock.currentTimeMillis.pipe(
+              Effect.map((now) => connector.edge.apply(edgeEvent, now)),
               Effect.asVoid,
-            );
-          case "warning":
-            if (isRejectedRelayClientTunnelOutput(line)) {
-              rejectedRegistrations += 1;
-              if (rejectedRegistrations >= TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY) {
-                rejectedRegistrations = 0;
-                return Effect.logWarning(
-                  "Relay client tunnel was rejected; requesting recovery",
-                  attributes,
-                ).pipe(
-                  Effect.andThen(Queue.offer(recoveryRequests, connector.config)),
-                  Effect.asVoid,
-                );
-              }
-            }
-            return Effect.logWarning("Relay client reported a transport warning", attributes);
-          case "debug":
-            return Effect.logDebug("Relay client output", attributes);
-        }
+            )
+          : Effect.void;
+        return countEdge.pipe(Effect.andThen(classifyAndLog(line, output)));
       }),
       Effect.catchCause((cause) =>
         Effect.logWarning("Relay client output observer failed", {
@@ -508,12 +556,14 @@ export const make = Effect.gen(function* () {
         config,
         startedAtMillis: yield* Clock.currentTimeMillis,
         connected: yield* Ref.make(false),
+        edge: new EdgeConnections(),
         ownershipGeneration: yield* ownership.publish(Number(child.pid), executable.executablePath),
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
       yield* Effect.forkIn(superviseConnector(connector), connectorScope);
       yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
+      yield* Effect.forkIn(watchEdgeLoss(connector), connectorScope);
       return {
         status: "running",
         providerKind: "cloudflare_tunnel",

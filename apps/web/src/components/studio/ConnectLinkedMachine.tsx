@@ -16,6 +16,44 @@ import { reopenJoinCodes } from "../devices/closedJoinCodes";
 import { Button } from "../ui/button";
 
 /**
+ * Saves a machine this app's SpecWithCode Connect account lists, with a
+ * Connect route: the one click of a linked machine this device never saved.
+ * Resolves to null when it was saved, else the reason it was not.
+ */
+export function useConnectLinkedMachine(): (
+  environmentId: string,
+  label: string,
+) => Promise<string | null> | null {
+  const discovery = useRelayEnvironmentDiscovery();
+  const register = useAtomCommand(environmentCatalog.register, { reportFailure: false });
+  return (environmentId, label) => {
+    const found = discovery.environments.get(environmentId)?.environment;
+    if (!found) return null;
+    return (async () => {
+      // The owner asks for this machine: a join code card closed earlier shows again.
+      reopenJoinCodes([found.environmentId]);
+      // The name Connect lists for the machine, not the caller's fallback.
+      const result = await register(
+        new RelayConnectionRegistration({
+          target: new RelayConnectionTarget({
+            environmentId: found.environmentId,
+            label: found.label,
+          }),
+        }),
+      );
+      if (result._tag === "Success") {
+        // Connecting by hand undoes an earlier removal on this device.
+        setFleetEnvironmentSkipped(environmentId as EnvironmentId, false);
+        setConnectRouteDeclined(environmentId, false);
+        return null;
+      }
+      const cause = squashAtomCommandFailure(result);
+      return cause instanceof Error ? cause.message : `Could not connect to ${label}.`;
+    })();
+  };
+}
+
+/**
  * The way to a linked machine this device has never saved. When this app's
  * SpecWithCode Connect account lists the machine, one click saves it with a
  * Connect route; otherwise it says what is missing.
@@ -28,7 +66,7 @@ export function ConnectLinkedMachine({
   label: string;
 }) {
   const discovery = useRelayEnvironmentDiscovery();
-  const register = useAtomCommand(environmentCatalog.register, { reportFailure: false });
+  const connectLinked = useConnectLinkedMachine();
   const [state, setState] = useState<{ busy: boolean; error: string | null }>({
     busy: false,
     error: null,
@@ -52,29 +90,8 @@ export function ConnectLinkedMachine({
     );
   const connect = async () => {
     setState({ busy: true, error: null });
-    // The owner asks for this machine: a join code card closed earlier shows again.
-    reopenJoinCodes([found.environmentId]);
-    // The name Connect lists for the machine, not this page's fallback.
-    const result = await register(
-      new RelayConnectionRegistration({
-        target: new RelayConnectionTarget({
-          environmentId: found.environmentId,
-          label: found.label,
-        }),
-      }),
-    );
-    if (result._tag === "Success") {
-      // Connecting by hand undoes an earlier removal on this device.
-      setFleetEnvironmentSkipped(environmentId as EnvironmentId, false);
-      setConnectRouteDeclined(environmentId, false);
-      setState({ busy: false, error: null });
-      return;
-    }
-    const cause = squashAtomCommandFailure(result);
-    setState({
-      busy: false,
-      error: cause instanceof Error ? cause.message : `Could not connect to ${label}.`,
-    });
+    const error = await connectLinked(environmentId, label);
+    setState({ busy: false, error });
   };
   return (
     <div className="mt-2" data-linked-machine-connect={environmentId}>

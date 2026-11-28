@@ -1486,6 +1486,8 @@ export interface DesktopBridge extends DesktopUpdateBridge, DesktopArtifactAppsB
    * desktop builds never emit it.
    */
   onBackendReady?: (listener: () => void) => () => void;
+  /** The computer woke from sleep or was unlocked. Optional: older desktop builds never emit it. */
+  onSystemResume?: (listener: () => void) => () => void;
   /**
    * State of a Connect sign-in this window started through another site.
    * Optional: older desktop builds never emit it.

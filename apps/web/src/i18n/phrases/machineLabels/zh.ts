@@ -27,4 +27,17 @@ export const machineLabelsZh: PhraseCatalog = {
     "每台机器保留自己的协调器，{machine} 上的工作线程继续运行。若要从 {main} 向 {machine} 发送工作，请在“设置 > 机器”中 {machine} 的卡片上选择“允许”。",
   "Make these one project. Each machine keeps its own coordinator, and the workers on both keep running. Files are not copied.":
     "将它们合为一个项目。每台机器保留自己的协调器，两台机器上的工作线程都继续运行。不会复制文件。",
+  // Why the machine menu cannot open a machine (1517).
+  "Could not connect to {machine}. Choose Connect… to try again.":
+    "无法连接到 {machine}。选择“连接…”重试。",
+  "Waiting for approval: type {code} on {machine} or on a device it allows":
+    "等待批准：在 {machine} 或 {machine} 允许的设备上输入 {code}",
+  "{machine} is offline on SpecWithCode Connect": "{machine} 在 SpecWithCode Connect 上离线",
+  "Choose Connect… to open {machine}": "选择“连接…”以打开 {machine}",
+  "Sign in to SpecWithCode Connect on this device to open {machine}":
+    "在此设备上登录 SpecWithCode Connect 以打开 {machine}",
+  "Away from {machine}? Type the code in SpecWithCode on a phone or computer {machine} already allows.":
+    "不在 {machine} 旁边？在 {machine} 已允许的手机或电脑上的 SpecWithCode 中输入此代码。",
+  "Away from a machine? Type its code in SpecWithCode on a phone or computer that machine already allows.":
+    "不在某台机器旁边？在该机器已允许的手机或电脑上的 SpecWithCode 中输入它的代码。",
 };

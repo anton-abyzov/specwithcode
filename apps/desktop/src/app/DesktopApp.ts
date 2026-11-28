@@ -31,6 +31,7 @@ import {
 } from "./DesktopHandoffSleep.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { broadcastSystemResume } from "../window/systemResume.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
@@ -734,8 +735,20 @@ const startup = Effect.gen(function* () {
   const checkIfStale = (reason: string) => () => {
     void Effect.runPromiseWith(updateContext)(updates.checkIfStale(reason));
   };
-  yield* powerMonitor.onSimpleEvent("resume", checkIfStale("resume"));
-  yield* powerMonitor.onSimpleEvent("unlock-screen", checkIfStale("unlock"));
+  // Waking also has every window check its connections now: sockets to other
+  // machines rarely survive a sleep, and a window in the background would
+  // otherwise wait out its retry timer.
+  const wakeWindows = () => {
+    broadcastSystemResume(Electron.BrowserWindow.getAllWindows());
+  };
+  yield* powerMonitor.onSimpleEvent("resume", () => {
+    checkIfStale("resume")();
+    wakeWindows();
+  });
+  yield* powerMonitor.onSimpleEvent("unlock-screen", () => {
+    checkIfStale("unlock")();
+    wakeWindows();
+  });
   // Before this Mac sleeps the main process tells its server, with the desktop
   // service credential, so coordinator standbys hear of the sleep with no window
   // open. Sleep moves no thread.
