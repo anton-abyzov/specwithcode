@@ -4327,10 +4327,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         snapshot && snapshot.value === current
           ? composerEditorRef.current?.readSelectionRange()
           : undefined;
-      const start = range?.start ?? current.length;
-      const end = range?.end ?? start;
-      const next = insertDictatedText(current, text, start, end);
-      applyPromptReplacement(start, end, next.value.slice(start, next.caret), {
+      // After the selection, never over it: dictation only adds.
+      const at = range?.end ?? current.length;
+      const next = insertDictatedText(current, text, at);
+      applyPromptReplacement(at, at, next.value.slice(at, next.caret), {
         expandedCursorAfterReplace: next.caret,
         focusEditorAfterReplace: focused,
       });

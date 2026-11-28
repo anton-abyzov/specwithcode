@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 /// Where dictated words go and which language they are heard in, as on the
 /// desktop: a phrase lands with one space between it and the draft, and one
@@ -11,6 +12,66 @@ nonisolated enum DictationText {
     guard let last = draft.last, !last.isWhitespace else { return draft + phrase }
     if let first = phrase.first, ".,;:!?)".contains(first) { return draft + phrase }
     return draft + " " + phrase
+  }
+
+  /// `prefix`, the words being heard, then `suffix`, each one space apart:
+  /// dictation that started with the cursor inside the draft.
+  static func compose(_ prefix: String, _ heard: String, _ suffix: String) -> String {
+    let left = insert(heard, into: prefix)
+    guard let first = suffix.first, let last = left.last else { return left + suffix }
+    if last.isWhitespace || first.isWhitespace || ".,;:!?)".contains(first) { return left + suffix }
+    return left + " " + suffix
+  }
+
+  /// The draft split at `cursor` (characters from the start); the end when the
+  /// cursor is unknown or outside the draft.
+  static func split(_ draft: String, at cursor: Int?) -> (prefix: String, suffix: String) {
+    guard let cursor, cursor >= 0, cursor < draft.count else { return (draft, "") }
+    let index = draft.index(draft.startIndex, offsetBy: cursor)
+    return (String(draft[..<index]), String(draft[index...]))
+  }
+
+  /// The cursor in characters from the start of `text`: the end of a
+  /// selection, so dictation adds after selected words rather than over them.
+  static func cursor(_ selection: TextSelection?, in text: String) -> Int? {
+    guard let selection, case let .selection(range) = selection.indices else { return nil }
+    let end = range.upperBound
+    guard end >= text.startIndex, end <= text.endIndex else { return nil }
+    return text.distance(from: text.startIndex, to: end)
+  }
+
+  /// Words compared without case or punctuation, as the recognizer revises them.
+  static func words(_ text: String) -> [String] {
+    text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
+  }
+
+  /// What `text` adds after `heard` when the recognizer repeats words it already
+  /// reported (case and punctuation aside); nil when it does not start with them.
+  static func remainder(of text: String, after heard: String) -> String? {
+    let expected = words(heard)
+    guard !expected.isEmpty else { return nil }
+    var index = text.startIndex
+    for word in expected {
+      while index < text.endIndex, !(text[index].isLetter || text[index].isNumber || text[index] == "'") {
+        index = text.index(after: index)
+      }
+      var end = index
+      while end < text.endIndex, text[end].isLetter || text[end].isNumber || text[end] == "'" {
+        end = text.index(after: end)
+      }
+      guard text[index..<end].lowercased() == word else { return nil }
+      index = end
+    }
+    return String(text[index...]).trimmingCharacters(in: .whitespaces)
+  }
+
+  /// The recognizer began a new phrase instead of revising the one it was
+  /// hearing: Apple's recognizer starts its transcript over after a pause, and
+  /// treating that as a revision erased everything said before the pause.
+  static func isRestart(from previous: String, to next: String) -> Bool {
+    let before = words(previous), after = words(next)
+    guard before.count >= 2, !after.isEmpty, after.count < before.count else { return false }
+    return before.first != after.first
   }
 
   /// The languages the desktop offers; "" follows the phone's language.

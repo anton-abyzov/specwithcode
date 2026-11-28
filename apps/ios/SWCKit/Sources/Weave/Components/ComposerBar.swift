@@ -6,6 +6,7 @@ import SwiftUI
 /// prompt shows as a chip above it while the field is empty and idle.
 public struct ComposerBar: View {
   @Binding var text: String
+  let selection: Binding<TextSelection?>?
   let isRunning: Bool
   let placeholder: String?
   let blockedReason: String?
@@ -32,10 +33,12 @@ public struct ComposerBar: View {
   ///   - onStop: Hides the stop button when nil.
   ///   - onAttach: Hides the attach button when nil.
   ///   - onMic: Hides the mic button when nil.
+  ///   - selection: The field's cursor, so dictation can write at it.
   ///   - isDictating: The mic is listening; it stays shown, filled, to stop it.
   ///   - onAcceptSuggestion: Fills the draft with the suggestion; hides it when nil.
   public init(
     text: Binding<String>,
+    selection: Binding<TextSelection?>? = nil,
     isRunning: Bool = false,
     placeholder: String? = nil,
     blockedReason: String? = nil,
@@ -50,6 +53,7 @@ public struct ComposerBar: View {
     onAcceptSuggestion: ((String) -> Void)? = nil
   ) {
     self._text = text
+    self.selection = selection
     self.isRunning = isRunning
     self.placeholder = placeholder
     self.blockedReason = blockedReason
@@ -128,7 +132,7 @@ public struct ComposerBar: View {
             .disabled(isBlocked)
         }
         let prompt = placeholder ?? (isRunning ? "Queue a message…" : "Message…")
-        TextField(prompt, text: $text, prompt: Text.weavePlaceholder(prompt), axis: .vertical)
+        field(prompt)
           .font(.weave(.body))
           .foregroundStyle(Color.weave.ink)
           // Landscape phones have little height; a 6-line field would hide the transcript.
@@ -139,7 +143,9 @@ public struct ComposerBar: View {
           .padding(.leading, onAttach == nil && attachmentControl == nil ? WeaveSpacing.s2 : 0)
           .frame(minHeight: WeaveSize.innerControl)
           .accessibilityLabel("Message")
-        if let onMic, isDictating || (isEmpty && !showsStop) {
+        // Always offered, so a message can be dictated in parts: new words go
+        // in at the cursor and never replace what is already written.
+        if let onMic {
           WeaveIconButton(isDictating ? "mic.fill" : "mic", label: isDictating ? "Stop dictation" : "Dictate", style: isDictating ? .filled : .sunken, size: WeaveSize.innerControl, action: onMic)
             .frame(width: WeaveSize.innerControl, height: WeaveSize.innerControl)
             .disabled(isBlocked && !isDictating)
@@ -161,6 +167,14 @@ public struct ComposerBar: View {
     .animation(.easeOut(duration: 0.15), value: showsStop)
     .animation(.easeOut(duration: 0.15), value: blockedReason)
     .animation(.easeOut(duration: 0.15), value: shownSuggestion)
+  }
+
+  @ViewBuilder private func field(_ prompt: String) -> some View {
+    if let selection {
+      TextField(prompt, text: $text, selection: selection, prompt: Text.weavePlaceholder(prompt), axis: .vertical)
+    } else {
+      TextField(prompt, text: $text, prompt: Text.weavePlaceholder(prompt), axis: .vertical)
+    }
   }
 
   @ViewBuilder private var trailingButton: some View {

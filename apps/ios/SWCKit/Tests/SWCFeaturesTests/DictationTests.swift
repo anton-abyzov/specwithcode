@@ -44,6 +44,94 @@ struct DictationTests {
     #expect(draft == "Status: all green. ship")
   }
 
+  /// Apple's recognizer starts its transcript over after a pause; the words
+  /// said before the pause must stay (the iPhone erased them).
+  @Test func aPauseNeverErasesWhatWasSaid() async throws {
+    let (engine, dictation, draft) = try await listening("Notes:")
+    engine.emit(.partial("I want to"))
+    engine.emit(.partial("I want to fix the build"))
+    engine.emit(.partial("and"))
+    engine.emit(.partial("and then ship it"))
+    #expect(draft() == "Notes: I want to fix the build and then ship it")
+    engine.emit(.partial("Okay"))
+    #expect(draft() == "Notes: I want to fix the build and then ship it Okay")
+    dictation.stop()
+  }
+
+  @Test func aSettledPhraseStaysWhetherTheRecognizerRepeatsItOrNot() async throws {
+    let (engine, _, draft) = try await listening("")
+    engine.emit(.partial("Fix the build"))
+    engine.emit(.final("Fix the build."))
+    engine.emit(.partial("Then"))
+    engine.emit(.partial("Then ship"))
+    #expect(draft() == "Fix the build. Then ship")
+    engine.emit(.final("Then ship."))
+    // Some recognizers report the whole session in every result.
+    engine.emit(.partial("Fix the build. Then ship. And tell"))
+    #expect(draft() == "Fix the build. Then ship. And tell")
+    engine.emit(.final("Fix the build. Then ship. And tell me."))
+    engine.emit(.final("Fix the build. Then ship. And tell me."))
+    #expect(draft() == "Fix the build. Then ship. And tell me.")
+  }
+
+  @Test func wordsGoInAtTheCursor() async throws {
+    let (engine, _, draft) = try await listening("Fix later", cursor: 3)
+    engine.emit(.partial("the"))
+    engine.emit(.partial("the build"))
+    #expect(draft() == "Fix the build later")
+    engine.emit(.final("the build"))
+    engine.emit(.partial("now"))
+    #expect(draft() == "Fix the build now later")
+  }
+
+  @Test func anEditWhileListeningIsKept() async throws {
+    var text = "Hi"
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let engine = FakeSpeech()
+    let dictation = SpeechDictation(makeEngine: { engine })
+    dictation.start(language: "", draft: binding)
+    try await engine.started()
+    engine.emit(.partial("hello"))
+    #expect(text == "Hi hello")
+    text = "Hi hello, typed by hand"
+    engine.emit(.partial("hello there"))
+    #expect(text == "Hi hello, typed by hand there")
+    text = ""
+    engine.emit(.partial("hello there again"))
+    #expect(text == "again")
+  }
+
+  @Test func theCursorIsTheEndOfASelection() {
+    let text = "one two three"
+    let range = text.index(text.startIndex, offsetBy: 4)..<text.index(text.startIndex, offsetBy: 7)
+    #expect(DictationText.cursor(TextSelection(range: range), in: text) == 7)
+    #expect(DictationText.cursor(nil, in: text) == nil)
+    #expect(DictationText.split(text, at: 7) == ("one two", " three"))
+    #expect(DictationText.split(text, at: 99) == (text, ""))
+    #expect(DictationText.compose("one", "two", "three") == "one two three")
+    #expect(DictationText.compose("one", "two", ", three") == "one two, three")
+  }
+
+  @Test func aRevisionIsNotARestart() {
+    #expect(!DictationText.isRestart(from: "for the record", to: "4 the record"))
+    #expect(!DictationText.isRestart(from: "I want", to: "I want to"))
+    #expect(!DictationText.isRestart(from: "hey", to: "hay"))
+    #expect(DictationText.isRestart(from: "fix the build", to: "then"))
+    #expect(DictationText.remainder(of: "Fix the build. Then", after: "fix the build") == "Then")
+    #expect(DictationText.remainder(of: "Fix it", after: "fix the build") == nil)
+  }
+
+  private func listening(_ initial: String, cursor: Int? = nil) async throws -> (FakeSpeech, SpeechDictation, () -> String) {
+    final class Box { var text = "" }
+    let box = Box()
+    box.text = initial
+    let engine = FakeSpeech()
+    let dictation = SpeechDictation(makeEngine: { engine })
+    dictation.start(language: "", draft: Binding(get: { box.text }, set: { box.text = $0 }), cursor: cursor)
+    try await engine.started()
+    return (engine, dictation, { box.text })
+  }
+
   @Test func aForgottenMicStopsAfterSilence() async throws {
     let engine = FakeSpeech()
     let dictation = SpeechDictation(silenceLimit: .milliseconds(150), makeEngine: { engine })

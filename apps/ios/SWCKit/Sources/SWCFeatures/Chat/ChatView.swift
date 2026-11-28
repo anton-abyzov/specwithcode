@@ -67,6 +67,7 @@ private struct ChatScreen: View {
   @State private var rowLimit = TranscriptWindow.step
   /// The composer's mic; words land in the draft unsent.
   @State private var dictation = SpeechDictation()
+  @State private var composerSelection: TextSelection?
   @AppStorage(AppDefaults.dictationLanguage) private var dictationLanguage = ""
   @State private var choosingAttachment = false
   /// Turn folds the person opened, by fold row id.
@@ -1027,6 +1028,7 @@ private struct ChatScreen: View {
       }
       ComposerBar(
         text: draft,
+        selection: $composerSelection,
         isRunning: session.showsRunning,
         placeholder: session.showsRunning ? nil : placeholder,
         blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : approvalMachine?.approvalComposerLine ?? "Machine unavailable. Your draft is kept.",
@@ -1036,7 +1038,7 @@ private struct ChatScreen: View {
         focus: $composerFocused,
         onSend: { send() },
         onStop: session.isStale ? nil : { stop() },
-        onMic: { dictation.toggle(language: dictationLanguage, draft: draft) },
+        onMic: { dictation.toggle(language: dictationLanguage, draft: draft, cursor: DictationText.cursor(composerSelection, in: draft.wrappedValue)) },
         isDictating: dictation.isActive,
         onAcceptSuggestion: { draft.wrappedValue = $0 }
       )
