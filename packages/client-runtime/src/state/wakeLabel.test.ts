@@ -16,10 +16,20 @@ describe("splitWakeLabel", () => {
     });
   });
 
-  it.each(["Subagent finished", 'Delegated task "X"', 'Odd " label'])(
-    "leaves %s whole",
-    (label) => {
-      expect(splitWakeLabel(label)).toEqual({ head: label, tail: "" });
-    },
-  );
+  it("keeps the exit code with the outcome", () => {
+    expect(splitWakeLabel('Background command "npm test" finished (exit 130)')).toEqual({
+      head: 'Background command "npm test"',
+      tail: " finished (exit 130)",
+    });
+  });
+
+  it.each([
+    "Subagent finished",
+    'Delegated task "X"',
+    'Odd " label',
+    '2 delegated tasks finished: Review "the plan", Beta task with a long name',
+    '2 of 5 delegated tasks finished: Review "the plan" carefully and then the rest of it',
+  ])("leaves %s whole", (label) => {
+    expect(splitWakeLabel(label)).toEqual({ head: label, tail: "" });
+  });
 });
