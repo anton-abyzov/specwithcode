@@ -102,7 +102,7 @@ export function startScreenControlHelper(input: {
             done();
           }
           releaseWaiters.push(finish);
-          unanswered.push({ keys: held.keys, buttons: held.buttons, settle: finish });
+          unanswered.push({ keys: [...held.keys], buttons: [...held.buttons], settle: finish });
           write({ t: "release", keys: held.keys, buttons: held.buttons });
         }),
       stop,
