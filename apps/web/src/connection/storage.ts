@@ -42,6 +42,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { makeBrowserLastConnectedStore } from "./lastConnectedStore";
 
 const DATABASE_NAME = "studio:connection-runtime";
 const DATABASE_VERSION = 4;
@@ -957,6 +958,7 @@ export const layer = Layer.effectContext(
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
       Context.add(Persistence.EnvironmentCacheStore, cacheStore),
+      Context.add(Persistence.LastConnectedStore, makeBrowserLastConnectedStore()),
     );
   }),
 );

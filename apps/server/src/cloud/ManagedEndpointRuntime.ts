@@ -323,14 +323,17 @@ export const make = Effect.gen(function* () {
         },
       );
       yield* Queue.offer(recoveryRequests, connector.config);
-      yield* connector.child
-        .kill()
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Could not stop the relay client after edge loss", { cause }),
+      // A failed stop leaves the connector running without an edge: keep
+      // watching, and try again one restart window later rather than give up.
+      return yield* connector.child.kill().pipe(
+        Effect.as(true),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not stop the relay client after edge loss", { cause }).pipe(
+            Effect.andThen(Effect.sleep(Duration.millis(EDGE_LOSS_RESTART_AFTER_MS))),
+            Effect.as(false),
           ),
-        );
-      return true;
+        ),
+      );
     }).pipe(Effect.repeat({ until: (restarted) => restarted }));
 
   const observeConnectorOutput = (connector: ActiveConnector) => {

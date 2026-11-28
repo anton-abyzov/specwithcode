@@ -539,6 +539,44 @@ describe("CloudManagedEndpointRuntime", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps watching for edge loss when stopping the connector fails (1517)", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      let kills = 0;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            pid: 802,
+            onKill: () => {
+              kills += 1;
+              if (kills === 1) throw new Error("kill failed");
+            },
+            output: Stream.fromQueue(output),
+          }),
+        ),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.recoveryRequests.pipe(Stream.runDrain, Effect.forkChild);
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-edge",
+      });
+      const line = (text: string) => Queue.offer(output, new TextEncoder().encode(`${text}\n`));
+      yield* line("2026-11-28T00:00:00Z INF Registered tunnel connection connIndex=0");
+      yield* Stream.runHead(runtime.tunnelConnected);
+      yield* line("2026-11-28T00:00:01Z WRN Connection terminated connIndex=0");
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* TestClock.adjust(Duration.minutes(2).pipe(Duration.sum(Duration.seconds(15))));
+      expect(kills).toBe(1);
+      // The failed stop waits one restart window, then the next check stops it.
+      yield* TestClock.adjust(Duration.minutes(2).pipe(Duration.sum(Duration.seconds(30))));
+      expect(kills).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>
     Effect.gen(function* () {
       const spawned: Array<ChildProcess.StandardCommand> = [];
