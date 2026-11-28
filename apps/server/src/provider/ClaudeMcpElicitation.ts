@@ -19,8 +19,9 @@
  * - The person's raw answers arrive through an in-process hand-off; the
  *   thread's records keep only which fields were answered.
  * - Stopping the turn closes the card as cancelled. When the SDK stops waiting
- *   on its own (the server or the CLI gave up) the card closes too, and a note
- *   says the server stopped waiting.
+ *   on its own (the server gave up) while the turn goes on, the card closes
+ *   too, and a note says the server stopped waiting. An abort that comes with
+ *   the turn's end (Stop, steer, rollback, fork, the CLI's exit) shows none.
  * - A thread nobody watches (a delegated worker, a routine) cancels the card
  *   after {@link UNATTENDED_MCP_ELICITATION_TIMEOUT_MS}.
  *
@@ -83,6 +84,13 @@ import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
  */
 export const UNATTENDED_MCP_ELICITATION_TIMEOUT_MS = 5 * 60 * 1_000;
 
+/**
+ * How long an abort waits before it is read as the server giving up. The SDK
+ * aborts every pending request when the CLI exits or the turn ends, and the
+ * adapter may learn of that end a moment after the abort.
+ */
+export const ABORT_SETTLE_MS = 2_000;
+
 /** How long the timer waits for an answer the app recorded but has not delivered yet. */
 export const ANSWER_IN_FLIGHT_GRACE_MS = 2 * 60 * 1_000;
 
@@ -116,8 +124,11 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
     event: ProviderAdapter.ProviderAdapterV2Event,
   ) => Effect.Effect<void>;
   readonly releaseHeldRootFrames: (context: C) => Effect.Effect<void>;
-  /** The person's Stop, a rollback or a fork is ending this turn. */
-  readonly turnStopping: (context: C) => Effect.Effect<boolean>;
+  /**
+   * This turn's calls are ending: the person's Stop, a steer, a rollback or a
+   * fork, the turn's end, or its CLI's exit. Read when the SDK aborts.
+   */
+  readonly turnEnding: (context: C) => Effect.Effect<boolean>;
   readonly resolveItemOrdinal: (context: C, nativeItemId: string) => Effect.Effect<number>;
   readonly idAllocator: Pick<IdAllocator.IdAllocatorV2Shape, "derive">;
   readonly runPromise: <A>(effect: Effect.Effect<A>) => Promise<A>;
@@ -125,6 +136,8 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
   readonly unattendedTimer?: Effect.Effect<void>;
   /** Waits out {@link ANSWER_IN_FLIGHT_GRACE_MS}; tests pass their own. */
   readonly answerInFlightGrace?: Effect.Effect<void>;
+  /** Waits out {@link ABORT_SETTLE_MS}; tests pass their own. */
+  readonly abortSettle?: Effect.Effect<void>;
   /** Bounds the wait for a commit still running after the grace; tests pass their own. */
   readonly commitOutcomeLimit?: Effect.Effect<void>;
 }
@@ -205,25 +218,35 @@ export function elicitationResultForDecision(
   }
 }
 
+/** A server name as Claude Code writes it in tool names (`mcp__<name>__<tool>`). */
+export function claudeToolServerName(serverName: string): string {
+  const name = serverName.replace(/[^a-zA-Z0-9_-]/g, "_");
+  // Claude Code 2.1.332 also folds runs of `_` in claude.ai connector names.
+  return serverName.startsWith("claude.ai ")
+    ? name.replace(/_+/g, "_").replace(/^_|_$/g, "")
+    : name;
+}
+
 /**
  * One key per tool call for a server's requests in this turn. The SDK's
  * request carries no tool use id, and each retry of a URL request (`-32042`)
  * comes with a new request id and elicitation id (1495 probe), so the call is
- * found among the turn's running tool calls: `mcp__<server>__<tool>`, with the
- * server name in the CLI's tool-name form. With no single such call, the
- * server and the turn stand in for it.
+ * found among the turn's running tool calls: `mcp__<server>__<tool>`. With no
+ * single such call (two calls of the server run at once), the request keys
+ * itself, so no call's note replaces another's.
  */
 export function claudeElicitationCallKey(
   context: ClaudeElicitationTurnContext,
   serverName: string,
+  sdkRequestId: string,
 ): string {
-  const prefix = `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, "_")}__`;
+  const prefix = `mcp__${claudeToolServerName(serverName)}__`;
   const calls = [...(context.toolCalls?.entries() ?? [])].filter(([, call]) =>
     call.toolName.startsWith(prefix),
   );
   return calls.length === 1
     ? `${serverName}:call:${calls[0]![0]}`
-    : `${serverName}:turn:${String(context.providerTurnId)}`;
+    : `${serverName}:request:${sdkRequestId}`;
 }
 
 const abortEffect = (signal: AbortSignal) =>
@@ -259,6 +282,16 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
     deps.unattendedTimer ?? Effect.sleep(Duration.millis(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS));
   const grace =
     deps.answerInFlightGrace ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
+  const settle = deps.abortSettle ?? Effect.sleep(Duration.millis(ABORT_SETTLE_MS));
+  // The server gave up while the turn goes on: the turn was not ending when
+  // the SDK aborted, and still is not a moment later.
+  const serverGaveUp = (context: C, endingAtAbort: boolean) =>
+    endingAtAbort
+      ? Effect.succeed(false)
+      : settle.pipe(
+          Effect.andThen(deps.turnEnding(context)),
+          Effect.map((ending) => !ending),
+        );
   // Every dispatch settles its answer as it ends (1493); this only guards a
   // dispatch that never ends, and then leaves the card as the record says.
   const outcomeLimit =
@@ -330,7 +363,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // Keyed by the tool call, so a retried request replaces its own note.
         yield* notice(
           context,
-          `mcp-elicitation:${claudeElicitationCallKey(context, request.serverName)}:url-notice`,
+          `mcp-elicitation:${claudeElicitationCallKey(context, request.serverName, sdkRequestId)}:url-notice`,
           urlModeNotice(request.serverName),
         );
         return DECLINE;
@@ -415,6 +448,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // neither overwrites the recorded answer as cancelled. Otherwise the
         // form is marked closing first, so an answer that comes in before the
         // cancelled card lands is refused, never recorded (1493).
+        // Read at once: the adapter forgets a stopped turn when it ends (1495).
+        const endingAtAbort = raced.by === "stop" ? yield* deps.turnEnding(context) : true;
         const committed = raced.by !== "person" && !beginClosingClaudeForm(artifacts.request.id);
         const awaited = committed
           ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
@@ -448,11 +483,23 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           );
           if (outcome === "failed" && beginClosingClaudeForm(artifacts.request.id))
             yield* closeCard(artifacts);
-          yield* notice(
-            context,
-            `${nativeRequestId}:undelivered`,
-            undeliveredAnswerNotice(request.serverName),
-          );
+          // Nothing was recorded and the server gave up first: that is the news.
+          if (
+            outcome === "failed" &&
+            settled.by === "stop" &&
+            (yield* serverGaveUp(context, endingAtAbort))
+          )
+            yield* notice(
+              context,
+              `${nativeRequestId}:stopped`,
+              stoppedWaitingNotice(request.serverName),
+            );
+          else
+            yield* notice(
+              context,
+              `${nativeRequestId}:undelivered`,
+              undeliveredAnswerNotice(request.serverName),
+            );
           return CANCEL;
         }
         yield* closeCard(artifacts);
@@ -462,8 +509,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
             `${nativeRequestId}:timeout`,
             unattendedTimeoutNotice(request.serverName),
           );
-        // The SDK aborted on its own, not for the person's Stop: say so.
-        else if (!(yield* deps.turnStopping(context)))
+        // The SDK aborted on its own, not for the turn's end: say so.
+        else if (yield* serverGaveUp(context, endingAtAbort))
           yield* notice(
             context,
             `${nativeRequestId}:stopped`,

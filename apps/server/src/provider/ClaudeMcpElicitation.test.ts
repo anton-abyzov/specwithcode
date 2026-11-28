@@ -14,6 +14,7 @@ import {
 } from "../orchestration-v2/ClaudeFormResponses.ts";
 import {
   claudeElicitationCallKey,
+  claudeToolServerName,
   isUnattendedClaudeTurn,
   makeClaudeMcpElicitations,
   secretFieldNotice,
@@ -55,7 +56,10 @@ function harness(
     thread?: "user" | "agent";
     held?: boolean;
     noTurn?: boolean;
-    stopping?: boolean;
+    /** The turn is ending when the SDK aborts (Stop, steer, rollback, fork). */
+    ending?: boolean;
+    /** The adapter learns of the turn's end just after the abort (the CLI exited). */
+    endsDuringSettle?: boolean;
   } = {},
 ) {
   const prefix = `h${++harnesses}`;
@@ -63,6 +67,7 @@ function harness(
   let released = 0;
   let requestCount = 0;
   const toolCalls = new Map<string, { readonly toolName: string }>();
+  let ending = options.ending === true;
   const context: ClaudeElicitationTurnContext = {
     input: turnInput(options.thread ?? "user"),
     providerTurnId: "provider-turn-1" as ClaudeElicitationTurnContext["providerTurnId"],
@@ -93,7 +98,10 @@ function harness(
       }),
     emitProviderEvent: (event) => Effect.sync(() => void events.push(event)),
     releaseHeldRootFrames: () => Effect.sync(() => void (released += 1)),
-    turnStopping: () => Effect.succeed(options.stopping === true),
+    turnEnding: () => Effect.sync(() => ending),
+    abortSettle: Effect.sync(() => {
+      if (options.endsDuringSettle === true) ending = true;
+    }),
     resolveItemOrdinal: () => Effect.succeed(7),
     idAllocator: {
       derive: {
@@ -327,15 +335,31 @@ describe("ClaudeMcpElicitation", () => {
   it("finds the tool call by the CLI's tool-name form of the server name", () => {
     const h = harness();
     h.toolCalls.set("toolu_gmail", { toolName: "mcp__claude_ai_Gmail__search_threads" });
-    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail")).toBe(
+    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail", "r1")).toBe(
       "claude.ai Gmail:call:toolu_gmail",
     );
-    // No single running call of that server: the server and the turn stand in.
-    expect(claudeElicitationCallKey(h.context, "github")).toBe("github:turn:provider-turn-1");
-    h.toolCalls.set("toolu_gmail_2", { toolName: "mcp__claude_ai_Gmail__get_thread" });
-    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail")).toBe(
-      "claude.ai Gmail:turn:provider-turn-1",
+    // Claude Code folds runs of `_` in claude.ai names: "Docs: Search" is Docs_Search.
+    expect(claudeToolServerName("claude.ai Docs: Search")).toBe("claude_ai_Docs_Search");
+    expect(claudeToolServerName("my.server: v2")).toBe("my_server__v2");
+    h.toolCalls.set("toolu_docs", { toolName: "mcp__claude_ai_Docs_Search__query" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Docs: Search", "r1")).toBe(
+      "claude.ai Docs: Search:call:toolu_docs",
     );
+    // No single running call of that server: the request keys itself.
+    expect(claudeElicitationCallKey(h.context, "github", "r1")).toBe("github:request:r1");
+    h.toolCalls.set("toolu_gmail_2", { toolName: "mcp__claude_ai_Gmail__get_thread" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail", "r2")).toBe(
+      "claude.ai Gmail:request:r2",
+    );
+  });
+
+  it("keeps one note per request when two calls of a server run at once", async () => {
+    const h = harness();
+    h.toolCalls.set("toolu_a", { toolName: "mcp__github__open_link" });
+    h.toolCalls.set("toolu_b", { toolName: "mcp__github__open_link" });
+    await h.ask({ mode: "url", url: "https://example.com/a" }, undefined, "sdk-request-a");
+    await h.ask({ mode: "url", url: "https://example.com/b" }, undefined, "sdk-request-b");
+    expect(h.shownNotices()).toEqual([urlModeNotice("github"), urlModeNotice("github")]);
   });
 
   it("cancels a form it cannot show, with a note", async () => {
@@ -349,7 +373,7 @@ describe("ClaudeMcpElicitation", () => {
   });
 
   it("closes the card as cancelled when the turn stops", async () => {
-    const h = harness({ stopping: true });
+    const h = harness({ ending: true });
     const controller = new AbortController();
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
@@ -388,6 +412,17 @@ describe("ClaudeMcpElicitation", () => {
     ).toHaveLength(1);
     expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
     expect(stoppedWaitingNotice("github")).toBe("github stopped waiting for an answer.");
+  });
+
+  it("shows no note when the turn's end reaches the adapter just after the abort (1495)", async () => {
+    // The CLI exited: the SDK aborts its requests before the adapter ends the turn.
+    const h = harness({ endsDuringSettle: true });
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    controller.abort();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([]);
   });
 
   it("answers a signal that was already aborted at once", async () => {
@@ -505,7 +540,8 @@ describe("ClaudeMcpElicitation", () => {
     forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
     h.endGrace();
     expect(await result).toEqual({ action: "cancel" });
-    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    // The server gave up and no answer was recorded: AC-02's note, not D-11's (1495).
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
     expect(
       h.events.filter(
         (event) =>

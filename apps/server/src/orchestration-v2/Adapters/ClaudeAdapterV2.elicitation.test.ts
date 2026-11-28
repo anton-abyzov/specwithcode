@@ -14,6 +14,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -21,6 +22,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "../IdAllocator.ts";
 import { type ProviderAdapterV2Event, ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
@@ -40,6 +42,8 @@ const openElicitationTurn = Effect.gen(function* () {
     prefix: "studio-claude-elicitation-",
   });
   let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+  // Ends the CLI's output, as when its process exits.
+  const exited = yield* Deferred.make<void>();
   const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
     instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
     settings: SETTINGS,
@@ -55,7 +59,9 @@ const openElicitationTurn = Effect.gen(function* () {
         Effect.sync(() => {
           openedOptions = input.options;
           return {
-            messages: Stream.never,
+            messages: Stream.fromEffect(Deferred.await(exited)).pipe(
+              Stream.flatMap(() => Stream.empty),
+            ),
             offer: () => Effect.void,
             setModel: () => Effect.void,
             setPermissionMode: () => Effect.void,
@@ -132,6 +138,7 @@ const openElicitationTurn = Effect.gen(function* () {
   return {
     runtime,
     providerThread,
+    exit: Deferred.succeed(exited, undefined),
     openedOptions: openedOptions as ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined,
   };
 });
@@ -222,70 +229,106 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
     ),
   );
 
+  /** Records the session's events and asks forms through its onElicitation. */
+  const watchForms = Effect.gen(function* () {
+    const opened = yield* openElicitationTurn;
+    const onElicitation = opened.openedOptions?.onElicitation;
+    assert.isFunction(onElicitation);
+    const events: Array<ProviderAdapterV2Event> = [];
+    yield* opened.runtime.events.pipe(
+      Stream.runForEach((event) => Effect.sync(() => void events.push(event))),
+      Effect.forkScoped,
+    );
+    const cards = () =>
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "approval_request" &&
+        event.turnItem.status !== "cancelled"
+          ? [event.turnItem]
+          : [],
+      );
+    const notices = () =>
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem.message]
+          : [],
+      );
+    const ended = () => events.some((event) => event.type === "turn.terminal");
+    const ask = (signal: AbortSignal, requestId: string) =>
+      Effect.promise(() =>
+        onElicitation!(
+          { serverName: "github", message: "Delete octo/repo?", mode: "form", requestedSchema },
+          { signal, requestId },
+        ),
+      ).pipe(Effect.forkScoped);
+    // The module reads an abort as the server's only once the turn goes on a moment later.
+    const settle = Effect.gen(function* () {
+      for (let i = 0; i < 20; i++)
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      yield* TestClock.adjust("2 seconds");
+    });
+    return { ...opened, cards, notices, ended, ask, settle };
+  });
+
   it.effect(
-    "says the server stopped waiting when the SDK aborts, and not after the person's Stop (1495)",
+    "says the server stopped waiting when the SDK aborts while the turn goes on (1495)",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { runtime, providerThread, openedOptions } = yield* openElicitationTurn;
-          const onElicitation = openedOptions?.onElicitation;
-          assert.isFunction(onElicitation);
-          const events: Array<ProviderAdapterV2Event> = [];
-          yield* runtime.events.pipe(
-            Stream.runForEach((event) => Effect.sync(() => void events.push(event))),
-            Effect.forkScoped,
-          );
-          const cards = () =>
-            events.flatMap((event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "approval_request" &&
-              event.turnItem.status !== "cancelled"
-                ? [event.turnItem]
-                : [],
-            );
-          const notices = () =>
-            events.flatMap((event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
-                ? [event.turnItem.message]
-                : [],
-            );
-          const ask = (signal: AbortSignal, requestId: string) =>
-            Effect.promise(() =>
-              onElicitation!(
-                {
-                  serverName: "github",
-                  message: "Delete octo/repo?",
-                  mode: "form",
-                  requestedSchema,
-                },
-                { signal, requestId },
-              ),
-            ).pipe(Effect.forkScoped);
-
+          const forms = yield* watchForms;
           // The server cancels its request (the probe's 60 s SDK timeout): the SDK aborts.
           const serverGaveUp = new AbortController();
-          const first = yield* ask(serverGaveUp.signal, "sdk-elicitation-1");
-          assert.isTrue(yield* until(() => cards().length === 1));
+          const first = yield* forms.ask(serverGaveUp.signal, "sdk-elicitation-1");
+          assert.isTrue(yield* until(() => forms.cards().length === 1));
           serverGaveUp.abort();
+          yield* forms.settle;
           assert.deepStrictEqual(yield* Fiber.join(first), { action: "cancel" });
-          assert.isTrue(yield* until(() => notices().length === 1));
-          assert.deepStrictEqual(notices(), ["github stopped waiting for an answer."]);
-
-          // The person's Stop marks the turn before the CLI aborts the request.
-          const stopped = new AbortController();
-          const second = yield* ask(stopped.signal, "sdk-elicitation-2");
-          assert.isTrue(yield* until(() => cards().length === 2));
-          const providerTurnId = cards()[1]!.providerTurnId;
-          assert.isDefined(providerTurnId);
-          yield* runtime
-            .interruptTurn({ providerThread, providerTurnId: providerTurnId! })
-            .pipe(Effect.ignore, Effect.forkScoped);
-          yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
-          stopped.abort();
-          assert.deepStrictEqual(yield* Fiber.join(second), { action: "cancel" });
-          yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
-          assert.deepStrictEqual(notices(), ["github stopped waiting for an answer."]);
+          assert.deepStrictEqual(forms.notices(), ["github stopped waiting for an answer."]);
         }).pipe(Effect.provide(LAYER)),
       ),
+  );
+
+  it.effect("shows no note when the person's Stop ends the turn before the SDK aborts (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const stopped = new AbortController();
+        const call = yield* forms.ask(stopped.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        const providerTurnId = forms.cards()[0]!.providerTurnId;
+        assert.isDefined(providerTurnId);
+        yield* forms.runtime
+          .interruptTurn({ providerThread: forms.providerThread, providerTurnId: providerTurnId! })
+          .pipe(Effect.ignore, Effect.forkScoped);
+        // The turn ends as interrupted, and the adapter forgets its Stop mark,
+        // before the CLI aborts the pending request.
+        yield* forms.exit;
+        assert.isTrue(yield* until(forms.ended));
+        yield* forms.settle;
+        stopped.abort();
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), []);
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  it.effect("shows no note when the CLI exits and the SDK aborts first (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const exited = new AbortController();
+        const call = yield* forms.ask(exited.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        // The SDK aborts its pending requests as the process goes; the adapter
+        // sees the output end a moment later.
+        exited.abort();
+        yield* forms.exit;
+        assert.isTrue(yield* until(forms.ended));
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), []);
+      }).pipe(Effect.provide(LAYER)),
+    ),
   );
 });

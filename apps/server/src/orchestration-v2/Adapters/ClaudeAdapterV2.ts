@@ -8240,11 +8240,15 @@ export function makeClaudeAdapterV2(
           buildApprovalRequestArtifacts,
           emitProviderEvent,
           releaseHeldRootFrames,
-          // Stop marks the turn before it interrupts; rollback and fork mark the process.
-          turnStopping: (context) =>
+          // Stop and steer mark the turn before they interrupt it; rollback, fork
+          // and Stop mark the process; an ended turn or process is gone from here.
+          turnEnding: (context) =>
             Effect.gen(function* () {
+              if ((yield* Ref.get(activeTurn)) !== context || context.finalizing) return true;
               if ((yield* Ref.get(interruptedTurns)).has(context.providerTurnId)) return true;
-              return (yield* Ref.get(queryContext))?.stopping === true;
+              if ((yield* Ref.get(steeredTurns)).has(context.providerTurnId)) return true;
+              const live = yield* Ref.get(queryContext);
+              return live === null || live.stopping;
             }),
           resolveItemOrdinal,
           idAllocator,
