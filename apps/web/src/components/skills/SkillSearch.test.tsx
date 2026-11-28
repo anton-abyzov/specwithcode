@@ -393,6 +393,62 @@ describe("skill search", () => {
     mocks.machines = [];
   });
 
+  it("offers nothing to add on when only the commit changed after the install", async () => {
+    mocks.machines = [
+      {
+        id: "m4",
+        label: "m4",
+        environmentId: "env-m4",
+        url: "http://m4:8319",
+        status: "reachable",
+        pairingConfigured: true,
+      },
+    ];
+    mocks.update.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-28T00:00:00.000Z",
+        // The project view's statuses carry the user lock the install wrote.
+        statuses: [
+          {
+            skill: "report-builder",
+            repo: "anton-abyzov/vskill",
+            lockScope: "user",
+            // Another install replaced the copy before the scan.
+            installed: { version: "0.4.0", commit: "d".repeat(40), contentHash: "b".repeat(64) },
+            installedSource: { path: "skills/report-builder/SKILL.md", branch: "main" },
+            latest: null,
+            state: "current",
+          },
+        ],
+        outcomes: [
+          {
+            skill: "report-builder",
+            outcome: "installed",
+            before: null,
+            after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            readiness: [],
+            scope: "user",
+          },
+        ],
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="user"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(host.textContent).toContain("For you, in every project.");
+    expect(host.querySelector('[data-testid="skill-rollout"]')).toBeNull();
+    mocks.machines = [];
+  });
+
   it("says a project install cannot be added on other machines yet", async () => {
     mocks.update.mockResolvedValue(
       success({

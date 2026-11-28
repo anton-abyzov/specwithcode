@@ -529,8 +529,11 @@ function sameSkillCopy(
   b: ProjectSkillUpdateOutcome["after"],
 ): boolean {
   if (a === null || b === null) return false;
+  // The rollout installs by commit, so the commit must agree even when SKILL.md does:
+  // a bundled file can change alone.
+  if (a.commit !== b.commit) return false;
   if (a.contentHash !== null && b.contentHash !== null) return a.contentHash === b.contentHash;
-  return a.version === b.version && a.commit === b.commit;
+  return a.version === b.version;
 }
 
 /** "Also add on" under an install or update outcome, for the skill as the lock now records it. */
