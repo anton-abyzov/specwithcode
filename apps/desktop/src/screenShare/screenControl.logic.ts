@@ -47,6 +47,10 @@ export const CONTROL_BROWSER_BUNDLE_IDS: ReadonlyArray<string> = [
   "com.kagi.kagimacOS",
   "ai.perplexity.comet",
   "com.openai.atlas",
+  "com.duckduckgo.macos.browser",
+  "company.thebrowser.dia",
+  "net.waterfox.waterfox",
+  "org.mozilla.librewolf",
 ];
 
 export interface DisplayBounds {

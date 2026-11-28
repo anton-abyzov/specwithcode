@@ -109,8 +109,8 @@ keys and typed with the Mac's own keyboard layout.
 
 Browsers in front of which nothing is typed, by bundle identifier: Safari and Safari Technology
 Preview, Chrome (stable, beta, dev, canary), Chromium, Firefox (stable, developer, nightly), Edge
-(stable, beta, dev), Brave (stable, beta), Arc, Opera, Vivaldi, Zen, Tor Browser, Orion, Comet and
-ChatGPT Atlas (`CONTROL_BROWSER_BUNDLE_IDS` in `apps/desktop/src/screenShare/screenControl.logic.ts`).
+(stable, beta, dev), Brave (stable, beta), Arc, Dia, Opera, Vivaldi, Zen, Tor Browser, Orion, Comet,
+ChatGPT Atlas, DuckDuckGo, Waterfox and LibreWolf (`CONTROL_BROWSER_BUNDLE_IDS` in `apps/desktop/src/screenShare/screenControl.logic.ts`).
 A password field on a web page does not turn macOS secure input on, so a browser cannot be told
 apart from one.
 
@@ -145,8 +145,11 @@ apart from one.
   machine that offers it, with its own prompt and its own grant. The banner says "is controlling"
   and the session list records it before the first event is posted. The input helper
   (`native/screen-control/main.swift`) runs only during control, takes commands only over the pipe
-  the app started it with, checks secure input, system prompts and the front app before each key
-  and click, and exits when the pipe closes or after 2 minutes without a command.
+  the app started it with, checks secure input, system prompts and the front app before each key,
+  click, scroll and drag, and blocks when it cannot read them. Input that waited more than a second
+  is dropped, except what lets go of a key or button, and at most 256 lines wait at once. It exits
+  when the pipe closes or after 2 minutes without a command, and the app kills it 2 seconds after
+  the session ends at the latest.
 - **Computer use on the viewing machine pauses** while the app shows another machine's screen, so
   that screen does not end up in a thread's screenshots. Every view is counted on its own, and a
   screen's own window counts from the moment it opens until it closes, so closing one of two views

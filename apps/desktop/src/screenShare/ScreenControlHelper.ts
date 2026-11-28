@@ -65,8 +65,13 @@ export function startScreenControlHelper(input: {
       for (const waiter of releaseWaiters) waiter();
       releaseWaiters = [];
       child.stdin.end();
-      const kill = setTimeout(() => child.kill("SIGTERM"), EXIT_MS);
-      child.once("exit", () => clearTimeout(kill));
+      // Then SIGTERM, then SIGKILL: a helper never outlives its session by more than two seconds.
+      const term = setTimeout(() => child.kill("SIGTERM"), EXIT_MS);
+      const kill = setTimeout(() => child.kill("SIGKILL"), EXIT_MS * 2);
+      child.once("exit", () => {
+        clearTimeout(term);
+        clearTimeout(kill);
+      });
     };
     const readyTimer = setTimeout(() => {
       if (started) return;

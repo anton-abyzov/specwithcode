@@ -88,12 +88,15 @@ func say(_ object: [String: Any]) {
 
 /// What stops typing right now, read fresh: nil when nothing does.
 func currentBlock() -> String? {
-  let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+  // What cannot be read blocks: the moments it is missing are lock and prompt changes.
+  guard let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return "locked" }
   if front == "com.apple.loginwindow" { return "locked" }
   if systemPromptApps.contains(front) { return "system_prompt" }
-  let windows =
-    (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-      as? [[String: Any]]) ?? []
+  guard
+    let windows =
+      CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+      as? [[String: Any]]
+  else { return "system_prompt" }
   for window in windows {
     let owner = window[kCGWindowOwnerName as String] as? String ?? ""
     if systemPromptOwners.contains(owner) { return "system_prompt" }
@@ -199,12 +202,18 @@ func number(_ value: Any?) -> Double? {
   return value.doubleValue
 }
 
-func handleInput(_ events: [[String: Any]]) {
+/// Input that waited too long is not acted on: only what lets go of a key or button runs.
+let staleSeconds = 1.0
+
+func handleInput(_ events: [[String: Any]], stale: Bool) {
   for event in events {
+    if stopping.value { return }
     switch event["t"] as? String {
     case "move":
-      guard let x = number(event["x"]), let y = number(event["y"]) else { continue }
-      if block(fresh: false) == "locked" { continue }
+      guard !stale, let x = number(event["x"]), let y = number(event["y"]) else { continue }
+      // A move with a button held is a drag: it gets the same fresh check as a press.
+      let now = block(fresh: !heldButtons.isEmpty)
+      if now == "locked" || (!heldButtons.isEmpty && now == "system_prompt") { continue }
       postMove(CGPoint(x: x, y: y))
     case "button":
       guard let x = number(event["x"]), let y = number(event["y"]),
@@ -212,6 +221,7 @@ func handleInput(_ events: [[String: Any]]) {
         let down = event["down"] as? Bool
       else { continue }
       if down {
+        if stale { continue }
         let now = block(fresh: true)
         if now == "system_prompt" || now == "locked" { continue }
         postButton(name, down: true, at: CGPoint(x: x, y: y))
@@ -219,10 +229,10 @@ func handleInput(_ events: [[String: Any]]) {
         postButton(name, down: false, at: CGPoint(x: x, y: y))
       }
     case "scroll":
-      guard let dx = number(event["dx"]), let dy = number(event["dy"]),
+      guard !stale, let dx = number(event["dx"]), let dy = number(event["dy"]),
         let x = number(event["x"]), let y = number(event["y"])
       else { continue }
-      let now = block(fresh: false)
+      let now = block(fresh: true)
       if now == "system_prompt" || now == "locked" { continue }
       postMove(CGPoint(x: x, y: y))
       postScroll(dx: dx, dy: dy)
@@ -231,7 +241,7 @@ func handleInput(_ events: [[String: Any]]) {
         let down = event["down"] as? Bool
       else { continue }
       if down {
-        if block(fresh: true) != nil { continue }
+        if stale || block(fresh: true) != nil { continue }
         postKey(code, down: true)
       } else if heldKeys.contains(code) {
         postKey(code, down: false)
@@ -242,9 +252,8 @@ func handleInput(_ events: [[String: Any]]) {
   }
 }
 
-func handle(_ line: String) {
-  guard let data = line.data(using: .utf8),
-    let command = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+func handle(_ data: Data, stale: Bool) {
+  guard let command = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
   else { return }
   lastCommand = Date()
   switch command["t"] as? String {
@@ -252,7 +261,9 @@ func handle(_ line: String) {
     if let list = command["browsers"] as? [String] { browsers = Set(list.prefix(200)) }
     _ = block(fresh: true)
   case "input":
-    if let events = command["events"] as? [[String: Any]] { handleInput(Array(events.prefix(64))) }
+    if let events = command["events"] as? [[String: Any]] {
+      handleInput(Array(events.prefix(64)), stale: stale)
+    }
   case "release":
     // The app may name keys and buttons another helper pressed before it went away.
     for code in (command["keys"] as? [String] ?? []).prefix(64) where keyCodes[code] != nil {
@@ -269,14 +280,66 @@ func handle(_ line: String) {
   }
 }
 
+/// Set off the main queue when the pipe closes or SIGTERM arrives, so an input
+/// backlog stops at once instead of running out first.
+final class Flag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var on = false
+  var value: Bool { lock.lock(); defer { lock.unlock() }; return on }
+  func set() { lock.lock(); on = true; lock.unlock() }
+}
+let stopping = Flag()
+
 func finish() -> Never {
+  stopping.set()
   releaseAll()
   exit(0)
 }
 
+/// Lines waiting for the main queue, at most `queueLimit`; past it new input is dropped
+/// (a release or config never is). Each line keeps when it arrived.
+let queueLimit = 256
+let queueLock = NSLock()
+var queued: [(at: Date, data: Data, input: Bool)] = []
+var draining = false
+
+func enqueue(_ data: Data) {
+  let input = data.range(of: Data("\"t\":\"input\"".utf8)) != nil
+  queueLock.lock()
+  if input && queued.count >= queueLimit {
+    queueLock.unlock()
+    return
+  }
+  queued.append((Date(), data, input))
+  let start = !draining
+  draining = true
+  queueLock.unlock()
+  if start { DispatchQueue.main.async { drain() } }
+}
+
+/// A few lines per turn of the main queue, so the timers and the signal source get turns between.
+func drain() {
+  for _ in 0..<8 {
+    if stopping.value { finish() }
+    queueLock.lock()
+    if queued.isEmpty {
+      draining = false
+      queueLock.unlock()
+      return
+    }
+    let next = queued.removeFirst()
+    queueLock.unlock()
+    handle(next.data, stale: Date().timeIntervalSince(next.at) > staleSeconds)
+  }
+  DispatchQueue.main.async { drain() }
+}
+
 signal(SIGTERM, SIG_IGN)
-let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-term.setEventHandler { finish() }
+let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+term.setEventHandler {
+  stopping.set()
+  DispatchQueue.main.async { finish() }
+}
 term.resume()
 signal(SIGPIPE, SIG_IGN)
 
@@ -289,13 +352,35 @@ silence.setEventHandler {
 }
 silence.resume()
 
-// Lines are read off the main thread and handled on it, so the run loop keeps
-// the front app current.
+/// Lines are read off the main thread in chunks, so a line over the limit is
+/// dropped as it arrives instead of being held whole first.
+let lineLimit = 128 * 1024
 Thread.detachNewThread {
-  while let line = readLine(strippingNewline: true) {
-    if line.utf8.count > 128 * 1024 { continue }
-    DispatchQueue.main.async { handle(line) }
+  var line = Data()
+  var overflow = false
+  var chunk = [UInt8](repeating: 0, count: 16 * 1024)
+  while true {
+    let count = read(0, &chunk, chunk.count)
+    if count <= 0 { break }
+    var start = 0
+    for index in 0..<count where chunk[index] == 0x0A {
+      if !overflow {
+        line.append(contentsOf: chunk[start..<index])
+        if line.count <= lineLimit && !line.isEmpty { enqueue(line) }
+      }
+      line = Data()
+      overflow = false
+      start = index + 1
+    }
+    if !overflow && start < count {
+      line.append(contentsOf: chunk[start..<count])
+      if line.count > lineLimit {
+        overflow = true
+        line = Data()
+      }
+    }
   }
+  stopping.set()
   DispatchQueue.main.async { finish() }
 }
 
