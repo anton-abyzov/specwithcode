@@ -689,18 +689,16 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       const scope = user ? "user" : "project";
       const settled = yield* settle(input, [{ ...result, scope }]);
       const verifiedEntry = written.entry;
-      // With a copy in the project too, the project view lists the project lock's
-      // status, so the user copy this run wrote is added for "Also add on".
-      if (
-        !user ||
-        verifiedEntry === null ||
-        settled.statuses.some((status) => status.skill === ask.skill && status.lockScope === "user")
-      )
-        return settled;
+      // "Also add on" sends the copy this run verified: its repo, folder, branch, commit
+      // and hash. A scanned user status is replaced, since another install may have
+      // changed the lock since, and with a copy in the project too the scan lists none.
+      if (!user || verifiedEntry === null) return settled;
       return {
         ...settled,
         statuses: [
-          ...settled.statuses,
+          ...settled.statuses.filter(
+            (status) => !(status.skill === ask.skill && status.lockScope === "user"),
+          ),
           {
             skill: ask.skill,
             repo: repo.repo,

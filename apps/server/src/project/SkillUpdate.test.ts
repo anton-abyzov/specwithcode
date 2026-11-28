@@ -183,6 +183,8 @@ interface Options {
   readonly projectLock?: Record<string, LockEntry>;
   /** The view's folder is refused (a stale thread folder). */
   readonly cwdRefused?: boolean;
+  /** What the scan after an install lists, as if another install replaced the copy. */
+  readonly scannedAfterInstall?: Record<string, LockEntry>;
   /** The scope vskill records in the entries it writes; left out, the lock it wrote. */
   readonly writtenScope?: "user" | "project";
 }
@@ -252,7 +254,9 @@ const fixture = (options: Options) =>
           const projectLock = options.projectLock ?? {};
           return snapshotOf(
             [
-              ...Object.entries(lock)
+              ...Object.entries(
+                installed && options.scannedAfterInstall ? options.scannedAfterInstall : lock,
+              )
                 .filter(([name]) => !(name in projectLock))
                 .map(([name, entry]) =>
                   rowFor(
@@ -913,6 +917,42 @@ describe("SkillUpdates install", () => {
             repo: "anton-abyzov/vskill",
             state: "current",
             installed: expect.objectContaining({ version: "1.0.12" }),
+          }),
+        ]);
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("offers Also add on for the copy it verified, not one the scan found later", () =>
+      Effect.gen(function* () {
+        const fx = yield* fixture({
+          lock: {},
+          latest: {
+            "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+          },
+          connected: [repo()],
+          afterInstall: () => ({ version: "1.0.12", sha: NEW_SHA, commit: NEW_COMMIT, path }),
+          project: true,
+          scannedAfterInstall: {
+            "obsidian-brain": {
+              version: "1.0.12",
+              sha: NEW_SHA,
+              commit: OLD_COMMIT,
+              path: "plugins/alt/skills/obsidian-brain/SKILL.md",
+            },
+          },
+        });
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "user" },
+        });
+        const user = result.statuses.filter(
+          (status) => status.skill === "obsidian-brain" && status.lockScope === "user",
+        );
+        expect(user).toEqual([
+          expect.objectContaining({
+            installed: expect.objectContaining({ commit: NEW_COMMIT }),
+            installedSource: { path, branch: "main" },
           }),
         ]);
       }).pipe(Effect.provide(live)),
