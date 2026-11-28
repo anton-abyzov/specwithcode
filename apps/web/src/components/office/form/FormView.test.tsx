@@ -153,6 +153,8 @@ describe("FormView", () => {
       'input[aria-labelledby="form-q-name"]',
     ) as HTMLInputElement;
     await act(async () => setValue(name, "Ana"));
+    // The name's error goes once it is answered; the city was never required.
+    expect(container.textContent).not.toContain("This question is required.");
     const other = [...container.querySelectorAll('input[type="radio"]')][2] as HTMLInputElement;
     await act(async () => other.click());
     await act(async () =>

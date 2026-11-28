@@ -391,7 +391,13 @@ export function FormFill(props: {
               item={item}
               state={state}
               problem={problemOf.get(item.id)}
-              onChange={setState}
+              onChange={(next) => {
+                setState(next);
+                // An answer being changed is no longer the one that was refused.
+                if (problemOf.has(item.id)) {
+                  setProblems(problems.filter((problem) => problem.itemId !== item.id));
+                }
+              }}
             />
           ) : (
             <li
