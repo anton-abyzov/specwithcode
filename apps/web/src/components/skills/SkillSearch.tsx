@@ -66,11 +66,17 @@ function Group({
 export function SkillSearch({
   onChanged,
   installScope = null,
+  otherInstallRunning = false,
+  onInstallRunning,
   ...scope
 }: SkillFolderScope & {
   /** Called after an install changed this machine. */ onChanged?: () => void;
   /** Where Install puts a skill; null on a server that only follows the open view. */
   installScope?: SkillInstallScope | null;
+  /** An install started from the other list is still running. */
+  otherInstallRunning?: boolean;
+  /** Told when an install from this list starts and ends. */
+  onInstallRunning?: (running: boolean) => void;
 }) {
   const tx = useTx();
   const { environmentId } = scope;
@@ -147,6 +153,7 @@ export function SkillSearch({
   const install = async (entry: ProjectSkillSearchAvailable) => {
     const key = `${entry.repo}/${entry.skill.name}`;
     setInstalling(key);
+    onInstallRunning?.(true);
     setRunScope(installScope);
     setError(null);
     setOutcomes([]);
@@ -168,6 +175,7 @@ export function SkillSearch({
     } finally {
       // A thrown or refused run never leaves every Install button disabled.
       setInstalling(null);
+      onInstallRunning?.(false);
     }
     if (!done.ok) {
       setError(done.error);
@@ -324,7 +332,7 @@ export function SkillSearch({
                           size="xs"
                           variant="outline"
                           type="button"
-                          disabled={!canRun || stale || installing !== null}
+                          disabled={!canRun || stale || installing !== null || otherInstallRunning}
                           onClick={() => void install(entry)}
                         >
                           {installing === key ? <Spinner className="size-3" /> : null}

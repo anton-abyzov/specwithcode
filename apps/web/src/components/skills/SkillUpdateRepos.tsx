@@ -45,11 +45,17 @@ import {
 export function SkillUpdateRepos({
   onChanged,
   installScope = null,
+  otherInstallRunning = false,
+  onInstallRunning,
   ...scope
 }: SkillFolderScope & {
   /** Called after an install changed this machine. */ onChanged?: () => void;
   /** Where Install puts a skill; null on a server that only follows the open view. */
   installScope?: SkillInstallScope | null;
+  /** An install started from the other list is still running. */
+  otherInstallRunning?: boolean;
+  /** Told when an install from this list starts and ends. */
+  onInstallRunning?: (running: boolean) => void;
 }) {
   const tx = useTx();
   const { environmentId, projectId } = scope;
@@ -114,6 +120,7 @@ export function SkillUpdateRepos({
 
   const install = async (repo: string, skill: string) => {
     setPending(`install:${repo}/${skill}`);
+    onInstallRunning?.(true);
     setRunScope(installScope);
     setError(null);
     setOutcomes([]);
@@ -130,6 +137,7 @@ export function SkillUpdateRepos({
       };
     } finally {
       setPending(null);
+      onInstallRunning?.(false);
     }
     if (!done.ok) {
       setError(done.error);
@@ -300,7 +308,7 @@ export function SkillUpdateRepos({
                           size="xs"
                           variant="outline"
                           type="button"
-                          disabled={!canRun || busy}
+                          disabled={!canRun || busy || otherInstallRunning}
                           onClick={() => void install(repo.repo, skill.name)}
                         >
                           {pending === `install:${repo.repo}/${skill.name}` ? (

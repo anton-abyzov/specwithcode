@@ -406,6 +406,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
   });
 
   type RunResult = Omit<ProjectSkillUpdateOutcome, "readiness">;
+  type LockRead = NonNullable<Effect.Success<ReturnType<typeof lockEntry>>>;
 
   /** One `vskill install` from a GitHub source, then the lock read back. */
   const install = (input: {
@@ -419,6 +420,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
     /** The source the comparison read, which the lock must record afterwards. */
     readonly source: { readonly branch: string; readonly path: string };
     readonly expected: ProjectSkillSourceVersion;
+    /** Called with the verified entry, from the same read the outcome came from. */
+    readonly verified?: (entry: LockRead) => void;
   }): Effect.Effect<RunResult> =>
     Effect.gen(function* () {
       const before = yield* lockEntry(input.lockPath, input.lockName);
@@ -485,6 +488,16 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           ),
           after: after.version,
         };
+      // vskill 1.2 records the scope in each entry; one written for the other scope fails.
+      const scope = input.user ? "user" : "project";
+      if (after.scope != null && after.scope !== scope)
+        return {
+          ...failed(
+            `vskill finished, but ${input.lockPath} records ${input.lockName} for ${after.scope === "user" ? "every project" : "one project"}, not ${input.user ? "every project" : "this project"}. Check it with vskill list.`,
+          ),
+          after: after.version,
+        };
+      input.verified?.(after);
       const outcome =
         before === null
           ? "installed"
@@ -652,7 +665,11 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       const viewCwd = yield* deps.resolveCwd(folderOf(input));
       const cwd = user ? deps.home : viewCwd;
       const lockPath = user ? userLockPath : path.join(cwd, "vskill.lock");
+      const written: { entry: LockRead | null } = { entry: null };
       const result = yield* install({
+        verified: (entry) => {
+          written.entry = entry;
+        },
         skill: ask.skill,
         lockName: ask.skill,
         repo: repo.repo,
@@ -668,24 +685,15 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         },
       });
       if (result.outcome === "failed") return yield* settle(input, [result]);
-      // The scope is the lock the copy was read back from, and the entry's own record
-      // of it when vskill wrote one.
-      const written = yield* lockEntry(lockPath, ask.skill);
+      // The scope is the lock the copy was verified in, which also checked the entry's own record.
       const scope = user ? "user" : "project";
-      if (written?.scope != null && written.scope !== scope)
-        return yield* settle(input, [
-          {
-            ...result,
-            outcome: "failed",
-            message: `vskill finished, but ${lockPath} records ${ask.skill} for ${written.scope === "user" ? "every project" : "one project"}, not ${user ? "every project" : "this project"}. Check it with vskill list.`,
-          },
-        ]);
       const settled = yield* settle(input, [{ ...result, scope }]);
+      const verifiedEntry = written.entry;
       // With a copy in the project too, the project view lists the project lock's
       // status, so the user copy this run wrote is added for "Also add on".
       if (
         !user ||
-        written === null ||
+        verifiedEntry === null ||
         settled.statuses.some((status) => status.skill === ask.skill && status.lockScope === "user")
       )
         return settled;
@@ -697,11 +705,11 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
             skill: ask.skill,
             repo: repo.repo,
             lockScope: "user",
-            installed: written.version,
-            ...(written.path !== null && written.branch !== null
-              ? { installedSource: { path: written.path, branch: written.branch } }
+            installed: verifiedEntry.version,
+            ...(verifiedEntry.path !== null && verifiedEntry.branch !== null
+              ? { installedSource: { path: verifiedEntry.path, branch: verifiedEntry.branch } }
               : {}),
-            latest: written.version,
+            latest: verifiedEntry.version,
             state: "current",
           } satisfies ProjectSkillSourceStatus,
         ],

@@ -3,6 +3,8 @@
  * search box, the machine's connected repos, and versions with updates.
  * Mounted by the Skills view; nothing here writes to another machine.
  */
+import { useState } from "react";
+
 import { SkillAdoptPanel } from "./SkillAdoptPanel";
 import {
   SkillInstallScopeChoice,
@@ -21,15 +23,27 @@ export function SkillUpdateCenter(
   },
 ) {
   const installScope = useSkillInstallScope(props);
+  // One install at a time across both lists (AC-05).
+  const [running, setRunning] = useState<"search" | "repos" | null>(null);
   const folder = useSkillProjectFolder(props);
   return (
     <div className="space-y-6 text-sm" data-testid="skill-update-center">
       <div className="space-y-3">
         <SkillInstallScopeChoice {...props} state={installScope} folder={folder} />
-        <SkillSearch {...props} installScope={installScope.scope} />
+        <SkillSearch
+          {...props}
+          installScope={installScope.scope}
+          otherInstallRunning={running === "repos"}
+          onInstallRunning={(on) => setRunning(on ? "search" : null)}
+        />
       </div>
       <SkillUpdatePanel {...props} />
-      <SkillUpdateRepos {...props} installScope={installScope.scope} />
+      <SkillUpdateRepos
+        {...props}
+        installScope={installScope.scope}
+        otherInstallRunning={running === "search"}
+        onInstallRunning={(on) => setRunning(on ? "repos" : null)}
+      />
       {props.userLevel ? (
         <SkillAdoptPanel
           environmentId={props.environmentId}

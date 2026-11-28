@@ -254,6 +254,34 @@ describe("skill search", () => {
     expect(host.textContent).toContain("For you, in every project.");
   });
 
+  it("tells the other list while an install runs, and waits while one runs there", async () => {
+    let finish: (value: unknown) => void = () => {};
+    mocks.update.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const running = vi.fn();
+    const show = (other: boolean) =>
+      act(async () =>
+        root.render(
+          <SkillSearch
+            environmentId={environmentId}
+            projectId={projectId}
+            cwd="/work/app"
+            installScope="user"
+            otherInstallRunning={other}
+            onInstallRunning={running}
+          />,
+        ),
+      );
+    await show(true);
+    await type("report");
+    expect(button("Install").disabled).toBe(true);
+    await show(false);
+    expect(button("Install").disabled).toBe(false);
+    await act(async () => button("Install").click());
+    expect(running.mock.calls).toEqual([[true]]);
+    await act(async () => finish({ ok: false, error: "no" }));
+    expect(running.mock.calls).toEqual([[true], [false]]);
+  });
+
   it("offers Also add on after a User install from a project view", async () => {
     mocks.machines = [
       {
