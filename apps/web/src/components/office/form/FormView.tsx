@@ -109,6 +109,8 @@ export function FormView(props: {
     const at = edits.current;
     const flush = () => {
       pendingSave.current = null;
+      // Only an edit still unsaved and not let go goes out.
+      if (savedEdits.current >= at || edits.current !== at) return;
       send(draft, at);
     };
     pendingSave.current = flush;
@@ -190,8 +192,10 @@ export function FormView(props: {
             size="xs"
             variant="outline"
             onClick={() => {
-              // The file on disk wins; what was typed here since is let go.
+              // The file on disk wins; what was typed here since is let go, saves waiting included.
               savedEdits.current = edits.current;
+              pendingSave.current = null;
+              queued.current = null;
               if (parsed.ok) {
                 savedRevision.current = incomingRevision;
                 setDraft(parsed.document);

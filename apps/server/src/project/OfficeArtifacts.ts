@@ -611,6 +611,17 @@ export async function writeSheetArtifact(
       if (existing !== null && !existing.isFile()) {
         throw invalid(`${relativePath} leads outside the project.`);
       }
+      if (createOnly) {
+        await publishNewFile(target, written, `sheet ${stem}`);
+        return {
+          name: stem,
+          relativePath,
+          absolutePath: NodePath.join(NodePath.resolve(workspaceRoot), ...relativePath.split("/")),
+          document: validated.document,
+          revision: sheetContentRevision(text),
+          created: true,
+        };
+      }
       // Written beside the target and renamed over it, so a reader never sees half a file.
       const temporary = `${OFFICE_ARTIFACTS_DIR}/.${stem}.${NodeCrypto.randomUUID()}.tmp`;
       const temporaryPath = NodePath.join(realRoot, ...temporary.split("/"));
@@ -628,17 +639,6 @@ export async function writeSheetArtifact(
         throw error;
       }
       await writer.close();
-      if (createOnly) {
-        await publishNewFile(temporaryPath, target, `sheet ${stem}`);
-        return {
-          name: stem,
-          relativePath,
-          absolutePath: NodePath.join(NodePath.resolve(workspaceRoot), ...relativePath.split("/")),
-          document: validated.document,
-          revision: sheetContentRevision(text),
-          created: true,
-        };
-      }
       try {
         await NodeFSP.rename(temporaryPath, target);
       } catch (error) {
@@ -664,30 +664,36 @@ export async function writeSheetArtifact(
  * instead of re-splitting `relativePath`.
  */
 /**
- * Publishes a written temporary file at `target` only when nothing is there:
- * a hard link fails on an existing name in one step, so a file another writer
- * made after any check is never replaced. Where links are not supported the
- * copy is still exclusive. The temporary file is always removed.
+ * Writes `contents` as a new file at `target`, only when nothing is there: an
+ * exclusive create fails on an existing name in one step, so a file another
+ * writer made after any check is never replaced, and the file keeps one name.
+ * Create-only writes are a header-only Sheet, small enough that the window in
+ * which a reader could see it half written is a single write call.
  */
-async function publishNewFile(temporaryPath: string, target: string, label: string): Promise<void> {
+async function publishNewFile(target: string, contents: string, label: string): Promise<void> {
+  let handle: NodeFSP.FileHandle;
   try {
-    try {
-      await NodeFSP.link(temporaryPath, target);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS" && code !== "EXDEV") {
-        throw error;
-      }
-      await NodeFSP.copyFile(temporaryPath, target, NodeFS.constants.COPYFILE_EXCL);
-    }
+    handle = await NodeFSP.open(
+      target,
+      NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
+      0o644,
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
       throw invalid(`Conflict: ${label} already exists. Re-read it and retry.`);
     }
     throw error;
-  } finally {
-    await NodeFSP.unlink(temporaryPath).catch(() => undefined);
   }
+  try {
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    // Only the file this call made, still empty or half written, is removed.
+    await NodeFSP.unlink(target).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
 }
 
 export async function writeSheetFileCompareAndSet(
@@ -747,6 +753,10 @@ export async function writeSheetFileCompareAndSet(
       // The new contents go to disk first and the revision is checked last, just
       // before the rename, so a write from outside the app has the shortest
       // possible window to land unseen.
+      if (requiredRevision === NEW_FILE_REVISION) {
+        await publishNewFile(target, contents, normalizedRel);
+        return;
+      }
       const tempPath = `${target}.${NodeCrypto.randomUUID()}.tmp`;
       const handle = await NodeFSP.open(
         tempPath,
@@ -762,10 +772,6 @@ export async function writeSheetFileCompareAndSet(
       }
       await handle.close();
       if (requiredRevision !== undefined) {
-        if (requiredRevision === NEW_FILE_REVISION) {
-          await publishNewFile(tempPath, target, normalizedRel);
-          return;
-        }
         const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
         const conflict =
           currentContents === null

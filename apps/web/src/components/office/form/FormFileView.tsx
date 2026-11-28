@@ -38,11 +38,14 @@ import { type FormSaveOutcome, FormView } from "./FormView";
 import { type SheetWrite, submitFormResponse } from "./submitFormResponse";
 
 /** The responses Sheet's path, in the same form as the form's own path. */
-export function responsesPathFor(formPath: string, text: string | undefined): string {
+export function responsesPathFor(formPath: string, text: string | undefined, cwd = ""): string {
   const parsed = text === undefined ? null : parseForm(text);
   const document: FormDocument =
     parsed?.ok === true ? parsed.document : { v: 1, kind: "form", title: "", items: [] };
-  return responsesSheetPath(formPath, document);
+  // The project folder's shape says whether its machine separates folders with backslashes.
+  const windowsHost =
+    cwd.length === 0 ? undefined : /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith("\\\\");
+  return responsesSheetPath(formPath, document, windowsHost);
 }
 
 /** A `.form.json` file from a project or thread folder, in the form view. */
@@ -55,8 +58,8 @@ export function FormFileView(props: {
   const { environmentId, cwd, path } = props;
   const file = useProjectFileQuery(environmentId, cwd, path);
   const sheetPath = useMemo(
-    () => responsesPathFor(path, file.data?.contents),
-    [file.data?.contents, path],
+    () => responsesPathFor(path, file.data?.contents, cwd),
+    [cwd, file.data?.contents, path],
   );
   const sheetFile = useProjectFileQuery(environmentId, cwd, sheetPath);
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);

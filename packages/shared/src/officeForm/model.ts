@@ -142,13 +142,20 @@ export function defaultResponsesSheetName(formFileName: string): string {
 }
 
 /** The project-relative path of a form's responses Sheet, next to the form. */
-export function responsesSheetPath(formRelativePath: string, document: FormDocument): string {
-  // A backslash separates folders only in a Windows-shaped path (a drive, a UNC share, or
-  // no forward slash at all); in a POSIX path it is part of a file name and stays.
+export function responsesSheetPath(
+  formRelativePath: string,
+  document: FormDocument,
+  /** True or false when the machine holding the file is known to be Windows or not. */
+  windowsHost?: boolean,
+): string {
+  // A backslash separates folders on Windows. Without word from the host, a Windows-shaped
+  // path (a drive, a UNC share, or no forward slash at all) counts as one; in a POSIX path
+  // a backslash is part of a file name and stays.
   const windows =
-    /^[A-Za-z]:[\\/]/.test(formRelativePath) ||
-    formRelativePath.startsWith("\\\\") ||
-    !formRelativePath.includes("/");
+    windowsHost ??
+    (/^[A-Za-z]:[\\/]/.test(formRelativePath) ||
+      formRelativePath.startsWith("\\\\") ||
+      !formRelativePath.includes("/"));
   const normalized = windows ? formRelativePath.replace(/\\/g, "/") : formRelativePath;
   const slash = normalized.lastIndexOf("/");
   const folder = slash >= 0 ? normalized.slice(0, slash + 1) : "";

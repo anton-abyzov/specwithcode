@@ -217,7 +217,9 @@ function withHeaders(
     if (typeof value !== "string") continue;
     // A header kept as text behind an apostrophe reads as the title it stands for.
     const header = /^'+=/.test(value) ? value.slice(1) : value;
-    if (!byHeader.has(header)) byHeader.set(header, address.col);
+    // A header used twice means its leftmost column, for the append and the count alike.
+    const known = byHeader.get(header);
+    if (known === undefined || address.col < known) byHeader.set(header, address.col);
   }
   let firstNew = Number.POSITIVE_INFINITY;
   if (!byHeader.has(SUBMITTED_AT_HEADER)) {
@@ -242,11 +244,18 @@ function withHeaders(
   }
   const last = columnLetters(Math.max(width, 1) - 1);
   // Only the header cells added now get the header style; a person's styles stay as they are.
-  const added = Number.isFinite(firstNew) ? `${columnLetters(firstNew)}1:${last}1` : null;
+  // The style is optional: skipped when that range is styled already (also as its one-cell
+  // key) or the tab has no room for another style range.
+  const from = Number.isFinite(firstNew) ? `${columnLetters(firstNew)}1` : null;
+  const added = from === null ? null : from === `${last}1` ? from : `${from}:${last}1`;
+  const own = tab.styles ?? {};
   const styles =
-    added !== null && tab.styles?.[added] === undefined
-      ? { ...tab.styles, [added]: { ...HEADER_STYLE } }
-      : { ...tab.styles };
+    added !== null &&
+    own[added] === undefined &&
+    own[`${added}:${added}`] === undefined &&
+    Object.keys(own).length < SHEET_LIMITS.rangeEntries
+      ? { ...own, [added]: { ...HEADER_STYLE } }
+      : { ...own };
   const nextTab: SheetTab = { ...tab, cells, styles };
   const tabs =
     tabIndex >= sheet.tabs.length
@@ -319,7 +328,13 @@ export function formResponseCount(sheet: SheetDocument): number {
   let column: number | null = null;
   for (const [key, value] of Object.entries(tab.cells)) {
     const address = parseCellAddress(key);
-    if (address?.row === 0 && value === SUBMITTED_AT_HEADER) column = address.col;
+    if (
+      address?.row === 0 &&
+      value === SUBMITTED_AT_HEADER &&
+      (column === null || address.col < column)
+    ) {
+      column = address.col;
+    }
   }
   if (column === null) return 0;
   let count = 0;

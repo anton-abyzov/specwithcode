@@ -151,6 +151,24 @@ describe("FormView", () => {
     expect(saved.ok && saved.document.title).toBe("Closing");
   });
 
+  it("never saves on close an edit let go with Load the saved form", async () => {
+    vi.useFakeTimers();
+    const resolves: Array<(outcome: "conflict") => void> = [];
+    const onSave = vi.fn(() => new Promise<"conflict">((resolve) => resolves.push(resolve)));
+    await render({ onSave });
+    const title = container.querySelector('input[aria-label="Form title"]') as HTMLInputElement;
+    await act(async () => setValue(title, "Mine"));
+    await act(async () => {
+      vi.advanceTimersByTime(FORM_SAVE_DELAY_MS + 10);
+    });
+    // A second edit waits on its timer while the first save is refused.
+    await act(async () => setValue(title, "Mine again"));
+    await act(async () => resolves[0]!("conflict"));
+    await act(async () => button("Load the saved form").click());
+    await act(async () => root.render(<p>Another file</p>));
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
   it("fills in and submits the saved form, not an edit that has not saved", async () => {
     vi.useFakeTimers();
     const onSubmit = vi.fn(async () => ({ ok: true as const }));

@@ -403,4 +403,44 @@ describe("review round 1: columns, tabs and long answers", () => {
     expect(appended.sheet.tabs[0]!.styles).toEqual({ "A1:B1": { bold: true, fill: true } });
     expect(formResponseCount(appended.sheet)).toBe(2);
   });
+
+  it("keeps a one-cell header style, and skips the style when the tab has no room", () => {
+    const base = (styles: Record<string, unknown>) =>
+      ({
+        v: 1,
+        kind: "sheet",
+        title: "R",
+        tabs: [{ name: "Responses", cells: { A1: "Submitted at" }, styles }],
+      }) as never;
+    const italic = appendFormResponse(base({ B1: { italic: true } }), titled(["Name"]), {}, "t");
+    expect(italic.ok && italic.sheet.tabs[0]!.styles?.B1).toEqual({ italic: true });
+    const many = Object.fromEntries(
+      Array.from({ length: 200 }, (_, i) => [`A${i + 3}`, { bold: true }]),
+    );
+    const full = appendFormResponse(base(many), titled(["Name"]), { q0: "Ana" }, "t");
+    expect(full.ok).toBe(true);
+    expect(full.ok && Object.keys(full.sheet.tabs[0]!.styles ?? {})).toHaveLength(200);
+  });
+
+  it("writes and counts the time in the leftmost Submitted at column", () => {
+    const sheet = {
+      v: 1,
+      kind: "sheet",
+      title: "R",
+      tabs: [{ name: "Responses", cells: { C1: "Submitted at", A1: "Submitted at", B1: "Name" } }],
+    } as never;
+    const appended = appendFormResponse(sheet, titled(["Name"]), { q0: "Ana" }, "t1");
+    expect(appended.ok && appended.sheet.tabs[0]!.cells.A2).toBe("t1");
+    expect(appended.ok && formResponseCount(appended.sheet)).toBe(1);
+  });
+
+  it("follows the host's separators when it is known", () => {
+    const linked = { ...titled(["Name"]), responses: { sheet: "answers.sheet.json" } };
+    expect(responsesSheetPath("forms/sub\\intake.form.json", linked, true)).toBe(
+      "forms/sub/answers.sheet.json",
+    );
+    expect(responsesSheetPath("forms/sub\\intake.form.json", linked, false)).toBe(
+      "forms/answers.sheet.json",
+    );
+  });
 });
