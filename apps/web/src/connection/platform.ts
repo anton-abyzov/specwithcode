@@ -168,6 +168,35 @@ export const backendRestarts = Stream.callback<"local-backend-ready">((queue) =>
   ).pipe(Effect.asVoid),
 );
 
+const systemResumeListeners = new Set<() => void>();
+let stopSystemResumeBridge: (() => void) | undefined;
+
+function onSystemResume(listener: () => void): () => void {
+  systemResumeListeners.add(listener);
+  if (systemResumeListeners.size === 1 && typeof window !== "undefined") {
+    stopSystemResumeBridge = window.desktopBridge?.onSystemResume?.(() => {
+      for (const each of [...systemResumeListeners]) each();
+    });
+  }
+  return () => {
+    if (!systemResumeListeners.delete(listener) || systemResumeListeners.size > 0) return;
+    stopSystemResumeBridge?.();
+    stopSystemResumeBridge = undefined;
+  };
+}
+
+/**
+ * The computer woke from sleep or was unlocked. Sockets to other machines
+ * rarely survive a sleep without a close event, so every connection gets a
+ * quick probe and a pending retry runs now, hidden window or not.
+ */
+export const systemResumes = Stream.callback<"application-active-probe">((queue) =>
+  Effect.acquireRelease(
+    Effect.sync(() => onSystemResume(() => Queue.offerUnsafe(queue, "application-active-probe"))),
+    (unsubscribe) => Effect.sync(unsubscribe),
+  ).pipe(Effect.asVoid),
+);
+
 export const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
@@ -209,6 +238,7 @@ export const layerWakeups = Wakeups.layer({
         ).pipe(Effect.asVoid),
       ),
       backendRestarts,
+      systemResumes,
       managedRelayAccountChanges(appAtomRegistry).pipe(
         Stream.map(() => "credentials-changed" as const),
       ),

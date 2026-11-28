@@ -470,6 +470,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
     };
   },
+  onSystemResume: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.SYSTEM_RESUME_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.SYSTEM_RESUME_CHANNEL, wrappedListener);
+    };
+  },
   onConnectSignInState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (!isConnectSignInState(state)) return;

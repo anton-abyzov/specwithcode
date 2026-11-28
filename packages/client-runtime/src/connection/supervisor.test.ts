@@ -409,9 +409,19 @@ describe("retryMaxDelayMs for a machine that was just connected", () => {
     }
   });
 
+  it("asks again within two minutes for a week after the last session", () => {
+    for (const error of [silent, offline]) {
+      expect(EnvironmentSupervisor.retryMaxDelayMs(false, error, 30 * 60_000)).toBe(120_000);
+      expect(EnvironmentSupervisor.retryMaxDelayMs(false, error, 7 * 24 * 60 * 60_000 - 1)).toBe(
+        120_000,
+      );
+    }
+  });
+
   it("keeps the long ceilings for a machine not seen for longer, or never in this run", () => {
-    expect(EnvironmentSupervisor.retryMaxDelayMs(false, silent, 30 * 60_000)).toBe(300_000);
-    expect(EnvironmentSupervisor.retryMaxDelayMs(false, offline, 30 * 60_000)).toBe(600_000);
+    const week = 7 * 24 * 60 * 60_000;
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, silent, week)).toBe(300_000);
+    expect(EnvironmentSupervisor.retryMaxDelayMs(false, offline, week)).toBe(600_000);
     expect(EnvironmentSupervisor.retryMaxDelayMs(false, silent, null)).toBe(300_000);
     expect(EnvironmentSupervisor.retryMaxDelayMs(false, offline)).toBe(600_000);
   });
