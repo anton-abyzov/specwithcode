@@ -492,6 +492,21 @@ export function artifactTypesPresent(
   return new Set<ArtifactTypeFilter>(["all", ...artifacts.map((item) => FILTER_OF[item.kind])]);
 }
 
+const ARTIFACTS_FOLDER = ".specweave/artifacts/";
+
+/**
+ * The folder an artifact sits in below the project's artifacts folder
+ * (`team/q4` for `.specweave/artifacts/team/q4/flow.excalidraw`), or null at
+ * its top level and elsewhere.
+ */
+export function artifactSubfolder(artifact: Pick<ProjectArtifact, "path">): string | null {
+  const path = artifact.path;
+  if (path === null || !path.startsWith(ARTIFACTS_FOLDER)) return null;
+  const rest = path.slice(ARTIFACTS_FOLDER.length);
+  const slash = rest.lastIndexOf("/");
+  return slash > 0 ? rest.slice(0, slash) : null;
+}
+
 export function searchArtifacts(
   artifacts: ReadonlyArray<ProjectArtifact>,
   query: string,

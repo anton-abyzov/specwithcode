@@ -180,6 +180,7 @@ import { ProjectDesignsButton, ProjectDesignsPane } from "./shell/ProjectDesigns
 import { useProjectDesigns } from "../design/useProjectDesigns";
 import { useBoardIncrementRoute } from "../../studio/useBoardIncrementRoute";
 import { useProjectPaneDeepLink } from "../../studio/useProjectPaneDeepLink";
+import { useNewWhiteboardDeepLink } from "../office/whiteboard/quickWhiteboard";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
 import type { ProjectPaneBarProps } from "./shell/ProjectPaneBar";
@@ -1664,6 +1665,12 @@ export function ProjectWorkspaceSurface({
     threads: shells,
     designs: designs.designs,
   });
+  // `?new=whiteboard` from the whiteboard shortcut or the palette makes a board here and opens it.
+  const newWhiteboard = useNewWhiteboardDeepLink(
+    project.environmentId,
+    projectArtifacts.library?.workspaceRoot ?? project.workspaceRoot,
+    projectArtifacts.refresh,
+  );
   const [librarySection, setLibrarySection] = useLocalStorage<LibrarySection, LibrarySection>(
     LIBRARY_SECTION_STORAGE_KEY,
     "artifacts",
@@ -1792,6 +1799,7 @@ export function ProjectWorkspaceSurface({
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden">
       <div className="project-surface project-workspace sws-project flex min-h-0 flex-1 flex-col">
+        {newWhiteboard}
         {planOpen && (
           <ProjectPlan
             project={project}
@@ -2483,6 +2491,7 @@ export function ProjectWorkspaceSurface({
                       artifacts={projectArtifacts.artifacts}
                       now={Date.now()}
                       onPin={projectArtifacts.setPinned}
+                      onCreated={projectArtifacts.refresh}
                       onOpenThread={openThread}
                       designProject={
                         project.environmentId === primaryEnvironmentId ? project : undefined

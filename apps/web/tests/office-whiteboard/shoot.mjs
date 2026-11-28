@@ -670,6 +670,65 @@ const waitForSaves = async (page, count) => {
   await context.close();
 }
 
+// 5a2. Undo and select all with focus on the view's toolbar --------------------------------
+// After an export, focus sits on a toolbar button outside the editor's frame. Cmd/Ctrl+Z
+// and Cmd/Ctrl+A still act on the drawing, and never reach the app around it.
+{
+  const where = "toolbar-keys";
+  const { page, context } = await open("file=empty&theme=light");
+  const box = await canvasBox(page);
+  const at = (x, y) => ({ x: box.x + x, y: box.y + y });
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 60);
+  await page.keyboard.press("r");
+  await drag(page, at(300, 300), at(500, 400));
+  await page.keyboard.press("r");
+  await drag(page, at(700, 300), at(900, 400));
+  // No Escape: a deselect is an undo step of its own in Excalidraw.
+  await waitForSaves(page, 1);
+  await page.waitForTimeout(1_200);
+  check(where, live(await lastSave(page)).length === 2, "two shapes drawn");
+  const keysBefore = (await appKeys(page)).length;
+  await page.locator('[data-whiteboard-export="png"]').focus();
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.waitForTimeout(1_200);
+  check(
+    where,
+    live(await lastSave(page)).length === 1,
+    `Cmd/Ctrl+Z from the toolbar undoes the last shape (${live(await lastSave(page)).length})`,
+  );
+  await page.locator('[data-whiteboard-export="svg"]').focus();
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await page.waitForTimeout(1_200);
+  check(
+    where,
+    live(await lastSave(page)).length === 2,
+    "Cmd/Ctrl+Shift+Z from the toolbar redoes it",
+  );
+  await page.locator('[data-whiteboard-export="png"]').focus();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.waitForTimeout(300);
+  const pageSelection = await page.evaluate(() => String(window.getSelection() ?? "").length);
+  check(where, pageSelection === 0, "Cmd/Ctrl+A from the toolbar selects no page text");
+  // Both shapes selected: Delete then removes both.
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(1_200);
+  check(
+    where,
+    live(await lastSave(page)).length === 0,
+    `Cmd/Ctrl+A from the toolbar selects every shape (${live(await lastSave(page)).length} left after Delete)`,
+  );
+  // A bare modifier press is not a shortcut; the chord itself must not arrive.
+  const leaked = (await appKeys(page))
+    .slice(keysBefore)
+    .filter((key) => !/(?:^|\+)(?:Meta|Control|Shift|Alt)$/.test(key));
+  check(
+    where,
+    leaked.length === 0,
+    `no editor key reached the app (${leaked.join(", ") || "none"})`,
+  );
+  await context.close();
+}
+
 // 5b. Mermaid to Excalidraw ------------------------------------------------------------
 // The only path through the Mermaid stack: a flowchart becomes shapes (new element
 // ids from nanoid), a pie chart is parsed by Mermaid's chevrotain grammar (lodash-es)

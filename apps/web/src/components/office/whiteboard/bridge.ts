@@ -18,6 +18,31 @@ export interface WhiteboardFrameApi {
   readonly exportPng: () => Promise<Blob>;
   readonly exportSvg: () => Promise<string>;
   readonly focus: () => void;
+  /** Focuses the editor and hands it a key pressed outside it (undo, redo, select all). */
+  readonly key: (key: WhiteboardKey) => void;
+}
+
+/** A key press, as `KeyboardEventInit` carries it across the frame. */
+export interface WhiteboardKey {
+  readonly key: string;
+  readonly code: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+}
+
+/**
+ * The editor keys that still reach the drawing when focus sits outside its
+ * frame, such as on the view's own toolbar: Cmd/Ctrl+Z, Shift+Z, Y and A.
+ * Without this they would run the app's own shortcut (Cmd+Z undoes the last
+ * thread action) or select the page's text.
+ */
+export function isWhiteboardEditorKey(event: WhiteboardKey): boolean {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return false;
+  const key = event.key.toLowerCase();
+  if (key === "z" || key === "a") return true;
+  return key === "y" && !event.shiftKey;
 }
 
 export interface WhiteboardFrameHost {

@@ -82,6 +82,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  ShapesIcon,
   PuzzleIcon,
   RotateCcwIcon,
   SettingsIcon,
@@ -210,6 +211,12 @@ import {
   TIMELINE_DETAIL_LEVELS,
   useTimelineDetailShortcut,
 } from "../timelineDetail";
+import {
+  NEW_WHITEBOARD_TERMS,
+  asksForWhiteboard,
+  newWhiteboardDestination,
+  useNewWhiteboardShortcut,
+} from "./office/whiteboard/quickWhiteboard";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { canOpenProjectWindowFor, openProjectWindow } from "../lib/projectWindow";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -607,6 +614,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   useTimelineDetailShortcut();
+  useNewWhiteboardShortcut();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
     strict: false,
@@ -3071,6 +3079,23 @@ function OpenCommandPaletteDialog(props: {
         : null) ??
       projectGroups[0] ??
       null);
+  // New whiteboard: the project in context first, and each other project when the query asks.
+  for (const group of projectGroups) {
+    const inContext = group.projectKey === contextualProjectGroup?.projectKey;
+    if (!inContext && !asksForWhiteboard(deferredQuery)) continue;
+    actionItems.push({
+      kind: "action",
+      value: `action:new-whiteboard:${group.projectKey}`,
+      searchTerms: ["new", ...NEW_WHITEBOARD_TERMS, group.displayName],
+      title: inContext ? "New whiteboard" : `New whiteboard in ${group.displayName}`,
+      description: group.displayName,
+      icon: <ShapesIcon className={ITEM_ICON_CLASS} />,
+      ...(inContext ? { shortcutCommand: "whiteboard.new" as const } : {}),
+      run: async () => {
+        await navigate(newWhiteboardDestination(group.projectKey) as never);
+      },
+    });
+  }
   if (contextualProjectGroup) {
     actionItems.push({
       kind: "action",

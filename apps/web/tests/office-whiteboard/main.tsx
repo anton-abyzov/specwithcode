@@ -3,9 +3,10 @@
 //                                  (served as /lifecycle.excalidraw), or the text
 //                                  a previous page saved in sessionStorage
 //   ?theme=light|dark
-// The page also stands in for the app around the editor: a capture-phase key
-// listener on window records every key that reaches it, as an app shortcut
-// would, and claims it. Nothing typed in the editor may arrive there.
+// The page also stands in for the app around the editor: a key listener on
+// window records every key that reaches it, as the app's shortcuts (which
+// listen in the bubble phase) would, and claims it. Nothing typed in the
+// editor may arrive there.
 import { whiteboardRevision } from "@specweave-studio/shared/officeWhiteboard";
 import { type ReactNode, StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -35,16 +36,12 @@ interface FixtureWindow extends Window {
 const fixture = window as unknown as FixtureWindow;
 fixture.appKeys = [];
 fixture.saves = [];
-window.addEventListener(
-  "keydown",
-  (event) => {
-    fixture.appKeys.push(
-      `${event.metaKey ? "Meta+" : ""}${event.ctrlKey ? "Control+" : ""}${event.key}`,
-    );
-    event.preventDefault();
-  },
-  true,
-);
+window.addEventListener("keydown", (event) => {
+  fixture.appKeys.push(
+    `${event.metaKey ? "Meta+" : ""}${event.ctrlKey ? "Control+" : ""}${event.key}`,
+  );
+  event.preventDefault();
+});
 
 async function initialText(): Promise<string> {
   const file = params.get("file") ?? "empty";

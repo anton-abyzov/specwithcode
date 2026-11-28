@@ -146,6 +146,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+f", command: "projectSearch.toggle", when: "!terminalFocus" },
   { key: "mod+u", command: "usage.open", when: "!terminalFocus" },
   { key: "mod+alt+d", command: "design.open", when: "!terminalFocus" },
+  // Not mod+shift+w: browsers close the window on it before the page sees the key.
+  { key: "mod+alt+w", command: "whiteboard.new", when: "!terminalFocus" },
   { key: "mod+alt+l", command: "away.start", when: "!terminalFocus" },
   { key: "mod+shift+,", command: "projectSettings.open", when: "!terminalFocus" },
   { key: "mod+alt+a", command: "theme.select", when: "!terminalFocus" },
