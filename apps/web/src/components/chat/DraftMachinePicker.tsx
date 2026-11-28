@@ -149,14 +149,23 @@ export function DraftMachinePicker(props: Props) {
       onPendingChange(false);
     };
   }, [draftId, onPendingChange]);
+  const shownDraftIdRef = useRef(draftId);
   useLayoutEffect(() => {
+    // Load balancing moves an untouched draft to another machine by itself.
+    // That must not close the open menu or send it back to the machine list
+    // while a project is being picked; a pick of its own, or another draft,
+    // still resets it.
+    const sameDraft = shownDraftIdRef.current === draftId;
+    shownDraftIdRef.current = draftId;
+    const ownPick = requestRef.current !== null;
     requestRef.current = null;
     setPending(false);
+    setError(null);
+    onPendingChange(false);
+    if (sameDraft && !ownPick) return;
     setOpen(false);
     setChoosingEnvironmentId(null);
     setView("machines");
-    setError(null);
-    onPendingChange(false);
   }, [draftId, draft?.environmentId, draft?.projectId, onPendingChange]);
 
   const activeEnvironment = environments.find(

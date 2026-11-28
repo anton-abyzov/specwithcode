@@ -377,14 +377,19 @@ export function CommandPalette(props: {
     results.findIndex((item) => item.key === selection),
   );
   const selectedKey = results[selectedIndex]?.key;
+  // Only a keyboard selection moves the list. With none (touch), the first row
+  // is merely implied, and live results reordering scrolled a list being
+  // scrolled by hand back to the top.
+  const keyboardSelected = selection !== null && selectedKey === selection;
   useEffect(() => {
+    if (!keyboardSelected) return;
     if (selectedIndex === 0) {
       // Centering before the list measures its height scrolls half the first row out of view.
       listRef.current?.scrollToOffset({ offset: 0, animated: false });
     } else if (selectedKey !== undefined) {
       listRef.current?.scrollToIndex({ index: selectedIndex, animated: false, viewPosition: 0.5 });
     }
-  }, [selectedIndex, selectedKey]);
+  }, [keyboardSelected, selectedIndex, selectedKey]);
 
   const dismissed = useRef(false);
   const handleDismissed = useCallback(() => {
