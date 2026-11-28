@@ -202,6 +202,96 @@ describe("skill search", () => {
     ]);
   });
 
+  it("sends the chosen scope, says where it goes while it runs, and names the scope after", async () => {
+    let finish: (value: unknown) => void = () => {};
+    mocks.update.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="user"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(mocks.update.mock.calls[0]?.[0].input.install).toEqual({
+      repo: "anton-abyzov/vskill",
+      skill: "report-builder",
+      scope: "user",
+    });
+    expect(host.querySelector('[data-testid="skill-install-progress"]')?.textContent).toContain(
+      "Installing report-builder for you in every project on M4…",
+    );
+    await act(async () =>
+      finish(
+        success({
+          checkedAt: "2026-11-28T00:00:00.000Z",
+          statuses: [],
+          outcomes: [
+            {
+              skill: "report-builder",
+              outcome: "installed",
+              before: null,
+              after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+              readiness: [],
+              scope: "user",
+            },
+          ],
+        }),
+      ),
+    );
+    expect(host.querySelector('[data-testid="skill-install-progress"]')).toBeNull();
+    expect(host.textContent).toContain("For you, in every project.");
+  });
+
+  it("says a project install cannot be added on other machines yet", async () => {
+    mocks.update.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-28T00:00:00.000Z",
+        statuses: [],
+        outcomes: [
+          {
+            skill: "report-builder",
+            outcome: "installed",
+            before: null,
+            after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            readiness: [],
+            scope: "project",
+          },
+        ],
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="project"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(mocks.update.mock.calls[0]?.[0].input.install.scope).toBe("project");
+    expect(host.textContent).toContain("For this project only.");
+    expect(host.textContent).toContain(
+      "Adding it on other machines works for skills installed for you in every project.",
+    );
+  });
+
+  it("enables Install again when the run throws", async () => {
+    mocks.update.mockRejectedValue(new Error("socket closed"));
+    await render();
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("did not answer");
+    expect(button("Install").disabled).toBe(false);
+  });
+
   it("says why an install failed and keeps the result", async () => {
     mocks.update.mockResolvedValue({
       _tag: "Failure",

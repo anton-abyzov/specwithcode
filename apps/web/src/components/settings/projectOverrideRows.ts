@@ -68,6 +68,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   advisor: { label: "Advisor", page: "Models" },
   learnedModelPreferences: { label: "Learned model preferences", page: "Providers" },
   keepActiveThreadsPerProject: { label: "Keep active chats per project", page: "Storage" },
+  skillInstallScope: { label: "Where new skills install", page: "Skills" },
 };
 
 export interface ProjectOverrideMachine {

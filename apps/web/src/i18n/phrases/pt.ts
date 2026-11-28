@@ -10,10 +10,12 @@ import { limitHopsPt } from "./limitHops/pt";
 import { installedPagesPt } from "./installedPages/pt";
 import { guidedTourPt } from "./guidedTour/pt";
 import { helperChatsPt } from "./helperChats/pt";
+import { skillInstallScopePt } from "./skillInstallScope/pt";
 
 /** Brazilian Portuguese Settings titles and labels, "você", as in the message catalog. */
 export const pt: PhraseCatalog = {
   ...syncPt,
+  ...skillInstallScopePt,
   ...handoffPt,
   ...iphonePt,
   ...machineLabelsPt,

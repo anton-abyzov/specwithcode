@@ -29,6 +29,7 @@ import {
   skillFolderInput,
   type SkillFolderScope,
 } from "./SkillUpdate.logic";
+import { PROJECT_ROLLOUT_NOTE, RECEIPT_SCOPE_PHRASES } from "./skillInstallScope.logic";
 
 export type SkillRunResult =
   | { readonly ok: true; readonly value: ProjectSkillsUpdateResult }
@@ -95,8 +96,14 @@ export function SkillUpdateOutcomeLine({ outcome }: { outcome: ProjectSkillUpdat
           skill: outcome.skill,
           version: formatSkillSourceVersion(outcome.after),
         })}
+        {outcome.scope && !failed ? (
+          <span className="text-muted-foreground"> {tx(RECEIPT_SCOPE_PHRASES[outcome.scope])}</span>
+        ) : null}
         {outcome.message ? <span className="text-muted-foreground"> {outcome.message}</span> : null}
       </p>
+      {outcome.scope === "project" && !failed ? (
+        <p className="text-xs text-muted-foreground">{tx(PROJECT_ROLLOUT_NOTE)}</p>
+      ) : null}
       {outcome.readiness.length > 0 ? (
         <ul className="flex flex-wrap gap-1" aria-label={tx("When each agent has it")}>
           {outcome.readiness.map((agent) => (

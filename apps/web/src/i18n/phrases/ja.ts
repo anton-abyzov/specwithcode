@@ -10,10 +10,12 @@ import { limitHopsJa } from "./limitHops/ja";
 import { installedPagesJa } from "./installedPages/ja";
 import { guidedTourJa } from "./guidedTour/ja";
 import { helperChatsJa } from "./helperChats/ja";
+import { skillInstallScopeJa } from "./skillInstallScope/ja";
 
 /** Japanese Settings titles and labels. "スレッド" for thread, as in the message catalog. */
 export const ja: PhraseCatalog = {
   ...syncJa,
+  ...skillInstallScopeJa,
   ...handoffJa,
   ...iphoneJa,
   ...machineLabelsJa,

@@ -12,6 +12,7 @@ import {
   type ProjectSkillReposResult,
   type ProjectSkillUpdateOutcome,
   type SkillRepoRefusalReason,
+  type SkillInstallScope,
 } from "@specweave-studio/contracts";
 import { useState } from "react";
 
@@ -26,6 +27,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
+import { PROGRESS_PHRASES } from "./skillInstallScope.logic";
 import {
   REPO_REFUSAL_PHRASES,
   SKILL_CHANGE_PERMISSION,
@@ -40,9 +42,12 @@ import {
 
 export function SkillUpdateRepos({
   onChanged,
+  installScope = null,
   ...scope
 }: SkillFolderScope & {
   /** Called after an install changed this machine. */ onChanged?: () => void;
+  /** Where Install puts a skill; null on a server that only follows the open view. */
+  installScope?: SkillInstallScope | null;
 }) {
   const tx = useTx();
   const { environmentId, projectId } = scope;
@@ -105,8 +110,21 @@ export function SkillUpdateRepos({
   const install = async (repo: string, skill: string) => {
     setPending(`install:${repo}/${skill}`);
     setError(null);
-    const done = await run({ operation: "install", install: { repo, skill } });
-    setPending(null);
+    setOutcomes([]);
+    let done: Awaited<ReturnType<typeof run>>;
+    try {
+      done = await run({
+        operation: "install",
+        install: { repo, skill, ...(installScope === null ? {} : { scope: installScope }) },
+      });
+    } catch {
+      done = {
+        ok: false,
+        error: tx("The install did not answer. Check the skill list, then try again."),
+      };
+    } finally {
+      setPending(null);
+    }
     if (!done.ok) {
       setError(done.error);
       return;
@@ -189,6 +207,20 @@ export function SkillUpdateRepos({
       {(error ?? query.error) ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {error ?? query.error}
+        </p>
+      ) : null}
+      {pending?.startsWith("install:") ? (
+        <p role="status" className="flex items-center gap-1.5 text-xs text-foreground">
+          <Spinner className="size-3" />
+          {installScope === null
+            ? tx("Installing {skill} on {machine}…", {
+                skill: pending.split("/").at(-1) ?? pending,
+                machine,
+              })
+            : tx(PROGRESS_PHRASES[installScope], {
+                skill: pending.split("/").at(-1) ?? pending,
+                machine,
+              })}
         </p>
       ) : null}
       {outcomes.map((outcome) => (

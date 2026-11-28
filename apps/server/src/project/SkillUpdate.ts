@@ -637,7 +637,15 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
             ? `${repo.repo} no longer holds ${ask.skill}.`
             : skillRepoRefusalMessage(read.state, repo.repo, "this machine"),
         );
-      const user = input.userLevel === true;
+      // An explicit scope wins over the open view (1440): "This project" from the
+      // machine view has no project folder, so it is refused rather than guessed.
+      const user = ask.scope === undefined ? input.userLevel === true : ask.scope === "user";
+      if (!user && input.userLevel === true)
+        return yield* actionError(
+          input.projectId,
+          "scope_unsupported",
+          "Open a project to install a skill for that project only.",
+        );
       const cwd = user ? deps.home : yield* deps.resolveCwd(folderOf(input));
       const result = yield* install({
         skill: ask.skill,
@@ -654,7 +662,10 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           contentHash: read.skill.contentHash,
         },
       });
-      return yield* settle(input, [result]);
+      // The scope is the lock the copy was read back from; a failed run names none.
+      return yield* settle(input, [
+        result.outcome === "failed" ? result : { ...result, scope: user ? "user" : "project" },
+      ]);
     });
 
   const update = (

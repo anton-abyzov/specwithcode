@@ -10,10 +10,12 @@ import { limitHopsFr } from "./limitHops/fr";
 import { installedPagesFr } from "./installedPages/fr";
 import { guidedTourFr } from "./guidedTour/fr";
 import { helperChatsFr } from "./helperChats/fr";
+import { skillInstallScopeFr } from "./skillInstallScope/fr";
 
 /** French Settings titles and labels. "fil" for thread, as in the message catalog. */
 export const fr: PhraseCatalog = {
   ...syncFr,
+  ...skillInstallScopeFr,
   ...handoffFr,
   ...iphoneFr,
   ...machineLabelsFr,

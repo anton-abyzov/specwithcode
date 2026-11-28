@@ -177,14 +177,18 @@ interface Options {
   /** Agents that list a skill only after it was installed. */
   readonly agentsAfter?: ReadonlyArray<string>;
   readonly states?: Partial<Record<string, "ok" | "cached" | "timeout" | "error">>;
+  /** A project folder under home that the view resolves to; left out, the view is home. */
+  readonly project?: boolean;
 }
 
 const fixture = (options: Options) =>
   Effect.gen(function* () {
     const home = yield* tempHome;
     const lockPath = join(home, ".agents", "vskill.lock");
+    const projectDir = join(home, "work", "app");
     yield* Effect.promise(async () => {
       await NodeFSP.mkdir(join(home, ".agents"), { recursive: true });
+      await NodeFSP.mkdir(projectDir, { recursive: true });
       await NodeFSP.writeFile(lockPath, lockJson(options.lock));
     });
     const calls: Call[] = [];
@@ -213,9 +217,14 @@ const fixture = (options: Options) =>
           const name = args[1]!.split("/").at(-1)!;
           const next = options.afterInstall?.(name);
           if (next !== undefined) {
-            lock = { ...lock, [name]: next };
             installed = true;
-            await NodeFSP.writeFile(lockPath, lockJson(lock));
+            // vskill writes the user lock with --global and the folder's own lock without.
+            if (args.includes("--global")) {
+              lock = { ...lock, [name]: next };
+              await NodeFSP.writeFile(lockPath, lockJson(lock));
+            } else {
+              await NodeFSP.writeFile(join(cwd, "vskill.lock"), lockJson({ [name]: next }));
+            }
           }
         }
         return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
@@ -238,7 +247,7 @@ const fixture = (options: Options) =>
             options.states,
           );
         }),
-      resolveCwd: () => Effect.succeed(home),
+      resolveCwd: () => Effect.succeed(options.project ? projectDir : home),
       invalidate: () => Effect.void,
       sources: {
         readSkill: (input) =>
@@ -250,7 +259,7 @@ const fixture = (options: Options) =>
       rescanOpenFolders: (instanceIds) => Effect.sync(() => void rescans.push(instanceIds)),
     };
     const service = yield* makeSkillUpdates(deps);
-    return { home, lockPath, calls, reads, rescans, service };
+    return { home, lockPath, projectDir, calls, reads, rescans, service };
   });
 
 const latest = (
@@ -754,11 +763,120 @@ describe("SkillUpdates install", () => {
             // Cursor does not list it, so nothing is assumed.
             expect.objectContaining({ label: "Cursor", readiness: "next-session" }),
           ],
+          scope: "user",
         },
       ]);
       expect(fx.rescans).toHaveLength(1);
     }).pipe(Effect.provide(live)),
   );
+
+  describe("install scope (1440)", () => {
+    const path = "plugins/personal/skills/obsidian-brain/SKILL.md";
+    const scoped = (project: boolean) =>
+      fixture({
+        lock: {},
+        latest: {
+          "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+        },
+        connected: [repo()],
+        afterInstall: () => ({ version: "1.0.12", sha: NEW_SHA, commit: NEW_COMMIT, path }),
+        project,
+      });
+    const source = link(
+      "anton-abyzov/vskill",
+      "obsidian-brain",
+      "main",
+      "plugins/personal/skills/obsidian-brain",
+    );
+
+    it.live("installs for the user from a project view when the scope says so", () =>
+      Effect.gen(function* () {
+        const fx = yield* scoped(true);
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "user" },
+        });
+        const call = installCalls(fx.calls)[0]!;
+        expect(call.args).toEqual(["install", source, "-y", "--global"]);
+        expect(call.cwd).toBe(fx.home);
+        expect(result.outcomes![0]).toEqual(
+          expect.objectContaining({ outcome: "installed", scope: "user" }),
+        );
+        const userLock = JSON.parse(
+          yield* Effect.promise(() => NodeFSP.readFile(fx.lockPath, "utf8")),
+        );
+        expect(Object.keys(userLock.skills)).toEqual(["obsidian-brain"]);
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("installs in the project folder, without --global, when the scope is the project", () =>
+      Effect.gen(function* () {
+        const fx = yield* scoped(true);
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "project" },
+        });
+        const call = installCalls(fx.calls)[0]!;
+        expect(call.args).toEqual(["install", source, "-y"]);
+        expect(call.cwd).toBe(fx.projectDir);
+        expect(result.outcomes![0]).toEqual(
+          expect.objectContaining({ outcome: "installed", scope: "project" }),
+        );
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("without a scope it still follows the view, as older clients expect", () =>
+      Effect.gen(function* () {
+        const fx = yield* scoped(true);
+        yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain" },
+        });
+        expect(installCalls(fx.calls)[0]!.args).toEqual(["install", source, "-y"]);
+        expect(installCalls(fx.calls)[0]!.cwd).toBe(fx.projectDir);
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("refuses a project install from the machine view, which has no project folder", () =>
+      Effect.gen(function* () {
+        const fx = yield* scoped(false);
+        const error = yield* fx.service
+          .update({
+            projectId,
+            userLevel: true,
+            operation: "install",
+            install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "project" },
+          })
+          .pipe(Effect.flip);
+        expect(error.message).toContain("Open a project");
+        expect(fx.calls).toEqual([]);
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("names no scope on a failed install", () =>
+      Effect.gen(function* () {
+        const fx = yield* fixture({
+          lock: {},
+          latest: {
+            "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+          },
+          connected: [repo()],
+          installExit: 1,
+          project: true,
+        });
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "user" },
+        });
+        expect(result.outcomes![0]!.outcome).toBe("failed");
+        expect(result.outcomes![0]!.scope).toBeUndefined();
+      }).pipe(Effect.provide(live)),
+    );
+  });
 
   it.live("refuses a repo that is not connected on this machine, or a skill it does not hold", () =>
     Effect.gen(function* () {

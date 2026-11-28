@@ -11,6 +11,7 @@ import {
   type ProjectSkillSourceStatus,
   type ProjectSkillsSearchResult,
   type ProjectSkillUpdateOutcome,
+  type SkillInstallScope,
 } from "@specweave-studio/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -29,6 +30,7 @@ import {
   skillFolderInput,
   type SkillFolderScope,
 } from "./SkillUpdate.logic";
+import { PROGRESS_PHRASES } from "./skillInstallScope.logic";
 import { SkillRolloutAfter } from "./SkillRollout";
 import {
   SkillUpdateOutcomeLine,
@@ -63,9 +65,12 @@ function Group({
 
 export function SkillSearch({
   onChanged,
+  installScope = null,
   ...scope
 }: SkillFolderScope & {
   /** Called after an install changed this machine. */ onChanged?: () => void;
+  /** Where Install puts a skill; null on a server that only follows the open view. */
+  installScope?: SkillInstallScope | null;
 }) {
   const tx = useTx();
   const { environmentId } = scope;
@@ -141,11 +146,26 @@ export function SkillSearch({
     const key = `${entry.repo}/${entry.skill.name}`;
     setInstalling(key);
     setError(null);
-    const done = await run({
-      operation: "install",
-      install: { repo: entry.repo, skill: entry.skill.name },
-    });
-    setInstalling(null);
+    setOutcomes([]);
+    let done: Awaited<ReturnType<typeof run>>;
+    try {
+      done = await run({
+        operation: "install",
+        install: {
+          repo: entry.repo,
+          skill: entry.skill.name,
+          ...(installScope === null ? {} : { scope: installScope }),
+        },
+      });
+    } catch {
+      done = {
+        ok: false,
+        error: tx("The install did not answer. Check the skill list, then try again."),
+      };
+    } finally {
+      // A thrown or refused run never leaves every Install button disabled.
+      setInstalling(null);
+    }
     if (!done.ok) {
       setError(done.error);
       return;
@@ -191,6 +211,24 @@ export function SkillSearch({
       {error ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {error}
+        </p>
+      ) : null}
+      {installing !== null ? (
+        <p
+          role="status"
+          className="flex items-center gap-1.5 text-xs text-foreground"
+          data-testid="skill-install-progress"
+        >
+          <Spinner className="size-3" />
+          {installScope === null
+            ? tx("Installing {skill} on {machine}…", {
+                skill: installing.split("/").at(-1) ?? installing,
+                machine,
+              })
+            : tx(PROGRESS_PHRASES[installScope], {
+                skill: installing.split("/").at(-1) ?? installing,
+                machine,
+              })}
         </p>
       ) : null}
       {outcomes.map((outcome) => (

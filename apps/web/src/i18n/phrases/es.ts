@@ -10,10 +10,12 @@ import { limitHopsEs } from "./limitHops/es";
 import { installedPagesEs } from "./installedPages/es";
 import { guidedTourEs } from "./guidedTour/es";
 import { helperChatsEs } from "./helperChats/es";
+import { skillInstallScopeEs } from "./skillInstallScope/es";
 
 /** Spanish Settings titles and labels. "hilo" for thread, as in the message catalog. */
 export const es: PhraseCatalog = {
   ...syncEs,
+  ...skillInstallScopeEs,
   ...handoffEs,
   ...iphoneEs,
   ...machineLabelsEs,
