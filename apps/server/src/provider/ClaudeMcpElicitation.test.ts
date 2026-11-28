@@ -61,6 +61,8 @@ function harness(
     endsDuringSettle?: boolean;
     /** The settle after an abort never runs out on its own. */
     longSettle?: boolean;
+    /** Counts each settle that runs out (it runs out at once). */
+    countSettle?: () => void;
   } = {},
 ) {
   const prefix = `h${++harnesses}`;
@@ -103,7 +105,9 @@ function harness(
         ? Effect.suspend(() => elicitations.outputEnded).pipe(Effect.andThen(Effect.never))
         : options.longSettle === true
           ? Effect.never
-          : Effect.void,
+          : options.countSettle !== undefined
+            ? Effect.sync(options.countSettle)
+            : Effect.void,
     resolveItemOrdinal: () => Effect.succeed(7),
     idAllocator: {
       derive: {
@@ -168,6 +172,7 @@ function harness(
     context,
     until,
     requestId,
+    prefix,
     fireTimer: () => Effect.runSync(Deferred.succeed(timer, undefined)),
     endGrace: () => Effect.runSync(Deferred.succeed(grace, undefined)),
     endOutcomeLimit: () => Effect.runSync(Deferred.succeed(outcomeLimit, undefined)),
@@ -505,6 +510,36 @@ describe("ClaudeMcpElicitation", () => {
     await Effect.runPromise(h.elicitations.settleAborted);
     expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
     expect(await result).toEqual({ action: "cancel" });
+  });
+
+  it("waits once, not per card, for the notes of several aborted forms (1495)", async () => {
+    let settles = 0;
+    const h = harness({ countSettle: () => (settles += 1) });
+    const asks = [1, 2, 3].map((n) => {
+      const controller = new AbortController();
+      handOffClaudeFormAnswers(RuntimeRequestId.make(`${h.prefix}-request-${n}`), {
+        handOff: { name: "octo/repo" },
+      });
+      return {
+        controller,
+        result: h.ask({ requestedSchema: confirmSchema }, controller.signal, `sdk-${n}`),
+      };
+    });
+    await h.until(
+      () => h.events.filter((event) => event.type === "runtime_request.updated").length === 3,
+    );
+    for (const { controller } of asks) controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    // Every commit is still running: the turn's end waits out one shared settle.
+    settles = 0;
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(settles).toBe(1);
+    for (const n of [1, 2, 3])
+      forgetUncommittedFormAnswer({
+        type: "runtime-request.respond",
+        requestId: RuntimeRequestId.make(`${h.prefix}-request-${n}`),
+      });
+    for (const { result } of asks) expect(await result).toEqual({ action: "cancel" });
   });
 
   it("shows the server's note before the turn ends, when the turn finishes inside the settle (1495)", async () => {

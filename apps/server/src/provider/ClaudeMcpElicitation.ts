@@ -625,17 +625,24 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       return true;
     });
 
-  const settleAborted: ClaudeMcpElicitations["settleAborted"] = Effect.suspend(() =>
-    Effect.forEach(
-      [...pending.values()].filter((card) => card.aborted),
-      (card) =>
-        Deferred.succeed(card.abortCause, "server").pipe(
-          // Bounded: the turn's end never waits on a card for long.
-          Effect.andThen(Effect.raceFirst(Deferred.await(card.done), settle)),
+  const settleAborted: ClaudeMcpElicitations["settleAborted"] = Effect.suspend(() => {
+    const aborted = [...pending.values()].filter((card) => card.aborted);
+    if (aborted.length === 0) return Effect.void;
+    return Effect.forEach(aborted, (card) => Deferred.succeed(card.abortCause, "server"), {
+      discard: true,
+    }).pipe(
+      // One shared bound: the turn's end never waits on its cards for long.
+      Effect.andThen(
+        Effect.raceFirst(
+          Effect.forEach(aborted, (card) => Deferred.await(card.done), {
+            concurrency: "unbounded",
+            discard: true,
+          }),
+          settle,
         ),
-      { discard: true },
-    ),
-  );
+      ),
+    );
+  });
 
   return { forQuery, respond, settleAborted };
 }
