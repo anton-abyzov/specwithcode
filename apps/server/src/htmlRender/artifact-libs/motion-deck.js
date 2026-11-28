@@ -396,7 +396,9 @@
         renderer.clear();
         if (custom) custom(hdr);
         else renderer.render(sceneToDraw, camera);
-        if (o.bloom > 0) {
+        // Halation reads the bloom chain's blurred highlights, so it needs the chain even
+        // when bloom itself is off.
+        if (o.bloom > 0 || o.halation > 0) {
           prefilter.uniforms.tIn.value = hdr.texture;
           prefilter.uniforms.threshold.value = o.threshold;
           prefilter.uniforms.knee.value = o.knee;

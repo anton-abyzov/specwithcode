@@ -14,7 +14,7 @@
     "uniform vec3 uSun,uSunColor,uZenith,uHorizon,uGround,uFog;uniform float uFogDensity,uFogHeight,uTime;\n" +
     // Sky colour along a view direction: horizon to zenith, ground below, glow around the sun.
     "vec3 swcSky(vec3 v){float h=v.y;vec3 c=mix(uHorizon,uZenith,pow(clamp(h,0.0,1.0),0.5));" +
-    "c=mix(c,uGround,smoothstep(0.0,-0.3,h));float s=max(dot(v,uSun),0.0);" +
+    "c=mix(c,uGround,(1.0-smoothstep(-0.3,0.0,h)));float s=max(dot(v,uSun),0.0);" +
     "return c+uSunColor*(pow(s,6.0)*0.1+pow(s,64.0)*0.45);}\n" +
     // Distance and height fog toward the fog colour, warmer where it scatters sunlight.
     "vec3 swcFog(vec3 col,vec3 wp){vec3 d=wp-cameraPosition;float dist=length(d);vec3 v=d/max(dist,1e-3);" +
@@ -66,7 +66,7 @@
         u.value.copy(vec3(THREE, v));
         if (name === "uSun") u.value.normalize();
       } else if (u.value && u.value.isVector2) u.value.set(v[0], v[1]);
-      else u.value = v;
+      else u.value = name === "uSoft" ? Math.max(0.01, v) : v;
     });
   }
 
