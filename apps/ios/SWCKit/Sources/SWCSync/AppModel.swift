@@ -198,6 +198,8 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
 public struct ProjectMember: Identifiable, Hashable, Sendable {
   public var id: ProjectRef { ref }
   public let ref: ProjectRef
+  /// Only the linked roster names this copy. Its shell has never loaded.
+  public var isUnreached = false
   /// The machine's nickname.
   public var machineLabel: String
   public var machineOnline: Bool

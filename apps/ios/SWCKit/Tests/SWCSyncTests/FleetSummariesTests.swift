@@ -146,6 +146,24 @@ import SWCWire
     }
   }
 
+  @Test func knownUnreachedMemberAppearsOnceUntilItsSnapshotLoads() throws {
+    var copy = try linked("p4")
+    func entry(_ id: String) -> LogicalProjectMember {
+      LogicalProjectMember(environmentId: id, projectId: "remote", coordinatorThreadId: "c")
+    }
+    copy.workspaceSettings?.logicalProject?.members = [entry("linux"), entry("unknown"), entry("linux")]
+    let local = machine("m4", label: "M4", threads: [], projects: [copy])
+    let remote = ShellSummaries.Machine(environmentId: "linux", label: "linux-mini", online: false, settling: true, snapshot: nil)
+    let output = ShellSummaries.build([remote, local], home: ["m4"])
+    let members = try #require(output.projects.first?.members)
+    #expect(members.map(\.machineLabel) == ["M4", "linux-mini"])
+    let row = try #require(members.last)
+    #expect(row.isUnreached && row.machineSettling && !row.machineOnline)
+    #expect(output.threadsByProject[row.ref] == nil)
+    let loaded = machine("linux", label: "linux-mini", threads: [], projects: [try linked("remote")])
+    #expect(ShellSummaries.build([loaded, local]).projects.first?.members.filter(\.isUnreached) == [])
+  }
+
   @Test func offlineCoordinatorStaysTheRowsMachine() throws {
     let output = ShellSummaries.build([
       machine("m4", label: "M4", online: false, threads: [try TestData.thread(id: "a", projectId: "p4")], projects: [try linked("p4", epoch: 3)], lastSeenAt: Self.seen),

@@ -6,6 +6,15 @@ import SWCWire
 
 @MainActor
 @Suite struct LinkedProjectViewTests {
+  @Test func unreachedSwitcherDetailsPreferTheApprovalCode() {
+    var member = ProjectMember(ref: ProjectRef(environmentId: "linux", projectId: "p"), machineLabel: "linux-mini", machineOnline: false)
+    member.isUnreached = true
+    #expect(OrchestratorSwitcher.detail(member) == "Not reached yet")
+    member.machineSettling = true
+    #expect(OrchestratorSwitcher.detail(member) == "Connecting")
+    #expect(OrchestratorSwitcher.detail(member, approvalCode: "1234") == "Waiting for approval · type 1234 on linux-mini")
+  }
+
   @Test func thePromptIsRememberedPerProject() throws {
     let defaults = try #require(UserDefaults(suiteName: "linked-prompt-\(UUID().uuidString)"))
     #expect(LinkedMachinesPromptMemory.asked(defaults).isEmpty)

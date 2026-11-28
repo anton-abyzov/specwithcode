@@ -57,6 +57,7 @@ private struct AppScreens: View {
     VStack(spacing: 0) {
       if sampleData.isActive { SampleDataBar(onExit: sampleData.exit) }
       ApprovalCodesBlock(placement: .screen)
+      WaitingDeviceLinks()
       screens
     }
     .sheet(item: $router.sheet) { sheet in
@@ -184,6 +185,7 @@ struct RouteDestination: View {
     case let .chat(target): ChatView(target: target, isPushed: true)
     case let .overview(project): ProjectOverviewView(project: project)
     case .machines: MachinesView()
+    case let .allowDevice(id): MachineDetailView(machineId: id, approvalFirst: true)
     case let .machine(id): MachineDetailView(machineId: id)
     case .pair: PairMachineView()
     case .addDevice: AddDeviceView()

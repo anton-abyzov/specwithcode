@@ -189,6 +189,14 @@ public final class FixtureEngine: AppEngine {
     if scenario.isFleet {
       model.machines = FixtureFleet.machines
       model.projects = [FixtureFleet.project]
+      if ProcessInfo.processInfo.arguments.contains("-SWCSwitcherFixture") {
+        let reached = ProcessInfo.processInfo.arguments.contains("-SWCLinuxReached")
+        let id = "fixture-linux"
+        model.machines.append(MachineSummary(id: id, label: "linux-mini", status: reached ? .connected : .offline))
+        var member = ProjectMember(ref: ProjectRef(environmentId: id, projectId: "specweave"), machineLabel: "linux-mini", machineOnline: reached)
+        member.isUnreached = !reached
+        model.projects[0].members.append(member)
+      }
       model.threadsByProject = [FixtureFleet.onM4: FixtureFleet.threads(now: now)]
       runsOn = FixtureFleet.runsOn
       recompute()

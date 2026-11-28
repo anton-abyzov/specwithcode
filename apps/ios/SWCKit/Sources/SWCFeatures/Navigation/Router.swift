@@ -9,6 +9,7 @@ public nonisolated enum Route: Hashable, Codable, Sendable {
   case chat(ChatTarget)
   case overview(ProjectRef)
   case machines
+  case allowDevice(String)
   case machine(String)
   case pair
   /// "Add a device or machine": a phone or a computer on the same account.

@@ -26,6 +26,10 @@ struct OrchestratorSwitcher: View {
                 let beside = isBesideCoordinator
                 Task { @MainActor in
                   await Task.yield()
+                  if member.isUnreached {
+                    router.push(.machine(member.ref.environmentId))
+                    return
+                  }
                   router.chooseCoordinator(member.ref, besideThread: beside, in: model)
                 }
               }
@@ -35,7 +39,7 @@ struct OrchestratorSwitcher: View {
               } else {
                 Text(Self.title(member, among: members))
               }
-              Text(Self.detail(member))
+              Text(Self.detail(member, approvalCode: model.machine(member.ref.environmentId)?.deviceApprovalCode))
             }
             .accessibilityIdentifier("orchestrator.member")
           }
@@ -104,7 +108,13 @@ struct OrchestratorSwitcher: View {
   }
 
   /// "Coordinator", "Offline · last seen 2:05 PM", or "Online".
-  static func detail(_ member: ProjectMember, now: Date = .now) -> String {
+  static func detail(_ member: ProjectMember, approvalCode: String? = nil, now: Date = .now) -> String {
+    if member.isUnreached {
+      if let approvalCode, !approvalCode.isEmpty {
+        return "Waiting for approval · type \(approvalCode) on \(member.machineLabel)"
+      }
+      return member.machineSettling ? "Connecting" : "Not reached yet"
+    }
     var parts: [String] = []
     if member.isCoordinator { parts.append("Coordinator") }
     if member.machineOnline {

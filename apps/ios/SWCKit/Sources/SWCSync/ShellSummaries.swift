@@ -140,6 +140,7 @@ public enum ShellSummaries {
     for seat in seats where !seat.listed && percy.threads[seat.ref] != nil { all += seat.threads }
 
     var ranks: [ProjectRef: ProjectOrdering.Rank] = [:]
+    let unreached = Dictionary(known.filter { $0.snapshot == nil }.map { ($0.environmentId, $0) }, uniquingKeysWith: { first, _ in first })
     for group in sameProjectGroups(copies) {
       // A linked project is one row under its logical key alone, apart from
       // unlinked checkouts of its repository.
@@ -150,7 +151,7 @@ public enum ShellSummaries {
         ranks[group[0].summary.ref] = rank
         continue
       }
-      let merged = merge(group)
+      let merged = merge(group, unreached: unreached)
       projects.append(merged.summary)
       ranks[merged.summary.ref] = rank
       for member in group { threadsByProject[member.summary.ref] = merged.threads }
@@ -433,7 +434,7 @@ public enum ShellSummaries {
   /// opens the member whose coordinator is active, chosen as the web's
   /// `logicalCoordinator` does; without one, the online linked copy with the
   /// most recent thread.
-  static func merge(_ copies: [LinkedCopy]) -> (summary: ProjectSummary, threads: [ThreadSummary]) {
+  static func merge(_ copies: [LinkedCopy], unreached: [String: Machine]) -> (summary: ProjectSummary, threads: [ThreadSummary]) {
     // The row's linked project: the one most of its copies share. Copies of the same
     // folder that were never linked sit in the row without being linked to it.
     let logicalIds = copies.compactMap { $0.project.workspaceSettings?.logicalProject?.id }
@@ -460,6 +461,17 @@ public enum ShellSummaries {
     var summary = primary.summary
     summary.title = groupLabel(copies, primary: primary, logicalId: logicalId)
     summary.members = members
+    var represented = Set(members.map { $0.ref.environmentId })
+    for copy in linkedCopies {
+      for entry in copy.project.workspaceSettings?.logicalProject?.members ?? [] {
+        guard let machine = unreached[entry.environmentId], represented.insert(entry.environmentId).inserted else { continue }
+        var member = ProjectMember(ref: ProjectRef(environmentId: entry.environmentId, projectId: entry.projectId),
+                                   machineLabel: machine.displayName, machineOnline: false)
+        member.isUnreached = true
+        member.machineSettling = machine.settling
+        summary.members.append(member)
+      }
+    }
     summary.logicalProjectId = logicalId
     let here = primary.summary.ref.environmentId
     var named = Set([here])

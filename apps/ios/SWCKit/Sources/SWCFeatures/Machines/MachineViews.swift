@@ -59,6 +59,7 @@ struct MachinesView: View {
 /// One machine: status, address, versions, pairing expiry and actions.
 struct MachineDetailView: View {
   let machineId: String
+  var approvalFirst = false
 
   @Environment(AppModel.self) private var model
   @Environment(StackNavigator.self) private var nav
@@ -105,35 +106,18 @@ struct MachineDetailView: View {
 
   private func details(_ machine: MachineSummary) -> some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
-      hero(machine)
+      if approvalFirst {
+        hero(machine).allowDeviceCard(for: machine)
+      } else {
+        hero(machine)
+      }
       connectionActions(machine)
       notice(machine)
-      GroupedCard(label: "Details", separatorInset: WeaveSpacing.s4) {
-        WeaveRow("Status", stacksTrailing: true) {
-          EmptyView()
-        } trailing: {
-          HStack(spacing: WeaveSpacing.s2) {
-            StatusDot(machine.displayStatus).accessibilityHidden(true)
-            WeaveRowTrailingText(machine.statusLabel)
-          }
-        }
-        if let address = machine.address {
-          WeaveRow("Address", subtitle: address) { EmptyView() } trailing: { EmptyView() }
-        }
-        if let platform = machine.platform {
-          WeaveRow("Platform", trailingText: platform)
-        }
-        if let version = machine.serverVersion {
-          WeaveRow("Server version", trailingText: version)
-        }
-        if machine.viaConnect {
-          WeaveRow("Preferred connection", trailingText: "SpecWithCode Connect")
-        }
-        if machine.hasDirectPairing {
-          WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
-        }
+      if approvalFirst {
+        machineDetails(machine)
+      } else {
+        machineDetails(machine).allowDeviceCard(for: machine)
       }
-      .allowDeviceCard(for: machine)
       TeamRulesCard(rules: machine.teamRules)
       devices(machine)
       if !machine.viaConnect {
@@ -144,6 +128,34 @@ struct MachineDetailView: View {
     }
     .padding(.horizontal, WeaveSpacing.gutter)
     .padding(.bottom, WeaveSpacing.s8)
+  }
+
+  private func machineDetails(_ machine: MachineSummary) -> some View {
+    GroupedCard(label: "Details", separatorInset: WeaveSpacing.s4) {
+      WeaveRow("Status", stacksTrailing: true) {
+        EmptyView()
+      } trailing: {
+        HStack(spacing: WeaveSpacing.s2) {
+          StatusDot(machine.displayStatus).accessibilityHidden(true)
+          WeaveRowTrailingText(machine.statusLabel)
+        }
+      }
+      if let address = machine.address {
+        WeaveRow("Address", subtitle: address) { EmptyView() } trailing: { EmptyView() }
+      }
+      if let platform = machine.platform {
+        WeaveRow("Platform", trailingText: platform)
+      }
+      if let version = machine.serverVersion {
+        WeaveRow("Server version", trailingText: version)
+      }
+      if machine.viaConnect {
+        WeaveRow("Preferred connection", trailingText: "SpecWithCode Connect")
+      }
+      if machine.hasDirectPairing {
+        WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
+      }
+    }
   }
 
   private func connectionActions(_ machine: MachineSummary) -> some View {
