@@ -877,7 +877,13 @@
     function back() {
       if (!deck.ready) return;
       frozen = false;
-      // Back during a transition undoes it: the previous scene returns, complete.
+      // Back during a forward transition undoes it: the previous scene returns, complete.
+      // During a transition that is already going back, Back hurries it instead of
+      // reversing to the scene being left.
+      if (transition && transition.dir < 0) {
+        transition.t += transition.dur * 0.5;
+        return;
+      }
       if (transition) {
         var undo = transition.from;
         jump(undo, instances[undo].beats.length - 1);

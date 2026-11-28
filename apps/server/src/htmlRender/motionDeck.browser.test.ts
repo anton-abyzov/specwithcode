@@ -310,6 +310,19 @@ describe("motion deck runtime", () => {
     await tab.close();
   });
 
+  it("keeps going back when Back is pressed again during a backward transition", async () => {
+    const tab = await open("#end", true, NAMED);
+    await ready(tab);
+    await tab.keyboard.press("ArrowLeft");
+    await tab.keyboard.press("ArrowLeft");
+    expect(await tab.evaluate<string>("location.hash")).toBe("#scene-2-2");
+    await tab.waitForFunction(
+      `document.querySelectorAll(".swc-layer")[1].classList.contains("swc-on")`,
+    );
+    expect(await tab.evaluate<string>("SpecWithCodeDeck.current.info().scene")).toBe("scene-2");
+    await tab.close();
+  });
+
   it("animates glyphs with each kinetic type style", async () => {
     const tab = await open("", true, WORLDS);
     await ready(tab);
