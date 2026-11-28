@@ -91,7 +91,9 @@
     "#swc-stage{position:fixed;inset:0;width:100%;height:100%;display:block;outline:none;touch-action:none}" +
     "#swc-layers{position:fixed;inset:0;pointer-events:none;--u:calc(min(100vw/1920,100vh/1080))}" +
     ".swc-layer{position:absolute;inset:0;opacity:0;transition:opacity .5s ease;color:#f4f1ea;" +
-    "font-family:var(--swc-font,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif)}" +
+    "font-family:var(--swc-font,'SpecWithCode Display',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif)}" +
+    ".swc-display{font-family:'SpecWithCode Display',ui-sans-serif,system-ui,sans-serif;font-stretch:125%;font-weight:640;letter-spacing:-.025em;line-height:.98}" +
+    ".swc-free .swc-w{overflow:visible}.swc-c{display:inline-block;will-change:transform,opacity,filter;white-space:pre}" +
     ".swc-layer.swc-on{opacity:1}" +
     // A scene's own controls take the pointer; everything else lets clicks reach the stage.
     ".swc-layer.swc-on :is(input,textarea,select,button,a[href],label,[contenteditable]){pointer-events:auto}" +
@@ -207,268 +209,6 @@
     };
   }
 
-  // ---------------------------------------------------------------- sound
-  // Everything is synthesized: no files. Pads are detuned oscillator pairs through a moving
-  // low-pass into a generated-impulse reverb; hits are short enveloped tones and noise.
-  function createAudio() {
-    var ac = null,
-      master,
-      comp,
-      wet,
-      dry,
-      verb,
-      noise;
-    var muted = false;
-    var beds = [];
-    var pendingBed; // asked for before the reader's first gesture; starts on unlock
-    var lastHit = {};
-    function midi(m) {
-      return 440 * Math.pow(2, (m - 69) / 12);
-    }
-    function impulse(seconds, decay) {
-      var len = Math.floor(ac.sampleRate * seconds);
-      var buf = ac.createBuffer(2, len, ac.sampleRate);
-      for (var ch = 0; ch < 2; ch++) {
-        var d = buf.getChannelData(ch),
-          r = rng(ch + 7),
-          lp = 0;
-        for (var i = 0; i < len; i++) {
-          var white = r() * 2 - 1;
-          lp += (white - lp) * (0.25 + 0.5 * (1 - i / len)); // darker tail
-          d[i] =
-            lp *
-            Math.pow(1 - i / len, decay) *
-            (i < ac.sampleRate * 0.012 ? i / (ac.sampleRate * 0.012) : 1);
-        }
-      }
-      return buf;
-    }
-    function ensure() {
-      if (ac) return true;
-      var Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return false;
-      ac = new Ctx({ latencyHint: "interactive" });
-      comp = ac.createDynamicsCompressor();
-      comp.threshold.value = -16;
-      comp.knee.value = 12;
-      comp.ratio.value = 4;
-      comp.attack.value = 0.005;
-      comp.release.value = 0.25;
-      master = ac.createGain();
-      master.gain.value = muted ? 0 : 0.9;
-      comp.connect(master);
-      master.connect(ac.destination);
-      dry = ac.createGain();
-      dry.gain.value = 0.8;
-      dry.connect(comp);
-      verb = ac.createConvolver();
-      verb.buffer = impulse(3.4, 2.6);
-      wet = ac.createGain();
-      wet.gain.value = 0.55;
-      verb.connect(wet);
-      wet.connect(comp);
-      var nb = ac.createBuffer(1, ac.sampleRate, ac.sampleRate),
-        nd = nb.getChannelData(0),
-        r = rng(99);
-      for (var i = 0; i < nd.length; i++) nd[i] = r() * 2 - 1;
-      noise = nb;
-      return true;
-    }
-    function send(node, verbAmount) {
-      node.connect(dry);
-      var s = ac.createGain();
-      s.gain.value = verbAmount;
-      node.connect(s);
-      s.connect(verb);
-    }
-    var api = {
-      get running() {
-        return !!ac && ac.state === "running";
-      },
-      get muted() {
-        return muted;
-      },
-      get context() {
-        return ac;
-      },
-      unlock: function () {
-        if (!ensure()) return;
-        var startPending = function () {
-          if (pendingBed === undefined || ac.state !== "running") return;
-          var spec = pendingBed;
-          pendingBed = undefined;
-          api.bed(spec);
-        };
-        if (ac.state !== "running") ac.resume().then(startPending, function () {});
-        else startPending();
-      },
-      mute: function (on) {
-        muted = on === undefined ? !muted : !!on;
-        if (ac) master.gain.setTargetAtTime(muted ? 0 : 0.9, ac.currentTime, 0.06);
-        return muted;
-      },
-      suspend: function () {
-        if (ac && ac.state === "running") ac.suspend().catch(function () {});
-      },
-      // A sustained chord bed. notes: MIDI numbers. color: "warm", "glass", "dark" or "air".
-      bed: function (spec) {
-        // Never create or feed a context before a gesture: browsers refuse and warn.
-        if (!ac || ac.state !== "running") {
-          pendingBed = spec;
-          return;
-        }
-        var now = ac.currentTime;
-        beds.forEach(function (b) {
-          b.gain.gain.cancelScheduledValues(now);
-          b.gain.gain.setTargetAtTime(0, now, 0.7);
-          b.voices.forEach(function (v) {
-            v.oscs.forEach(function (o) {
-              o.stop(now + 4);
-            });
-          });
-        });
-        beds = [];
-        if (!spec) return;
-        var color = spec.color || "warm";
-        var shapes = {
-          warm: ["sawtooth", "triangle"],
-          glass: ["sine", "triangle"],
-          dark: ["sawtooth", "sawtooth"],
-          air: ["sine", "sine"],
-        }[color] || ["sawtooth", "triangle"];
-        var cut = { warm: 900, glass: 2600, dark: 420, air: 3600 }[color] || 900;
-        var gain = ac.createGain();
-        gain.gain.value = 0;
-        send(gain, color === "air" || color === "glass" ? 0.9 : 0.6);
-        gain.gain.setTargetAtTime(spec.level || 0.16, now, 1.2);
-        var voices = (spec.notes || [50, 57, 62, 66]).map(function (note, i) {
-          var filter = ac.createBiquadFilter();
-          filter.type = "lowpass";
-          filter.frequency.value = cut;
-          filter.Q.value = 0.7;
-          var lfo = ac.createOscillator(),
-            lfoGain = ac.createGain();
-          lfo.frequency.value = 0.05 + i * 0.023;
-          lfoGain.gain.value = cut * 0.35;
-          lfo.connect(lfoGain);
-          lfoGain.connect(filter.frequency);
-          var vg = ac.createGain();
-          vg.gain.value = (1 / Math.sqrt(spec.notes ? spec.notes.length : 4)) * 0.5;
-          var oscs = [-7, 7].map(function (cents, j) {
-            var o = ac.createOscillator();
-            o.type = shapes[j];
-            o.frequency.value = midi(note);
-            o.detune.value = cents + (j ? 2 : -3) * i;
-            o.connect(filter);
-            o.start(now);
-            return o;
-          });
-          lfo.start(now);
-          oscs.push(lfo);
-          filter.connect(vg);
-          vg.connect(gain);
-          return { oscs: oscs, note: note };
-        });
-        beds.push({ gain: gain, voices: voices });
-      },
-      // Glides the current bed's voices to new notes.
-      chord: function (notes, glide) {
-        if (!ac || !beds.length) return;
-        var now = ac.currentTime;
-        beds[0].voices.forEach(function (v, i) {
-          var n = notes[i % notes.length] + (i >= notes.length ? 12 : 0);
-          v.oscs.slice(0, 2).forEach(function (o) {
-            o.frequency.setTargetAtTime(midi(n), now, glide || 0.4);
-          });
-        });
-      },
-      level: function (value, seconds) {
-        if (!ac || !beds.length) return;
-        beds[0].gain.gain.setTargetAtTime(value, ac.currentTime, seconds || 0.8);
-      },
-      // One-shot sounds: tick, pop, chime, whoosh, rise, boom, blip.
-      hit: function (kind, opts) {
-        if (!ac || ac.state !== "running") return;
-        var o = opts || {};
-        var t = ac.currentTime + (o.delay || 0);
-        if (lastHit[kind] && t - lastHit[kind] < 0.02) return;
-        lastHit[kind] = t;
-        var g = ac.createGain();
-        g.gain.value = 0;
-        var pan = ac.createStereoPanner ? ac.createStereoPanner() : null;
-        if (pan) {
-          pan.pan.value = o.pan || 0;
-          g.connect(pan);
-          send(pan, o.verb === undefined ? 0.35 : o.verb);
-        } else send(g, o.verb === undefined ? 0.35 : o.verb);
-        var vol = o.gain === undefined ? 0.5 : o.gain;
-        var tone = function (type, f0, f1, dur) {
-          var osc = ac.createOscillator();
-          osc.type = type;
-          osc.frequency.setValueAtTime(f0, t);
-          if (f1) osc.frequency.exponentialRampToValueAtTime(f1, t + dur);
-          osc.connect(g);
-          osc.start(t);
-          osc.stop(t + dur + 0.05);
-        };
-        var hiss = function (type, f0, f1, dur, q) {
-          var src = ac.createBufferSource();
-          src.buffer = noise;
-          src.loop = true;
-          var f = ac.createBiquadFilter();
-          f.type = type;
-          f.Q.value = q || 0.8;
-          f.frequency.setValueAtTime(f0, t);
-          f.frequency.exponentialRampToValueAtTime(f1, t + dur);
-          src.connect(f);
-          f.connect(g);
-          src.start(t, Math.random());
-          src.stop(t + dur + 0.05);
-        };
-        var env = function (attack, dur) {
-          g.gain.setValueAtTime(0, t);
-          g.gain.linearRampToValueAtTime(vol, t + attack);
-          g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-        };
-        var pitch = midi(o.note || 76);
-        switch (kind) {
-          case "tick":
-            tone("triangle", 2400, 1800, 0.05);
-            env(0.002, 0.06);
-            break;
-          case "pop":
-            tone("sine", pitch * 1.5, pitch * 0.75, 0.12);
-            env(0.003, 0.14);
-            break;
-          case "chime":
-            tone("sine", pitch, 0, 1.6);
-            tone("sine", pitch * 2.01, 0, 1.2);
-            tone("sine", pitch * 3.02, 0, 0.7);
-            env(0.004, 1.8);
-            break;
-          case "whoosh":
-            hiss("bandpass", 300, 4200, o.dur || 0.9, 1.2);
-            env((o.dur || 0.9) * 0.6, o.dur || 0.9);
-            break;
-          case "rise":
-            hiss("bandpass", 200, 6000, o.dur || 1.6, 2);
-            tone("sawtooth", pitch / 4, pitch, o.dur || 1.6);
-            env((o.dur || 1.6) * 0.92, (o.dur || 1.6) + 0.1);
-            break;
-          case "boom":
-            tone("sine", 90, 34, 1.4);
-            hiss("lowpass", 900, 60, 1.0);
-            env(0.006, 1.6);
-            break;
-          default:
-            tone("square", pitch, pitch * 0.5, 0.08);
-            env(0.002, 0.09); // blip
-        }
-      },
-    };
-    return api;
-  }
-
   // ---------------------------------------------------------------- post-processing
   // Scene -> HDR target -> dual-filter bloom (down then tent-up chain) -> composite: bloom,
   // exposure, ACES fit, grade, vignette, grain, dither -> LDR target or screen. Two LDR targets
@@ -514,22 +254,37 @@
         "gl_FragColor=vec4(s/12.0+texture2D(tAdd,vUv).rgb,1.0);}",
       { tIn: { value: null }, tAdd: { value: null }, texel: { value: new THREE.Vector2() } },
     );
+    // AgX constants follow three.js r180's tonemapping chunk (MIT), itself after Filament and Blender.
+    var AGX =
+      "vec3 agxCurve(vec3 x){vec3 x2=x*x,x4=x2*x2;return 15.5*x4*x2-40.14*x4*x+31.96*x4-6.868*x2*x+0.4298*x2+0.1191*x-0.00232;}" +
+      "vec3 agx(vec3 c){const mat3 toRec2020=mat3(0.6274,0.0691,0.0164,0.3293,0.9195,0.0880,0.0433,0.0113,0.8956);" +
+      "const mat3 fromRec2020=mat3(1.6605,-0.1246,-0.0182,-0.5876,1.1329,-0.1006,-0.0728,-0.0083,1.1187);" +
+      "const mat3 inset=mat3(0.856627153315983,0.137318972929847,0.11189821299995,0.0951212405381588,0.761241990602591,0.0767994186031903,0.0482516061458583,0.101439036467562,0.811302368396859);" +
+      "const mat3 outset=mat3(1.1271005818144368,-0.1413297634984383,-0.14132976349843826,-0.11060664309660323,1.157823702216272,-0.11060664309660294,-0.016493938717834573,-0.016493938717834257,1.2519364065950405);" +
+      "c=inset*(toRec2020*c);c=clamp((log2(max(c,1e-10))+12.47393)/16.499999,0.0,1.0);c=outset*agxCurve(c);" +
+      "return clamp(fromRec2020*pow(max(c,0.0),vec3(2.2)),0.0,1.0);}";
     var composite = mat(
       GLSL.hash +
-        "uniform sampler2D tScene,tBloom;uniform float bloom,exposure,vignette,grain,time,contrast,saturation,ca,fade;uniform vec3 lift,gain,fadeColor;uniform vec2 res;varying vec2 vUv;" +
+        AGX +
+        "uniform sampler2D tScene,tBloom,tHalo;uniform float bloom,exposure,vignette,grain,time,contrast,saturation,ca,fade,tone,halation;" +
+        "uniform vec3 lift,gain,fadeColor,shadows,highlights;uniform vec2 res;varying vec2 vUv;" +
         "vec3 aces(vec3 x){return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0);}" +
         "vec3 toSrgb(vec3 c){return mix(c*12.92,1.055*pow(c,vec3(1.0/2.4))-0.055,step(0.0031308,c));}" +
         "void main(){vec2 d=vUv-0.5;vec3 c;" +
         "if(ca>0.0){vec2 o=d*dot(d,d)*ca*0.012;c=vec3(texture2D(tScene,vUv+o).r,texture2D(tScene,vUv).g,texture2D(tScene,vUv-o).b);}else c=texture2D(tScene,vUv).rgb;" +
-        "c+=texture2D(tBloom,vUv).rgb*bloom;c*=exposure;c=aces(c);c=toSrgb(c);" +
+        "vec3 b=texture2D(tBloom,vUv).rgb;" +
+        // Halation: film's red-orange glow around highlights, warmer than the bloom it rides on.
+        "if(halation>0.0){b*=vec3(1.0+0.35*halation,1.0,1.0-0.35*halation);c+=texture2D(tHalo,vUv).rgb*vec3(1.0,0.32,0.1)*halation*0.6;}" +
+        "c+=b*bloom;c*=exposure;c=tone<0.5?aces(c):tone<1.5?agx(c):clamp(c,0.0,1.0);c=toSrgb(c);" +
         "c=(c-0.5)*contrast+0.5;float l=dot(c,vec3(0.2126,0.7152,0.0722));c=mix(vec3(l),c,saturation);" +
-        "c=c*gain+lift*(1.0-c);" +
+        "c=c*gain+lift*(1.0-c);c+=shadows*(1.0-l)*(1.0-l)+highlights*l*l;" +
         "vec2 a=d*vec2(res.x/res.y,1.0);c*=1.0-vignette*smoothstep(0.25,1.05,length(a)*1.15);" +
         "float n=swcHash(vUv*res+fract(time*7.0)*97.0)-0.5;c+=n*grain*(1.0-abs(l-0.5));" +
         "c=mix(c,fadeColor,fade);c+=(swcHash(vUv*res+3.1)-0.5)/255.0;gl_FragColor=vec4(clamp(c,0.0,1.0),1.0);}",
       {
         tScene: { value: null },
         tBloom: { value: null },
+        tHalo: { value: null },
         bloom: { value: 0.6 },
         exposure: { value: 1 },
         vignette: { value: 0.25 },
@@ -539,28 +294,43 @@
         saturation: { value: 1.05 },
         ca: { value: 0 },
         fade: { value: 0 },
+        tone: { value: 0 },
+        halation: { value: 0 },
         lift: { value: new THREE.Color(0, 0, 0) },
         gain: { value: new THREE.Color(1, 1, 1) },
         fadeColor: { value: new THREE.Color(0, 0, 0) },
+        shadows: { value: new THREE.Color(0, 0, 0) },
+        highlights: { value: new THREE.Color(0, 0, 0) },
         res: { value: new THREE.Vector2(1, 1) },
       },
     );
-    var blend = mat(
+    // Transitions composite the outgoing frame (A) and the incoming one (B). Each registered
+    // transition is GLSL defining vec3 transition(vec2 uv) with A(uv), B(uv), p, aspect, time.
+    var TRANSITION_HEAD =
       GLSL.hash +
-        GLSL.noise +
-        "uniform sampler2D tA,tB;uniform float p,mode,aspect;varying vec2 vUv;void main(){vec3 a=texture2D(tA,vUv).rgb,b=texture2D(tB,vUv).rgb;float m;" +
-        "if(mode<0.5){m=smoothstep(0.0,1.0,p);}" +
-        "else if(mode<1.5){vec2 q=(vUv-0.5)*vec2(aspect,1.0);float r=length(q)+swcFbm(q*3.0)*0.12;m=1.0-smoothstep(p*1.25-0.12,p*1.25,r);}" +
-        "else{float e=vUv.x*0.75+vUv.y*0.25+swcFbm(vUv*vec2(4.0,8.0))*0.18;m=1.0-smoothstep(p*1.4-0.15,p*1.4,e+0.15);}" +
-        "gl_FragColor=vec4(mix(a,b,m),1.0);}",
-      {
-        tA: { value: null },
-        tB: { value: null },
-        p: { value: 0 },
-        mode: { value: 0 },
-        aspect: { value: 1 },
-      },
-    );
+      GLSL.noise +
+      "uniform sampler2D tA,tB;uniform float p,aspect,time;uniform vec2 res;varying vec2 vUv;" +
+      "vec3 A(vec2 uv){return texture2D(tA,uv).rgb;}vec3 B(vec2 uv){return texture2D(tB,uv).rgb;}\n";
+    var transitionMaterials = {};
+    function transitionMaterial(name) {
+      if (transitionMaterials[name]) return transitionMaterials[name];
+      var def = registry()[name];
+      if (!def) return null;
+      transitionMaterials[name] = mat(
+        TRANSITION_HEAD +
+          def.glsl +
+          "\nvoid main(){gl_FragColor=vec4(clamp(transition(vUv),0.0,1.0),1.0);}",
+        {
+          tA: { value: null },
+          tB: { value: null },
+          p: { value: 0 },
+          aspect: { value: 1 },
+          time: { value: 0 },
+          res: { value: new THREE.Vector2(1, 1) },
+        },
+      );
+      return transitionMaterials[name];
+    }
     var LEVELS = 5;
     var hdrOpts = { type: THREE.HalfFloatType, depthBuffer: false };
     var hdr = null,
@@ -589,7 +359,6 @@
         return new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
       });
       composite.uniforms.res.value.set(w, h);
-      blend.uniforms.aspect.value = w / h;
     }
     function pass(material, target) {
       quad.material = material;
@@ -610,6 +379,10 @@
       lift: [0, 0, 0],
       gain: [1, 1, 1],
       fadeColor: [0, 0, 0],
+      tone: "aces",
+      halation: 0,
+      shadows: [0, 0, 0],
+      highlights: [0, 0, 0],
     };
     return {
       resize: resize,
@@ -644,6 +417,7 @@
         var u = composite.uniforms;
         u.tScene.value = hdr.texture;
         u.tBloom.value = ups[0].texture;
+        u.tHalo.value = ups[Math.min(2, ups.length - 1)].texture;
         u.bloom.value = o.bloom / LEVELS;
         u.exposure.value = o.exposure;
         u.vignette.value = o.vignette;
@@ -652,30 +426,58 @@
         u.saturation.value = o.saturation;
         u.ca.value = o.ca;
         u.fade.value = o.fade;
+        u.tone.value = o.tone === "agx" ? 1 : o.tone === "none" ? 2 : 0;
+        u.halation.value = o.halation;
+        u.shadows.value.fromArray(o.shadows);
+        u.highlights.value.fromArray(o.highlights);
         u.time.value = time;
         u.lift.value.fromArray(o.lift);
         u.gain.value.fromArray(o.gain);
         u.fadeColor.value.fromArray(o.fadeColor);
         pass(composite, slot === undefined ? null : ldr[slot]);
       },
-      blend: function (p, mode) {
-        blend.uniforms.tA.value = ldr[0].texture;
-        blend.uniforms.tB.value = ldr[1].texture;
-        blend.uniforms.p.value = p;
-        blend.uniforms.mode.value = mode;
-        pass(blend, null);
+      // Composites LDR slots 0 (A) and 1 (B) through the named transition onto the screen.
+      blend: function (p, name, time) {
+        var m = transitionMaterial(name) || transitionMaterial("fade");
+        if (!m) return;
+        m.uniforms.tA.value = ldr[0].texture;
+        m.uniforms.tB.value = ldr[1].texture;
+        m.uniforms.p.value = p;
+        m.uniforms.aspect.value = w / h;
+        m.uniforms.time.value = time || 0;
+        m.uniforms.res.value.set(w, h);
+        pass(m, null);
       },
       compile: function () {
-        [prefilter, down, up, composite, blend].forEach(function (m) {
-          quad.material = m;
-          renderer.compile(scene, cam);
-        });
+        Object.keys(registry()).forEach(transitionMaterial);
+        [prefilter, down, up, composite]
+          .concat(
+            Object.keys(transitionMaterials).map(function (k) {
+              return transitionMaterials[k];
+            }),
+          )
+          .forEach(function (m) {
+            quad.material = m;
+            renderer.compile(scene, cam);
+          });
       },
     };
   }
 
   // ---------------------------------------------------------------- the deck
-  var TRANSITIONS = { fade: 0, iris: 1, wipe: 2 };
+  // Transitions by name. The core carries fade; the fx part registers the rest.
+  var TRANSITIONS = {
+    fade: {
+      dur: 1.2,
+      glsl: "vec3 transition(vec2 uv){return mix(A(uv),B(uv),smoothstep(0.0,1.0,p));}",
+    },
+  };
+  function registry() {
+    return TRANSITIONS;
+  }
+  function transitionOf(name) {
+    return TRANSITIONS[name] ? name : "fade";
+  }
 
   function start(options) {
     var opts = options || {};
@@ -749,7 +551,7 @@
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
     var post = createPost(THREE, renderer);
-    var audio = createAudio();
+    var audio = window.SpecWithCodeDeck.createAudio();
 
     // Chrome: loader, progress hairline, notes, help, toast.
     var loader = el(
@@ -826,6 +628,15 @@
         words: words,
         rise: rise,
         odometer: odometer,
+        type: function (node, p, o) {
+          return window.SpecWithCodeDeck.type(node, p, o);
+        },
+        // Worlds made here follow the scene's clock.
+        world: function (scene, atmosphere) {
+          var made = window.SpecWithCodeDeck.world(THREE, scene, atmosphere);
+          (entry.worlds || (entry.worlds = [])).push(made);
+          return made;
+        },
         mix: mix,
         clamp01: clamp01,
         $: function (selector) {
@@ -839,6 +650,13 @@
       var ratio = Math.min(window.devicePixelRatio || 1, dprCap) * quality;
       var cw = Math.max(1, Math.floor(window.innerWidth * ratio)),
         ch = Math.max(1, Math.floor(window.innerHeight * ratio));
+      // A pixel budget keeps a 5K window from allocating huge multisampled HDR targets.
+      var budget = opts.maxPixels || 4200000;
+      if (cw * ch > budget) {
+        var shrink = Math.sqrt(budget / (cw * ch));
+        cw = Math.max(1, Math.floor(cw * shrink));
+        ch = Math.max(1, Math.floor(ch * shrink));
+      }
       renderer.setPixelRatio(1);
       renderer.setSize(cw, ch, false);
       post.resize(cw, ch);
@@ -896,6 +714,15 @@
       });
     }
     async function warm() {
+      // The display face first, so text lays out once; a font that never loads cannot hold the show.
+      var font = window.SpecWithCodeDeck.fontReady;
+      if (font)
+        await Promise.race([
+          font.catch(function () {}),
+          new Promise(function (r) {
+            setTimeout(r, 4000);
+          }),
+        ]);
       size();
       post.compile();
       for (var i = 0; i < instances.length; i++) {
@@ -937,7 +764,7 @@
     }
 
     // ---- navigation
-    var transition = null; // { from, to, t, dur, mode, reverse }
+    var transition = null; // { from, to, t, dur, name, dir }
     function writeHash() {
       var entry = instances[deck.index];
       var id = entry.def.id || "scene" + (deck.index + 1);
@@ -971,11 +798,15 @@
       }
       return null;
     }
-    function enterScene(index, beat, cut) {
-      var entry = instances[index];
+    // Shows one scene's text layer, or none while a transition is mid-way.
+    function showLayer(index) {
       instances.forEach(function (e, i) {
         e.layer.classList.toggle("swc-on", i === index);
       });
+    }
+    function enterScene(index, beat, cut) {
+      var entry = instances[index];
+      showLayer(transition ? -1 : index);
       deck.index = index;
       deck.beat = beat;
       if (cut) seekState(entry, beat, 0);
@@ -992,6 +823,7 @@
     }
     function jump(index, beat) {
       transition = null;
+      frozen = false;
       enterScene(index, beat, true);
     }
     function go(index, dir) {
@@ -1007,20 +839,26 @@
         enterScene(to, beat, false);
         return;
       }
-      var name = (dir > 0 ? entry.def.transition : instances[from].def.transition) || "fade";
+      // Back plays the transition into the scene being left, in reverse and faster.
+      var name = transitionOf(
+        (dir > 0 ? entry.def.transition : instances[from].def.transition) || "fade",
+      );
+      var def = TRANSITIONS[name];
       transition = {
         from: from,
         to: to,
         t: 0,
-        dur: dir > 0 ? 1.2 : 0.8,
-        mode: TRANSITIONS[name] === undefined ? 0 : TRANSITIONS[name],
+        dur: (def.dur || 1.2) * (dir > 0 ? 1 : 0.6),
+        name: name,
         dir: dir,
       };
-      audio.hit("whoosh", { gain: 0.25, dur: transition.dur });
+      if (def.cue) def.cue(audio, transition.dur, dir);
+      else audio.hit("whoosh", { gain: 0.25, dur: transition.dur });
       enterScene(to, beat, false);
     }
     function next() {
       if (!deck.ready) return;
+      frozen = false;
       if (transition) {
         transition.t += transition.dur * 0.5;
         return;
@@ -1038,6 +876,7 @@
     }
     function back() {
       if (!deck.ready) return;
+      frozen = false;
       // Back during a transition undoes it: the previous scene returns, complete.
       if (transition) {
         var undo = transition.from;
@@ -1233,6 +1072,22 @@
     });
 
     // ---- frame loop
+    var TEXT_AT = 0.6;
+    var frozen = false;
+    // Draws a transition at p: forward from A into B, or back with the same transition reversed.
+    function composite(tr, p) {
+      var from = instances[tr.from],
+        to = instances[tr.to];
+      if (tr.dir < 0) {
+        draw(to, 0);
+        draw(from, 1);
+        post.blend(1 - p, tr.name, clock);
+      } else {
+        draw(from, 0);
+        draw(to, 1);
+        post.blend(p, tr.name, clock);
+      }
+    }
     var last = performance.now(),
       slowFrames = 0,
       fastFrames = 0;
@@ -1242,6 +1097,10 @@
       s.dt = dt;
       s.t += dt;
       s.time = clock;
+      if (entry.worlds)
+        entry.worlds.forEach(function (made) {
+          made.tick(clock);
+        });
       for (var k = 0; k < beats.length; k++) {
         var d = beats[k];
         if (k <= s.beat) {
@@ -1259,7 +1118,7 @@
       requestAnimationFrame(frame);
       var dt = Math.min(0.1, (now - last) / 1000);
       last = now;
-      if (!deck.ready) return;
+      if (!deck.ready || frozen) return;
       clock += dt;
       // Adaptive resolution: hold 60 fps on slower GPUs, recover when there is headroom.
       if (dt > 0.024) {
@@ -1287,10 +1146,11 @@
         entry.s.enter = ease.inOutCubic(p);
         from.s.enter = 1 - entry.s.enter;
         advanceState(from, dt);
-        advanceState(entry, dt);
-        draw(from, 0);
-        draw(entry, 1);
-        post.blend(ease.inOutCubic(p), transition.mode);
+        // The incoming scene's beat clock starts once it is mostly on screen, so its text
+        // animates in view instead of under the transition.
+        advanceState(entry, p >= TEXT_AT ? dt : 0);
+        composite(transition, p);
+        if (p >= TEXT_AT) showLayer(transition.to);
         if (p >= 1) {
           transition = null;
           entry.s.enter = 1;
@@ -1336,7 +1196,56 @@
         };
       },
       // Deterministic stills for tests and thumbnails: scene at beat (1-based) after t seconds.
+      transitions: function () {
+        return Object.keys(TRANSITIONS);
+      },
+      // A still of the transition into scene `id` at p (0 to 1), forward, for tests and
+      // thumbnails. The deck holds that frame until the next seek, jump or key.
+      transitionFrame: function (id, p, name) {
+        var to = -1;
+        for (var i = 0; i < instances.length; i++) if (instances[i].def.id === id) to = i;
+        if (to < 1) return false;
+        var from = instances[to - 1],
+          entry = instances[to];
+        seekState(from, from.beats.length - 1, 1);
+        seekState(entry, 0, 0);
+        var tr = {
+          from: to - 1,
+          to: to,
+          dir: 1,
+          name: transitionOf(name || entry.def.transition || "fade"),
+        };
+        entry.s.enter = ease.inOutCubic(p);
+        from.s.enter = 1 - entry.s.enter;
+        advanceState(from, 0);
+        advanceState(entry, 0);
+        composite(tr, clamp01(p));
+        showLayer(p >= TEXT_AT ? to : p < 0.05 ? to - 1 : -1);
+        frozen = true;
+        return tr.name;
+      },
+      // Mean milliseconds to draw `n` frames of the current scene. Reading one pixel back after
+      // each frame waits for the GPU to finish it, which gl.finish() alone does not in Chrome.
+      perf: function (n) {
+        var count = n || 60,
+          entry = instances[deck.index],
+          pixel = new Uint8Array(4),
+          started = performance.now();
+        for (var k = 0; k < count; k++) {
+          clock += 1 / 60;
+          advanceState(entry, 1 / 60);
+          draw(entry);
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        }
+        var size = post.size;
+        return {
+          ms: (performance.now() - started) / count,
+          width: size.width,
+          height: size.height,
+        };
+      },
       seek: function (id, beat, t) {
+        frozen = false;
         for (var i = 0; i < instances.length; i++) {
           if (instances[i].def.id !== id) continue;
           var entry = instances[i];
@@ -1383,6 +1292,25 @@
 
   window.SpecWithCodeDeck = {
     start: start,
+    transitions: TRANSITIONS,
+    // Called by the font part with the display face as a data URI. Archivo's width axis runs
+    // 62% to 125%, so font-stretch picks the cut.
+    useFont: function (url) {
+      if (typeof FontFace !== "function" || !document.fonts) return;
+      try {
+        var face = new FontFace("SpecWithCode Display", "url(" + url + ") format('woff2')", {
+          weight: "100 900",
+          stretch: "62% 125%",
+        });
+        window.SpecWithCodeDeck.fontReady = face.load().then(function (loaded) {
+          document.fonts.add(loaded);
+          return loaded;
+        });
+      } catch (error) {
+        console.warn("[motion-deck] display face not loaded", error);
+      }
+    },
+    fontReady: null,
     ease: ease,
     rng: rng,
     glsl: GLSL,
@@ -1390,6 +1318,6 @@
     rise: rise,
     odometer: odometer,
     current: null,
-    version: "1.0.0",
+    version: "1.1.0",
   };
 })();

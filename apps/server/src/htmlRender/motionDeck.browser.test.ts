@@ -5,12 +5,9 @@ import * as NodeURL from "node:url";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { wrapThreeCommonJs } from "./localArtifactLibs.ts";
+import { joinMotionDeck, wrapThreeCommonJs } from "./localArtifactLibs.ts";
 
-const DECK = NodeFS.readFileSync(
-  NodeURL.fileURLToPath(new URL("./artifact-libs/motion-deck.js", import.meta.url)),
-  "utf8",
-);
+const DECK = joinMotionDeck(NodeURL.fileURLToPath(new URL("./artifact-libs", import.meta.url)));
 const THREE = wrapThreeCommonJs(
   NodeFS.readFileSync(
     NodeModule.createRequire(
@@ -71,6 +68,31 @@ SpecWithCodeDeck.start({
       create(ctx) { return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera() }; } },
     { id: "end", beats: [{ dur: 0.2 }],
       create(ctx) { return { scene: new ctx.THREE.Scene(), camera: new ctx.THREE.PerspectiveCamera() }; } },
+  ],
+});`;
+
+// Two small lit worlds with every helper, AgX and halation, joined by a long portal.
+const WORLDS = `
+function lit(ctx, s) {
+  const scene = new ctx.THREE.Scene();
+  const camera = new ctx.THREE.PerspectiveCamera(40, 16 / 9, 0.5, 4000);
+  camera.position.set(0, 40, 120); camera.lookAt(0, 0, -200);
+  const w = ctx.world(scene, { sun: [0.3, 0.2, -1], fogDensity: 0.001 });
+  w.sky({ clouds: 0.6, stars: 0.5 });
+  w.terrain({ height: 60, segments: 40, size: 1200, plateau: { center: [0, -200], radius: 120 } });
+  w.water({ level: -20 });
+  const field = w.field({ cols: 24, rows: 24, spacing: 5, center: [0, -200], scan: 0 });
+  w.arcs({ pairs: [{ from: [-60, 0, -200], to: [60, 0, -220] }] });
+  w.motes({ count: 50 });
+  w.slab({ position: [0, 0, -300], progress: 0.5 });
+  return { scene, camera, field, update(st) { field.set({ on: 40 + st.win(0, 0, 0.3) * 100 }); } };
+}
+SpecWithCodeDeck.start({
+  title: "World deck",
+  scenes: [
+    { id: "a", beats: [{ dur: 0.3 }], post: { tone: "agx", halation: 0.5, ca: 0.5, shadows: [0, 0, 0.02] },
+      html: '<h1 id="h">Lit world</h1>', create: (ctx) => lit(ctx) },
+    { id: "b", transition: "portal", beats: [{ dur: 0.3 }], html: '<h1 id="g">Second</h1>', create: (ctx) => lit(ctx) },
   ],
 });`;
 
@@ -195,6 +217,132 @@ describe("motion deck runtime", () => {
     await tab.keyboard.press("Enter");
     expect(await tab.evaluate<number>("window.pressed")).toBe(1);
     expect(await tab.evaluate<string>("location.hash")).toBe("#scene-2");
+    await tab.close();
+  });
+
+  // Mean brightness (0 to 255) of the frame the deck just drew, read in the same task.
+  const brightness = `(() => {
+    const gl = document.getElementById("swc-stage").getContext("webgl2");
+    const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let sum = 0; for (let i = 0; i < px.length; i += 4) sum += px[i] + px[i + 1] + px[i + 2];
+    return sum / (w * h * 3);
+  })()`;
+
+  it("draws a lit world with AgX, halation and every world helper", async () => {
+    const tab = await open("", true, WORLDS);
+    const errors: string[] = [];
+    tab.on("console", (m) => {
+      if (m.type() === "error") errors.push(m.text());
+    });
+    await ready(tab);
+    const lit = await tab.evaluate<number>(
+      `(SpecWithCodeDeck.current.seek("a", 1, 0.4), ${brightness})`,
+    );
+    expect(lit).toBeGreaterThan(20);
+    expect(errors).toEqual([]);
+    // The display face is registered with its width axis.
+    expect(
+      await tab.evaluate<boolean>(`document.fonts.check('700 20px "SpecWithCode Display"')`),
+    ).toBe(true);
+    expect(
+      await tab.evaluate<string>(
+        `[...document.fonts].find((f) => f.family.includes("SpecWithCode Display")).stretch`,
+      ),
+    ).toBe("62% 125%");
+    await tab.close();
+  });
+
+  it("registers the shader transitions and draws each one mid-way", async () => {
+    const tab = await open("", true, WORLDS);
+    const errors: string[] = [];
+    tab.on("console", (m) => {
+      if (m.type() === "error") errors.push(m.text());
+    });
+    await ready(tab);
+    const names = await tab.evaluate<string[]>("SpecWithCodeDeck.current.transitions()");
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "fade",
+        "iris",
+        "wipe",
+        "portal",
+        "flaps",
+        "curl",
+        "wash",
+        "slam",
+        "tear",
+        "zoom",
+      ]),
+    );
+    for (const name of names) {
+      const drawn = await tab.evaluate<[string, number]>(
+        `[SpecWithCodeDeck.current.transitionFrame("b", 0.5, ${JSON.stringify(name)}), ${brightness}]`,
+      );
+      expect(drawn[0]).toBe(name);
+      expect(drawn[1], name).toBeGreaterThan(10);
+    }
+    // An unknown name falls back to fade.
+    expect(
+      await tab.evaluate<string>(`SpecWithCodeDeck.current.transitionFrame("b", 0.5, "nope")`),
+    ).toBe("fade");
+    expect(errors).toEqual([]);
+    await tab.close();
+  });
+
+  it("keeps the incoming scene's text hidden until the transition is mostly through", async () => {
+    const tab = await open("", true, WORLDS);
+    await ready(tab);
+    await tab.keyboard.press("ArrowRight");
+    const layers = () =>
+      tab.evaluate<boolean[]>(
+        `[...document.querySelectorAll(".swc-layer")].map((l) => l.classList.contains("swc-on"))`,
+      );
+    expect(await layers()).toEqual([false, false]);
+    await tab.waitForFunction(
+      `document.querySelectorAll(".swc-layer")[1].classList.contains("swc-on")`,
+      null,
+      {
+        timeout: 20_000,
+      },
+    );
+    expect(await tab.evaluate<string>("location.hash")).toBe("#b");
+    await tab.close();
+  });
+
+  it("animates glyphs with each kinetic type style", async () => {
+    const tab = await open("", true, WORLDS);
+    await ready(tab);
+    const styles = ["rise", "blur", "track", "scatter", "drop", "type"];
+    const result = await tab.evaluate<
+      Record<string, { start: string[]; end: string[]; blur: string }>
+    >(`(() => {
+      const out = {};
+      for (const style of ${JSON.stringify(styles)}) {
+        const node = document.createElement("h2");
+        node.textContent = "Ship it";
+        document.body.appendChild(node);
+        SpecWithCodeDeck.type(node, 0, { style });
+        const glyphs = [...node.querySelectorAll(".swc-c")];
+        const start = glyphs.map((g) => g.style.opacity);
+        const blur = glyphs[0].style.filter;
+        SpecWithCodeDeck.type(node, 1, { style });
+        out[style] = { start, end: glyphs.map((g) => g.style.opacity), blur };
+      }
+      return out;
+    })()`);
+    for (const style of styles) {
+      expect(result[style]!.start.length, style).toBe(6);
+      expect(
+        result[style]!.start.every((o) => Number(o) === 0),
+        style,
+      ).toBe(true);
+      expect(
+        result[style]!.end.every((o) => Number(o) === 1),
+        style,
+      ).toBe(true);
+    }
+    expect(result.blur!.blur).toMatch(/^blur\(/);
     await tab.close();
   });
 });
