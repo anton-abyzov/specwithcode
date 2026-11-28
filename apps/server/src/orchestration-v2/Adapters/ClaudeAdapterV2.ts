@@ -27,7 +27,11 @@ import {
 } from "../../provider/subscriptionIdentity.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { withMainThreadPromptCache } from "../../provider/ClaudePromptCache.ts";
-import { makeClaudeMcpElicitations } from "../../provider/ClaudeMcpElicitation.ts";
+import {
+  type ClaudeMcpElicitations,
+  type ClaudeQueryForms,
+  makeClaudeMcpElicitations,
+} from "../../provider/ClaudeMcpElicitation.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -443,6 +447,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  /** Runs as the CLI's output ends, before its process tree is ended. */
+  readonly onOutputEnd?: Effect.Effect<void>;
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -908,6 +914,7 @@ export const layerQueryRunner: Layer.Layer<
                 payload: message,
               }),
             ),
+            Stream.onExit(() => input.onOutputEnd ?? Effect.void),
             Stream.ensuring(endOwnedTree),
           ),
           endProcessTree: endOwnedTree,
@@ -3648,6 +3655,8 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   // Stop, rollback or fork is closing this process; its work is ending.
   stopping: boolean;
+  // The forms this process's MCP servers asked (1495).
+  readonly forms: ClaudeQueryForms;
   // Registry entries still running when this process opened. Their process
   // is gone and never reports their end; any later task_started replaces the
   // entry, so an entry still in this set runs nowhere.
@@ -6095,6 +6104,9 @@ export function makeClaudeAdapterV2(
             });
           }
 
+          // A form the server just gave up on shows its note before the turn ends (1495);
+          // forms the app ended itself are marked already and show none.
+          yield* mcpElicitations.settleAborted;
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
             input.status === "failed"
@@ -8235,7 +8247,7 @@ export function makeClaudeAdapterV2(
             }),
           );
 
-        const mcpElicitations = makeClaudeMcpElicitations({
+        const mcpElicitations: ClaudeMcpElicitations = makeClaudeMcpElicitations({
           activeTurn: Ref.get(activeTurn),
           buildApprovalRequestArtifacts,
           emitProviderEvent,
@@ -8737,6 +8749,7 @@ export function makeClaudeAdapterV2(
           // the replacement open succeeds or fails below.
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
+            yield* existing.forms.endedHere;
             yield* existing.query.close.pipe(Effect.ignore);
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
@@ -8756,6 +8769,8 @@ export function makeClaudeAdapterV2(
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          // This process's forms: Stop, steer and close mark only them.
+          const forms = mcpElicitations.forQuery();
           const queryOptions = makeClaudeQueryOptions({
             modelCatalog: catalog,
             modelSelection: turnInput.modelSelection,
@@ -8804,7 +8819,7 @@ export function makeClaudeAdapterV2(
                 }),
             canUseTool,
             onUserDialog,
-            onElicitation: mcpElicitations.onElicitation,
+            onElicitation: forms.onElicitation,
             supportedDialogKinds: ["resume_return"],
             claudeAdvisor: sessionAdvisor.outcome,
             advisorGuidance: turnInput.runtimePolicy.advisorGuidance,
@@ -8813,6 +8828,8 @@ export function makeClaudeAdapterV2(
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
+              // The SDK aborts the CLI's pending forms as its output ends.
+              onOutputEnd: forms.outputEnded,
               options: {
                 ...queryOptions,
                 hooks: subagentLaunchHooks(
@@ -8894,6 +8911,7 @@ export function makeClaudeAdapterV2(
             openedPermissionMode: queryOptions.permissionMode,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            forms,
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
@@ -9329,6 +9347,7 @@ export function makeClaudeAdapterV2(
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            yield* existing.forms.endedHere;
             yield* Ref.update(interruptedTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
@@ -9448,6 +9467,8 @@ export function makeClaudeAdapterV2(
               fileSystem,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),
             });
+            // The steer interrupts the running tools, and their forms with them.
+            yield* existing.forms.endedHere;
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
@@ -9472,6 +9493,7 @@ export function makeClaudeAdapterV2(
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
+            yield* existing.forms.endedHere;
             yield* existing.query.close.pipe(Effect.ignore);
           }
           yield* Effect.yieldNow;
@@ -9491,6 +9513,7 @@ export function makeClaudeAdapterV2(
           timeoutEvent: string,
         ) {
           existing.stopping = true;
+          yield* existing.forms.endedHere;
           yield* existing.query.close.pipe(Effect.ignore);
           const closed = yield* Deferred.await(existing.closed).pipe(
             Effect.timeoutOption("10 seconds"),

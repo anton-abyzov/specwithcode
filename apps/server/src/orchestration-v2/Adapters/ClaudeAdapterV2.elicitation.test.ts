@@ -14,16 +14,20 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { type ProviderAdapterV2Event, ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 
 const SETTINGS = Schema.decodeSync(ClaudeSettings)({});
@@ -32,105 +36,139 @@ const MODEL = {
   model: "claude-sonnet-4-6",
 } satisfies ModelSelection;
 
+/** Opens a Claude session on a fake query and starts one turn of a person's thread. */
+const openElicitationTurn = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+    prefix: "studio-claude-elicitation-",
+  });
+  let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+  // The CLI's output; its end is the process's exit.
+  const output = yield* Queue.unbounded<SDKMessage, Cause.Done>();
+  const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+    settings: SETTINGS,
+    environment: {},
+    attachmentsDir,
+    fileSystem,
+    path: yield* Path.Path,
+    crypto: yield* Crypto.Crypto,
+    idAllocator,
+    queryRunner: {
+      allocateSessionId: Effect.succeed("native-thread-claude-elicitation"),
+      open: (input) =>
+        Effect.sync(() => {
+          openedOptions = input.options;
+          return {
+            // As the real runner: the output's end runs onOutputEnd first.
+            messages: Stream.fromQueue(output).pipe(
+              Stream.onExit(() => input.onOutputEnd ?? Effect.void),
+            ),
+            offer: () => Effect.void,
+            setModel: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            interrupt: Effect.void,
+            close: Effect.void,
+          };
+        }),
+      forkSession: () => Effect.die("unused"),
+      subagentLaunchToolUseId: () => Effect.succeed(null),
+      assertComplete: Effect.void,
+    },
+  });
+  // Full access: the form still waits for the person.
+  const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: "/workspace",
+  });
+  const threadId = ThreadId.make("thread-claude-elicitation");
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-claude-elicitation"),
+    modelSelection: MODEL,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({
+    threadId,
+    modelSelection: MODEL,
+    runtimePolicy,
+  });
+  const now = yield* DateTime.now;
+  const attemptId = RunAttemptId.make("attempt-claude-elicitation");
+  yield* runtime.startTurn({
+    appThread: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make("project-claude-elicitation"),
+      title: "Claude elicitation test",
+      providerInstanceId: MODEL.instanceId,
+      modelSelection: MODEL,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: providerThread.id,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+    threadId,
+    runId: RunId.make(`run-${attemptId}`),
+    runOrdinal: 1,
+    providerTurnOrdinal: 1,
+    attemptId,
+    rootNodeId: NodeId.make(`node-${attemptId}`),
+    providerThread,
+    message: {
+      createdBy: "user",
+      creationSource: "web",
+      messageId: MessageId.make(`message-${attemptId}`),
+      text: "Delete the test repository.",
+      attachments: [],
+    },
+    modelSelection: MODEL,
+    runtimePolicy,
+  });
+  return {
+    runtime,
+    providerThread,
+    threadId,
+    runId: RunId.make(`run-${attemptId}`),
+    exit: Queue.end(output),
+    emit: (message: SDKMessage) => Queue.offer(output, message),
+    openedOptions: openedOptions as ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined,
+  };
+});
+
+const LAYER = Layer.merge(IdAllocator.layer, NodeServices.layer);
+
+const requestedSchema = {
+  type: "object",
+  properties: { confirm: { type: "string", title: "Type octo/repo to confirm" } },
+  required: ["confirm"],
+};
+
+/** Waits a few event-loop turns for a condition the adapter's fibers reach. */
+const until = (check: () => boolean) =>
+  Effect.promise(async () => {
+    for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setImmediate(resolve));
+    return check();
+  });
+
 describe("ClaudeAdapterV2 MCP elicitation", () => {
   it.effect("passes onElicitation and answers a form with the person's content", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "studio-claude-elicitation-",
-        });
-        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
-          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-          settings: SETTINGS,
-          environment: {},
-          attachmentsDir,
-          fileSystem,
-          path: yield* Path.Path,
-          crypto: yield* Crypto.Crypto,
-          idAllocator,
-          queryRunner: {
-            allocateSessionId: Effect.succeed("native-thread-claude-elicitation"),
-            open: (input) =>
-              Effect.sync(() => {
-                openedOptions = input.options;
-                return {
-                  messages: Stream.never,
-                  offer: () => Effect.void,
-                  setModel: () => Effect.void,
-                  setPermissionMode: () => Effect.void,
-                  interrupt: Effect.void,
-                  close: Effect.void,
-                };
-              }),
-            forkSession: () => Effect.die("unused"),
-            subagentLaunchToolUseId: () => Effect.succeed(null),
-            assertComplete: Effect.void,
-          },
-        });
-        // Full access: the form still waits for the person.
-        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: "/workspace",
-        });
-        const threadId = ThreadId.make("thread-claude-elicitation");
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("provider-session-claude-elicitation"),
-          modelSelection: MODEL,
-          runtimePolicy,
-        });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection: MODEL,
-          runtimePolicy,
-        });
-        const now = yield* DateTime.now;
-        const attemptId = RunAttemptId.make("attempt-claude-elicitation");
-        yield* runtime.startTurn({
-          appThread: {
-            createdBy: "user",
-            creationSource: "web",
-            id: threadId,
-            projectId: ProjectId.make("project-claude-elicitation"),
-            title: "Claude elicitation test",
-            providerInstanceId: MODEL.instanceId,
-            modelSelection: MODEL,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            activeProviderThreadId: providerThread.id,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
-          threadId,
-          runId: RunId.make(`run-${attemptId}`),
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-          attemptId,
-          rootNodeId: NodeId.make(`node-${attemptId}`),
-          providerThread,
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: MessageId.make(`message-${attemptId}`),
-            text: "Delete the test repository.",
-            attachments: [],
-          },
-          modelSelection: MODEL,
-          runtimePolicy,
-        });
+        const { runtime, openedOptions } = yield* openElicitationTurn;
         const onElicitation = openedOptions?.onElicitation;
         assert.isFunction(onElicitation);
         // The SDK runs Elicitation hooks before onElicitation; the app installs none.
@@ -146,11 +184,6 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
           Stream.runCollect,
           Effect.forkScoped,
         );
-        const requestedSchema = {
-          type: "object",
-          properties: { confirm: { type: "string", title: "Type octo/repo to confirm" } },
-          required: ["confirm"],
-        };
         const result = yield* Effect.promise(() =>
           onElicitation!(
             {
@@ -198,7 +231,188 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
           action: "accept",
           content: { confirm: "octo/repo" },
         });
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  /** Records the session's events and asks forms through its onElicitation. */
+  const watchForms = Effect.gen(function* () {
+    const opened = yield* openElicitationTurn;
+    const onElicitation = opened.openedOptions?.onElicitation;
+    assert.isFunction(onElicitation);
+    const events: Array<ProviderAdapterV2Event> = [];
+    yield* opened.runtime.events.pipe(
+      Stream.runForEach((event) => Effect.sync(() => void events.push(event))),
+      Effect.forkScoped,
+    );
+    const cards = () =>
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "approval_request" &&
+        event.turnItem.status !== "cancelled"
+          ? [event.turnItem]
+          : [],
+      );
+    const notices = () =>
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem.message]
+          : [],
+      );
+    const ended = () => events.some((event) => event.type === "turn.terminal");
+    const ask = (signal: AbortSignal, requestId: string) =>
+      Effect.promise(() =>
+        onElicitation!(
+          { serverName: "github", message: "Delete octo/repo?", mode: "form", requestedSchema },
+          { signal, requestId },
+        ),
+      ).pipe(Effect.forkScoped);
+    // The module reads an abort as the server's only once the turn goes on a moment later.
+    const settle = Effect.gen(function* () {
+      for (let i = 0; i < 20; i++)
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      yield* TestClock.adjust("2 seconds");
+    });
+    return { ...opened, events, cards, notices, ended, ask, settle };
+  });
+
+  it.effect(
+    "says the server stopped waiting when the SDK aborts while the turn goes on (1495)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const forms = yield* watchForms;
+          // The server cancels its request (the probe's 60 s SDK timeout): the SDK aborts.
+          const serverGaveUp = new AbortController();
+          const first = yield* forms.ask(serverGaveUp.signal, "sdk-elicitation-1");
+          assert.isTrue(yield* until(() => forms.cards().length === 1));
+          serverGaveUp.abort();
+          yield* forms.settle;
+          assert.deepStrictEqual(yield* Fiber.join(first), { action: "cancel" });
+          assert.deepStrictEqual(forms.notices(), ["github stopped waiting for an answer."]);
+        }).pipe(Effect.provide(LAYER)),
+      ),
+  );
+
+  it.effect("shows no note when the person's Stop ends the call (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const stopped = new AbortController();
+        const call = yield* forms.ask(stopped.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        const providerTurnId = forms.cards()[0]!.providerTurnId;
+        assert.isDefined(providerTurnId);
+        yield* forms.runtime
+          .interruptTurn({ providerThread: forms.providerThread, providerTurnId: providerTurnId! })
+          .pipe(Effect.ignore, Effect.forkScoped);
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+        // The CLI aborts the pending request for the interrupt.
+        stopped.abort();
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), []);
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  it.effect("after a steer, still says so when a new form's server gives up (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const steered = new AbortController();
+        const first = yield* forms.ask(steered.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        const providerTurnId = forms.cards()[0]!.providerTurnId!;
+        yield* forms.runtime.steerTurn({
+          threadId: forms.threadId,
+          runId: forms.runId,
+          providerThread: forms.providerThread,
+          providerTurnId,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-steer"),
+            text: "Use octo/other instead.",
+            attachments: [],
+          },
+        });
+        // The steer interrupts the running tool, and its form with it.
+        steered.abort();
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(first), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), []);
+        // Claude goes on in the same turn; the server times out a new form.
+        const serverGaveUp = new AbortController();
+        const second = yield* forms.ask(serverGaveUp.signal, "sdk-elicitation-2");
+        assert.isTrue(yield* until(() => forms.cards().length === 2));
+        serverGaveUp.abort();
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(second), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), ["github stopped waiting for an answer."]);
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  it.effect("shows the server's note before a turn that ends at once with an error (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const serverGaveUp = new AbortController();
+        const call = yield* forms.ask(serverGaveUp.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        serverGaveUp.abort();
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+        // Claude reaches its turn limit right after the tool error.
+        yield* forms.emit({
+          type: "result",
+          subtype: "error_max_turns",
+          duration_ms: 1,
+          duration_api_ms: 0,
+          is_error: true,
+          num_turns: 1,
+          stop_reason: null,
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          errors: [],
+          uuid: "00000000-0000-4000-8000-000000001495",
+          session_id: "native-thread-claude-elicitation",
+        } as unknown as SDKMessage);
+        assert.isTrue(yield* until(forms.ended));
+        const terminal = forms.events.findIndex((event) => event.type === "turn.terminal");
+        const note = forms.events.findIndex(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isAbove(note, -1);
+        assert.isBelow(note, terminal);
+        assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  it.effect("shows no note when the CLI exits and the SDK aborts first (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const exited = new AbortController();
+        const call = yield* forms.ask(exited.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        // The SDK aborts its pending requests as the process goes; the adapter
+        // sees the output end a moment later.
+        exited.abort();
+        yield* forms.exit;
+        assert.isTrue(yield* until(forms.ended));
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), []);
+      }).pipe(Effect.provide(LAYER)),
     ),
   );
 });

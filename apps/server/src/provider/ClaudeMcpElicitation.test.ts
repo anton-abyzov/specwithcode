@@ -13,9 +13,13 @@ import {
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
 import {
+  claudeElicitationCallKey,
+  claudeToolServerName,
+  type ClaudeMcpElicitations,
   isUnattendedClaudeTurn,
   makeClaudeMcpElicitations,
   secretFieldNotice,
+  stoppedWaitingNotice,
   type ClaudeElicitationTurnContext,
   undeliveredAnswerNotice,
   UNATTENDED_MCP_ELICITATION_TIMEOUT_MS,
@@ -48,20 +52,34 @@ const turnInput = (thread: "user" | "agent", scheduled = false) =>
 // Request ids are unique per harness: a closing mark outlives its call (1493).
 let harnesses = 0;
 
-function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: boolean } = {}) {
+function harness(
+  options: {
+    thread?: "user" | "agent";
+    held?: boolean;
+    noTurn?: boolean;
+    /** The adapter marks the call's end just after the abort (the CLI's output ended). */
+    endsDuringSettle?: boolean;
+    /** The settle after an abort never runs out on its own. */
+    longSettle?: boolean;
+    /** Counts each settle that runs out (it runs out at once). */
+    countSettle?: () => void;
+  } = {},
+) {
   const prefix = `h${++harnesses}`;
   const events: Array<Event> = [];
   let released = 0;
   let requestCount = 0;
+  const toolCalls = new Map<string, { readonly toolName: string }>();
   const context: ClaudeElicitationTurnContext = {
     input: turnInput(options.thread ?? "user"),
     providerTurnId: "provider-turn-1" as ClaudeElicitationTurnContext["providerTurnId"],
     heldRootFrames: options.held === true ? [{}] : [],
+    toolCalls,
   };
   const timer = Effect.runSync(Deferred.make<void>());
   const grace = Effect.runSync(Deferred.make<void>());
   const outcomeLimit = Effect.runSync(Deferred.make<void>());
-  const elicitations = makeClaudeMcpElicitations({
+  const made: ClaudeMcpElicitations = makeClaudeMcpElicitations({
     activeTurn: Effect.succeed(options.noTurn === true ? null : context),
     buildApprovalRequestArtifacts: (input) =>
       Effect.sync(() => {
@@ -82,6 +100,14 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
       }),
     emitProviderEvent: (event) => Effect.sync(() => void events.push(event)),
     releaseHeldRootFrames: () => Effect.sync(() => void (released += 1)),
+    abortSettle:
+      options.endsDuringSettle === true
+        ? Effect.suspend(() => elicitations.outputEnded).pipe(Effect.andThen(Effect.never))
+        : options.longSettle === true
+          ? Effect.never
+          : options.countSettle !== undefined
+            ? Effect.sync(options.countSettle)
+            : Effect.void,
     resolveItemOrdinal: () => Effect.succeed(7),
     idAllocator: {
       derive: {
@@ -93,10 +119,16 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     answerInFlightGrace: Deferred.await(grace),
     commitOutcomeLimit: Deferred.await(outcomeLimit),
   });
-  const ask = (request: Partial<ElicitationRequest>, signal = new AbortController().signal) =>
+  // One CLI process's forms, plus the session's own calls.
+  const elicitations = { ...made, ...made.forQuery() };
+  const ask = (
+    request: Partial<ElicitationRequest>,
+    signal = new AbortController().signal,
+    sdkRequestId = "sdk-request-1",
+  ) =>
     elicitations.onElicitation(
       { serverName: "github", message: "Delete octo/repo?", ...request } as ElicitationRequest,
-      { signal, requestId: "sdk-request-1" },
+      { signal, requestId: sdkRequestId },
     );
   const card = () =>
     events.find(
@@ -113,6 +145,16 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
         ? [event.turnItem.message]
         : [],
     );
+  // The thread shows one row per turn item; an update to the same item replaces it.
+  const shownNotices = () => [
+    ...new Map(
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [[String(event.turnItem.id), event.turnItem.message] as const]
+          : [],
+      ),
+    ).values(),
+  ];
   const until = async (check: () => boolean) => {
     for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setImmediate(resolve));
     expect(check()).toBe(true);
@@ -121,11 +163,16 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
   return {
     events,
     elicitations,
+    made,
     ask,
     card,
     notices,
+    shownNotices,
+    toolCalls,
+    context,
     until,
     requestId,
+    prefix,
     fireTimer: () => Effect.runSync(Deferred.succeed(timer, undefined)),
     endGrace: () => Effect.runSync(Deferred.succeed(grace, undefined)),
     endOutcomeLimit: () => Effect.runSync(Deferred.succeed(outcomeLimit, undefined)),
@@ -274,6 +321,57 @@ describe("ClaudeMcpElicitation", () => {
     expect(JSON.stringify(h.events)).not.toContain("evil.example");
   });
 
+  it("shows one URL note per tool call, however often the call retries (1495)", async () => {
+    const h = harness();
+    // The probe's -32042 call: three retries, each with a new request and elicitation id.
+    h.toolCalls.set("toolu_open", { toolName: "mcp__github__open_link" });
+    h.toolCalls.set("toolu_other", { toolName: "mcp__notion__search" });
+    for (const attempt of [1, 2, 3])
+      expect(
+        await h.ask(
+          { mode: "url", url: `https://example.com/sign-in?attempt=${attempt}` },
+          undefined,
+          `sdk-request-${attempt}`,
+        ),
+      ).toEqual({ action: "decline" });
+    expect(h.shownNotices()).toEqual([urlModeNotice("github")]);
+    // Another tool call of the same server gets its own note.
+    h.toolCalls.delete("toolu_open");
+    h.toolCalls.set("toolu_open_again", { toolName: "mcp__github__open_link" });
+    await h.ask({ mode: "url", url: "https://example.com/sign-in" }, undefined, "sdk-request-4");
+    expect(h.shownNotices()).toEqual([urlModeNotice("github"), urlModeNotice("github")]);
+  });
+
+  it("finds the tool call by the CLI's tool-name form of the server name", () => {
+    const h = harness();
+    h.toolCalls.set("toolu_gmail", { toolName: "mcp__claude_ai_Gmail__search_threads" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail", "r1")).toBe(
+      "claude.ai Gmail:call:toolu_gmail",
+    );
+    // Claude Code folds runs of `_` in claude.ai names: "Docs: Search" is Docs_Search.
+    expect(claudeToolServerName("claude.ai Docs: Search")).toBe("claude_ai_Docs_Search");
+    expect(claudeToolServerName("my.server: v2")).toBe("my_server__v2");
+    h.toolCalls.set("toolu_docs", { toolName: "mcp__claude_ai_Docs_Search__query" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Docs: Search", "r1")).toBe(
+      "claude.ai Docs: Search:call:toolu_docs",
+    );
+    // No single running call of that server: the request keys itself.
+    expect(claudeElicitationCallKey(h.context, "github", "r1")).toBe("github:request:r1");
+    h.toolCalls.set("toolu_gmail_2", { toolName: "mcp__claude_ai_Gmail__get_thread" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail", "r2")).toBe(
+      "claude.ai Gmail:request:r2",
+    );
+  });
+
+  it("keeps one note per request when two calls of a server run at once", async () => {
+    const h = harness();
+    h.toolCalls.set("toolu_a", { toolName: "mcp__github__open_link" });
+    h.toolCalls.set("toolu_b", { toolName: "mcp__github__open_link" });
+    await h.ask({ mode: "url", url: "https://example.com/a" }, undefined, "sdk-request-a");
+    await h.ask({ mode: "url", url: "https://example.com/b" }, undefined, "sdk-request-b");
+    expect(h.shownNotices()).toEqual([urlModeNotice("github"), urlModeNotice("github")]);
+  });
+
   it("cancels a form it cannot show, with a note", async () => {
     const h = harness();
     const result = await h.ask({
@@ -289,6 +387,8 @@ describe("ClaudeMcpElicitation", () => {
     const controller = new AbortController();
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
+    // The adapter marks the open cards before its Stop interrupts the CLI.
+    await Effect.runPromise(h.elicitations.endedHere);
     controller.abort();
     expect(await result).toEqual({ action: "cancel" });
     const closed = h.events.filter(
@@ -298,12 +398,176 @@ describe("ClaudeMcpElicitation", () => {
         (event.type === "turn_item.updated" && event.turnItem.status === "cancelled"),
     );
     expect(closed).toHaveLength(3);
+    // The person stopped the turn; no note says the server gave up.
+    expect(h.notices()).toEqual([]);
     // A late answer to the closed card is taken and ignored.
     expect(
       await Effect.runPromise(
         h.elicitations.respond({ requestId: h.requestId, decision: "accept" }),
       ),
     ).toBe(true);
+  });
+
+  it("closes the card and says so when the server stops waiting on its own (1495)", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    // The probe's legacy server cancels its request after 60 s; the SDK aborts.
+    controller.abort();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+    expect(stoppedWaitingNotice("github")).toBe("github stopped waiting for an answer.");
+  });
+
+  it("marks only the cards open at the adapter's end of their calls (1495)", async () => {
+    const h = harness();
+    // A steer ends the first form's call; Claude goes on in the same turn.
+    const first = new AbortController();
+    const firstResult = h.ask({ requestedSchema: confirmSchema }, first.signal, "sdk-request-1");
+    await h.until(() => h.card() !== undefined);
+    await Effect.runPromise(h.elicitations.endedHere);
+    first.abort();
+    expect(await firstResult).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([]);
+    // A new form in the steered turn hits the server's timeout: the note shows.
+    const second = new AbortController();
+    const secondResult = h.ask({ requestedSchema: confirmSchema }, second.signal, "sdk-request-2");
+    await h.until(
+      () => h.events.filter((event) => event.type === "runtime_request.updated").length === 3,
+    );
+    second.abort();
+    expect(await secondResult).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("marks only the cards of the process the adapter ends (1495)", async () => {
+    const h = harness();
+    const old = h.elicitations;
+    // A replacement process opened; its form waits while the old output ends.
+    const replacement = h.made.forQuery();
+    const controller = new AbortController();
+    const result = replacement.onElicitation(
+      {
+        serverName: "github",
+        message: "Delete octo/repo?",
+        requestedSchema: confirmSchema,
+      } as never,
+      { signal: controller.signal, requestId: "sdk-request-new" },
+    );
+    await h.until(() => h.card() !== undefined);
+    await Effect.runPromise(old.outputEnded);
+    controller.abort();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("keeps the server's cause when a Stop lands after the server already gave up (1495)", async () => {
+    const h = harness({ longSettle: true });
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    controller.abort();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    // The person presses Stop inside the settle; the turn then ends.
+    await Effect.runPromise(h.elicitations.endedHere);
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("keeps the server's cause when Stop then closes the CLI's output (1495)", async () => {
+    const h = harness({ longSettle: true });
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    controller.abort();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    // Stop marks, then its close ends the output, before the turn ends.
+    await Effect.runPromise(h.elicitations.endedHere);
+    await Effect.runPromise(h.elicitations.outputEnded);
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("ends the grace when the answer's commit fails, so the note comes before the turn's end (1495)", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    // The grace never runs out here: the failed commit alone ends the wait.
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+    expect(await result).toEqual({ action: "cancel" });
+  });
+
+  it("waits once, not per card, for the notes of several aborted forms (1495)", async () => {
+    let settles = 0;
+    const h = harness({ countSettle: () => (settles += 1) });
+    const asks = [1, 2, 3].map((n) => {
+      const controller = new AbortController();
+      handOffClaudeFormAnswers(RuntimeRequestId.make(`${h.prefix}-request-${n}`), {
+        handOff: { name: "octo/repo" },
+      });
+      return {
+        controller,
+        result: h.ask({ requestedSchema: confirmSchema }, controller.signal, `sdk-${n}`),
+      };
+    });
+    await h.until(
+      () => h.events.filter((event) => event.type === "runtime_request.updated").length === 3,
+    );
+    for (const { controller } of asks) controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    // Every commit is still running: the turn's end waits out one shared settle.
+    settles = 0;
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(settles).toBe(1);
+    for (const n of [1, 2, 3])
+      forgetUncommittedFormAnswer({
+        type: "runtime-request.respond",
+        requestId: RuntimeRequestId.make(`${h.prefix}-request-${n}`),
+      });
+    for (const { result } of asks) expect(await result).toEqual({ action: "cancel" });
+  });
+
+  it("shows the server's note before the turn ends, when the turn finishes inside the settle (1495)", async () => {
+    const h = harness({ longSettle: true });
+    const controller = new AbortController();
+    let ended = false;
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal).finally(() => {
+      ended = true;
+    });
+    await h.until(() => h.card() !== undefined);
+    // The server's 60 s timeout; Claude handles the tool error and finishes at once.
+    controller.abort();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(ended).toBe(false);
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+    expect(await result).toEqual({ action: "cancel" });
+  });
+
+  it("shows no note when the turn's end reaches the adapter just after the abort (1495)", async () => {
+    // The CLI exited: the SDK aborts its requests before the adapter ends the turn.
+    const h = harness({ endsDuringSettle: true });
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    controller.abort();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([]);
   });
 
   it("answers a signal that was already aborted at once", async () => {
@@ -323,9 +587,10 @@ describe("ClaudeMcpElicitation", () => {
     expect(await result).toEqual({ action: "cancel" });
     expect(h.notices()).toEqual([unattendedTimeoutNotice("github")]);
     expect(unattendedTimeoutNotice("github")).toBe(
-      "No one answered github's question in 30 minutes; it was cancelled.",
+      "No one answered github's question in 5 minutes; it was cancelled.",
     );
-    expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(30 * 60 * 1_000);
+    // Shorter than the HTTP stream drop the 1495 probe measured (about 356 s).
+    expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(5 * 60 * 1_000);
   });
 
   it("refuses an answer that comes in after the timer began closing the card (1493)", async () => {
@@ -420,7 +685,8 @@ describe("ClaudeMcpElicitation", () => {
     forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
     h.endGrace();
     expect(await result).toEqual({ action: "cancel" });
-    expect(h.notices()).toEqual([undeliveredAnswerNotice("github")]);
+    // The server gave up and no answer was recorded: AC-02's note, not D-11's (1495).
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
     expect(
       h.events.filter(
         (event) =>
