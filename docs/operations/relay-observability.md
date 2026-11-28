@@ -80,8 +80,13 @@ responses, file contents, tokens, account, thread or project ids, or raw paths.
 
 `POST /v1/site-events` takes a body of at most 1 KiB (`SITE_EVENT_MAX_BYTES`) parsed with
 `parseSiteEvent`, and logs an info line with the message `site_event` and the fields `log` (always
-`site_event`), `event` (`download_click` or `install_copy`), `platform`, `asset`, `page` and
-`country`. The client IP is used only, hashed, as a rate limit key.
+`site_event`), `event` (`download_click`, `install_copy`, `mobile_store_click`,
+`chrome_extension_click`, `github_star_click`, `feedback_click` or `referral_landing`), `platform`,
+`asset`, `placement`, `page`, `source` and `country`. `source` is the campaign tag of the link the
+visitor followed (`utm_source`, lowercase, at most 32 characters); `referral_landing` is sent once
+per page load that carries one. Count a referral funnel with
+`npx wrangler tail <workerName> --format json --search site_event` and group by `event` and
+`source`. The client IP is used only, hashed, as a rate limit key.
 
 Limits use Cloudflare Rate Limiting bindings, keyed with the stage prepended:
 
