@@ -443,6 +443,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  /** Runs as the CLI's output ends, before its process tree is ended. */
+  readonly onOutputEnd?: Effect.Effect<void>;
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -908,6 +910,7 @@ export const layerQueryRunner: Layer.Layer<
                 payload: message,
               }),
             ),
+            Stream.onExit(() => input.onOutputEnd ?? Effect.void),
             Stream.ensuring(endOwnedTree),
           ),
           endProcessTree: endOwnedTree,
@@ -6095,6 +6098,8 @@ export function makeClaudeAdapterV2(
             });
           }
 
+          // A form the server just gave up on shows its note before the turn ends (1495).
+          if (input.status === "completed") yield* mcpElicitations.settleAborted;
           const threadDisposition = input.threadDisposition ?? "reusable";
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
             input.status === "failed"
@@ -8240,16 +8245,6 @@ export function makeClaudeAdapterV2(
           buildApprovalRequestArtifacts,
           emitProviderEvent,
           releaseHeldRootFrames,
-          // Stop and steer mark the turn before they interrupt it; rollback, fork
-          // and Stop mark the process; an ended turn or process is gone from here.
-          turnEnding: (context) =>
-            Effect.gen(function* () {
-              if ((yield* Ref.get(activeTurn)) !== context || context.finalizing) return true;
-              if ((yield* Ref.get(interruptedTurns)).has(context.providerTurnId)) return true;
-              if ((yield* Ref.get(steeredTurns)).has(context.providerTurnId)) return true;
-              const live = yield* Ref.get(queryContext);
-              return live === null || live.stopping;
-            }),
           resolveItemOrdinal,
           idAllocator,
           runPromise,
@@ -8747,6 +8742,7 @@ export function makeClaudeAdapterV2(
           // the replacement open succeeds or fails below.
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
+            yield* mcpElicitations.endedHere;
             yield* existing.query.close.pipe(Effect.ignore);
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
@@ -8823,6 +8819,8 @@ export function makeClaudeAdapterV2(
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
+              // The SDK aborts the CLI's pending forms as its output ends.
+              onOutputEnd: mcpElicitations.endedHere,
               options: {
                 ...queryOptions,
                 hooks: subagentLaunchHooks(
@@ -9339,6 +9337,7 @@ export function makeClaudeAdapterV2(
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            yield* mcpElicitations.endedHere;
             yield* Ref.update(interruptedTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
@@ -9458,6 +9457,8 @@ export function makeClaudeAdapterV2(
               fileSystem,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),
             });
+            // The steer interrupts the running tools, and their forms with them.
+            yield* mcpElicitations.endedHere;
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
@@ -9482,6 +9483,7 @@ export function makeClaudeAdapterV2(
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
+            yield* mcpElicitations.endedHere;
             yield* existing.query.close.pipe(Effect.ignore);
           }
           yield* Effect.yieldNow;
@@ -9501,6 +9503,7 @@ export function makeClaudeAdapterV2(
           timeoutEvent: string,
         ) {
           existing.stopping = true;
+          yield* mcpElicitations.endedHere;
           yield* existing.query.close.pipe(Effect.ignore);
           const closed = yield* Deferred.await(existing.closed).pipe(
             Effect.timeoutOption("10 seconds"),

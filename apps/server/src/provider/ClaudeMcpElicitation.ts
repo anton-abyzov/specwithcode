@@ -19,9 +19,10 @@
  * - The person's raw answers arrive through an in-process hand-off; the
  *   thread's records keep only which fields were answered.
  * - Stopping the turn closes the card as cancelled. When the SDK stops waiting
- *   on its own (the server gave up) while the turn goes on, the card closes
- *   too, and a note says the server stopped waiting. An abort that comes with
- *   the turn's end (Stop, steer, rollback, fork, the CLI's exit) shows none.
+ *   on its own (the server gave up), the card closes too, and a note says the
+ *   server stopped waiting. The adapter marks the cards open when it ends their
+ *   calls itself (Stop, steer, closing the CLI) or the CLI's output ends, so
+ *   the abort that follows shows no note.
  * - A thread nobody watches (a delegated worker, a routine) cancels the card
  *   after {@link UNATTENDED_MCP_ELICITATION_TIMEOUT_MS}.
  *
@@ -85,9 +86,9 @@ import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 export const UNATTENDED_MCP_ELICITATION_TIMEOUT_MS = 5 * 60 * 1_000;
 
 /**
- * How long an abort waits before it is read as the server giving up. The SDK
- * aborts every pending request when the CLI exits or the turn ends, and the
- * adapter may learn of that end a moment after the abort.
+ * How long an abort waits for the adapter's mark before it is read as the
+ * server giving up. When the CLI exits, the SDK aborts its pending requests
+ * about 2 ms before its output ends (1495 probe, `crash.sh`).
  */
 export const ABORT_SETTLE_MS = 2_000;
 
@@ -124,11 +125,6 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
     event: ProviderAdapter.ProviderAdapterV2Event,
   ) => Effect.Effect<void>;
   readonly releaseHeldRootFrames: (context: C) => Effect.Effect<void>;
-  /**
-   * This turn's calls are ending: the person's Stop, a steer, a rollback or a
-   * fork, the turn's end, or its CLI's exit. Read when the SDK aborts.
-   */
-  readonly turnEnding: (context: C) => Effect.Effect<boolean>;
   readonly resolveItemOrdinal: (context: C, nativeItemId: string) => Effect.Effect<number>;
   readonly idAllocator: Pick<IdAllocator.IdAllocatorV2Shape, "derive">;
   readonly runPromise: <A>(effect: Effect.Effect<A>) => Promise<A>;
@@ -148,6 +144,17 @@ export interface ClaudeMcpElicitations {
   readonly respond: (
     input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<boolean>;
+  /**
+   * The adapter is ending the open cards' calls itself (Stop, steer, closing
+   * the CLI), or the CLI's output ended: the aborts that follow are not the
+   * server's. Run it before the interrupt, the steer or the close.
+   */
+  readonly endedHere: Effect.Effect<void>;
+  /**
+   * The turn finished on its own: a card the server just gave up on shows its
+   * note now, before the turn's end, instead of waiting out the settle.
+   */
+  readonly settleAborted: Effect.Effect<void>;
 }
 
 type Answer =
@@ -163,6 +170,12 @@ type Answer =
 
 interface PendingCard {
   readonly answer: Deferred.Deferred<Answer>;
+  /** Why the SDK stopped waiting, decided once: the adapter's own end, or the server. */
+  readonly abortCause: Deferred.Deferred<"here" | "server">;
+  /** Waiting out the settle after an abort. */
+  settling: boolean;
+  /** The call ended, its notes shown. */
+  readonly done: Deferred.Deferred<void>;
 }
 
 const CANCEL: ElicitationResult = { action: "cancel" };
@@ -283,15 +296,18 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
   const grace =
     deps.answerInFlightGrace ?? Effect.sleep(Duration.millis(ANSWER_IN_FLIGHT_GRACE_MS));
   const settle = deps.abortSettle ?? Effect.sleep(Duration.millis(ABORT_SETTLE_MS));
-  // The server gave up while the turn goes on: the turn was not ending when
-  // the SDK aborted, and still is not a moment later.
-  const serverGaveUp = (context: C, endingAtAbort: boolean) =>
-    endingAtAbort
-      ? Effect.succeed(false)
-      : settle.pipe(
-          Effect.andThen(deps.turnEnding(context)),
-          Effect.map((ending) => !ending),
-        );
+  // The server gave up: the adapter marked no end of the call by the time the
+  // settle ran out, or the turn finished on its own meanwhile.
+  const serverGaveUp = (card: PendingCard) =>
+    Effect.gen(function* () {
+      card.settling = true;
+      const cause = yield* Effect.raceFirst(
+        Deferred.await(card.abortCause),
+        settle.pipe(Effect.as("server" as const)),
+      );
+      card.settling = false;
+      return cause === "server";
+    });
   // Every dispatch settles its answer as it ends (1493); this only guards a
   // dispatch that never ends, and then leaves the card as the record says.
   const outcomeLimit =
@@ -423,7 +439,13 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       const artifacts: ApprovalArtifacts = { node, request: built.request, turnItem };
       const id = String(artifacts.request.id);
       const answer = yield* Deferred.make<Answer>();
-      pending.set(id, { answer });
+      const card: PendingCard = {
+        answer,
+        abortCause: yield* Deferred.make<"here" | "server">(),
+        settling: false,
+        done: yield* Deferred.make<void>(),
+      };
+      pending.set(id, card);
 
       return yield* Effect.gen(function* () {
         yield* deps.emitProviderEvent({ type: "node.updated", driver: DRIVER, node });
@@ -448,8 +470,6 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // neither overwrites the recorded answer as cancelled. Otherwise the
         // form is marked closing first, so an answer that comes in before the
         // cancelled card lands is refused, never recorded (1493).
-        // Read at once: the adapter forgets a stopped turn when it ends (1495).
-        const endingAtAbort = raced.by === "stop" ? yield* deps.turnEnding(context) : true;
         const committed = raced.by !== "person" && !beginClosingClaudeForm(artifacts.request.id);
         const awaited = committed
           ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
@@ -484,11 +504,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           if (outcome === "failed" && beginClosingClaudeForm(artifacts.request.id))
             yield* closeCard(artifacts);
           // Nothing was recorded and the server gave up first: that is the news.
-          if (
-            outcome === "failed" &&
-            settled.by === "stop" &&
-            (yield* serverGaveUp(context, endingAtAbort))
-          )
+          if (outcome === "failed" && settled.by === "stop" && (yield* serverGaveUp(card)))
             yield* notice(
               context,
               `${nativeRequestId}:stopped`,
@@ -509,8 +525,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
             `${nativeRequestId}:timeout`,
             unattendedTimeoutNotice(request.serverName),
           );
-        // The SDK aborted on its own, not for the turn's end: say so.
-        else if (yield* serverGaveUp(context, endingAtAbort))
+        // The SDK aborted on its own, not for the adapter's end of the call: say so.
+        else if (yield* serverGaveUp(card))
           yield* notice(
             context,
             `${nativeRequestId}:stopped`,
@@ -522,7 +538,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           Effect.sync(() => {
             pending.delete(id);
             dropClaudeFormAnswers(artifacts.request.id);
-          }),
+          }).pipe(Effect.andThen(Deferred.succeed(card.done, undefined))),
         ),
       );
     });
@@ -565,5 +581,23 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       return true;
     });
 
-  return { onElicitation, respond };
+  const endedHere: ClaudeMcpElicitations["endedHere"] = Effect.suspend(() =>
+    Effect.forEach([...pending.values()], (card) => Deferred.succeed(card.abortCause, "here"), {
+      discard: true,
+    }),
+  );
+
+  const settleAborted: ClaudeMcpElicitations["settleAborted"] = Effect.suspend(() =>
+    Effect.forEach(
+      [...pending.values()].filter((card) => card.settling),
+      (card) =>
+        Deferred.succeed(card.abortCause, "server").pipe(
+          // Bounded: the turn's end never waits on a card for long.
+          Effect.andThen(Effect.raceFirst(Deferred.await(card.done), settle)),
+        ),
+      { discard: true },
+    ),
+  );
+
+  return { onElicitation, respond, endedHere, settleAborted };
 }

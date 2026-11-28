@@ -59,8 +59,10 @@ const openElicitationTurn = Effect.gen(function* () {
         Effect.sync(() => {
           openedOptions = input.options;
           return {
+            // As the real runner: the output's end runs onOutputEnd first.
             messages: Stream.fromEffect(Deferred.await(exited)).pipe(
               Stream.flatMap(() => Stream.empty),
+              Stream.onExit(() => input.onOutputEnd ?? Effect.void),
             ),
             offer: () => Effect.void,
             setModel: () => Effect.void,
@@ -138,6 +140,8 @@ const openElicitationTurn = Effect.gen(function* () {
   return {
     runtime,
     providerThread,
+    threadId,
+    runId: RunId.make(`run-${attemptId}`),
     exit: Deferred.succeed(exited, undefined),
     openedOptions: openedOptions as ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined,
   };
@@ -288,7 +292,7 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
       ),
   );
 
-  it.effect("shows no note when the person's Stop ends the turn before the SDK aborts (1495)", () =>
+  it.effect("shows no note when the person's Stop ends the call (1495)", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const forms = yield* watchForms;
@@ -300,15 +304,50 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
         yield* forms.runtime
           .interruptTurn({ providerThread: forms.providerThread, providerTurnId: providerTurnId! })
           .pipe(Effect.ignore, Effect.forkScoped);
-        // The turn ends as interrupted, and the adapter forgets its Stop mark,
-        // before the CLI aborts the pending request.
-        yield* forms.exit;
-        assert.isTrue(yield* until(forms.ended));
-        yield* forms.settle;
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+        // The CLI aborts the pending request for the interrupt.
         stopped.abort();
         yield* forms.settle;
         assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
         assert.deepStrictEqual(forms.notices(), []);
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  it.effect("after a steer, still says so when a new form's server gives up (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const steered = new AbortController();
+        const first = yield* forms.ask(steered.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        const providerTurnId = forms.cards()[0]!.providerTurnId!;
+        yield* forms.runtime.steerTurn({
+          threadId: forms.threadId,
+          runId: forms.runId,
+          providerThread: forms.providerThread,
+          providerTurnId,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-steer"),
+            text: "Use octo/other instead.",
+            attachments: [],
+          },
+        });
+        // The steer interrupts the running tool, and its form with it.
+        steered.abort();
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(first), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), []);
+        // Claude goes on in the same turn; the server times out a new form.
+        const serverGaveUp = new AbortController();
+        const second = yield* forms.ask(serverGaveUp.signal, "sdk-elicitation-2");
+        assert.isTrue(yield* until(() => forms.cards().length === 2));
+        serverGaveUp.abort();
+        yield* forms.settle;
+        assert.deepStrictEqual(yield* Fiber.join(second), { action: "cancel" });
+        assert.deepStrictEqual(forms.notices(), ["github stopped waiting for an answer."]);
       }).pipe(Effect.provide(LAYER)),
     ),
   );

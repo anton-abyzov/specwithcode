@@ -56,10 +56,10 @@ function harness(
     thread?: "user" | "agent";
     held?: boolean;
     noTurn?: boolean;
-    /** The turn is ending when the SDK aborts (Stop, steer, rollback, fork). */
-    ending?: boolean;
-    /** The adapter learns of the turn's end just after the abort (the CLI exited). */
+    /** The adapter marks the call's end just after the abort (the CLI's output ended). */
     endsDuringSettle?: boolean;
+    /** The settle after an abort never runs out on its own. */
+    longSettle?: boolean;
   } = {},
 ) {
   const prefix = `h${++harnesses}`;
@@ -67,7 +67,6 @@ function harness(
   let released = 0;
   let requestCount = 0;
   const toolCalls = new Map<string, { readonly toolName: string }>();
-  let ending = options.ending === true;
   const context: ClaudeElicitationTurnContext = {
     input: turnInput(options.thread ?? "user"),
     providerTurnId: "provider-turn-1" as ClaudeElicitationTurnContext["providerTurnId"],
@@ -98,10 +97,12 @@ function harness(
       }),
     emitProviderEvent: (event) => Effect.sync(() => void events.push(event)),
     releaseHeldRootFrames: () => Effect.sync(() => void (released += 1)),
-    turnEnding: () => Effect.sync(() => ending),
-    abortSettle: Effect.sync(() => {
-      if (options.endsDuringSettle === true) ending = true;
-    }),
+    abortSettle:
+      options.endsDuringSettle === true
+        ? Effect.suspend(() => elicitations.endedHere).pipe(Effect.andThen(Effect.never))
+        : options.longSettle === true
+          ? Effect.never
+          : Effect.void,
     resolveItemOrdinal: () => Effect.succeed(7),
     idAllocator: {
       derive: {
@@ -373,10 +374,12 @@ describe("ClaudeMcpElicitation", () => {
   });
 
   it("closes the card as cancelled when the turn stops", async () => {
-    const h = harness({ ending: true });
+    const h = harness();
     const controller = new AbortController();
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
+    // The adapter marks the open cards before its Stop interrupts the CLI.
+    await Effect.runPromise(h.elicitations.endedHere);
     controller.abort();
     expect(await result).toEqual({ action: "cancel" });
     const closed = h.events.filter(
@@ -412,6 +415,44 @@ describe("ClaudeMcpElicitation", () => {
     ).toHaveLength(1);
     expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
     expect(stoppedWaitingNotice("github")).toBe("github stopped waiting for an answer.");
+  });
+
+  it("marks only the cards open at the adapter's end of their calls (1495)", async () => {
+    const h = harness();
+    // A steer ends the first form's call; Claude goes on in the same turn.
+    const first = new AbortController();
+    const firstResult = h.ask({ requestedSchema: confirmSchema }, first.signal, "sdk-request-1");
+    await h.until(() => h.card() !== undefined);
+    await Effect.runPromise(h.elicitations.endedHere);
+    first.abort();
+    expect(await firstResult).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([]);
+    // A new form in the steered turn hits the server's timeout: the note shows.
+    const second = new AbortController();
+    const secondResult = h.ask({ requestedSchema: confirmSchema }, second.signal, "sdk-request-2");
+    await h.until(
+      () => h.events.filter((event) => event.type === "runtime_request.updated").length === 3,
+    );
+    second.abort();
+    expect(await secondResult).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("shows the server's note before the turn ends, when the turn finishes inside the settle (1495)", async () => {
+    const h = harness({ longSettle: true });
+    const controller = new AbortController();
+    let ended = false;
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal).finally(() => {
+      ended = true;
+    });
+    await h.until(() => h.card() !== undefined);
+    // The server's 60 s timeout; Claude handles the tool error and finishes at once.
+    controller.abort();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(ended).toBe(false);
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+    expect(await result).toEqual({ action: "cancel" });
   });
 
   it("shows no note when the turn's end reaches the adapter just after the abort (1495)", async () => {
