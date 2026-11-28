@@ -11,6 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { NEW_FILE_REVISION, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 
+import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
+
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -1104,6 +1106,59 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             .pipe(Effect.flip);
           expect(String(refused.cause ?? refused)).toMatch(/outside|Conflict/);
           expect(yield* fileSystem.exists(away)).toBe(false);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a new sheet whose name is a dangling link to a missing sheet in the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const folder = path.join(cwd, ".specweave", "artifacts");
+          yield* fileSystem.makeDirectory(folder, { recursive: true });
+          yield* fileSystem.symlink(
+            path.join(folder, "missing.sheet.json"),
+            path.join(folder, "intake-responses.sheet.json"),
+          );
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/intake-responses.sheet.json",
+              contents:
+                '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}',
+              expectedRevision: NEW_FILE_REVISION,
+            })
+            .pipe(Effect.flip);
+          expect(String(refused.cause ?? refused)).toMatch(/outside|Conflict/);
+          expect(yield* fileSystem.exists(path.join(folder, "missing.sheet.json"))).toBe(false);
+        }),
+    );
+
+    it.effect.skipIf(isWindows)(
+      "keeps a backslash in a new sheet's name as part of the name, never a way out",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const parent = yield* makeTempDir;
+          const cwd = path.join(parent, "project");
+          yield* fileSystem.makeDirectory(path.join(cwd, "sub"), { recursive: true });
+          const name = "sub/..\\..\\escape.sheet.json";
+          yield* Effect.promise(() =>
+            writeSheetFileCompareAndSet(
+              cwd,
+              name,
+              '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}',
+              NEW_FILE_REVISION,
+            ),
+          );
+          expect(yield* fileSystem.exists(path.join(cwd, "sub", "..\\..\\escape.sheet.json"))).toBe(
+            true,
+          );
+          expect(yield* fileSystem.exists(path.join(parent, "escape.sheet.json"))).toBe(false);
         }),
     );
 
