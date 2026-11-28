@@ -10,32 +10,32 @@ import {
   takeViewportTurn,
 } from "./screenSharePicture.logic.ts";
 
-const m1 = { width: 3456, height: 2234 };
+const retina = { width: 3456, height: 2234 };
 
 describe("screen share picture", () => {
   it("keeps slice 1's picture until a viewer says how big its window is", () => {
-    expect(pictureFor(null, m1)).toEqual(CLASSIC_PICTURE);
-    expect(pictureFor({ width: 2560, height: 1680, picture: "classic" }, m1)).toEqual(
+    expect(pictureFor(null, retina)).toEqual(CLASSIC_PICTURE);
+    expect(pictureFor({ width: 2560, height: 1680, picture: "classic" }, retina)).toEqual(
       CLASSIC_PICTURE,
     );
   });
 
   it("fits the display into the viewer's window, between the floor and the cap", () => {
     // A 1280x840 window at pixel ratio 2: the screen scaled by min(2560/3456, 1680/2234).
-    expect(pictureFor({ width: 2560, height: 1680, picture: "auto" }, m1)).toEqual({
+    expect(pictureFor({ width: 2560, height: 1680, picture: "auto" }, retina)).toEqual({
       maxEdge: 2560,
       quality: 55,
     });
-    expect(pictureFor({ width: 1200, height: 700, picture: "auto" }, m1)).toEqual({
+    expect(pictureFor({ width: 1200, height: 700, picture: "auto" }, retina)).toEqual({
       maxEdge: 1083,
       quality: 60,
     });
-    expect(pictureFor({ width: 100, height: 60, picture: "auto" }, m1).maxEdge).toBe(640);
-    expect(pictureFor({ width: 8000, height: 6000, picture: "auto" }, m1).maxEdge).toBe(2880);
+    expect(pictureFor({ width: 100, height: 60, picture: "auto" }, retina).maxEdge).toBe(640);
+    expect(pictureFor({ width: 8000, height: 6000, picture: "auto" }, retina).maxEdge).toBe(2880);
   });
 
   it("caps low bandwidth at 1,280 px and quality 50", () => {
-    expect(pictureFor({ width: 2560, height: 1680, picture: "low" }, m1)).toEqual({
+    expect(pictureFor({ width: 2560, height: 1680, picture: "low" }, retina)).toEqual({
       maxEdge: 1280,
       quality: 50,
     });

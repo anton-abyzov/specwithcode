@@ -12,20 +12,20 @@ import {
 
 describe("screen viewer window", () => {
   it("opens on the viewer route for one machine", () => {
-    expect(screenViewerWindowUrl("studio://app/", "env one", "m1 & co")).toBe(
-      "studio://app/#/screen/env%20one?name=m1%20%26%20co",
+    expect(screenViewerWindowUrl("studio://app/", "env one", "studio-mac & co")).toBe(
+      "studio://app/#/screen/env%20one?name=studio-mac%20%26%20co",
     );
   });
 
   it("names itself after the machine in one bounded plain line", () => {
-    expect(screenViewerWindowTitle("m1")).toBe("Screen of m1");
+    expect(screenViewerWindowTitle("studio-mac")).toBe("Screen of studio-mac");
     expect(screenViewerWindowTitle("evil‮\nname")).toBe("Screen of evil name");
     expect(screenViewerWindowTitle("x".repeat(500)).length).toBe("Screen of ".length + 120);
     expect(screenViewerWindowTitle(undefined)).toBe("Screen of another machine");
   });
 
   it("follows no other address", () => {
-    const own = "studio://app/#/screen/m1";
+    const own = "studio://app/#/screen/studio-mac";
     expect(isScreenViewerNavigationAllowed(own, own)).toBe(true);
     expect(isScreenViewerNavigationAllowed(own, "studio://app/#/settings")).toBe(false);
     expect(isScreenViewerNavigationAllowed(own, "https://example.com/")).toBe(false);
@@ -46,9 +46,10 @@ describe("screen viewer window", () => {
   it("forgets what it cannot read", () => {
     expect(parseViewerPlaces("{").size).toBe(0);
     expect(parseViewerPlaces("[1]").size).toBe(0);
-    expect(parseViewerPlaces('{"m1":{"x":"1"},"m2":{"x":1,"y":2,"width":0,"height":3}}').size).toBe(
-      0,
-    );
+    expect(
+      parseViewerPlaces('{"studio-mac":{"x":"1"},"other-mac":{"x":1,"y":2,"width":0,"height":3}}')
+        .size,
+    ).toBe(0);
   });
 
   it("puts a window back where it was only when it is still on a display", () => {

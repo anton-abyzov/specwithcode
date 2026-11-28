@@ -38,7 +38,7 @@ export const screenViewerMachineName = (name: unknown): string =>
         .slice(0, TITLE_MAX)
     : "";
 
-/** "Screen of m1", from a name a page supplied: one plain line, bounded. */
+/** "Screen of Work Mac", from a name a page supplied: one plain line, bounded. */
 export const screenViewerWindowTitle = (name: unknown): string => {
   const plain = screenViewerMachineName(name);
   return plain === "" ? "Screen of another machine" : `Screen of ${plain}`;
