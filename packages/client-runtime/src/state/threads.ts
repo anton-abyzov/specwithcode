@@ -28,6 +28,7 @@ import { connectionProjectionPhase } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
+import { authorizedProjection } from "./authorizedProjection.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
@@ -151,6 +152,7 @@ interface ThreadResumeSnapshot {
 }
 
 interface ThreadResumeCache {
+  isCurrent?: () => boolean;
   snapshot: ThreadResumeSnapshot | undefined;
   owner: object | undefined;
 }
@@ -202,7 +204,8 @@ export interface EnvironmentThreadStateOptions {
   readonly untilListed?: Effect.Effect<void>;
 }
 
-export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
+const makeThreadProjection = Effect.fn("EnvironmentThreadState.make")(function* (
+  state: SubscriptionRef.SubscriptionRef<EnvironmentThreadState>,
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
   options?: EnvironmentThreadStateOptions,
@@ -250,7 +253,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           onSome: historyMetaFromCachedSnapshot,
         }),
       };
-  const state = yield* SubscriptionRef.make(initialState);
+  yield* SubscriptionRef.set(state, initialState);
   // Paging support belongs to the client, even when the initial HTTP request
   // fails. A bounded socket reset retains a cursor so history can be retried.
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
@@ -1092,9 +1095,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );
-
-  return state;
 });
+
+export const makeEnvironmentThreadState = (
+  threadId: ThreadIdType,
+  resumeCache?: ThreadResumeCache,
+  options?: EnvironmentThreadStateOptions,
+) =>
+  authorizedProjection(EMPTY_ENVIRONMENT_THREAD_STATE, (state, isCurrent) => {
+    if (resumeCache) {
+      if (resumeCache.isCurrent && !resumeCache.isCurrent()) resumeCache.snapshot = undefined;
+      resumeCache.isCurrent = isCurrent;
+    }
+    return makeThreadProjection(state, threadId, resumeCache, options);
+  });
 
 function threadStateChanges(
   environmentId: EnvironmentIdType,
@@ -1176,7 +1190,7 @@ export function createEnvironmentThreadStateAtoms<R, E>(
               ? undefined
               : { untilListed: untilAtomIsTrue(get.registry, listedAtom) },
           );
-          return resume.snapshot === undefined
+          return resume.snapshot === undefined || !resume.isCurrent?.()
             ? live
             : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);
         },

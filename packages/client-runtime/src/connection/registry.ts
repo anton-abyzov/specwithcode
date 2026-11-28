@@ -42,6 +42,7 @@ import type {
   PersistedConnectionTarget,
   SupervisorConnectionState,
 } from "./model.ts";
+import { projectionAccess } from "./projectionAccess.ts";
 import { ConnectionBlockedError } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
@@ -444,7 +445,13 @@ export const make = Effect.gen(function* () {
             next.set(environmentId, { entry, supervisor, scope });
             return next;
           });
+          const access = projectionAccess(cache, environmentId);
           yield* SubscriptionRef.changes(supervisor.state).pipe(
+            Stream.tap((state) =>
+              access
+                .observe(supervisor.state, state)
+                .pipe(Effect.flatMap((epoch) => (epoch === null ? access.purge : Effect.void))),
+            ),
             Stream.runForEach((state) =>
               state.phase === "blocked" && state.lastFailure?.reason === "unsupported"
                 ? setCompatibility(environmentId, state.lastFailure).pipe(
