@@ -450,6 +450,7 @@ export function sortArtifacts(
 export const ARTIFACT_TYPE_FILTERS = [
   "all",
   "documents",
+  "whiteboards",
   "pages",
   "images",
   "designs",
@@ -460,6 +461,7 @@ export type ArtifactTypeFilter = (typeof ARTIFACT_TYPE_FILTERS)[number];
 export const ARTIFACT_TYPE_FILTER_LABELS: Record<ArtifactTypeFilter, string> = {
   all: "All types",
   documents: "Documents",
+  whiteboards: "Whiteboards",
   pages: "Pages",
   images: "Images and video",
   designs: "Designs and decks",
@@ -473,7 +475,7 @@ const FILTER_OF: Record<ProjectArtifactKind, Exclude<ArtifactTypeFilter, "all">>
   page: "pages",
   document: "documents",
   sheet: "documents",
-  whiteboard: "documents",
+  whiteboard: "whiteboards",
   image: "images",
   video: "images",
   data: "files",

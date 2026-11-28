@@ -2,10 +2,17 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@specweave-studio/shared/keybindin
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../../../keybindings";
-import { artifactSubfolder } from "../../../studio/projectArtifacts";
+import { reduceCommandPaletteUiState } from "../../CommandPalette.logic";
+import { artifactMatchesType, artifactSubfolder } from "../../../studio/projectArtifacts";
 import { parseProjectWorkspaceSearch } from "../../../studio/projectPaneThreads";
 import { isWhiteboardEditorKey } from "./bridge";
-import { asksForWhiteboard } from "./quickWhiteboard";
+import {
+  asksForWhiteboard,
+  openWhiteboardDestination,
+  whiteboardSearchTerms,
+  whiteboardsInLibrary,
+} from "./quickWhiteboard";
+import { limitGroupItems, whiteboardBoardItems } from "./whiteboardPalette";
 
 const press = (overrides: Record<string, unknown>) => ({
   key: "w",
@@ -78,6 +85,114 @@ describe("?new=whiteboard", () => {
     expect(parseProjectWorkspaceSearch({ new: "whiteboard" })).toEqual({ new: "whiteboard" });
     expect(parseProjectWorkspaceSearch({ new: "sheet" })).toEqual({});
     expect(parseProjectWorkspaceSearch({ new: ["whiteboard"] })).toEqual({});
+  });
+});
+
+describe("?open=<path>", () => {
+  it("keeps a project-relative whiteboard path and refuses any way out of the project", () => {
+    const open = (value: unknown) => parseProjectWorkspaceSearch({ open: value }).open;
+    expect(open(".specweave/artifacts/team/q4/checkout flow #2.excalidraw")).toBe(
+      ".specweave/artifacts/team/q4/checkout flow #2.excalidraw",
+    );
+    for (const bad of [
+      "/etc/x.excalidraw",
+      "C:/Users/x.excalidraw",
+      "..\\x.excalidraw",
+      ".specweave/../x.excalidraw",
+      "a//b.excalidraw",
+      "notes.md",
+      "",
+      ["a.excalidraw"],
+      "a\u0000.excalidraw",
+    ]) {
+      expect(open(bad)).toBeUndefined();
+    }
+  });
+
+  it("drops a pending new-board request when it asks to open one", () => {
+    const destination = openWhiteboardDestination("p1", ".specweave/artifacts/a.excalidraw");
+    expect(destination.search({ new: "whiteboard", pane: "library" })).toEqual({
+      pane: "library",
+      open: ".specweave/artifacts/a.excalidraw",
+    });
+  });
+});
+
+describe("the project's whiteboards", () => {
+  const library = {
+    outputs: [
+      { path: ".specweave/reports/r.md", byteLength: 1, modifiedAt: "2026-11-27T10:00:00Z" },
+      {
+        path: ".specweave/artifacts/old.excalidraw",
+        byteLength: 1,
+        modifiedAt: "2026-11-01T10:00:00Z",
+      },
+      {
+        path: ".specweave/artifacts/team/q4/checkout-architecture.excalidraw",
+        byteLength: 1,
+        modifiedAt: "2026-11-26T16:00:00Z",
+      },
+      { path: "docs/flow.excalidraw", byteLength: 1, modifiedAt: "2026-11-20T10:00:00Z" },
+    ].map((output) => ({ ...output, increment: null })),
+  } as never;
+
+  it("are the snapshot's .excalidraw files, newest first, with their folder", () => {
+    expect(whiteboardsInLibrary(library).map((board) => [board.name, board.folder])).toEqual([
+      ["checkout-architecture.excalidraw", "team/q4"],
+      ["flow.excalidraw", "docs"],
+      ["old.excalidraw", null],
+    ]);
+    // Older servers send no outputs.
+    expect(whiteboardsInLibrary({} as never)).toEqual([]);
+    expect(whiteboardsInLibrary(null)).toEqual([]);
+  });
+
+  it("are found by words of their name and folder", () => {
+    const [board] = whiteboardsInLibrary(library);
+    const terms = whiteboardSearchTerms(board!).join(" ");
+    for (const word of ["checkout architecture", "team q4", "whiteboard", "excalidraw"]) {
+      expect(terms).toContain(word);
+    }
+  });
+
+  it("become palette rows that open the board, named without the extension", async () => {
+    const opened: string[] = [];
+    const items = whiteboardBoardItems({
+      projectKey: "p1",
+      projectName: "Atlas web",
+      boards: whiteboardsInLibrary(library),
+      icon: null,
+      openBoard: async (path) => {
+        opened.push(path);
+      },
+    });
+    expect(items.map((item) => [item.title, item.description])).toEqual([
+      ["checkout-architecture", "team/q4 · Atlas web"],
+      ["flow", "docs · Atlas web"],
+      ["old", "Atlas web"],
+    ]);
+    await items[0]!.run();
+    expect(opened).toEqual([".specweave/artifacts/team/q4/checkout-architecture.excalidraw"]);
+    expect(
+      limitGroupItems([{ value: "w", label: "W", items }], "w", 2)[0]!.items.map(
+        (item) => item.title,
+      ),
+    ).toEqual(["checkout-architecture", "flow"]);
+  });
+
+  it("have their own Type filter in the Library", () => {
+    const board = { kind: "whiteboard" } as never;
+    expect(artifactMatchesType("whiteboards", board)).toBe(true);
+    expect(artifactMatchesType("documents", board)).toBe(false);
+  });
+
+  it("open the palette on the Whiteboards picker", () => {
+    expect(
+      reduceCommandPaletteUiState(
+        { open: false, mode: "command", openIntent: null },
+        { _tag: "OpenWhiteboards" },
+      ),
+    ).toEqual({ open: true, mode: "command", openIntent: { kind: "whiteboards" } });
   });
 });
 

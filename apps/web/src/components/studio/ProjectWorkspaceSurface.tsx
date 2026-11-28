@@ -180,7 +180,7 @@ import { ProjectDesignsButton, ProjectDesignsPane } from "./shell/ProjectDesigns
 import { useProjectDesigns } from "../design/useProjectDesigns";
 import { useBoardIncrementRoute } from "../../studio/useBoardIncrementRoute";
 import { useProjectPaneDeepLink } from "../../studio/useProjectPaneDeepLink";
-import { useNewWhiteboardDeepLink } from "../office/whiteboard/quickWhiteboard";
+import { useWhiteboardDeepLink } from "../office/whiteboard/quickWhiteboard";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
 import type { ProjectPaneBarProps } from "./shell/ProjectPaneBar";
@@ -1665,12 +1665,14 @@ export function ProjectWorkspaceSurface({
     threads: shells,
     designs: designs.designs,
   });
-  // `?new=whiteboard` from the whiteboard shortcut or the palette makes a board here and opens it.
-  const newWhiteboard = useNewWhiteboardDeepLink(
-    project.environmentId,
-    projectArtifacts.library?.workspaceRoot ?? project.workspaceRoot,
-    projectArtifacts.refresh,
-  );
+  // `?new=whiteboard` and `?open=<path>` from the whiteboard picker make or open a board here.
+  const newWhiteboard = useWhiteboardDeepLink({
+    environmentId: project.environmentId,
+    workspaceRoot: projectArtifacts.library?.workspaceRoot ?? project.workspaceRoot,
+    artifacts: projectArtifacts.artifacts,
+    loaded: projectArtifacts.loaded,
+    onCreated: projectArtifacts.refresh,
+  });
   const [librarySection, setLibrarySection] = useLocalStorage<LibrarySection, LibrarySection>(
     LIBRARY_SECTION_STORAGE_KEY,
     "artifacts",

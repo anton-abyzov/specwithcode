@@ -49,7 +49,7 @@ export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
   | { readonly kind: "add-project"; readonly environmentId?: EnvironmentId }
-  | { readonly kind: "new-assistant" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "new-assistant" | "new-thread-in" | "change-theme" | "whiteboards" }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -75,6 +75,7 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "OpenNewAssistant"; readonly aideEnabled: boolean }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
+  | { readonly _tag: "OpenWhiteboards" }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -117,6 +118,8 @@ export function reduceCommandPaletteUiState(
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
     case "OpenChangeTheme":
       return { open: true, mode: "command", openIntent: { kind: "change-theme" } };
+    case "OpenWhiteboards":
+      return { open: true, mode: "command", openIntent: { kind: "whiteboards" } };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }
