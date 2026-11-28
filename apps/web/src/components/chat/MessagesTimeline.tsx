@@ -93,6 +93,7 @@ import {
 import { modelLabel } from "../../studio/shellModel";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
+import { splitWakeLabel } from "@specweave-studio/client-runtime/state/wake-label";
 import { replaceComposerContextReferences } from "@specweave-studio/shared/composerContextReferences";
 import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
 import { useMachineNicknames } from "../../studio/machineNickname";
@@ -3240,6 +3241,7 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
   const tx = useTx();
+  const wakeParts = row.wake ? splitWakeLabel(row.wake.label) : null;
 
   return (
     <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
@@ -3250,9 +3252,12 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         onClick={() => ctx.onToggleTurnFold(row.runId)}
         className="flex min-w-0 cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        {row.wake ? (
-          <span className="min-w-0 truncate text-start text-foreground/80" title={row.wake.label}>
-            {row.wake.label}
+        {wakeParts ? (
+          <span className="flex min-w-0 text-start text-foreground/80" title={row.wake?.label}>
+            <span className="min-w-0 truncate">{wakeParts.head}</span>
+            {wakeParts.tail ? (
+              <span className="shrink-0 whitespace-pre">{wakeParts.tail}</span>
+            ) : null}
           </span>
         ) : null}
         {row.wake ? <span aria-hidden>·</span> : null}
