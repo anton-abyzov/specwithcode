@@ -836,7 +836,11 @@ export const make = Effect.gen(function* () {
           }
           await writeSheetFileCompareAndSet(
             input.cwd,
-            target.relativePath,
+            // A new file is named by the native path asked for: on POSIX a backslash
+            // stays part of the name, as the window's later reads of it expect.
+            input.expectedRevision === NEW_FILE_REVISION
+              ? NodePath.relative(input.cwd, target.absolutePath)
+              : target.relativePath,
             contents,
             input.expectedRevision,
             destination,

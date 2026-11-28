@@ -1141,22 +1141,36 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       "keeps a backslash in a new sheet's name as part of the name, never a way out",
       () =>
         Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const parent = yield* makeTempDir;
           const cwd = path.join(parent, "project");
+          const forms = path.join(cwd, "forms");
+          yield* fileSystem.makeDirectory(path.join(forms, "team"), { recursive: true });
+          const sheet =
+            '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}';
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "forms/team\\west-responses.sheet.json",
+            contents: sheet,
+            expectedRevision: NEW_FILE_REVISION,
+          });
+          expect(
+            yield* fileSystem.exists(path.join(forms, "team\\west-responses.sheet.json")),
+          ).toBe(true);
+          expect(
+            yield* fileSystem.exists(path.join(forms, "team", "west-responses.sheet.json")),
+          ).toBe(false);
+          // Called directly too: a backslash never climbs out of the project.
           yield* fileSystem.makeDirectory(path.join(cwd, "sub"), { recursive: true });
-          const name = "sub/..\\..\\escape.sheet.json";
           yield* Effect.promise(() =>
             writeSheetFileCompareAndSet(
               cwd,
-              name,
-              '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}',
+              "sub/..\\..\\escape.sheet.json",
+              sheet,
               NEW_FILE_REVISION,
             ),
-          );
-          expect(yield* fileSystem.exists(path.join(cwd, "sub", "..\\..\\escape.sheet.json"))).toBe(
-            true,
           );
           expect(yield* fileSystem.exists(path.join(parent, "escape.sheet.json"))).toBe(false);
         }),
