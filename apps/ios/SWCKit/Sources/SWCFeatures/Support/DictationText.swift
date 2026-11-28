@@ -87,13 +87,15 @@ nonisolated enum DictationText {
   /// The recognizer began a new phrase instead of revising the one it was
   /// hearing. Apple's on-device recognizer marks the end of a phrase before it
   /// starts over (handled as a settled phrase); this catches a restart without
-  /// that mark. A new phrase arrives a word or two at a time and opens with a
-  /// different word; a revision ("twenty five dollars" to "$25") keeps its
-  /// opening words.
+  /// that mark. When in doubt it says restart: writing a phrase twice can be
+  /// fixed by hand, erasing what was said cannot. A revision keeps the opening
+  /// word and most of the length ("twenty five dollars" to "$25" inside a
+  /// longer phrase), or keeps the closing word ("Their is a cat" to "There's a cat").
   static func isRestart(from previous: String, to next: String) -> Bool {
     let before = words(previous), after = words(next)
-    guard before.count >= 2, (1...2).contains(after.count) else { return false }
-    return before.first != after.first
+    guard before.count >= 2, !after.isEmpty, after.count < before.count else { return false }
+    if after.last == before.last { return false }
+    return before.first != after.first || after.count * 2 <= before.count
   }
 
   /// The languages the desktop offers; "" follows the phone's language.

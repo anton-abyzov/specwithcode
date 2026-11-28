@@ -188,6 +188,34 @@ struct DictationTests {
     dictation.stop()
   }
 
+  /// Without Apple's end-of-phrase mark, a pause must still keep what was said.
+  @Test func aRestartWithoutTheEndMarkKeepsTheEarlierPhrase() async throws {
+    let (engine, _, draft) = try await listening("")
+    engine.emit(.partial("I want to fix the build"))
+    engine.emit(.partial("I"))
+    engine.emit(.partial("I think"))
+    #expect(draft() == "I want to fix the build I think")
+  }
+
+  /// A late result from a stopped session never reaches the next one, even
+  /// when the new engine sits at the old one's address.
+  @Test func aStoppedSessionsLateResultIsDropped() async throws {
+    let engine = FakeSpeech()
+    var text = ""
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let dictation = SpeechDictation(makeEngine: { engine })
+    dictation.start(language: "", draft: binding)
+    try await engine.started()
+    let late = engine.handler
+    dictation.stop()
+    dictation.start(language: "", draft: binding)
+    for _ in 0..<50 where engine.starts < 2 { await Task.yield() }
+    try #require(engine.starts == 2)
+    late?(.final("stale words"))
+    #expect(text == "")
+    dictation.stop()
+  }
+
   @Test func theCursorIsTheEndOfASelection() {
     let text = "one two three"
     let range = text.index(text.startIndex, offsetBy: 4)..<text.index(text.startIndex, offsetBy: 7)
@@ -207,6 +235,9 @@ struct DictationTests {
     #expect(!DictationText.isRestart(from: "I paid twenty five dollars", to: "I paid $25"))
     #expect(!DictationText.isRestart(from: "Their is a cat", to: "There's a cat"))
     #expect(DictationText.isRestart(from: "fix the build", to: "then"))
+    #expect(DictationText.isRestart(from: "I want to fix it", to: "I think"))
+    #expect(DictationText.isRestart(from: "I want to fix the build", to: "I"))
+    #expect(DictationText.isRestart(from: "I want to fix the build", to: "And then ship"))
     #expect(DictationText.dropWords("I want to fix the build. Please", count: 6) == "Please")
     #expect(DictationText.remainder(of: "Fix the build. Then", after: "fix the build") == "Then")
     #expect(DictationText.remainder(of: "Fix it", after: "fix the build") == nil)
@@ -275,6 +306,8 @@ struct DictationTests {
 @MainActor
 private final class FakeSpeech: SpeechEngine {
   private var onEvent: (@MainActor (SpeechEvent) -> Void)?
+  private(set) var starts = 0
+  var handler: (@MainActor (SpeechEvent) -> Void)? { onEvent }
   private let failure: Error?
   private(set) var stopped = false
 
@@ -283,6 +316,7 @@ private final class FakeSpeech: SpeechEngine {
   func start(locale: Locale, onEvent: @escaping @MainActor (SpeechEvent) -> Void) async throws {
     if let failure { throw failure }
     self.onEvent = onEvent
+    starts += 1
   }
 
   func started() async throws {

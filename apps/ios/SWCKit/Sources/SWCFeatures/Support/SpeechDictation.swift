@@ -57,6 +57,8 @@ final class SpeechDictation {
   /// continues there even when the field's cursor was not moved by them.
   @ObservationIgnored private var resume: (draft: String, cursor: Int?, caret: Int)?
   @ObservationIgnored private var startCursor: Int?
+  /// Counts mic sessions; results carry the one they belong to.
+  @ObservationIgnored private var session = 0
   /// The draft as dictation last wrote it; anything else means the person
   /// edited it, and the edit wins.
   @ObservationIgnored private var written: String?
@@ -95,12 +97,14 @@ final class SpeechDictation {
     written = draft.wrappedValue
     let engine = makeEngine()
     self.engine = engine
-    let session = ObjectIdentifier(engine)
+    session += 1
+    let current = session
     Task {
       do {
         try await engine.start(locale: DictationText.locale(language)) { [weak self] event in
           // A stopped session's last result must not land in the next one.
-          guard let self, let current = self.engine, ObjectIdentifier(current) == session else { return }
+          // A counter, not the engine's address: a new engine often reuses it.
+          guard let self, self.session == current, self.engine != nil else { return }
           self.handle(event, draft: draft)
         }
         if self.engine === engine, phase == .starting { phase = .listening }
