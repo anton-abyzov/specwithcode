@@ -9,63 +9,14 @@
  */
 import {
   SCREEN_SHARE_INPUT_MAX_EVENTS,
+  SCREEN_SHARE_KEY_CODES,
   SCREEN_SHARE_INPUT_PER_SECOND,
   type ScreenShareInputEvent,
   type ScreenShareInputRecord,
 } from "@specweave-studio/contracts";
 
-/**
- * Physical keys the helper can press (`KeyboardEvent.code`). The same list is
- * the helper's key table; a test compares the two.
- */
-export const CONTROL_KEY_CODES: ReadonlySet<string> = new Set([
-  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => `Key${letter}`),
-  ..."0123456789".split("").map((digit) => `Digit${digit}`),
-  ..."0123456789".split("").map((digit) => `Numpad${digit}`),
-  ...Array.from({ length: 19 }, (_, index) => `F${index + 1}`),
-  "Enter",
-  "Escape",
-  "Backspace",
-  "Tab",
-  "Space",
-  "Minus",
-  "Equal",
-  "BracketLeft",
-  "BracketRight",
-  "Backslash",
-  "IntlBackslash",
-  "Semicolon",
-  "Quote",
-  "Backquote",
-  "Comma",
-  "Period",
-  "Slash",
-  "CapsLock",
-  "ShiftLeft",
-  "ShiftRight",
-  "ControlLeft",
-  "ControlRight",
-  "AltLeft",
-  "AltRight",
-  "MetaLeft",
-  "MetaRight",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-  "Delete",
-  "NumpadDecimal",
-  "NumpadMultiply",
-  "NumpadAdd",
-  "NumpadDivide",
-  "NumpadEnter",
-  "NumpadSubtract",
-  "NumpadEqual",
-]);
+/** Physical keys the helper can press; the same list is the helper's key table (a test compares them). */
+export const CONTROL_KEY_CODES: ReadonlySet<string> = SCREEN_SHARE_KEY_CODES;
 
 /**
  * Apps in front of which nothing is typed (1490 D-04): a web page's password

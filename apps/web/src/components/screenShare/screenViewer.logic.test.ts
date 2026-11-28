@@ -16,7 +16,9 @@ import {
   reduceScreenViewer,
   screenShareCodeDigits,
   screenShareMachineKeyStorageKey,
+  screenViewerCanRequestControl,
   screenViewerCanRetry,
+  screenViewerControlWords,
   screenViewerEndOfClose,
   screenViewerEndWords,
   screenViewerPhaseWords,
@@ -456,5 +458,88 @@ describe("version skew with slice 1 (1519)", () => {
     };
     const { effects } = run([handshake(true), state(LIVE), withStats]);
     expect(kinds(effects)).toContain("draw");
+  });
+});
+
+const control = (value: unknown, now = T0): ScreenViewerEvent => ({
+  t: "record",
+  type: SCREEN_SHARE_RECORD.control,
+  data: encoder.encode(JSON.stringify(value)),
+  now,
+});
+const keyA = {
+  t: "input",
+  displayId: "1",
+  events: [{ t: "key", code: "KeyA", down: true }],
+} as const;
+
+describe("control (1519)", () => {
+  const offered = { ...LIVE, features: ["viewport", "control"] } as ScreenShareSessionState;
+
+  it("never asks a machine that did not offer control, and sends it no input", () => {
+    const { effects, model } = run([
+      handshake(true),
+      state({ ...LIVE, features: ["viewport"] }),
+      { t: "request_control" },
+      keyA,
+      { t: "stop_control" },
+    ]);
+    expect(screenViewerCanRequestControl(model)).toBe(false);
+    expect(sent(effects).map((record) => record.type)).toEqual([]);
+    expect(model.control).toEqual({ mode: "viewing", requested: false });
+  });
+
+  it("asks once, waits for the machine, and sends input only while controlling", () => {
+    const asked = run([handshake(true), state(offered), keyA, { t: "request_control" }]);
+    expect(sent(asked.effects)).toEqual([{ type: SCREEN_SHARE_RECORD.controlRequest }]);
+    expect(asked.model.control.mode).toBe("requesting");
+    const waiting = run([{ t: "request_control" }, control({ mode: "asking" }), keyA], asked.model);
+    expect(sent(waiting.effects)).toEqual([]);
+    expect(screenViewerControlWords(waiting.model.control)).toContain("to allow control");
+    const on = run([control({ mode: "controlling" }), keyA], waiting.model);
+    expect(sent(on.effects)).toEqual([
+      { type: SCREEN_SHARE_RECORD.input, displayId: "1", events: keyA.events },
+    ]);
+    const otherDisplay = run([{ ...keyA, displayId: "2" }], on.model);
+    expect(sent(otherDisplay.effects)).toEqual([]);
+    const stopped = run([{ t: "stop_control" }, keyA], on.model);
+    expect(sent(stopped.effects)).toEqual([{ type: SCREEN_SHARE_RECORD.controlEnd }]);
+    expect(stopped.model.control.mode).toBe("viewing");
+  });
+
+  it("sends no input while the machine is locked", () => {
+    const on = run([
+      handshake(true),
+      state(offered),
+      { t: "request_control" },
+      control({ mode: "controlling" }),
+      state({ phase: "locked" }),
+      keyA,
+    ]);
+    expect(sent(on.effects).map((record) => record.type)).toEqual([
+      SCREEN_SHARE_RECORD.controlRequest,
+    ]);
+  });
+
+  it("ends the view on a control record it did not ask for, or one it cannot read", () => {
+    expect(
+      run([handshake(true), state(offered), control({ mode: "controlling" })]).model.phase,
+    ).toMatchObject({ kind: "ended" });
+    expect(
+      run([handshake(true), state(offered), { t: "request_control" }, control({ mode: "boss" })])
+        .model.phase,
+    ).toMatchObject({ kind: "ended" });
+  });
+
+  it("says why typing is off, and why control ended", () => {
+    const on = run([handshake(true), state(offered), { t: "request_control" }]).model;
+    const blocked = run([control({ mode: "controlling", blocked: "browser" })], on).model;
+    expect(blocked.control).toEqual({ mode: "controlling", requested: true, blocked: "browser" });
+    expect(screenViewerControlWords(blocked.control)).toContain("browser");
+    const denied = run([control({ mode: "viewing", reason: "denied" })], on).model;
+    expect(screenViewerControlWords(denied.control)).toBe("Control was not allowed at {machine}.");
+    expect(screenViewerCanRequestControl(denied)).toBe(true);
+    const ended = run([control({ mode: "viewing", reason: "ended" })], on).model;
+    expect(screenViewerControlWords(ended.control)).toBeNull();
   });
 });

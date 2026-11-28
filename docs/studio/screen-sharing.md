@@ -1,8 +1,9 @@
 # Screen sharing
 
 See the screen of one of your own machines from another of your own devices, through SpecWithCode
-Connect. This first version is view-only and the machine being viewed must be a Mac. Control
-(pointer, keys), Windows and Linux machines, and the phone viewer come in later versions.
+Connect. The machine being viewed must be a Mac. A device that views it can also ask to control it
+(pointer, scroll and keys), which a person at the Mac allows separately. Windows and Linux machines
+and the phone viewer come in later versions.
 
 Screen sharing is off on every machine until a person turns it on at that machine.
 
@@ -79,6 +80,40 @@ the other anything it does not know.
 The card of the machine being viewed keeps a list of recent sessions: which device, when, for how
 long, and how it was allowed or why it was refused. Pictures are never kept.
 
+## Control the machine
+
+When the Mac offers control, a live view shows **Request control**. The Mac then shows "Work
+laptop (ID 7F3A) wants to control this Mac" with **Deny** and **Always allow control**. Always
+allow asks for Touch ID or the account password at the Mac. After that the device can control the
+Mac with nobody there, until 30 days after it last did. Allowing a device to view never lets it
+control, and a control grant never lets a device view without the view rules above. Removing a
+device in Settings removes both.
+
+While a device controls the Mac:
+
+- The banner reads "Work laptop (ID 7F3A) is controlling this screen", and **Stop** ends control
+  and the view.
+- The viewer's picture area has an amber edge. Pointer, scroll and keys go to the Mac while that
+  area has focus. **Stop control** goes back to viewing.
+- Computer use on the Mac pauses, so an agent and a person never move the same pointer.
+- Nothing is typed on the Mac while a password field has focus there (macOS secure input), while a
+  system prompt is open (SecurityAgent, the Touch ID dialog), while a browser is the front app, or
+  while the Mac is locked. Clicks stop too while a system prompt is open or the Mac is locked. The
+  viewer says why typing is off. Clicks and scrolling still work in a browser.
+- Every key and button held is let go when control ends, the view ends, the viewer leaves or goes
+  quiet for 5 seconds, the picture moves to another display, or the window loses focus.
+
+Control needs the Mac's Accessibility permission for SpecWithCode (System Settings > Privacy &
+Security > Accessibility). Without it the Mac does not offer control. Keys are sent as physical
+keys and typed with the Mac's own keyboard layout.
+
+Browsers in front of which nothing is typed, by bundle identifier: Safari and Safari Technology
+Preview, Chrome (stable, beta, dev, canary), Chromium, Firefox (stable, developer, nightly), Edge
+(stable, beta, dev), Brave (stable, beta), Arc, Opera, Vivaldi, Zen, Tor Browser, Orion, Comet and
+ChatGPT Atlas (`CONTROL_BROWSER_BUNDLE_IDS` in `apps/desktop/src/screenShare/screenControl.logic.ts`).
+A password field on a web page does not turn macOS secure input on, so a browser cannot be told
+apart from one.
+
 ## How it is protected
 
 - **The app at the machine decides.** The switch, the list of devices always allowed, the
@@ -106,6 +141,12 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
   longest session, a limit on how often one device may ask, and a small size for anything a viewer
   sends. One WebSocket message is still read whole before its size is known, up to the server's
   general limit of 100 MB; a message over screen sharing's own limits then ends the session.
+- **Control is a second permission.** It is asked for inside a live, sealed view, only from a
+  machine that offers it, with its own prompt and its own grant. The banner says "is controlling"
+  and the session list records it before the first event is posted. The input helper
+  (`native/screen-control/main.swift`) runs only during control, takes commands only over the pipe
+  the app started it with, checks secure input, system prompts and the front app before each key
+  and click, and exits when the pipe closes or after 2 minutes without a command.
 - **Computer use on the viewing machine pauses** while the app shows another machine's screen, so
   that screen does not end up in a thread's screenshots. Every view is counted on its own, and a
   screen's own window counts from the moment it opens until it closes, so closing one of two views
@@ -120,6 +161,9 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
 - **A person who authenticates without reading.** A synthetic click can press Allow so that the
   system's dialog appears. The dialog names the device and the choice; approving it with Touch ID
   is the decision.
+- **Typing into a web page's password field while a non-browser app is in front.** An app that
+  draws its own web content (an Electron app, for example) is not on the browser list, and its
+  password fields do not turn secure input on.
 - **An older copy of the app's file put back by a local program.** A grant you removed could
   return that way. Sealing stops the file being edited by something that cannot run code as the
   app; it does not stop an earlier copy being put back.
@@ -157,6 +201,7 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
 | The session's rules at the machine        | `apps/desktop/src/screenShare/screenShareSession.logic.ts`                                            |
 | The sealed file                           | `apps/desktop/src/screenShare/ScreenShareStore.ts`, `apps/desktop/src/screenShare/screenShareSeal.ts` |
 | Capture, prompt and banner                | `apps/desktop/src/screenShare/ScreenCapture.ts`, `apps/desktop/src/screenShare/ScreenShareWindows.ts` |
+| Control rules and the input helper        | `apps/desktop/src/screenShare/screenControl.logic.ts`, `native/screen-control/main.swift`             |
 | The viewer and the settings               | `apps/web/src/components/screenShare/`                                                                |
 
 Focused tests:
@@ -174,3 +219,5 @@ Rules to keep when changing it:
   product decision, not a refactor.
 - The server stays unable to open a record: it is never given a key.
 - No frame leaves before the banner is up.
+- No input is posted before the banner says "is controlling" and the session list has it. Every end
+  of control lets go of every key and button.

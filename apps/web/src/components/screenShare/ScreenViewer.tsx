@@ -1,13 +1,20 @@
 /**
- * Another machine's screen, in this window (1490). View only: nothing typed or
- * clicked here reaches that machine.
+ * Another machine's screen, in this window (1490). View only, unless the
+ * machine offers control and this device asked for it and was allowed (1519):
+ * then the pointer, wheel and keys over the picture reach that machine.
  *
  * `ScreenViewerView` takes plain props, so the app and the fixture under
  * tests/screen-share render the same thing. `ViewScreenButton.tsx` adds the
  * session and the overlay.
  */
 import type { ScreenShareFrameHeader, ScreenSharePicture } from "@specweave-studio/contracts";
-import { ActivityIcon, MonitorIcon, MonitorOffIcon, ShieldAlertIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  MonitorIcon,
+  MonitorOffIcon,
+  MousePointerClickIcon,
+  ShieldAlertIcon,
+} from "lucide-react";
 import { type FormEvent, type RefObject, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -17,7 +24,9 @@ import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import {
   screenShareCodeDigits,
+  screenViewerCanRequestControl,
   screenViewerCanRetry,
+  screenViewerControlWords,
   screenViewerEndWords,
   screenViewerPhaseWords,
   screenViewerTimeLeft,
@@ -143,6 +152,9 @@ export interface ScreenViewerViewProps {
   /** Frames per second, size and delay, when the person asked to see them; null otherwise. */
   statsLine?: string | null;
   onToggleStats?: () => void;
+  /** 1519: ask the machine for control, and go back to viewing. Absent where control is not offered. */
+  onRequestControl?: () => void;
+  onStopControl?: () => void;
   onTypedCode: (code: string) => void;
   onChooseDisplay: (displayId: string) => void;
   /** Ends the view; the surface stays to say so. */
@@ -163,6 +175,8 @@ export function ScreenViewerView({
   onPicture,
   statsLine,
   onToggleStats,
+  onRequestControl,
+  onStopControl,
   onTypedCode,
   onChooseDisplay,
   onEnd,
@@ -178,6 +192,9 @@ export function ScreenViewerView({
   const end = phase.kind === "ended" ? phase.end : null;
   const endWords = end === null ? null : screenViewerEndWords(end);
   const warning = end?.kind === "machine_key_changed" || end?.kind === "code_mismatch";
+  const control = model.control;
+  const controlling = live && control.mode === "controlling";
+  const controlWords = live ? screenViewerControlWords(control) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-screen-viewer={phase.kind}>
@@ -187,8 +204,16 @@ export function ScreenViewerView({
           {tx("Screen of {machine}", { machine })}
         </h2>
         {live ? (
-          <Badge variant={phase.locked ? "warning" : "success"} size="sm" data-screen-status="">
-            {phase.locked ? tx("Locked") : tx("Live, view only")}
+          <Badge
+            variant={phase.locked || controlling ? "warning" : "success"}
+            size="sm"
+            data-screen-status={controlling ? "controlling" : "viewing"}
+          >
+            {phase.locked
+              ? tx("Locked")
+              : controlling
+                ? tx("Live, you are controlling")
+                : tx("Live, view only")}
           </Badge>
         ) : null}
         {live ? (
@@ -197,6 +222,29 @@ export function ScreenViewerView({
           </span>
         ) : null}
         <span className="flex-1" />
+        {live && onRequestControl !== undefined && phase.features.includes("control") ? (
+          controlling || control.mode === "asking" || control.mode === "requesting" ? (
+            <Button
+              size="compact"
+              variant="secondary"
+              onClick={onStopControl}
+              data-screen-stop-control=""
+            >
+              {controlling ? tx("Stop control") : tx("Cancel request")}
+            </Button>
+          ) : (
+            <Button
+              size="compact"
+              variant="outline"
+              disabled={!screenViewerCanRequestControl(model)}
+              onClick={onRequestControl}
+              data-screen-request-control=""
+            >
+              <MousePointerClickIcon />
+              {tx("Request control")}
+            </Button>
+          )
+        ) : null}
         {live && onPicture !== undefined && phase.features.includes("viewport") ? (
           <Button
             size="compact"
@@ -252,6 +300,16 @@ export function ScreenViewerView({
         )}
       </header>
 
+      {controlWords !== null ? (
+        <p
+          className="shrink-0 border-b border-border px-3 py-1 text-xs text-muted-foreground sm:px-4"
+          role="status"
+          aria-live="polite"
+          data-screen-control-note=""
+        >
+          {tx(controlWords, { machine })}
+        </p>
+      ) : null}
       {statsLine != null ? (
         <p
           className="shrink-0 border-b border-border px-3 py-1 font-mono text-xs text-muted-foreground tabular-nums sm:px-4"
@@ -262,7 +320,14 @@ export function ScreenViewerView({
       ) : null}
       <div
         ref={areaRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted"
+        tabIndex={controlling ? 0 : undefined}
+        aria-label={controlling ? tx("Controlling {machine}", { machine }) : undefined}
+        data-screen-controlling={controlling ? "" : undefined}
+        className={
+          controlling
+            ? "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted outline-none ring-2 ring-warning ring-inset"
+            : "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted"
+        }
       >
         <canvas
           ref={canvasRef}

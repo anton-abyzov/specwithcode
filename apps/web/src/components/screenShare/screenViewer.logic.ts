@@ -16,6 +16,10 @@
  * - A record slice 1 did not have (1519) goes only to a machine whose sealed
  *   `live` state named it in its features: a slice-1 machine ends the session
  *   on a record it does not know.
+ * - Control (1519) is asked for only from a live view of a machine that named
+ *   `control`, and input goes only while the machine says it is controlling,
+ *   and only for the display shown. The machine's control record is read only
+ *   after this device asked.
  */
 import {
   SCREEN_SHARE_CLOSE_ENDED,
@@ -24,10 +28,14 @@ import {
   SCREEN_SHARE_FEATURES,
   SCREEN_SHARE_NO_PICTURE_MS,
   SCREEN_SHARE_RECORD,
+  ScreenShareControlState,
   ScreenShareEndReason,
   ScreenShareSessionState,
   decodeScreenShareFrame,
+  type ScreenShareControlReason,
   type ScreenShareDisplay,
+  type ScreenShareInputEvent,
+  type ScreenShareTypingBlock,
   type ScreenShareFrameHeader,
   type ScreenSharePicture,
 } from "@specweave-studio/contracts";
@@ -107,6 +115,19 @@ export interface ScreenViewerModel {
   readonly viewport: ScreenViewerViewport | null;
   /** The viewport last sent, as `viewportKey` writes it. */
   readonly viewportSent: string | null;
+  /** 1519: whether this device views or controls the machine. */
+  readonly control: ScreenViewerControl;
+}
+
+export interface ScreenViewerControl {
+  /** `requesting`: asked, no answer yet; `asking`: a person at the machine is being asked. */
+  readonly mode: "viewing" | "requesting" | "asking" | "controlling";
+  /** This device asked at least once, so it reads the machine's control records. */
+  readonly requested: boolean;
+  /** While controlling: why typing is off on the machine. */
+  readonly blocked?: ScreenShareTypingBlock;
+  /** Back to viewing: why. */
+  readonly reason?: ScreenShareControlReason;
 }
 
 export interface ScreenViewerViewport {
@@ -135,6 +156,14 @@ export type ScreenViewerEvent =
   | { readonly t: "choose_display"; readonly displayId: string }
   /** The picture area changed size, or the picture choice changed. */
   | { readonly t: "viewport"; readonly viewport: ScreenViewerViewport }
+  /** 1519: ask the machine for control, go back to viewing, or input while controlling. */
+  | { readonly t: "request_control" }
+  | { readonly t: "stop_control" }
+  | {
+      readonly t: "input";
+      readonly displayId: string;
+      readonly events: ReadonlyArray<ScreenShareInputEvent>;
+    }
   | { readonly t: "end_here" }
   | {
       readonly t: "closed";
@@ -174,7 +203,15 @@ export const initialScreenViewer = (now: number): ScreenViewerModel => ({
   lastSaidAt: now,
   viewport: null,
   viewportSent: null,
+  control: { mode: "viewing", requested: false },
 });
+
+/** Whether a live view of this machine may ask for control now. */
+export const screenViewerCanRequestControl = (model: ScreenViewerModel): boolean =>
+  model.phase.kind === "live" &&
+  !model.phase.locked &&
+  model.phase.features.includes(SCREEN_SHARE_FEATURES.control) &&
+  model.control.mode === "viewing";
 
 /** The viewport record to send now, if the machine reads it and it is not the one already sent. */
 const viewportToSend = (
@@ -192,6 +229,7 @@ const viewportToSend = (
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const decodeState = Schema.decodeUnknownSync(ScreenShareSessionState);
+const decodeControl = Schema.decodeUnknownSync(ScreenShareControlState);
 const isEndReason = Schema.is(ScreenShareEndReason);
 
 const stay = (model: ScreenViewerModel): ScreenViewerStep => ({ model, effects: [] });
@@ -316,6 +354,32 @@ function onRecord(
     }
     return onState(model, state, now);
   }
+  if (type === SCREEN_SHARE_RECORD.control) {
+    // Only an answer to this device's own request; and only while the view is live.
+    if (!model.control.requested || model.phase.kind !== "live")
+      return ended(model, { kind: "handshake" });
+    let state: ScreenShareControlState;
+    try {
+      state = decodeControl(JSON.parse(decoder.decode(data)));
+    } catch {
+      return ended(model, { kind: "handshake" });
+    }
+    const control: ScreenViewerControl =
+      state.mode === "asking"
+        ? { mode: "asking", requested: true }
+        : state.mode === "controlling"
+          ? {
+              mode: "controlling",
+              requested: true,
+              ...(state.blocked === undefined ? {} : { blocked: state.blocked }),
+            }
+          : {
+              mode: "viewing",
+              requested: true,
+              ...(state.reason === undefined ? {} : { reason: state.reason }),
+            };
+    return stay({ ...model, control });
+  }
   if (type === SCREEN_SHARE_RECORD.frame) {
     const { phase } = model;
     // No picture before live, none while locked, and none of a display not chosen.
@@ -435,6 +499,38 @@ export function reduceScreenViewer(
         ? stay(next)
         : { model: { ...next, viewportSent: viewportKey(event.viewport) }, effects: [send] };
     }
+    case "request_control":
+      return screenViewerCanRequestControl(model)
+        ? {
+            model: { ...model, control: { mode: "requesting", requested: true } },
+            effects: [{ t: "send", type: SCREEN_SHARE_RECORD.controlRequest, body: {} }],
+          }
+        : stay(model);
+    case "stop_control":
+      return phase.kind === "live" && model.control.mode !== "viewing"
+        ? {
+            model: { ...model, control: { mode: "viewing", requested: true } },
+            effects: [{ t: "send", type: SCREEN_SHARE_RECORD.controlEnd, body: {} }],
+          }
+        : stay(model);
+    case "input":
+      // Only while the machine says this device controls it, and only for the display shown.
+      return phase.kind === "live" &&
+        !phase.locked &&
+        model.control.mode === "controlling" &&
+        event.displayId === phase.displayId &&
+        event.events.length > 0
+        ? {
+            model,
+            effects: [
+              {
+                t: "send",
+                type: SCREEN_SHARE_RECORD.input,
+                body: { displayId: event.displayId, events: event.events },
+              },
+            ],
+          }
+        : stay(model);
     case "end_here":
       return ended(
         model,
@@ -633,4 +729,37 @@ export const screenViewerStatsLine = (stats: ScreenViewerStats, now: number): st
       `q${machine.quality}`,
     );
   return parts.join(" · ");
+};
+
+/** What the viewer says about control, in words; null when there is nothing to say. */
+export const screenViewerControlWords = (control: ScreenViewerControl): string | null => {
+  if (control.mode === "requesting" || control.mode === "asking")
+    return "Waiting for a person at {machine} to allow control…";
+  if (control.mode === "controlling")
+    switch (control.blocked) {
+      case "secure_input":
+        return "Typing is off: a password field has focus on {machine}.";
+      case "system_prompt":
+        return "Typing and clicks are off: a system prompt is open on {machine}. Answer it at the machine.";
+      case "browser":
+        return "Typing is off while a browser is in front on {machine}. Clicks and scrolling still work.";
+      case "locked":
+        return "{machine} is locked. Unlock it at the machine.";
+      default:
+        return null;
+    }
+  switch (control.reason) {
+    case "denied":
+      return "Control was not allowed at {machine}.";
+    case "prompt_timeout":
+      return "Nobody answered at {machine}, so control was not allowed.";
+    case "no_permission":
+      return "{machine} cannot be controlled yet: turn on Accessibility for SpecWithCode there, in System Settings.";
+    case "unavailable":
+      return "Control is not available on {machine} right now.";
+    case "asked_too_often":
+      return "Control was asked for too often. Try again later.";
+    default:
+      return null;
+  }
 };

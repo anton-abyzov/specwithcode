@@ -136,6 +136,60 @@ export const SCREEN_SHARE_HELPER_SILENCE_MS = 2 * 60_000;
 export const SCREEN_SHARE_CONTROL_ASKS = 2;
 
 /**
+ * Physical keys a viewer may press on the machine (`KeyboardEvent.code`), and
+ * the only ones the machine posts. The macOS helper's key table is the same
+ * list (`native/screen-control/main.swift`); a test compares the two.
+ */
+export const SCREEN_SHARE_KEY_CODES: ReadonlySet<string> = new Set([
+  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => `Key${letter}`),
+  ..."0123456789".split("").map((digit) => `Digit${digit}`),
+  ..."0123456789".split("").map((digit) => `Numpad${digit}`),
+  ...Array.from({ length: 19 }, (_, index) => `F${index + 1}`),
+  "Enter",
+  "Escape",
+  "Backspace",
+  "Tab",
+  "Space",
+  "Minus",
+  "Equal",
+  "BracketLeft",
+  "BracketRight",
+  "Backslash",
+  "IntlBackslash",
+  "Semicolon",
+  "Quote",
+  "Backquote",
+  "Comma",
+  "Period",
+  "Slash",
+  "CapsLock",
+  "ShiftLeft",
+  "ShiftRight",
+  "ControlLeft",
+  "ControlRight",
+  "AltLeft",
+  "AltRight",
+  "MetaLeft",
+  "MetaRight",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Delete",
+  "NumpadDecimal",
+  "NumpadMultiply",
+  "NumpadAdd",
+  "NumpadDivide",
+  "NumpadEnter",
+  "NumpadSubtract",
+  "NumpadEqual",
+]);
+
+/**
  * One input event, viewer to machine. Pointer places are fractions (0 to 1) of
  * the frame, so a picture sized to the viewer's window maps the same way; the
  * machine maps them onto its own display. Keys are physical key codes

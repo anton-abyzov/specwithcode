@@ -16,6 +16,7 @@ import { Button } from "../ui/button";
 import { browserMachineKeyPins, browserScreenViewerDeps } from "./screenShareBrowser";
 import { ScreenViewerSession } from "./screenShareClient";
 import { ScreenViewerView, clearScreenFrame, paintScreenFrame } from "./ScreenViewer";
+import { useScreenControlInput } from "./useScreenControlInput";
 import {
   initialScreenViewer,
   screenViewerStatsLine,
@@ -144,6 +145,15 @@ function ScreenViewerSessionRun({
     };
   }, [picture]);
 
+  const live = model.phase.kind === "live" ? model.phase : null;
+  useScreenControlInput({
+    enabled: live !== null && !live.locked && model.control.mode === "controlling",
+    canvasRef,
+    focusRef: areaRef,
+    displayId: live?.displayId ?? null,
+    send: (displayId, events) => sessionRef.current?.sendInput(displayId, events),
+  });
+
   return (
     <ScreenViewerView
       machine={machine}
@@ -162,6 +172,8 @@ function ScreenViewerSessionRun({
       }}
       statsLine={showStats ? statsLine : null}
       onToggleStats={() => setShowStats((value) => !value)}
+      onRequestControl={() => sessionRef.current?.requestControl()}
+      onStopControl={() => sessionRef.current?.stopControl()}
       onTypedCode={(code) => sessionRef.current?.typedCode(code)}
       onChooseDisplay={(displayId) => sessionRef.current?.chooseDisplay(displayId)}
       onEnd={() => sessionRef.current?.end()}
