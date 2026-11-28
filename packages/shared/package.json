@@ -296,6 +296,10 @@
       "types": "./src/modelBilling.ts",
       "import": "./src/modelBilling.ts"
     },
+    "./openModelPresets": {
+      "types": "./src/openModelPresets.ts",
+      "import": "./src/openModelPresets.ts"
+    },
     "./taskRouting": {
       "types": "./src/taskRouting.ts",
       "import": "./src/taskRouting.ts"

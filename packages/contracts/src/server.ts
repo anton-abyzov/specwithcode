@@ -343,6 +343,12 @@ export const ServerProvider = Schema.Struct({
     }),
   ),
   configurableProviders: Schema.optional(Schema.Boolean),
+  /**
+   * The open-model preset a Claude Code instance was made from (`deepseek`,
+   * `ollama`, ...), from its `SPECWITHCODE_OPEN_MODEL_PRESET` row. Such a route
+   * is billed to the person's key or machine, and nothing picks it by itself.
+   */
+  openModelPreset: Schema.optional(TrimmedNonEmptyString),
   runtimePaths: Schema.optionalKey(
     Schema.Struct({
       homePath: TrimmedNonEmptyString,
