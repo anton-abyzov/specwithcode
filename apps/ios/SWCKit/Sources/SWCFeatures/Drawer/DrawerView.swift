@@ -8,6 +8,7 @@ struct DrawerView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @State private var scrollPosition = ScrollPosition(edge: .top)
+  @State private var awaitingScrollLayout = true
   @State private var settingUpAide = false
 
   private static let collapsedProjectCount = 6
@@ -32,13 +33,21 @@ struct DrawerView: View {
         .scrollIndicators(.hidden)
         // Opening the drawer again shows the list where it was left.
         .scrollPosition($scrollPosition)
-        .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y + $0.contentInsets.top }) { _, offset in
-          router.drawerScrollOffset = max(0, offset)
+        .onScrollGeometryChange(for: CGFloat?.self, of: { geometry in
+          guard geometry.containerSize.height > 0, geometry.contentSize.height > 0 else { return nil }
+          return max(0, geometry.contentOffset.y + geometry.contentInsets.top)
+        }) { _, offset in
+          guard let offset else { return }
+          if awaitingScrollLayout {
+            awaitingScrollLayout = false
+            if router.drawerScrollOffset > 0 {
+              scrollPosition.scrollTo(y: router.drawerScrollOffset)
+              return
+            }
+          }
+          router.drawerScrollOffset = offset
         }
-        .onAppear {
-          let offset = router.drawerScrollOffset
-          if offset > 0 { scrollPosition.scrollTo(y: offset) }
-        }
+        .onDisappear { awaitingScrollLayout = true }
         .overlay(alignment: .bottom) { bottomBar }
       }
     }
