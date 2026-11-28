@@ -64,7 +64,7 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
   /// The models a thread may switch to: every model of each provider on its
   /// machine that is enabled, installed and ready, plus the thread's own
   /// model even when its provider is not ready, so the menu can show it.
-  public static func available(providers: [ServerProviderSummary], current: ModelSelection) -> [ModelChoice] {
+  public static func available(providers: [ServerProviderSummary], current: ModelSelection?) -> [ModelChoice] {
     var choices: [ModelChoice] = []
     let identities = Dictionary(providers.map { ($0.instanceId, ThreadIdentity(selection: ModelSelection(instanceId: $0.instanceId, model: ""), providers: [$0])) }, uniquingKeysWith: { a, _ in a })
     let harness = identities.mapValues(\.provider)
@@ -87,7 +87,7 @@ public struct ModelChoice: Hashable, Sendable, Identifiable {
           aliases: model.aliases ?? [],
           descriptors: model.optionDescriptors
         )
-        guard ready || choice.matches(current) else { continue }
+        guard ready || current.map(choice.matches) == true else { continue }
         choices.append(choice)
       }
     }

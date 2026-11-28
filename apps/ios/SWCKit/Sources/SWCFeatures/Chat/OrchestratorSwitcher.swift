@@ -71,7 +71,7 @@ struct OrchestratorSwitcher: View {
       .menuIndicator(.hidden)
       .buttonStyle(.plain)
       .accessibilityLabel("Viewing \(viewing?.machineLabel ?? "this machine")")
-      .accessibilityHint("Shows another machine's orchestrator for this project")
+      .accessibilityHint("Shows another machine's coordinator for this project")
       .accessibilityIdentifier("orchestrator.switcher")
     }
   }

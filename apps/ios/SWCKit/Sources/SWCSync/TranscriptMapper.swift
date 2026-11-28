@@ -110,7 +110,10 @@ public enum TranscriptMapper {
       return .subagent(title: title.isEmpty ? "Subagent" : title, child: subagent.childThreadId.map { ThreadRef(environmentId: environmentId, threadId: $0) }, isRunning: item.isInFlight)
 
     case let .error(report):
-      return .error(message: report.failure.message.isEmpty ? "Something went wrong." : report.failure.message)
+      let failure = report.failure
+      return .error(message: failure.message.isEmpty ? "Something went wrong." : failure.message,
+                    isUsageLimit: failure.failureClass == .usageLimit || failure.code == "usage_limit",
+                    resetAt: failure.resetAt)
 
     case let .systemNotice(notice):
       return .notice(text: notice.message)

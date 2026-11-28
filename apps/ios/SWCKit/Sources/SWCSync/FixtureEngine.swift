@@ -189,6 +189,10 @@ public final class FixtureEngine: AppEngine {
     if scenario.isFleet {
       model.machines = FixtureFleet.machines
       model.projects = [FixtureFleet.project]
+      if ProcessInfo.processInfo.arguments.contains("-SWCCoordinatorAsleep") {
+        model.machines[0].status = .offline
+        lastSeen[FixtureFleet.m4] = now.addingTimeInterval(-1800)
+      }
       if ProcessInfo.processInfo.arguments.contains("-SWCSwitcherFixture") {
         let reached = ProcessInfo.processInfo.arguments.contains("-SWCLinuxReached")
         let id = "fixture-linux"
@@ -621,6 +625,11 @@ public final class FixtureEngine: AppEngine {
     var saved = draft
     saved.title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !saved.title.isEmpty else { throw FixtureFailure("A project needs a name.") }
+    if let pick = saved.pickedCoordinatorSelection {
+      saved.coordinatorModel = saved.selectedChoice?.name ?? pick.model
+      saved.savedCoordinatorSelection = pick
+      saved.pickedCoordinatorSelection = nil
+    }
     saved.revision += 1
     let icon = saved.icon
     saved.icon = nil
@@ -738,12 +747,15 @@ public final class FixtureEngine: AppEngine {
     session.plan = Self.plan(in: rows, running: running.contains(target))
     session.machineLabel = machine?.label ?? ""
     session.machineOnline = online
+    session.machineLastSeenAt = lastSeen[target.environmentId]
     session.isStale = !online
     session.sendBlockedReason = online ? nil : "\(machine?.label ?? "This machine") is offline. You can send again when it reconnects."
     if case let .thread(ref) = target, continuedThreads[ref] != nil { session.sendBlockedReason = LiveEngine.handedOffReason }
     session.teamRulesNotice = teamRulesNotice(for: target, machine: machine)
     switch target {
     case let .aide(ref), let .project(ref):
+      session.canEditCoordinatorModel = online
+      session.coordinatorModel = (try? currentSettings(ref))?.coordinatorModel
       if let project = model.project(ref) { session.title = project.title }
       session.subtitle = "Coordinator · \(machine.map { MachineNickname.shortName($0.label) } ?? "machine")"
     case let .thread(ref):
@@ -820,7 +832,7 @@ public final class FixtureEngine: AppEngine {
   private func currentSettings(_ project: ProjectRef) throws -> ProjectSettingsDraft {
     if let saved = projectSettings[project] { return saved }
     guard let summary = model?.project(project) else { throw FixtureFailure("This project is no longer available.") }
-    let draft = ProjectSettingsDraft(
+    var draft = ProjectSettingsDraft(
       title: summary.title,
       goal: FixtureSample.goal(for: project.projectId),
       instructions: project.projectId == FixtureSample.specweave.projectId ? "Keep pull requests small. Run the full test suite before asking for a merge." : "",
@@ -829,6 +841,11 @@ public final class FixtureEngine: AppEngine {
       coordinatorModel: "Default",
       revision: 1
     )
+    draft.coordinatorChoices = FixtureSample.modelChoices
+    if scenario.isFleet, let choice = draft.coordinatorChoices.first {
+      draft.coordinatorModel = choice.name
+      draft.savedCoordinatorSelection = choice.selection
+    }
     projectSettings[project] = draft
     return draft
   }
@@ -929,6 +946,9 @@ public final class FixtureEngine: AppEngine {
       let rows = scenario.isOnePercy ? FixtureOnePercy.transcript : scenario == .long ? FixtureSample.longAideTranscript : FixtureSample.aideTranscript
       return rows.map { row("a", $0) }
     case let .project(ref):
+      if scenario.isFleet, ProcessInfo.processInfo.arguments.contains("-SWCCoordinatorLimit") {
+        return [row("limit", .error(message: "Subscription usage limit reached.", isUsageLimit: true, resetAt: "2026-11-28T13:59:59.000Z"))]
+      }
       let title = model?.project(ref)?.title ?? "this project"
       let threads = model?.threads(in: ref) ?? []
       let working = threads.filter { $0.activity == .working }.count

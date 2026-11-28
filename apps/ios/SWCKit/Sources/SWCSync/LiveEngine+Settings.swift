@@ -156,7 +156,7 @@ extension LiveEngine {
     }
     let settings = result.settings
     let shell = entry.project(project.projectId)
-    return ProjectSettingsDraft(
+    var draft = ProjectSettingsDraft(
       title: shell?.displayTitle ?? "",
       goal: settings.goal,
       instructions: settings.instructions,
@@ -165,6 +165,11 @@ extension LiveEngine {
       coordinatorModel: settings.coordinatorModelSelection.map { modelName($0, on: entry) },
       revision: settings.revision
     )
+    draft.savedCoordinatorSelection = settings.coordinatorModelSelection
+    if entry.canOperate {
+      draft.coordinatorChoices = ModelChoice.available(providers: entry.config?.providers ?? [], current: settings.coordinatorModelSelection)
+    }
+    return draft
   }
 
   public func saveProjectSettings(_ draft: ProjectSettingsDraft, for project: ProjectRef) async throws {
@@ -181,6 +186,7 @@ extension LiveEngine {
         expectedRevision: draft.revision,
         goal: draft.goal,
         instructions: draft.instructions,
+        coordinatorModelSelection: draft.pickedCoordinatorSelection.map(Nullable.value),
         paused: draft.paused,
         archived: draft.archived
       ),

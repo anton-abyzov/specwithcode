@@ -23,6 +23,7 @@ struct ProjectSettingsSheet: View {
   @State private var saveError: String?
   @State private var confirmArchive = false
   @State private var confirmDiscard = false
+  @State private var pickingModel = false
   @State private var pickingIcon = false
 
   private var summary: ProjectSummary? { model.project(project) }
@@ -55,6 +56,9 @@ struct ProjectSettingsSheet: View {
       .interactiveDismissDisabled(isDirty)
       .onSheetDismissAttempt { if isDirty, !saving { confirmDiscard = true } }
       .task { await load() }
+      .sheet(isPresented: $pickingModel) {
+        ModelPickerSheet(models: draft.coordinatorChoices, selectedId: draft.selectedChoice?.id, machine: model.machine(project.environmentId)?.displayName) { draft.pickCoordinatorModel($0) }
+      }
       .sheet(isPresented: $pickingIcon) {
         ProjectIconPicker(title: draft.title, current: shownIcon) { draft.icon = $0 }
           .presentationDetents([.medium, .large])
@@ -128,8 +132,9 @@ struct ProjectSettingsSheet: View {
         }
         WeaveTextEditor("What should this project achieve?", text: $draft.goal, label: "Goal", minLines: 3, maxLines: 10)
         WeaveTextEditor("Anything the coordinator should always keep in mind", text: $draft.instructions, label: "Instructions (optional)", minLines: 2, maxLines: 10)
-        GroupedCard(footer: "Change the model in SpecWithCode on your computer.") {
-          WeaveRow("Coordinator model", symbol: "cpu", trailingText: draft.coordinatorModel ?? "Default")
+        GroupedCard {
+          WeaveRow("Coordinator model", symbol: "cpu", trailingText: draft.selectedChoice?.name ?? draft.coordinatorModel ?? "Default", showsChevron: !draft.coordinatorChoices.isEmpty) { pickingModel = true }
+            .disabled(draft.coordinatorChoices.isEmpty)
           WeaveToggleRow("Paused", subtitle: "The coordinator starts no new work", symbol: "pause.circle", isOn: $draft.paused)
         }
         if let summary, summary.isLinkedAide {

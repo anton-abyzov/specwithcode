@@ -54,6 +54,7 @@ private struct ChatScreen: View {
   @State private var confirmDelete = false
   @State private var showingHandoff = false
   @State private var showingIncrement = false
+  @State private var savingModel = false
   @State private var showingModelPicker = false
   @State private var deviceViewer: DeviceViewerRoute?
   /// A file a reply linked to, open in the viewer.
@@ -120,14 +121,18 @@ private struct ChatScreen: View {
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
       .sheet(isPresented: $showingModelPicker) {
-        ModelPickerSheet(
-          models: threadSummary?.modelChoices ?? [],
-          selectedId: chosenModelId,
-          unlisted: unlistedModels,
-          onDropPick: dropModelPick,
-          machine: target.threadRef.flatMap { model.machine($0.environmentId)?.displayName },
-          onPick: setModel
-        )
+        if let project = target.projectRef {
+          CoordinatorPicker(project: project, saving: $savingModel, session: session)
+        } else {
+          ModelPickerSheet(
+            models: threadSummary?.modelChoices ?? [],
+            selectedId: chosenModelId,
+            unlisted: unlistedModels,
+            onDropPick: dropModelPick,
+            machine: target.threadRef.flatMap { model.machine($0.environmentId)?.displayName },
+            onPick: setModel
+          )
+        }
       }
       .sheet(item: $hostFile) { file in
         HostFileViewer(file: file, target: target) { url in
@@ -192,6 +197,7 @@ private struct ChatScreen: View {
 
   /// Beside a thread, another machine's coordinator replaces only this column.
   private func showOrchestrator(_ ref: ProjectRef) {
+    router.carryDraft(from: target, to: .project(ref))
     router.chooseCoordinator(ref, besideThread: isBesideCoordinator, in: model)
   }
 
@@ -247,6 +253,7 @@ private struct ChatScreen: View {
             row: row,
             busyRequests: busyRequests,
             thinkingBrand: thinkingBrand,
+            changeModel: changeModelAction,
             onDecision: { requestId, decision in respond(requestId, decision) },
             onAccess: { request, answer in answerAccess(request, answer) },
             onOpenThread: { router.pushThread($0, on: nav, in: model) },
@@ -346,13 +353,17 @@ private struct ChatScreen: View {
   private var machineLabel: String { session.machineLabel.isEmpty ? "This machine" : session.machineLabel }
 
   /// The machine answered, but not with this conversation.
-  private func loadFailedTranscript(_ error: String) -> some View {
-    transcriptPlaceholder(
-      title: "Couldn't load messages",
-      message: error,
-      actionTitle: "Try again",
-      action: { model.engine.reload(session) }
-    )
+  @ViewBuilder private func loadFailedTranscript(_ error: String) -> some View {
+    if CoordinatorRecovery.limitMessage(error, limited: false, resetAt: nil) != nil {
+      ChatErrorBanner(message: error, changeModel: changeModelAction)
+    } else {
+      transcriptPlaceholder(
+        title: "Couldn't load messages",
+        message: error,
+        actionTitle: "Try again",
+        action: { model.engine.reload(session) }
+      )
+    }
   }
 
   /// The machine is down and nothing has loaded: a spinner would spin until
@@ -368,17 +379,17 @@ private struct ChatScreen: View {
     if let machine = model.machine(machineId) {
       if let code = machine.deviceApprovalCode, !machine.isDisconnected {
         approvalTranscript(machine, code: code)
-      } else if let other = reachableOrchestrator, !machine.isDisconnected {
+      } else if let other = reachableOrchestrator, machine.canRetryConnection {
         transcriptPlaceholder(
-          title: machine.recoveryTitle,
-          message: "This machine is unavailable. \(other.machineLabel)'s coordinator for this project is available now.",
-          actionTitle: "View on \(other.machineLabel)",
+          title: "Machine unavailable",
+          message: asleepMessage,
+          actionTitle: "Continue on \(other.machineLabel)'s coordinator",
           action: { showOrchestrator(other.ref) }
         )
       } else {
         transcriptPlaceholder(
           title: machine.recoveryTitle,
-          message: machine.recoveryMessage,
+          message: target.projectRef != nil && machine.canRetryConnection && !machine.needsSignIn && machine.teamRulesRefusal == nil && !machine.isRefusingSignIns ? asleepMessage : machine.recoveryMessage,
           actionTitle: model.connect != nil && (!machine.viaConnect || machine.needsSignIn) ? "SpecWithCode Connect" : machine.canRetryConnection ? "Reconnect" : nil,
           action: model.connect != nil && (!machine.viaConnect || machine.needsSignIn)
             ? { router.sheet = .globalSettings }
@@ -421,7 +432,7 @@ private struct ChatScreen: View {
           .accessibilityIdentifier("chat.approval-this-phone")
       }
       if let other = reachableOrchestrator {
-        WeaveButton("View on \(other.machineLabel)", kind: .secondary) { showOrchestrator(other.ref) }
+        WeaveButton("Continue on \(other.machineLabel)'s coordinator", kind: .secondary) { showOrchestrator(other.ref) }
           .padding(.top, WeaveSpacing.s2)
       }
       recoveryButton
@@ -973,13 +984,13 @@ private struct ChatScreen: View {
               .accessibilityIdentifier("chat.increment")
               .transition(.opacity.combined(with: .scale(scale: 0.9)))
           }
-          if showsModelOptions, let thread = threadSummary {
+          if showsModelOptions {
             ModelOptionsMenu(
-              model: chosenModelName ?? thread.identity.model,
+              model: session.coordinatorModel ?? chosenModelName ?? "Model",
               brand: chosenBrand,
               traits: chosenTraits,
-              runtimeMode: thread.runtimeMode,
-              canChooseModel: canChooseModel,
+              runtimeMode: threadSummary?.runtimeMode,
+              canChooseModel: session.canEditCoordinatorModel || canChooseModel,
               hasPendingChanges: !(router.optionDrafts[target] ?? []).isEmpty || router.modelDrafts[target] != nil,
               hasPendingModel: router.modelDrafts[target] != nil,
               onSet: setOption,
@@ -1008,7 +1019,7 @@ private struct ChatScreen: View {
         Banner(notice.message, title: notice.title, kind: .warn, actionTitle: notice.switchTitle, action: notice.switchTo == nil ? nil : { lowerMode(notice) }, lineLimit: isShort ? 2 : nil)
       }
       if let error = session.lastError {
-        Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
+        ChatErrorBanner(message: error, changeModel: changeModelAction, dismiss: { session.lastError = nil })
       }
       if let error = dictation.error {
         Banner(error, kind: .fail, onDismiss: { dictation.clearError() })
@@ -1029,7 +1040,7 @@ private struct ChatScreen: View {
         text: draft,
         isRunning: session.showsRunning,
         placeholder: session.showsRunning ? nil : placeholder,
-        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : approvalMachine?.approvalComposerLine ?? "Machine unavailable. Your draft is kept.",
+        blockedReason: savingModel ? "Saving model…" : session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : approvalMachine?.approvalComposerLine ?? "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
         // Set only from a thread's runs, so chats without runs offer none.
         suggestion: session.isStale ? nil : session.promptSuggestion,
@@ -1111,7 +1122,7 @@ private struct ChatScreen: View {
         // One action fits the banner: the way to keep working wins; the
         // toolbar's laptop button still opens Connection options.
         if let other = reachableOrchestrator {
-          return ConnectionNotice(message: "\(machine.approvalBanner(code: code)) \(other.machineLabel)'s coordinator is available.", kind: .info, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
+          return ConnectionNotice(message: "\(machine.approvalBanner(code: code)) \(other.machineLabel)'s coordinator is available.", kind: .info, actionTitle: "Continue on \(other.machineLabel)'s coordinator", action: { showOrchestrator(other.ref) })
         }
         return ConnectionNotice(message: machine.approvalBanner(code: code), kind: .info, actionTitle: "Connection options", action: { nav.push(.machine(machineId)) })
       }
@@ -1120,11 +1131,12 @@ private struct ChatScreen: View {
       }
       // The composer already explains a blocked send; the banner adds the way
       // out, and only mentions saved messages when there are some.
-      let message = session.rows.isEmpty
-        ? "\(label) is offline."
-        : (session.sendBlockedReason == nil ? "\(label) is offline. Showing saved messages." : "Showing saved messages.")
+      let message: String
+      if target.projectRef != nil { message = asleepMessage }
+      else if session.rows.isEmpty { message = "\(label) is offline." }
+      else { message = session.sendBlockedReason == nil ? "\(label) is offline. Showing saved messages." : "Showing saved messages." }
       if let other = reachableOrchestrator {
-        return ConnectionNotice(message: "\(message) \(other.machineLabel)'s orchestrator is available.", kind: .warn, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
+        return ConnectionNotice(message: message, kind: .warn, actionTitle: "Continue on \(other.machineLabel)'s coordinator", action: { showOrchestrator(other.ref) })
       }
       return ConnectionNotice(message: message, kind: .warn, action: { model.engine.reconnect(machineId: machineId) })
     }
@@ -1223,8 +1235,17 @@ private struct ChatScreen: View {
 
   private var threadSummary: ThreadSummary? { target.threadRef.flatMap { model.thread($0) } }
 
-  /// Threads only: a coordinator's messages go through its own send, which takes no model.
+  private var changeModelAction: (() -> Void)? {
+    guard session.machineOnline, !savingModel, session.canEditCoordinatorModel || (canChooseModel && session.sendBlockedReason == nil) else { return nil }
+    return { showingModelPicker = true }
+  }
+
+  private var asleepMessage: String {
+    CoordinatorRecovery.asleep(machineLabel, lastSeen: session.machineLastSeenAt)
+  }
+
   private var showsModelOptions: Bool {
+    if target.projectRef != nil { return session.machineOnline && session.canEditCoordinatorModel && !savingModel }
     guard let thread = threadSummary, session.sendBlockedReason == nil else { return false }
     return thread.traits?.isEmpty == false || thread.runtimeMode != nil || canChooseModel
   }
@@ -1346,7 +1367,7 @@ private struct ChatScreen: View {
   }
 
   private func send() {
-    guard !photosPending else { return }
+    guard !savingModel, !photosPending else { return }
     dictation.stop()
     let original = router.drafts[target] ?? ""
     let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1470,21 +1491,5 @@ private struct ChatScreen: View {
     guard let row = session.rows.last(where: { if case .plan = $0.kind { true } else { false } }) else { return }
     reveal(row.id)
     withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: row.id, anchor: .top) }
-  }
-}
-
-/// The header's Threads button: icon and title, or only the icon when the
-/// header is short of room. VoiceOver reads "Threads" either way.
-private struct ThreadsLabelStyle: LabelStyle {
-  let showsTitle: Bool
-
-  func makeBody(configuration: Configuration) -> some View {
-    if showsTitle {
-      Label(configuration)
-    } else {
-      configuration.icon
-        .frame(minWidth: WeaveSize.minTap)
-        .accessibilityShowsLargeContentViewer { Label(configuration) }
-    }
   }
 }
