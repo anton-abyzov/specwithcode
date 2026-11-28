@@ -13,5 +13,14 @@ export const OrchestrationV2McpElicitation = Schema.Struct({
   message: Schema.String,
   /** The form's JSON Schema (form mode only); see `@specweave-studio/shared/mcpElicitationForm`. */
   requestedSchema: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  /** The link to open, exactly as the server sent it (URL mode only); see `@specweave-studio/shared/mcpElicitationUrl`. */
+  url: Schema.optional(Schema.String),
 });
 export type OrchestrationV2McpElicitation = typeof OrchestrationV2McpElicitation.Type;
+
+/**
+ * The answer a URL card's "I'm done, continue" sends with its `accept`. Only
+ * that card sends it, so an accept without it (Full access, an automatic
+ * responder, an agent) is refused (1498).
+ */
+export const MCP_ELICITATION_URL_DONE_ANSWER = { linkDone: true } as const;

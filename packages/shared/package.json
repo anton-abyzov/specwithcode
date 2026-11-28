@@ -316,6 +316,10 @@
       "types": "./src/mcpElicitationForm.ts",
       "import": "./src/mcpElicitationForm.ts"
     },
+    "./mcpElicitationUrl": {
+      "types": "./src/mcpElicitationUrl.ts",
+      "import": "./src/mcpElicitationUrl.ts"
+    },
     "./mcpElicitationDateTime": {
       "types": "./src/mcpElicitationDateTime.ts",
       "import": "./src/mcpElicitationDateTime.ts"

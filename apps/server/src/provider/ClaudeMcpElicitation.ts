@@ -8,8 +8,9 @@
  * Decline or Cancel goes back as the server's `accept` (with the content),
  * `decline` or `cancel`.
  *
- * - URL mode is declined with a note in the thread; no link is shown or opened.
- *   A tool call that retries the request shows one note, not one per retry.
+ * - URL mode shows the link on its own card (`ClaudeMcpUrlElicitation.ts`, 1498):
+ *   only the person's press opens it, and a tool call that retries the
+ *   request shows one card, not one per retry.
  * - A form the card cannot show is cancelled with a note.
  * - A form that asks for a password, token or other secret is declined with a
  *   note and never shown.
@@ -75,6 +76,12 @@ import {
 } from "../orchestration-v2/ClaudeFormResponses.ts";
 import type * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
+import {
+  isClaudeTurnWithoutPerson,
+  makeClaudeUrlAnswers,
+  planClaudeUrlElicitation,
+  urlElicitationResult,
+} from "./ClaudeMcpUrlElicitation.ts";
 
 /**
  * How long a card in a thread nobody watches waits before it is cancelled.
@@ -195,8 +202,9 @@ const CANCEL: ElicitationResult = { action: "cancel" };
 const DECLINE: ElicitationResult = { action: "decline" };
 
 /**
- * A card's generic choices. Submit lives on the form itself, never here, so
- * Full access and the generic approval actions cannot accept a form.
+ * A card's generic choices. Submit lives on the form itself, and "I'm done,
+ * continue" on the link card, never here, so Full access and the generic
+ * approval actions cannot accept either.
  */
 export const ELICITATION_CARD_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "decline", label: "Decline" },
@@ -208,8 +216,6 @@ export function isUnattendedClaudeTurn(input: ProviderAdapter.ProviderAdapterV2T
   return input.appThread.createdBy !== "user" || input.message.scheduledTaskId !== undefined;
 }
 
-export const urlModeNotice = (serverName: string) =>
-  `${serverName} wanted to open a link in your browser. SpecWithCode doesn't open MCP sign-in links yet; finish it from the tool's own terminal.`;
 export const unreadableFormNotice = (serverName: string) =>
   `${serverName} asked for input in a form SpecWithCode can't show yet; it was cancelled.`;
 export const unattendedTimeoutNotice = (serverName: string) =>
@@ -300,6 +306,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
   const pending = new Map<string, PendingCard>();
   // Cards this module closed itself; a late answer to one is ignored.
   const closed = new Set<string>();
+  const urlAnswers = makeClaudeUrlAnswers();
   const remember = (id: string) => {
     closed.add(id);
     if (closed.size > 200) closed.delete(closed.values().next().value as string);
@@ -388,14 +395,22 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         return DECLINE;
       }
       const nativeRequestId = `mcp-elicitation:${request.serverName}:${sdkRequestId}`;
+      const callKey = claudeElicitationCallKey(context, request.serverName, sdkRequestId);
       if (request.mode === "url") {
+        const plan = planClaudeUrlElicitation(request, {
+          unattended: isClaudeTurnWithoutPerson(context.input),
+          remembered: urlAnswers.get(callKey, request),
+        });
+        if (plan.type === "card")
+          return yield* showCard(context, request, signal, owner, nativeRequestId, {
+            elicitation: plan.elicitation,
+            resultFor: (decision) => urlElicitationResult(decision),
+            remember: (result) => urlAnswers.remember(callKey, request, result),
+          });
         // Keyed by the tool call, so a retried request replaces its own note.
-        yield* notice(
-          context,
-          `mcp-elicitation:${claudeElicitationCallKey(context, request.serverName, sdkRequestId)}:url-notice`,
-          urlModeNotice(request.serverName),
-        );
-        return DECLINE;
+        if (plan.notice !== undefined)
+          yield* notice(context, `mcp-elicitation:${callKey}:url-notice`, plan.notice);
+        return plan.result;
       }
       const form = parseMcpElicitationSchema(request.requestedSchema);
       if (!form.ok) {
@@ -419,6 +434,40 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         );
         return DECLINE;
       }
+      return yield* showCard(context, request, signal, owner, nativeRequestId, {
+        elicitation: {
+          serverName: request.serverName,
+          mode: "form",
+          message: request.message,
+          ...(request.requestedSchema === undefined
+            ? {}
+            : { requestedSchema: request.requestedSchema }),
+        },
+        resultFor: (decision, answers) =>
+          elicitationResultForDecision(form.fields, decision, answers),
+      });
+    });
+
+  /** A form's or a link's card, open until the person, a stop or the timer settles it. */
+  const showCard = (
+    context: C,
+    request: ElicitationRequest,
+    signal: AbortSignal,
+    owner: object,
+    nativeRequestId: string,
+    shown: {
+      readonly elicitation: OrchestrationV2McpElicitation;
+      /** What the server gets for the person's answer; null when it does not fit. */
+      readonly resultFor: (
+        decision: ProviderApprovalDecision,
+        answers: ProviderUserInputAnswers | undefined,
+      ) => ElicitationResult | null;
+      /** Keeps the person's answer for a retry of the same call. */
+      readonly remember?: (result: ElicitationResult) => void;
+    },
+  ) =>
+    Effect.gen(function* () {
+      const { elicitation } = shown;
       // The CLI waits on this answer, so output held for the prompt echo goes
       // on now, as it does for a tool approval.
       if (context.heldRootFrames.length > 0) yield* deps.releaseHeldRootFrames(context);
@@ -430,14 +479,6 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         requestKind: "mcp-elicitation",
         prompt: request.message,
       });
-      const elicitation: OrchestrationV2McpElicitation = {
-        serverName: request.serverName,
-        mode: "form",
-        message: request.message,
-        ...(request.requestedSchema === undefined
-          ? {}
-          : { requestedSchema: request.requestedSchema }),
-      };
       // The request belongs to no tool node the app knows, so it hangs off the turn's root.
       const node = { ...built.node, parentNodeId: context.input.rootNodeId };
       const turnItem =
@@ -505,8 +546,11 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
           const result =
             settled.lost === true && settled.decision !== "decline" && settled.decision !== "cancel"
               ? null
-              : elicitationResultForDecision(form.fields, settled.decision, settled.answers);
-          if (result !== null) return result;
+              : shown.resultFor(settled.decision, settled.answers);
+          if (result !== null) {
+            shown.remember?.(result);
+            return result;
+          }
           yield* notice(
             context,
             `${nativeRequestId}:invalid`,

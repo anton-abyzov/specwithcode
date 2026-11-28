@@ -6,6 +6,7 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { OnActionMachine, type ActionMachine } from "../../studio/actionMachine";
 import { McpElicitationForm, type McpElicitationFormProps } from "./McpElicitationForm";
+import { McpElicitationUrlCard } from "./McpElicitationUrlCard";
 
 /**
  * An MCP server's form the person can still answer: drawn as the form, with
@@ -16,13 +17,23 @@ export const isMcpElicitationFormApproval = (approval: PendingApproval) =>
   approval.elicitation?.mode === "form" &&
   approval.responseCapability === "live";
 
+/** An MCP server's link the person can still answer: drawn as the link card (1498). */
+export const isMcpElicitationUrlApproval = (approval: PendingApproval) =>
+  approval.requestKind === "mcp-elicitation" &&
+  approval.elicitation?.mode === "url" &&
+  approval.responseCapability === "live";
+
+/** A form or a link card: it brings its own actions, so the approval actions hide. */
+export const isMcpElicitationCardApproval = (approval: PendingApproval) =>
+  isMcpElicitationFormApproval(approval) || isMcpElicitationUrlApproval(approval);
+
 interface ComposerPendingApprovalPanelProps {
   approval: PendingApproval;
   pendingCount: number;
   className?: string;
   /** The thread's machine when it is not the window's own (1427 AC-07). */
   machine?: ActionMachine | null | undefined;
-  /** Answers an MCP server's form; without it the form shows as a plain approval. */
+  /** Answers an MCP server's form or link; without it the card shows as a plain approval. */
   onRespond?: McpElicitationFormProps["onRespond"];
   disabled?: boolean;
   isResponding?: boolean;
@@ -38,6 +49,20 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   isResponding = false,
 }: ComposerPendingApprovalPanelProps) {
   const tx = useTx();
+  if (onRespond !== undefined && approval.elicitation && isMcpElicitationUrlApproval(approval)) {
+    return (
+      <McpElicitationUrlCard
+        key={approval.requestId}
+        requestId={approval.requestId}
+        elicitation={approval.elicitation}
+        pendingCount={pendingCount}
+        disabled={disabled}
+        isResponding={isResponding}
+        machine={machine}
+        onRespond={onRespond}
+      />
+    );
+  }
   if (onRespond !== undefined && approval.elicitation && isMcpElicitationFormApproval(approval)) {
     return (
       <McpElicitationForm
