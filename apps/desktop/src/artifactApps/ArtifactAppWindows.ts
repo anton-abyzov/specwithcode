@@ -588,7 +588,9 @@ export function isArtifactAppQuitShortcut(
   input: Pick<Electron.Input, "type" | "key" | "code" | "meta" | "control" | "alt" | "shift">,
   platform: NodeJS.Platform,
 ): boolean {
-  if (platform !== "darwin" || input.type !== "keyDown") return false;
+  if (input.type !== "keyDown") return false;
   if (input.key.toLowerCase() !== "q" && input.code !== "KeyQ") return false;
-  return input.meta && !input.control && !input.alt && !input.shift;
+  // Command-Q on macOS, Control-Q elsewhere: it closes this page, never SpecWithCode.
+  if (input.alt || input.shift) return false;
+  return platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
 }

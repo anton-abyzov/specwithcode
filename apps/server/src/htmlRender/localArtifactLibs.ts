@@ -439,7 +439,9 @@ export function inlineArtifactLibraries(
     const src = attrs.get("src")?.trim();
 
     const named = src === undefined ? null : SPECWITHCODE_SCHEME_RE.exec(src);
-    if (src !== undefined && /^specwithcode:/i.test(src) && innerText.trim().length === 0) {
+    // A script with a src runs the src and ignores its text, so text never excuses an
+    // unknown library.
+    if (src !== undefined && /^specwithcode:/i.test(src)) {
       const name = named?.[1]?.toLowerCase();
       const library = SPECWITHCODE_ARTIFACT_LIBRARIES.find((known) => known === name);
       if (library === undefined) {

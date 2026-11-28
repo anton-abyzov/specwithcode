@@ -144,6 +144,34 @@ describe("motion deck runtime", () => {
     await tab.close();
   });
 
+  it(
+    "stops drawing while the page is hidden and resumes when it is shown",
+    { timeout: 60_000 },
+    async () => {
+      const tab = await open("#intro");
+      await ready(tab);
+      const framesIn = (ms: number) =>
+        tab.evaluate<number>(`new Promise((done) => {
+        let count = 0;
+        const raf = window.requestAnimationFrame;
+        window.requestAnimationFrame = (cb) => { count += 1; return raf(cb); };
+        setTimeout(() => { window.requestAnimationFrame = raf; done(count); }, ${ms});
+      })`);
+      const setHidden = (hidden: boolean) =>
+        tab.evaluate(`Object.defineProperty(document, "hidden", { configurable: true, get: () => ${hidden} });
+        document.dispatchEvent(new Event("visibilitychange"));`);
+      expect(await tab.evaluate<string>("document.visibilityState")).toBe("visible");
+      // SwiftShader draws a frame slowly, so each window is a few seconds.
+      expect(await framesIn(3000)).toBeGreaterThan(0);
+      await setHidden(true);
+      await tab.waitForTimeout(1500);
+      expect(await framesIn(3000)).toBe(0);
+      await setHidden(false);
+      expect(await framesIn(3000)).toBeGreaterThan(0);
+      await tab.close();
+    },
+  );
+
   it("rolls the counter and lifts words on beat windows", async () => {
     const tab = await open("#intro-2");
     await ready(tab);
