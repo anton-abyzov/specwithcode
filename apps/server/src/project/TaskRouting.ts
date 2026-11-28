@@ -25,6 +25,7 @@ import {
   withTrackEffort,
 } from "@specweave-studio/shared/modelTracks";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { fallbackSelectionKey } from "@specweave-studio/shared/providerFallback";
 import {
   classifyTask,
   resolveTaskRouting,
@@ -41,7 +42,7 @@ import {
   ROUTING_DECISION_TIMEOUT_MS,
 } from "../decisions/DecisionModel.ts";
 import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailure.ts";
-import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
+import { heldLimitSources, usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -127,6 +128,21 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   const baselineProvider = input.providers.find(
     (provider) => provider.instanceId === input.baseline.instanceId,
   );
+  const sourceHolds = yield* heldLimitSources(nowMs);
+  const baselineModel = baselineProvider?.models.find(
+    (model) => model.slug === input.baseline.model || model.aliases?.includes(input.baseline.model),
+  );
+  const baselineAtLimit =
+    sourceHolds.has(fallbackSelectionKey(input.baseline)) ||
+    (baselineModel !== undefined &&
+      sourceHolds.has(
+        fallbackSelectionKey({ instanceId: input.baseline.instanceId, model: baselineModel.slug }),
+      ));
+  const refuseLimitedBaseline = () =>
+    new OrchestratorMcpFailure({
+      code: "model_unavailable",
+      message: `The worker's default model ${input.baseline.model} is at its usage limit, and no permitted alternative was selected.`,
+    });
   const heldBaseline =
     tracks &&
     baselineProvider !== undefined &&
@@ -141,6 +157,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     rule.modelLanes.routine.length > 0 ||
     rule.learnedModelPreferences.length > 0;
   if (rule.taskRouting.mode !== "auto" && !lanesSet) {
+    if (baselineAtLimit) return yield* refuseLimitedBaseline();
     if (heldBaseline) return yield* refuseHeldBaseline();
     return null;
   }
@@ -211,6 +228,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
         policy: rule.taskRouting,
         switchAtPercent: rule.providerLimitSwitchAtPercent,
         limitedInstanceIds: limited,
+        heldSourceKeys: sourceHolds,
         ...(input.runnableInstanceIds === undefined
           ? {}
           : { runnableInstanceIds: input.runnableInstanceIds }),
@@ -227,6 +245,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     return lane.decision;
   }
   if (rule.taskRouting.mode !== "auto") {
+    if (baselineAtLimit) return yield* refuseLimitedBaseline();
     if (heldBaseline) return yield* refuseHeldBaseline();
     return null;
   }
@@ -238,12 +257,14 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     nowMs,
     switchAtPercent: rule.providerLimitSwitchAtPercent,
     limitedInstanceIds: limited,
+    heldSourceKeys: sourceHolds,
     preferredProviders: rule.defaultModelProviders,
     ...(input.runnableInstanceIds === undefined
       ? {}
       : { runnableInstanceIds: input.runnableInstanceIds }),
   });
   // Auto kept the baseline: on Tracks that is still nobody's spending choice.
+  if (!tiered.moved && baselineAtLimit) return yield* refuseLimitedBaseline();
   if (!tiered.moved && heldBaseline) return yield* refuseHeldBaseline();
   yield* logDecision(input.project, tiered);
   return tiered;
