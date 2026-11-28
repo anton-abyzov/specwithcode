@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
   // Machines the relay lists under the window's Connect account.
   accountMachines: [] as string[],
   discoveryRefreshing: false,
+  // This app's sign-in on another machine may operate there (the Connect route).
+  operateThere: true,
+  confirm: vi.fn(async (_message: string) => true as boolean | undefined),
   status: vi.fn(),
   set: vi.fn(),
   undo: vi.fn(),
@@ -43,7 +46,10 @@ vi.mock("../../state/environments", () => ({
 vi.mock("../../state/session", () => ({
   useEnvironmentScopeAccess: () => mocks.ownAccess,
   useEnvironmentsScopeAccess: () => mocks.otherAccess,
+  readEnvironmentScope: () => mocks.operateThere,
 }));
+vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: mocks.confirm }));
+vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
 vi.mock("../../studio/personalShareCommands", () => ({
   setPersonalSharedCommand: { name: "set" },
@@ -302,6 +308,9 @@ const pageText = () => text(renderer.root);
 
 describe("PercySharedSetting", () => {
   beforeEach(() => {
+    mocks.operateThere = true;
+    mocks.confirm.mockReset();
+    mocks.confirm.mockResolvedValue(true);
     mocks.ownId = "studio";
     mocks.shared = { enabled: false, machines: [] };
     mocks.aideEnabled = true;
@@ -888,6 +897,76 @@ describe("PercySharedSetting", () => {
       environmentId: "studio",
       input: { enabled: true, machines: ["m1"] },
     });
+  });
+
+  it("asks before Allow hands out a key, and grants nothing when the owner cancels", async () => {
+    mocks.shared = { enabled: true, machines: [] };
+    mocks.status.mockResolvedValue(
+      success(
+        statusOf({
+          enabled: true,
+          machines: [{ environmentId: "m4", label: "M4", state: "no_grant" }],
+        }),
+      ),
+    );
+    fleet.readStudioFleetMachines.mockReset();
+    fleet.allowStudioFleetWorkers.mockReset();
+    fleet.allowIncomingStudioFleetWorkers.mockReset();
+    fleet.joinAccountMachineForWorkers.mockReset();
+    mocks.set.mockClear();
+    mocks.confirm.mockResolvedValue(false);
+    await render();
+    await click(within(one({ "data-share-machine": "m4" }), { "data-share-allow": true })[0]!);
+    expect(mocks.confirm).toHaveBeenCalledOnce();
+    expect(mocks.confirm.mock.calls[0]![0]).toContain("Allow work between Studio and m4?");
+    expect(mocks.confirm.mock.calls[0]![0]).toContain("a key to the other for a year");
+    expect(fleet.readStudioFleetMachines).not.toHaveBeenCalled();
+    expect(fleet.allowStudioFleetWorkers).not.toHaveBeenCalled();
+    expect(fleet.allowIncomingStudioFleetWorkers).not.toHaveBeenCalled();
+    expect(fleet.joinAccountMachineForWorkers).not.toHaveBeenCalled();
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it("skips the Connect route when this app cannot operate on that machine", async () => {
+    mocks.shared = { enabled: true, machines: [] };
+    mocks.operateThere = false;
+    mocks.environments = [
+      environment("studio", "Studio"),
+      {
+        ...environment("m1", "M1"),
+        serverConfig: { environment: { capabilities: { fleetAccountJoinWorkers: true } } },
+      },
+    ];
+    mocks.status.mockResolvedValue(
+      success(
+        statusOf({
+          enabled: true,
+          machines: [{ environmentId: "m1", label: "M1", state: "no_grant" }],
+        }),
+      ),
+    );
+    fleet.readStudioFleetMachines.mockResolvedValue([
+      { id: "fleet-m1", environmentId: "m1", label: "M1" },
+    ]);
+    fleet.allowStudioFleetWorkers.mockReset();
+    fleet.allowStudioFleetWorkers.mockResolvedValue({
+      id: "fleet-m1",
+      workers: {
+        status: "not_allowed",
+        access: null,
+        expiresAt: null,
+        renewable: false,
+        problem: null,
+      },
+    });
+    fleet.allowIncomingStudioFleetWorkers.mockReset();
+    fleet.allowIncomingStudioFleetWorkers.mockRejectedValue(
+      new Error("M1 refused: M1 no longer accepts the key saved here for it (HTTP 401)."),
+    );
+    fleet.joinAccountMachineForWorkers.mockReset();
+    await render();
+    await click(within(one({ "data-share-machine": "m1" }), { "data-share-allow": true })[0]!);
+    expect(fleet.joinAccountMachineForWorkers).not.toHaveBeenCalled();
   });
 
   it("says the way out when the machine is not signed in to Connect or Percy is off", async () => {

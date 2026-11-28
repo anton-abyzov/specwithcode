@@ -167,4 +167,50 @@ describe("allowShareMachine: Allow on a Percy row with no access (1448)", () => 
         "m1 did not allow work with this machine. M1 refused: M1 answered HTTP 401. Connect to m1 first.",
     });
   });
+
+  it("keeps the held grant's level only for the direction it belongs to", async () => {
+    const calls: string[] = [];
+    const result = await allowShareMachine(
+      deps({
+        calls,
+        machines: async () => [machine("env-m4", workers("allowed", "approval-required"))],
+        allowThere: async (id, access) => {
+          calls.push(`there ${access}`);
+          return workers("not_allowed");
+        },
+        allowHere: async (id, access) => {
+          calls.push(`here ${access}`);
+          throw new Error("M4 refused: M4 no longer accepts the key saved here for it (HTTP 401).");
+        },
+        throughAccount: async (access) => {
+          calls.push(`account ${access}`);
+          return workers("allowed", access);
+        },
+      }),
+      "env-m4",
+      "m4",
+    );
+    expect(result).toEqual({ ok: true, direction: "account" });
+    expect(calls).toEqual(["there approval-required", "here full-access", "account full-access"]);
+  });
+
+  it("still tries the Connect route when this machine's list cannot be read", async () => {
+    const calls: string[] = [];
+    const result = await allowShareMachine(
+      deps({
+        calls,
+        machines: async () => {
+          throw new Error("Could not read the machine list.");
+        },
+        throughAccount: async (access) => {
+          calls.push(`account ${access}`);
+          return workers("allowed", access);
+        },
+      }),
+      "env-m4",
+      "m4",
+    );
+    expect(result).toEqual({ ok: true, direction: "account" });
+    expect(calls).toEqual(["account full-access"]);
+  });
 });

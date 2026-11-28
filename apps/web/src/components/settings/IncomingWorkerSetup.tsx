@@ -346,12 +346,10 @@ export function useIncomingWorkerAllow({
               // account's Connect sign-in carries the line without it.
               if (!accountRoute) throw failure;
               return allowThroughAccount().catch((second: unknown) => {
-                throw new Error(
-                  [failure, second]
-                    .map((each) => (each instanceof Error ? each.message : String(each)))
-                    .join(" "),
-                  { cause: second },
+                const said = [failure, second].map((each) =>
+                  each instanceof Error ? each.message : String(each),
                 );
+                throw new Error([...new Set(said)].join(" "), { cause: second });
               });
             })
           : await setUpIncomingWorkers({ here, coordinator, hereLabel, access });

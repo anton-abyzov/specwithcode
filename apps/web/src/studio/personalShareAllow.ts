@@ -8,8 +8,10 @@
  * that key is gone or refused (the other machine answers 401), the line goes
  * over this app's own SpecWithCode Connect sign-in there instead, as Settings
  * > Machines does for a machine of the same account: no saved key is needed.
- * Either direction is enough for the two to keep Percy in step. An existing
- * grant keeps its access level; a new one gets the default.
+ * Either direction is enough for the two to keep Percy in step. The grant
+ * this machine holds there keeps its access level; a grant the other machine
+ * gets here starts at the default. The caller asks the owner first: every
+ * route hands the other machine a key.
  *
  * @module personalShareAllow
  */
@@ -54,28 +56,36 @@ export async function allowShareMachine(
   peerEnvironmentId: string,
   label: string,
 ): Promise<ShareAllowResult> {
-  const machine = (await deps.machines()).find(
-    (candidate) => candidate.environmentId === peerEnvironmentId,
-  );
-  const access = machine?.workers?.access ?? DEFAULT_FLEET_WORKER_ACCESS;
   // What each route said, so a refusal names every reason, not only the last.
   const failures: string[] = [];
+  // An unreadable list still leaves the Connect route, which needs none.
+  const machine = (
+    await deps.machines().catch((failure: unknown) => {
+      failures.push(messageOf(failure));
+      return [];
+    })
+  ).find((candidate) => candidate.environmentId === peerEnvironmentId);
+  // The grant this machine holds there keeps its level; a grant the other
+  // machine gets here starts at the default, never copied from that one.
+  const accessThere = machine?.workers?.access ?? DEFAULT_FLEET_WORKER_ACCESS;
+  const accessHere = DEFAULT_FLEET_WORKER_ACCESS;
   if (machine !== undefined) {
     try {
-      if (usable(await deps.allowThere(machine.id, access)))
+      if (usable(await deps.allowThere(machine.id, accessThere)))
         return { ok: true, direction: "there" };
     } catch (failure) {
       failures.push(messageOf(failure));
     }
     try {
-      if (usable(await deps.allowHere(machine.id, access))) return { ok: true, direction: "here" };
+      if (usable(await deps.allowHere(machine.id, accessHere)))
+        return { ok: true, direction: "here" };
     } catch (failure) {
       failures.push(messageOf(failure));
     }
   }
   if (deps.throughAccount !== undefined) {
     try {
-      if (usable(await deps.throughAccount(access))) return { ok: true, direction: "account" };
+      if (usable(await deps.throughAccount(accessHere))) return { ok: true, direction: "account" };
     } catch (failure) {
       failures.push(messageOf(failure));
     }
