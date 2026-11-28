@@ -215,6 +215,14 @@ describe("inlineArtifactLibraries", () => {
     expect(result.unavailable).toEqual(["three"]);
   });
 
+  it("reports an unknown library even when its script has fallback text", () => {
+    const result = inlineArtifactLibraries(
+      '<script src="specwithcode:missing">window.fallback = 1;</script>',
+      { maxPageBytes: 100_000, resolveLibrarySource: () => null },
+    );
+    expect(result.unknown).toEqual(["missing"]);
+  });
+
   it("inlines Mermaid beside a SpecWithCode library, in either order", () => {
     const mermaid =
       '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>';

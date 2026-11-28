@@ -36,15 +36,25 @@ describe("isArtifactAppQuitShortcut", () => {
       shift: false,
       ...input,
     }) as Electron.Input;
-  it("matches Command-Q alone on macOS, on any layout, and nothing elsewhere", () => {
+  it("matches Command-Q alone on macOS and Control-Q alone elsewhere, on any layout", () => {
     assert.isTrue(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true }), "darwin"));
     assert.isTrue(
       ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true, key: "й" }), "darwin"),
     );
     assert.isFalse(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "darwin"));
-    // No Quit menu item on Windows or Linux, so Control-Q stays the page's.
-    assert.isFalse(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "win32"));
-    assert.isFalse(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "linux"));
+    // Windows and Linux: Control-Q closes the page (on Linux it would otherwise quit SpecWithCode).
+    assert.isTrue(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "win32"));
+    assert.isTrue(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true }), "linux"));
+    assert.isTrue(
+      ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true, key: "й" }), "linux"),
+    );
+    assert.isFalse(ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true }), "linux"));
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true, shift: true }), "win32"),
+    );
+    assert.isFalse(
+      ArtifactAppWindows.isArtifactAppQuitShortcut(key({ control: true, alt: true }), "linux"),
+    );
     assert.isFalse(
       ArtifactAppWindows.isArtifactAppQuitShortcut(key({ meta: true, shift: true }), "darwin"),
     );

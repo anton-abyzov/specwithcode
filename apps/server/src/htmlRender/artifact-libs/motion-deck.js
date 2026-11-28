@@ -1073,8 +1073,19 @@
     window.addEventListener("resize", function () {
       if (deck.ready) size();
     });
+    // A hidden page draws nothing and its clock stands still; it resumes where it was.
+    var looping = false;
+    function loop() {
+      if (looping || document.hidden) return;
+      looping = true;
+      requestAnimationFrame(function (now) {
+        last = now;
+        frame(now);
+      });
+    }
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) audio.suspend();
+      else loop();
     });
 
     // ---- frame loop
@@ -1121,6 +1132,10 @@
       call(entry, "update", s);
     }
     function frame(now) {
+      if (document.hidden) {
+        looping = false;
+        return;
+      }
       requestAnimationFrame(frame);
       var dt = Math.min(0.1, (now - last) / 1000);
       last = now;
@@ -1291,7 +1306,7 @@
         );
       },
     );
-    requestAnimationFrame(frame);
+    loop();
     window.SpecWithCodeDeck.current = api;
     return api;
   }
