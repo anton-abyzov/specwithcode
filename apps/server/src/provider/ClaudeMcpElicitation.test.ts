@@ -13,9 +13,11 @@ import {
   takeClaudeFormAnswers,
 } from "../orchestration-v2/ClaudeFormResponses.ts";
 import {
+  claudeElicitationCallKey,
   isUnattendedClaudeTurn,
   makeClaudeMcpElicitations,
   secretFieldNotice,
+  stoppedWaitingNotice,
   type ClaudeElicitationTurnContext,
   undeliveredAnswerNotice,
   UNATTENDED_MCP_ELICITATION_TIMEOUT_MS,
@@ -48,15 +50,24 @@ const turnInput = (thread: "user" | "agent", scheduled = false) =>
 // Request ids are unique per harness: a closing mark outlives its call (1493).
 let harnesses = 0;
 
-function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: boolean } = {}) {
+function harness(
+  options: {
+    thread?: "user" | "agent";
+    held?: boolean;
+    noTurn?: boolean;
+    stopping?: boolean;
+  } = {},
+) {
   const prefix = `h${++harnesses}`;
   const events: Array<Event> = [];
   let released = 0;
   let requestCount = 0;
+  const toolCalls = new Map<string, { readonly toolName: string }>();
   const context: ClaudeElicitationTurnContext = {
     input: turnInput(options.thread ?? "user"),
     providerTurnId: "provider-turn-1" as ClaudeElicitationTurnContext["providerTurnId"],
     heldRootFrames: options.held === true ? [{}] : [],
+    toolCalls,
   };
   const timer = Effect.runSync(Deferred.make<void>());
   const grace = Effect.runSync(Deferred.make<void>());
@@ -82,6 +93,7 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
       }),
     emitProviderEvent: (event) => Effect.sync(() => void events.push(event)),
     releaseHeldRootFrames: () => Effect.sync(() => void (released += 1)),
+    turnStopping: () => Effect.succeed(options.stopping === true),
     resolveItemOrdinal: () => Effect.succeed(7),
     idAllocator: {
       derive: {
@@ -93,10 +105,14 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     answerInFlightGrace: Deferred.await(grace),
     commitOutcomeLimit: Deferred.await(outcomeLimit),
   });
-  const ask = (request: Partial<ElicitationRequest>, signal = new AbortController().signal) =>
+  const ask = (
+    request: Partial<ElicitationRequest>,
+    signal = new AbortController().signal,
+    sdkRequestId = "sdk-request-1",
+  ) =>
     elicitations.onElicitation(
       { serverName: "github", message: "Delete octo/repo?", ...request } as ElicitationRequest,
-      { signal, requestId: "sdk-request-1" },
+      { signal, requestId: sdkRequestId },
     );
   const card = () =>
     events.find(
@@ -113,6 +129,16 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
         ? [event.turnItem.message]
         : [],
     );
+  // The thread shows one row per turn item; an update to the same item replaces it.
+  const shownNotices = () => [
+    ...new Map(
+      events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [[String(event.turnItem.id), event.turnItem.message] as const]
+          : [],
+      ),
+    ).values(),
+  ];
   const until = async (check: () => boolean) => {
     for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setImmediate(resolve));
     expect(check()).toBe(true);
@@ -124,6 +150,9 @@ function harness(options: { thread?: "user" | "agent"; held?: boolean; noTurn?: 
     ask,
     card,
     notices,
+    shownNotices,
+    toolCalls,
+    context,
     until,
     requestId,
     fireTimer: () => Effect.runSync(Deferred.succeed(timer, undefined)),
@@ -274,6 +303,41 @@ describe("ClaudeMcpElicitation", () => {
     expect(JSON.stringify(h.events)).not.toContain("evil.example");
   });
 
+  it("shows one URL note per tool call, however often the call retries (1495)", async () => {
+    const h = harness();
+    // The probe's -32042 call: three retries, each with a new request and elicitation id.
+    h.toolCalls.set("toolu_open", { toolName: "mcp__github__open_link" });
+    h.toolCalls.set("toolu_other", { toolName: "mcp__notion__search" });
+    for (const attempt of [1, 2, 3])
+      expect(
+        await h.ask(
+          { mode: "url", url: `https://example.com/sign-in?attempt=${attempt}` },
+          undefined,
+          `sdk-request-${attempt}`,
+        ),
+      ).toEqual({ action: "decline" });
+    expect(h.shownNotices()).toEqual([urlModeNotice("github")]);
+    // Another tool call of the same server gets its own note.
+    h.toolCalls.delete("toolu_open");
+    h.toolCalls.set("toolu_open_again", { toolName: "mcp__github__open_link" });
+    await h.ask({ mode: "url", url: "https://example.com/sign-in" }, undefined, "sdk-request-4");
+    expect(h.shownNotices()).toEqual([urlModeNotice("github"), urlModeNotice("github")]);
+  });
+
+  it("finds the tool call by the CLI's tool-name form of the server name", () => {
+    const h = harness();
+    h.toolCalls.set("toolu_gmail", { toolName: "mcp__claude_ai_Gmail__search_threads" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail")).toBe(
+      "claude.ai Gmail:call:toolu_gmail",
+    );
+    // No single running call of that server: the server and the turn stand in.
+    expect(claudeElicitationCallKey(h.context, "github")).toBe("github:turn:provider-turn-1");
+    h.toolCalls.set("toolu_gmail_2", { toolName: "mcp__claude_ai_Gmail__get_thread" });
+    expect(claudeElicitationCallKey(h.context, "claude.ai Gmail")).toBe(
+      "claude.ai Gmail:turn:provider-turn-1",
+    );
+  });
+
   it("cancels a form it cannot show, with a note", async () => {
     const h = harness();
     const result = await h.ask({
@@ -285,7 +349,7 @@ describe("ClaudeMcpElicitation", () => {
   });
 
   it("closes the card as cancelled when the turn stops", async () => {
-    const h = harness();
+    const h = harness({ stopping: true });
     const controller = new AbortController();
     const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
     await h.until(() => h.card() !== undefined);
@@ -298,12 +362,32 @@ describe("ClaudeMcpElicitation", () => {
         (event.type === "turn_item.updated" && event.turnItem.status === "cancelled"),
     );
     expect(closed).toHaveLength(3);
+    // The person stopped the turn; no note says the server gave up.
+    expect(h.notices()).toEqual([]);
     // A late answer to the closed card is taken and ignored.
     expect(
       await Effect.runPromise(
         h.elicitations.respond({ requestId: h.requestId, decision: "accept" }),
       ),
     ).toBe(true);
+  });
+
+  it("closes the card and says so when the server stops waiting on its own (1495)", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    // The probe's legacy server cancels its request after 60 s; the SDK aborts.
+    controller.abort();
+    expect(await result).toEqual({ action: "cancel" });
+    expect(
+      h.events.filter(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+      ),
+    ).toHaveLength(1);
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+    expect(stoppedWaitingNotice("github")).toBe("github stopped waiting for an answer.");
   });
 
   it("answers a signal that was already aborted at once", async () => {
@@ -323,9 +407,10 @@ describe("ClaudeMcpElicitation", () => {
     expect(await result).toEqual({ action: "cancel" });
     expect(h.notices()).toEqual([unattendedTimeoutNotice("github")]);
     expect(unattendedTimeoutNotice("github")).toBe(
-      "No one answered github's question in 30 minutes; it was cancelled.",
+      "No one answered github's question in 5 minutes; it was cancelled.",
     );
-    expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(30 * 60 * 1_000);
+    // Shorter than the HTTP stream drop the 1495 probe measured (about 356 s).
+    expect(UNATTENDED_MCP_ELICITATION_TIMEOUT_MS).toBe(5 * 60 * 1_000);
   });
 
   it("refuses an answer that comes in after the timer began closing the card (1493)", async () => {

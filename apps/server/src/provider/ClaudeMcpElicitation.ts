@@ -9,6 +9,7 @@
  * `decline` or `cancel`.
  *
  * - URL mode is declined with a note in the thread; no link is shown or opened.
+ *   A tool call that retries the request shows one note, not one per retry.
  * - A form the card cannot show is cancelled with a note.
  * - A form that asks for a password, token or other secret is declined with a
  *   note and never shown.
@@ -17,7 +18,9 @@
  *   answer that is not the person's own (`ClaudeFormResponses.ts`).
  * - The person's raw answers arrive through an in-process hand-off; the
  *   thread's records keep only which fields were answered.
- * - Stopping the turn closes the card as cancelled.
+ * - Stopping the turn closes the card as cancelled. When the SDK stops waiting
+ *   on its own (the server or the CLI gave up) the card closes too, and a note
+ *   says the server stopped waiting.
  * - A thread nobody watches (a delegated worker, a routine) cancels the card
  *   after {@link UNATTENDED_MCP_ELICITATION_TIMEOUT_MS}.
  *
@@ -71,8 +74,14 @@ import {
 import type * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 
-/** How long a card in a thread nobody watches waits before it is cancelled. */
-export const UNATTENDED_MCP_ELICITATION_TIMEOUT_MS = 30 * 60 * 1_000;
+/**
+ * How long a card in a thread nobody watches waits before it is cancelled.
+ * The shortest deadline no server signals (1495 probe): over HTTP without SSE
+ * keepalives, Claude Code drops the call's stream after about 356 seconds of
+ * silence and the answer is lost. A server's own timeout (60 seconds in the MCP
+ * TypeScript SDK) arrives as the SDK's abort instead, with its own note.
+ */
+export const UNATTENDED_MCP_ELICITATION_TIMEOUT_MS = 5 * 60 * 1_000;
 
 /** How long the timer waits for an answer the app recorded but has not delivered yet. */
 export const ANSWER_IN_FLIGHT_GRACE_MS = 2 * 60 * 1_000;
@@ -84,6 +93,8 @@ export interface ClaudeElicitationTurnContext {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: ProviderTurnId;
   readonly heldRootFrames: ReadonlyArray<unknown>;
+  /** The turn's running tool calls, keyed by the CLI's tool use id. */
+  readonly toolCalls?: ReadonlyMap<string, { readonly toolName: string }>;
 }
 
 interface ApprovalArtifacts {
@@ -105,6 +116,8 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
     event: ProviderAdapter.ProviderAdapterV2Event,
   ) => Effect.Effect<void>;
   readonly releaseHeldRootFrames: (context: C) => Effect.Effect<void>;
+  /** The person's Stop, a rollback or a fork is ending this turn. */
+  readonly turnStopping: (context: C) => Effect.Effect<boolean>;
   readonly resolveItemOrdinal: (context: C, nativeItemId: string) => Effect.Effect<number>;
   readonly idAllocator: Pick<IdAllocator.IdAllocatorV2Shape, "derive">;
   readonly runPromise: <A>(effect: Effect.Effect<A>) => Promise<A>;
@@ -161,7 +174,9 @@ export const urlModeNotice = (serverName: string) =>
 export const unreadableFormNotice = (serverName: string) =>
   `${serverName} asked for input in a form SpecWithCode can't show yet; it was cancelled.`;
 export const unattendedTimeoutNotice = (serverName: string) =>
-  `No one answered ${serverName}'s question in 30 minutes; it was cancelled.`;
+  `No one answered ${serverName}'s question in 5 minutes; it was cancelled.`;
+export const stoppedWaitingNotice = (serverName: string) =>
+  `${serverName} stopped waiting for an answer.`;
 export const secretFieldNotice = (serverName: string, fieldTitle: string) =>
   `${serverName} asked for a password or secret ("${fieldTitle}"). SpecWithCode doesn't send those through forms, so it was declined.`;
 export const undeliveredAnswerNotice = (serverName: string) =>
@@ -188,6 +203,27 @@ export function elicitationResultForDecision(
       return { action: "accept", content: checked.content as ElicitationResult["content"] };
     }
   }
+}
+
+/**
+ * One key per tool call for a server's requests in this turn. The SDK's
+ * request carries no tool use id, and each retry of a URL request (`-32042`)
+ * comes with a new request id and elicitation id (1495 probe), so the call is
+ * found among the turn's running tool calls: `mcp__<server>__<tool>`, with the
+ * server name in the CLI's tool-name form. With no single such call, the
+ * server and the turn stand in for it.
+ */
+export function claudeElicitationCallKey(
+  context: ClaudeElicitationTurnContext,
+  serverName: string,
+): string {
+  const prefix = `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, "_")}__`;
+  const calls = [...(context.toolCalls?.entries() ?? [])].filter(([, call]) =>
+    call.toolName.startsWith(prefix),
+  );
+  return calls.length === 1
+    ? `${serverName}:call:${calls[0]![0]}`
+    : `${serverName}:turn:${String(context.providerTurnId)}`;
 }
 
 const abortEffect = (signal: AbortSignal) =>
@@ -291,7 +327,12 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       }
       const nativeRequestId = `mcp-elicitation:${request.serverName}:${sdkRequestId}`;
       if (request.mode === "url") {
-        yield* notice(context, `${nativeRequestId}:notice`, urlModeNotice(request.serverName));
+        // Keyed by the tool call, so a retried request replaces its own note.
+        yield* notice(
+          context,
+          `mcp-elicitation:${claudeElicitationCallKey(context, request.serverName)}:url-notice`,
+          urlModeNotice(request.serverName),
+        );
         return DECLINE;
       }
       const form = parseMcpElicitationSchema(request.requestedSchema);
@@ -420,6 +461,13 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
             context,
             `${nativeRequestId}:timeout`,
             unattendedTimeoutNotice(request.serverName),
+          );
+        // The SDK aborted on its own, not for the person's Stop: say so.
+        else if (!(yield* deps.turnStopping(context)))
+          yield* notice(
+            context,
+            `${nativeRequestId}:stopped`,
+            stoppedWaitingNotice(request.serverName),
           );
         return CANCEL;
       }).pipe(
