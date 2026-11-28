@@ -7,6 +7,7 @@ import { actionMachineRu } from "./actionMachine/ru";
 import { coordinatorMessagesRu } from "./coordinatorMessages/ru";
 import { providerSignInRu } from "./providerSignIn/ru";
 import { limitHopsRu } from "./limitHops/ru";
+import { installedPagesRu } from "./installedPages/ru";
 import { guidedTourRu } from "./guidedTour/ru";
 import { helperChatsRu } from "./helperChats/ru";
 
@@ -20,6 +21,7 @@ export const ru: PhraseCatalog = {
   ...coordinatorMessagesRu,
   ...providerSignInRu,
   ...limitHopsRu,
+  ...installedPagesRu,
   ...guidedTourRu,
   ...helperChatsRu,
   About: "О приложении",

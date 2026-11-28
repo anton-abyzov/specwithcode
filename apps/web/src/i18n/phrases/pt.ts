@@ -7,6 +7,7 @@ import { actionMachinePt } from "./actionMachine/pt";
 import { coordinatorMessagesPt } from "./coordinatorMessages/pt";
 import { providerSignInPt } from "./providerSignIn/pt";
 import { limitHopsPt } from "./limitHops/pt";
+import { installedPagesPt } from "./installedPages/pt";
 import { guidedTourPt } from "./guidedTour/pt";
 import { helperChatsPt } from "./helperChats/pt";
 
@@ -20,6 +21,7 @@ export const pt: PhraseCatalog = {
   ...coordinatorMessagesPt,
   ...providerSignInPt,
   ...limitHopsPt,
+  ...installedPagesPt,
   ...guidedTourPt,
   ...helperChatsPt,
   About: "Sobre",

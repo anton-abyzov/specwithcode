@@ -7,6 +7,7 @@ import { actionMachineDe } from "./actionMachine/de";
 import { coordinatorMessagesDe } from "./coordinatorMessages/de";
 import { providerSignInDe } from "./providerSignIn/de";
 import { limitHopsDe } from "./limitHops/de";
+import { installedPagesDe } from "./installedPages/de";
 import { guidedTourDe } from "./guidedTour/de";
 import { helperChatsDe } from "./helperChats/de";
 
@@ -20,6 +21,7 @@ export const de: PhraseCatalog = {
   ...coordinatorMessagesDe,
   ...providerSignInDe,
   ...limitHopsDe,
+  ...installedPagesDe,
   ...guidedTourDe,
   ...helperChatsDe,
   About: "Über",

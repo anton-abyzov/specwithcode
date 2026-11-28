@@ -7,7 +7,7 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
 
-import type * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
+import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
 import { harness, hostPath, input, withHome } from "./artifactAppInstallerTestHarness.ts";
 
 const shimConfig = (loaderPath: string): ArtifactAppInstaller.ArtifactAppShimConfig => ({
@@ -506,7 +506,10 @@ describe("ArtifactAppInstaller with app shims", () => {
         h.calls.tampered.add(hostPath(bundle));
         // The same title from another thread, and the person picks Open.
         const other = yield* h.installer.install({ ...input, threadId: "thread-2" });
-        assert.equal(other.status, "failed");
+        assert.deepEqual(other, {
+          status: "failed",
+          message: ArtifactAppInstaller.artifactAppOtherUnconfirmedFailure("Morning dashboard"),
+        });
         assert.equal(h.calls.dialogs.at(-1)?.message, "Morning dashboard is already installed.");
         assert.equal(h.calls.openedApps.length, opened);
         assert.deepEqual(yield* h.records.list, [first.app]);

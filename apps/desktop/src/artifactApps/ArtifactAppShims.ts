@@ -267,25 +267,34 @@ const make = Effect.gen(function* () {
   let lastUninstallRequest = 0;
   const askPage = (contents: Electron.WebContents) =>
     Effect.suspend(() => {
-      // Only this request's answer counts, not a late one to an earlier request.
       const requestId = ++lastUninstallRequest;
-      let stopListening = () => {};
+      // Decided once: the page takes the confirm while this request waits, or it goes
+      // native. A late answer is refused, so the page never opens a second confirm.
+      let owner: "waiting" | "page" | "native" = "waiting";
       return Effect.callback<void>((resume) => {
-        const onAck = (_event: unknown, id: unknown) => {
-          if (id === requestId) resume(Effect.void);
-        };
-        contents.ipc.on(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, onAck);
-        stopListening = () =>
-          contents.ipc.removeListener(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, onAck);
+        contents.ipc.removeHandler(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL);
+        contents.ipc.handle(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, (_event, id: unknown) => {
+          if (owner !== "waiting" || id !== requestId) return false;
+          owner = "page";
+          resume(Effect.void);
+          return true;
+        });
         contents.send(ARTIFACT_APP_UNINSTALL_REQUEST_CHANNEL, requestId);
       }).pipe(
         Effect.timeoutOption(ARTIFACT_APP_UNINSTALL_ACK_WAIT),
-        Effect.map(Option.isSome),
-        Effect.ensuring(Effect.sync(() => stopListening())),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (owner === "waiting") owner = "native";
+            contents.ipc.removeHandler(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL);
+          }),
+        ),
+        Effect.map(() => owner === "page"),
       );
     });
 
-  const requestUninstall = Effect.fn("desktop.artifactAppShims.requestUninstall")(function* (
+  // One question per page at a time: more clicks while it is asked add no second confirm.
+  const uninstallAsking = new Set<string>();
+  const askToUninstall = Effect.fn("desktop.artifactAppShims.askToUninstall")(function* (
     installId: string,
     shim: Electron.AppShimHost,
   ) {
@@ -318,6 +327,14 @@ const make = Effect.gen(function* () {
     if (choice !== 0) return;
     yield* installer.uninstall(installId);
   });
+  const requestUninstall = (installId: string, shim: Electron.AppShimHost) =>
+    Effect.suspend(() => {
+      if (uninstallAsking.has(installId)) return Effect.void;
+      uninstallAsking.add(installId);
+      return askToUninstall(installId, shim).pipe(
+        Effect.ensuring(Effect.sync(() => uninstallAsking.delete(installId))),
+      );
+    });
 
   const connect = Effect.fn("desktop.artifactAppShims.connect")(function* (
     shim: Electron.AppShimHost,

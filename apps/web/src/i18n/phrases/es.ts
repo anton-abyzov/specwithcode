@@ -7,6 +7,7 @@ import { actionMachineEs } from "./actionMachine/es";
 import { coordinatorMessagesEs } from "./coordinatorMessages/es";
 import { providerSignInEs } from "./providerSignIn/es";
 import { limitHopsEs } from "./limitHops/es";
+import { installedPagesEs } from "./installedPages/es";
 import { guidedTourEs } from "./guidedTour/es";
 import { helperChatsEs } from "./helperChats/es";
 
@@ -20,6 +21,7 @@ export const es: PhraseCatalog = {
   ...coordinatorMessagesEs,
   ...providerSignInEs,
   ...limitHopsEs,
+  ...installedPagesEs,
   ...guidedTourEs,
   ...helperChatsEs,
   About: "Acerca de",

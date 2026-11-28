@@ -7,6 +7,7 @@ import { actionMachineKo } from "./actionMachine/ko";
 import { coordinatorMessagesKo } from "./coordinatorMessages/ko";
 import { providerSignInKo } from "./providerSignIn/ko";
 import { limitHopsKo } from "./limitHops/ko";
+import { installedPagesKo } from "./installedPages/ko";
 import { guidedTourKo } from "./guidedTour/ko";
 import { helperChatsKo } from "./helperChats/ko";
 
@@ -20,6 +21,7 @@ export const ko: PhraseCatalog = {
   ...coordinatorMessagesKo,
   ...providerSignInKo,
   ...limitHopsKo,
+  ...installedPagesKo,
   ...guidedTourKo,
   ...helperChatsKo,
   About: "정보",

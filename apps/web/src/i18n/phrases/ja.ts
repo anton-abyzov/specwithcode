@@ -7,6 +7,7 @@ import { actionMachineJa } from "./actionMachine/ja";
 import { coordinatorMessagesJa } from "./coordinatorMessages/ja";
 import { providerSignInJa } from "./providerSignIn/ja";
 import { limitHopsJa } from "./limitHops/ja";
+import { installedPagesJa } from "./installedPages/ja";
 import { guidedTourJa } from "./guidedTour/ja";
 import { helperChatsJa } from "./helperChats/ja";
 
@@ -20,6 +21,7 @@ export const ja: PhraseCatalog = {
   ...coordinatorMessagesJa,
   ...providerSignInJa,
   ...limitHopsJa,
+  ...installedPagesJa,
   ...guidedTourJa,
   ...helperChatsJa,
   About: "このアプリについて",

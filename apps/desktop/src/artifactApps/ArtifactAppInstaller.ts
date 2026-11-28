@@ -191,6 +191,11 @@ export function artifactAppAlreadyInstalledChoice(name: string): Electron.Messag
 const UNCONFIRMED_LAUNCHER_FAILURE =
   "This page's app could not be confirmed as the one SpecWithCode installed, so it was not opened. Try again; if it keeps failing, uninstall it and install it again.";
 
+/** The app another page installed under this name could not be confirmed, so it was not opened. */
+export function artifactAppOtherUnconfirmedFailure(name: string): string {
+  return `${name} could not be confirmed as the app SpecWithCode installed, so it was not opened. Install this page again and choose Install another copy, or uninstall ${name} from its own window.`;
+}
+
 const GENERIC_FAILURE = "SpecWithCode could not install this page as an app. Try again.";
 
 const installedTime = (app: DesktopArtifactApp) => {
@@ -921,7 +926,7 @@ const make = Effect.gen(function* () {
       );
       if (answer === 0) {
         if (!(yield* openInstall(other.installId, otherLocation))) {
-          return failed(UNCONFIRMED_LAUNCHER_FAILURE);
+          return failed(artifactAppOtherUnconfirmedFailure(other.name));
         }
         return { status: "already-installed", app: other } as const;
       }

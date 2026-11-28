@@ -30,7 +30,7 @@ Uninstall is not a button in the page's window. It is in two quieter places:
 - the window's **More** menu (the "…" button in its header), on every system: **Uninstall <Name>…**;
 - on macOS, the page's own app menu: **Uninstall <Name>…**.
 
-Both open the same confirm inside the page's window: "Uninstall <Name>?", with Cancel as the default. Confirming removes the launcher (to the Trash on macOS), forgets the install and closes the window; the page stays in its thread and can be installed again. The macOS menu item does not uninstall by itself: SpecWithCode focuses the page's window and asks it to show the confirm (`desktop:artifact-app-uninstall-request`), because a dialog from SpecWithCode, running in the background, could open behind the page. The page answers on `desktop:artifact-app-uninstall-ack` when it will show the confirm. If it does not answer within a second (it is still loading, crashed, or cannot show it), or it has no window, SpecWithCode opens the window if it can and shows the same question as a native sheet on it, with Cancel as the default.
+Both open the same confirm inside the page's window: "Uninstall <Name>?", with Cancel as the default. Confirming removes the launcher (to the Trash on macOS), forgets the install and closes the window; the page stays in its thread and can be installed again. The macOS menu item does not uninstall by itself: SpecWithCode focuses the page's window and asks it to show the confirm (`desktop:artifact-app-uninstall-request`), because a dialog from SpecWithCode, running in the background, could open behind the page. The page asks on `desktop:artifact-app-uninstall-ack` to show the confirm, and shows it only when the main process hands it over; a late answer is refused, so the page never opens a second confirm. If it does not answer within a second (it is still loading, crashed, or cannot show it), or it has no window, SpecWithCode opens the window if it can and shows the same question as a native sheet on it, with Cancel as the default.
 
 ## macOS: one app per page
 
@@ -90,7 +90,8 @@ The window takes the page's identity only while the entry is on disk. Without it
 - `apps/desktop/src/artifactApps/ArtifactAppLaunchers.ts`: launcher file generators.
 - `apps/desktop/src/artifactApps/ArtifactAppInstaller.ts`: install, the same-title check, ownership checks, signing, hash records, upgrade.
 - `apps/desktop/src/artifactApps/ArtifactAppShims.ts`: shim server, verification, page menu (and its uninstall request to the window), reopen and update message.
-- `apps/web/src/components/artifactApps/ArtifactAppView.tsx`: the page window's header, its More menu and the uninstall confirm.
+- `apps/web/src/components/artifactApps/ArtifactAppView.tsx`: the page window's header.
+- `apps/web/src/components/artifactApps/ArtifactAppUninstall.tsx`: the header's More menu, the Uninstall confirm and the app menu's uninstall request.
 - `apps/desktop/src/artifactApps/ArtifactAppWindows.ts`: page windows, in a shim or not.
 - `apps/desktop/src/electron/LinuxWindowIdentity.ts`: a Linux window's app id and `WM_CLASS`.
 - `apps/desktop/src/artifactApps/ArtifactAppShimRecords.ts`: the private hash and reopen files.

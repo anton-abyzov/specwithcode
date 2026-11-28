@@ -7,6 +7,7 @@ import { actionMachineFr } from "./actionMachine/fr";
 import { coordinatorMessagesFr } from "./coordinatorMessages/fr";
 import { providerSignInFr } from "./providerSignIn/fr";
 import { limitHopsFr } from "./limitHops/fr";
+import { installedPagesFr } from "./installedPages/fr";
 import { guidedTourFr } from "./guidedTour/fr";
 import { helperChatsFr } from "./helperChats/fr";
 
@@ -20,6 +21,7 @@ export const fr: PhraseCatalog = {
   ...coordinatorMessagesFr,
   ...providerSignInFr,
   ...limitHopsFr,
+  ...installedPagesFr,
   ...guidedTourFr,
   ...helperChatsFr,
   About: "À propos",

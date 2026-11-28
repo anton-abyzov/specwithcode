@@ -299,10 +299,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => ipcRenderer.removeListener(IpcChannels.ARTIFACT_APP_POWER_EVENT_CHANNEL, handler);
   },
   onArtifactAppUninstallRequest: (listener) => {
-    // The ack tells the main process this page shows the confirm, so it does not ask too.
+    // The page shows the confirm only when the main process hands it over; a request
+    // it already answered natively is refused, so no second confirm opens.
     const handler = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
-      ipcRenderer.send(IpcChannels.ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, requestId);
-      listener();
+      void ipcRenderer
+        .invoke(IpcChannels.ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, requestId)
+        .then((accepted: unknown) => {
+          if (accepted === true) listener();
+        })
+        .catch(() => undefined);
     };
     ipcRenderer.on(IpcChannels.ARTIFACT_APP_UNINSTALL_REQUEST_CHANNEL, handler);
     return () =>
