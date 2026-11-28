@@ -7,14 +7,23 @@ export interface WakeLabelParts {
 }
 
 /**
+ * The longest outcome text the server writes after a quoted title, such as
+ * ` was stopped (exit 130)` or ` reported new output` (Notification.ts).
+ */
+const MAX_OUTCOME_TAIL = 28;
+
+/**
  * Splits `Delegated task "X" finished` into `Delegated task "X"` and ` finished`,
- * at the last closing quote. A label without a quoted title, or with nothing
- * after it, stays whole in `head`.
+ * at the last closing quote. A label without a quoted title, with nothing after
+ * it, or whose text after the last quote is not a short outcome (a list of task
+ * names, for example) stays whole in `head`, so it truncates as one piece.
  */
 export function splitWakeLabel(label: string): WakeLabelParts {
   const close = label.lastIndexOf('"');
   if (close <= 0 || label.indexOf('"') === close) return { head: label, tail: "" };
   const tail = label.slice(close + 1);
-  if (tail.trim() === "") return { head: label, tail: "" };
+  if (tail.trim() === "" || tail.length > MAX_OUTCOME_TAIL || tail.includes(",")) {
+    return { head: label, tail: "" };
+  }
   return { head: label.slice(0, close + 1), tail };
 }
