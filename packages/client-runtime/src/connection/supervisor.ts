@@ -68,6 +68,8 @@ export const RECENT_CONNECTION_WINDOW_MS = 30 * 60_000;
  */
 export const KNOWN_MACHINE_RETRY_MAX_DELAY_MS = 120_000;
 export const KNOWN_CONNECTION_WINDOW_MS = 7 * 24 * 60 * 60_000;
+/** How often a live session refreshes the saved time of the last session (1517). */
+const LAST_CONNECTED_REFRESH = Duration.hours(1);
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const loopbackEstablishmentTimeout = Duration.fromInputUnsafe(
@@ -434,8 +436,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // had none while wanting one, and why the latest attempt failed. Merged into
   // every published state, so a retry cannot blank what a person reads.
   const rememberLastConnected = (at: number) => options?.lastConnected?.write(at) ?? Effect.void;
+  // The last session from an earlier run of the app counts only toward the
+  // retry cap; what a person reads starts fresh, so a first attempt after a
+  // relaunch does not read as a reconnect.
+  const rememberedLastConnectedAt = options?.lastConnected
+    ? yield* options.lastConnected.read
+    : null;
   const reach = yield* Ref.make<ConnectionReach>({
-    lastConnectedAt: options?.lastConnected ? yield* options.lastConnected.read : null,
+    lastConnectedAt: null,
     lostAt: initialIntent.desired ? yield* Clock.currentTimeMillis : null,
     lossFailure: null,
   });
@@ -1049,6 +1057,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, active.lease).pipe(Effect.forkScoped);
     }
+    if (options?.lastConnected !== undefined) {
+      // Kept fresh while the session lasts: closing the app can skip the write
+      // at its end, and a session older than the window would lose the cap.
+      yield* Effect.sleep(LAST_CONNECTED_REFRESH).pipe(
+        Effect.andThen(Clock.currentTimeMillis),
+        Effect.flatMap(rememberLastConnected),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+    }
     yield* setState({
       desired: true,
       network: currentIntent.network,
@@ -1262,7 +1280,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
-      const lastConnectedAt = (yield* Ref.get(reach)).lastConnectedAt;
+      const lastConnectedAt = (yield* Ref.get(reach)).lastConnectedAt ?? rememberedLastConnectedAt;
       // A device waiting for approval asks again on a steady beat, so it gets
       // in within seconds of the owner typing its code (1327).
       const waitingForApproval =

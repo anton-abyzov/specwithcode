@@ -287,13 +287,14 @@ describe("EnvironmentSupervisor recovery of a machine that was just connected", 
         yield* TestClock.adjust(waitMs);
       }
       expect(backoffCeiling(waits)).toBe(EnvironmentSupervisor.KNOWN_MACHINE_RETRY_MAX_DELAY_MS);
+      // The earlier run's session sets the cap only; this run has had none yet.
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
-        lastConnectedAt: yesterday,
+        lastConnectedAt: null,
       });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("remembers when a session starts and when it ends", () =>
+  it.effect("remembers when a session starts, hourly while it lasts, and when it ends", () =>
     Effect.gen(function* () {
       const written: Array<number> = [];
       const harness = yield* makeHarness({
@@ -307,11 +308,14 @@ describe("EnvironmentSupervisor recovery of a machine that was just connected", 
         },
       }).pipe(Effect.provide(harness.dependencies));
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(written.length).toBeGreaterThan(0);
+      expect(written).toEqual([0]);
+      // A long session keeps the record fresh, in case the app closes before it ends.
+      yield* TestClock.adjust("3 hours");
+      expect(written.slice(1)).toEqual([3_600_000, 7_200_000, 10_800_000]);
       yield* TestClock.adjust("10 minutes");
       yield* harness.close();
       yield* awaitState(supervisor.state, (state) => state.phase !== "connected");
-      expect(written.at(-1)).toBe(10 * 60_000);
+      expect(written.at(-1)).toBe(3 * 3_600_000 + 10 * 60_000);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
