@@ -7,10 +7,8 @@ import Weave
 struct DrawerView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
-  @State private var showAllProjects = false
-  @State private var showAllRecents = false
-  @State private var showAutomated = false
-  @State private var showArchived = false
+  @State private var scrollPosition = ScrollPosition(edge: .top)
+  @State private var awaitingScrollLayout = true
   @State private var settingUpAide = false
 
   private static let collapsedProjectCount = 6
@@ -33,6 +31,23 @@ struct DrawerView: View {
           .padding(.bottom, 112)
         }
         .scrollIndicators(.hidden)
+        // Opening the drawer again shows the list where it was left.
+        .scrollPosition($scrollPosition)
+        .onScrollGeometryChange(for: CGFloat?.self, of: { geometry in
+          guard geometry.containerSize.height > 0, geometry.contentSize.height > 0 else { return nil }
+          return max(0, geometry.contentOffset.y + geometry.contentInsets.top)
+        }) { _, offset in
+          guard let offset else { return }
+          if awaitingScrollLayout {
+            awaitingScrollLayout = false
+            if router.drawerScrollOffset > 0 {
+              scrollPosition.scrollTo(y: router.drawerScrollOffset)
+              return
+            }
+          }
+          router.drawerScrollOffset = offset
+        }
+        .onDisappear { awaitingScrollLayout = true }
         .overlay(alignment: .bottom) { bottomBar }
       }
     }
@@ -144,31 +159,31 @@ struct DrawerView: View {
     let archived = model.archivedProjects
     if !projects.isEmpty || !automated.isEmpty || !archived.isEmpty {
       DrawerSectionLabel("Projects")
-      let visible = showAllProjects ? projects : Array(projects.prefix(Self.collapsedProjectCount))
+      let visible = router.drawerFolds.allProjects ? projects : Array(projects.prefix(Self.collapsedProjectCount))
       let shared = Self.sharedTitles(projects + automated + archived)
-      ForEach(visible) { project in projectRow(project, shared: shared) }
+      ForEach(visible, id: \.rowKey) { project in projectRow(project, shared: shared) }
       if projects.count > Self.collapsedProjectCount {
-        foldButton(showAllProjects ? "Show less" : "Show all \(projects.count)", open: showAllProjects) {
-          showAllProjects.toggle()
+        foldButton(router.drawerFolds.allProjects ? "Show less" : "Show all \(projects.count)", open: router.drawerFolds.allProjects) {
+          router.drawerFolds.allProjects.toggle()
         }
       }
       if !automated.isEmpty {
         // Checks and agents make these for themselves; they stay folded until asked for.
-        let open = showAutomated || automated.contains { isSelected(.project($0.ref)) }
+        let open = router.drawerFolds.automated || automated.contains { isSelected(.project($0.ref)) }
         foldButton(open ? "Hide automated" : "Automated (\(automated.count))", open: open) {
-          showAutomated = !open
+          router.drawerFolds.automated = !open
         }
         if open {
-          ForEach(automated) { project in projectRow(project, shared: shared) }
+          ForEach(automated, id: \.rowKey) { project in projectRow(project, shared: shared) }
         }
       }
       if !archived.isEmpty {
-        let open = showArchived || archived.contains { isSelected(.project($0.ref)) }
+        let open = router.drawerFolds.archived || archived.contains { isSelected(.project($0.ref)) }
         foldButton(open ? "Hide archived" : "Archived (\(archived.count))", open: open) {
-          showArchived = !open
+          router.drawerFolds.archived = !open
         }
         if open {
-          ForEach(archived) { project in projectRow(project, shared: shared) }
+          ForEach(archived, id: \.rowKey) { project in projectRow(project, shared: shared) }
         }
       }
     }
@@ -224,7 +239,7 @@ struct DrawerView: View {
 
   @ViewBuilder private var recentsSection: some View {
     let grouped = RecentChatGroups(model.recentThreads)
-    let visible = Set((showAllRecents ? grouped.groups.flatMap(\.threads) : Array(grouped.groups.flatMap(\.threads).prefix(Self.recentCount))).map(\.ref))
+    let visible = Set((router.drawerFolds.allRecents ? grouped.groups.flatMap(\.threads) : Array(grouped.groups.flatMap(\.threads).prefix(Self.recentCount))).map(\.ref))
     if !grouped.groups.isEmpty {
       DrawerSectionLabel("Recents", detail: model.staleMachines.isEmpty ? nil : "Updating")
       ForEach(grouped.groups, id: \.label) { group in
@@ -246,7 +261,7 @@ struct DrawerView: View {
         }
       }
       if model.recentThreads.count > Self.recentCount {
-        foldButton(showAllRecents ? "Show fewer chats" : "Show all \(model.recentThreads.count) chats", open: showAllRecents) { showAllRecents.toggle() }
+        foldButton(router.drawerFolds.allRecents ? "Show fewer chats" : "Show all \(model.recentThreads.count) chats", open: router.drawerFolds.allRecents) { router.drawerFolds.allRecents.toggle() }
       }
     }
   }
@@ -449,5 +464,17 @@ extension View {
         }
       }
       .accessibilityAddTraits(isSelected ? .isSelected : [])
+  }
+}
+
+extension ProjectSummary {
+  /// A project row's identity in a list. A project on several machines is
+  /// shown through one copy, and that copy changes as machines connect and
+  /// threads update; keyed by it, the row was removed and inserted again under
+  /// the person scrolling. The linked project's id stays the same while
+  /// copies load; without one, the set of its copies does.
+  var rowKey: AnyHashable {
+    if let logicalProjectId { return AnyHashable("logical:\(logicalProjectId)") }
+    return members.isEmpty ? AnyHashable(ref) : AnyHashable(Set(members.map(\.ref)))
   }
 }

@@ -165,6 +165,11 @@ final class AppRouter {
   private var linkedThread: ThreadRef?
   /// Search replaces the drawer list. Closing the drawer ends it.
   var isDrawerSearching = false
+  /// The drawer leaves the view tree when it closes; where its list was
+  /// scrolled and which parts were unfolded live here, so opening it again
+  /// shows the list as it was left instead of folded at the top.
+  var drawerFolds = DrawerFolds()
+  @ObservationIgnored var drawerScrollOffset: CGFloat = 0
   var sheet: SheetRoute?
   var toast: WeaveToastMessage?
   /// Unsent composer text per conversation.
@@ -667,6 +672,13 @@ final class AppRouter {
   @discardableResult
   func applyRestore(in model: AppModel) -> Bool {
     guard let saved = pendingRestore else { return true }
+    // The person opened the drawer or a sheet while the saved chat was
+    // loading: they are choosing something else. Restoring now closed the
+    // drawer under them and its list came back at the top.
+    if isDrawerOpen || sheet != nil {
+      pendingRestore = nil
+      return true
+    }
     if root != Self.onTalkSeat(saved.root, in: model) {
       switch Self.restoreState(of: saved.root, in: model) {
       case .waiting:
@@ -724,4 +736,12 @@ struct SentModel: Equatable {
   var selection: ModelSelection
   var threadWas: ModelSelection?
   var runStartedBefore: Date?
+}
+
+/// The drawer's "Show all" and folded sections.
+struct DrawerFolds: Equatable {
+  var allProjects = false
+  var allRecents = false
+  var automated = false
+  var archived = false
 }

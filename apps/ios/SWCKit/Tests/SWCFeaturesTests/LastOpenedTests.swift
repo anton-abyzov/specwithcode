@@ -63,6 +63,20 @@ struct LastOpenedTests {
     #expect(store.load() == LastOpened(root: .project(project), thread: thread))
   }
 
+  /// Opening the drawer while the saved chat loads ends the restore, so the
+  /// drawer is not closed under the person scrolling it.
+  @Test func anOpenDrawerEndsTheRestore() throws {
+    let model = model()
+    let (project, thread) = try projectWithThread(in: model)
+    let router = AppRouter(lastOpenedStore: store())
+    router.pendingRestore = LastOpened(root: .project(project), thread: thread)
+    router.isDrawerOpen = true
+    #expect(router.applyRestore(in: model))
+    #expect(router.isDrawerOpen)
+    #expect(router.main.path.isEmpty)
+    #expect(router.pendingRestore == nil)
+  }
+
   @Test func waitsForARootNotInYetWithoutShowingAide() throws {
     let model = model()
     let (project, thread) = try projectWithThread(in: model)

@@ -310,6 +310,8 @@ import type { ThreadPlanCompact } from "../studio/threadPlanProgress";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
+import { followSearchHighlight } from "./sidebarSearchHighlight";
+import { useHeldOrder } from "../hooks/useHeldOrder";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -2684,6 +2686,12 @@ export default function Sidebar() {
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
   );
+  // Recent activity re-sorts the projects; the open list keeps its order.
+  const menuProjectScopeItems = useHeldOrder(
+    projectScopeItems,
+    projectScopeItemValue,
+    projectScopeMenuState.open,
+  );
   const projectScopeFilter = useComboboxFilter();
   // Filtering derives from the same React state that controls the input, so
   // the visible query and the visible list can never desync — the peer wiring
@@ -2694,12 +2702,12 @@ export default function Sidebar() {
   const filteredProjectScopeItems = useMemo(
     () =>
       filterSidebarProjectScopeItems({
-        items: projectScopeItems,
+        items: menuProjectScopeItems,
         query: projectScopeMenuState.query,
         matches: (item, query) =>
           projectScopeFilter.contains(item, query, (candidate) => candidate.label),
       }),
-    [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
+    [projectScopeFilter, menuProjectScopeItems, projectScopeMenuState.query],
   );
   const scopedProjectGroup = useMemo(
     () =>
@@ -2986,16 +2994,36 @@ export default function Sidebar() {
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
     .join("\0");
 
+  // Results that reorder by themselves keep the highlight on its thread; a
+  // new query (onSearchQueryChange) starts again at the first result.
+  const searchResultOrderRef = useRef({
+    order: threadSearchResultOrderKey,
+    query: threadSearchQuery,
+  });
   useEffect(() => {
-    setActiveSearchResultIndex(0);
-  }, [threadSearchResultOrderKey]);
+    const previous = searchResultOrderRef.current.order;
+    const sameQuery = searchResultOrderRef.current.query === threadSearchQuery;
+    searchResultOrderRef.current = { order: threadSearchResultOrderKey, query: threadSearchQuery };
+    if (previous === threadSearchResultOrderKey || !sameQuery) return;
+    setActiveSearchResultIndex((index) =>
+      followSearchHighlight(
+        previous ? previous.split("\0") : [],
+        threadSearchResultOrderKey ? threadSearchResultOrderKey.split("\0") : [],
+        index,
+      ),
+    );
+  }, [threadSearchQuery, threadSearchResultOrderKey]);
 
+  // Only the arrow keys move the list to the highlight; a live refresh or a
+  // hover never scrolls it.
+  const scrollToSearchHighlightRef = useRef(false);
   useEffect(() => {
-    if (!isSearchingThreads) return;
+    if (!isSearchingThreads || !scrollToSearchHighlightRef.current) return;
+    scrollToSearchHighlightRef.current = false;
     document
       .getElementById(`sidebar-thread-search-result-${activeSearchResultIndex}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeSearchResultIndex, isSearchingThreads, threadSearchResultOrderKey]);
+  }, [activeSearchResultIndex, isSearchingThreads]);
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted
@@ -3286,11 +3314,13 @@ export default function Sidebar() {
       if (threadSearchResults.length === 0) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
+        scrollToSearchHighlightRef.current = true;
         setActiveSearchResultIndex((index) => (index + 1) % threadSearchResults.length);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
+        scrollToSearchHighlightRef.current = true;
         setActiveSearchResultIndex(
           (index) => (index - 1 + threadSearchResults.length) % threadSearchResults.length,
         );
@@ -5818,4 +5848,8 @@ export default function Sidebar() {
       <SidebarChromeFooter />
     </>
   );
+}
+
+function projectScopeItemValue(item: { readonly value: string }): string {
+  return item.value;
 }

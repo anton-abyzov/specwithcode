@@ -36,15 +36,21 @@ function dictationBridge(): DictationBridge | null {
   return bridge as DictationBridge;
 }
 
-/** Puts a phrase at the cursor, with one space between it and what surrounds it. */
+/**
+ * Puts a phrase at the cursor, with one space between it and what surrounds
+ * it. Dictation only ever adds: with words selected, the phrase goes after the
+ * selection and the selected words stay (a lingering selection used to be
+ * overwritten by the next phrase).
+ */
 export function insertDictatedText(
   current: string,
   text: string,
   start: number = current.length,
   end: number = start,
 ): { readonly value: string; readonly caret: number } {
-  const before = current.slice(0, start);
-  const after = current.slice(end);
+  const at = Math.min(Math.max(start, end, 0), current.length);
+  const before = current.slice(0, at);
+  const after = current.slice(at);
   const lead = before.length > 0 && !/\s$/.test(before) ? " " : "";
   const trail = after.length > 0 && !/^[\s.,;:!?)]/.test(after) ? " " : "";
   const inserted = `${lead}${text}${trail}`;

@@ -2,6 +2,29 @@ import XCTest
 
 @MainActor
 final class DrawerUITests: SWCUITestCase {
+  func testReopeningKeepsExpandedChatsAtTheSameOffset() {
+    launch(fixture: "long", route: "drawer")
+    let expand = button("Show all 10 chats")
+    for _ in 0..<5 where !expand.isHittable { app.swipeUp() }
+    tap(expand)
+    app.swipeUp()
+    settle()
+
+    let fold = button("Show fewer chats")
+    waitForHittable(fold)
+    let before = fold.frame.minY
+    attachScreenshot("drawer-scrolled")
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+    waitForGone(button("Close menu"))
+    button("Menu").tap()
+    waitFor(button("Close menu"))
+    settle()
+
+    attachScreenshot("drawer-reopened")
+    XCTAssertTrue(fold.isHittable)
+    XCTAssertEqual(fold.frame.minY, before, accuracy: 1)
+  }
+
   func testArchivedAndAutomatedAreSeparateProjectGroups() throws {
     launch(fixture: "duplicates")
     waitForHome()

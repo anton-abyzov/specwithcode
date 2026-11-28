@@ -414,19 +414,19 @@ struct SidebarView: View {
       let shared = DrawerView.sharedTitles(projects + automated + archived)
       Section("Projects") {
         let visible = showAllProjects ? projects : Array(projects.prefix(Self.collapsedProjectCount))
-        ForEach(visible) { projectRow($0, shared: shared) }
+        ForEach(visible, id: \.rowKey) { projectRow($0, shared: shared) }
         if projects.count > Self.collapsedProjectCount {
           foldButton(showAllProjects ? "Show less" : "Show all \(projects.count)") { showAllProjects.toggle() }
         }
         if !automated.isEmpty {
           let open = showAutomated || automated.contains { isSelected(.project($0.ref)) }
           foldButton(open ? "Hide automated" : "Automated (\(automated.count))") { showAutomated = !open }
-          if open { ForEach(automated) { projectRow($0, shared: shared) } }
+          if open { ForEach(automated, id: \.rowKey) { projectRow($0, shared: shared) } }
         }
         if !archived.isEmpty {
           let open = showArchived || archived.contains { isSelected(.project($0.ref)) }
           foldButton(open ? "Hide archived" : "Archived (\(archived.count))") { showArchived = !open }
-          if open { ForEach(archived) { projectRow($0, shared: shared) } }
+          if open { ForEach(archived, id: \.rowKey) { projectRow($0, shared: shared) } }
         }
       }
     }

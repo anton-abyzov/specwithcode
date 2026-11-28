@@ -4327,10 +4327,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         snapshot && snapshot.value === current
           ? composerEditorRef.current?.readSelectionRange()
           : undefined;
-      const start = range?.start ?? current.length;
-      const end = range?.end ?? start;
-      const next = insertDictatedText(current, text, start, end);
-      applyPromptReplacement(start, end, next.value.slice(start, next.caret), {
+      // After the selection, never over it: dictation only adds.
+      const at = range?.end ?? current.length;
+      const next = insertDictatedText(current, text, at);
+      applyPromptReplacement(at, at, next.value.slice(at, next.caret), {
         expandedCursorAfterReplace: next.caret,
         focusEditorAfterReplace: focused,
       });
@@ -5644,7 +5644,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerSubmissionError !== null ||
     providerInputSubmissionError !== null ||
     hasImageAttachmentAttention;
-  const isComposerResting = shouldUseRestingComposerLayout({
+  const liveComposerResting = shouldUseRestingComposerLayout({
     isExistingThread: routeKind === "server" && activeThreadId !== null,
     isMobileViewport,
     isScrollCollapsed: isComposerScrollCollapsed,
@@ -5652,11 +5652,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hasMultilinePrompt,
     timelineOverflows,
   });
+  // The model picker renders in the resting strip or inline in the composer.
+  // A live change (a banner, an error, the timeline growing, focus leaving the
+  // editor on a phone) flipping the layout while it was open moved it to the
+  // other parent, which remounted its list at the top. The layout holds while
+  // the picker is open.
+  const liveControlsCollapsed = liveComposerResting || isComposerCollapsedMobile;
+  const [heldComposerLayout, setHeldComposerLayout] = useState<{
+    readonly resting: boolean;
+    readonly controlsCollapsed: boolean;
+  } | null>(null);
+  if (isComposerModelPickerOpen && heldComposerLayout === null) {
+    setHeldComposerLayout({
+      resting: liveComposerResting,
+      controlsCollapsed: liveControlsCollapsed,
+    });
+  } else if (!isComposerModelPickerOpen && heldComposerLayout !== null) {
+    setHeldComposerLayout(null);
+  }
+  const heldLayout = isComposerModelPickerOpen ? heldComposerLayout : null;
+  const isComposerResting = heldLayout?.resting ?? liveComposerResting;
   const expandedComposerImages = isComposerResting
     ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
     : standaloneComposerImages;
   // Keep collapsed controls inside the input when workspace context is hidden.
-  const composerControlsCollapsed = isComposerResting || isComposerCollapsedMobile;
+  const composerControlsCollapsed = heldLayout?.controlsCollapsed ?? liveControlsCollapsed;
   const showInlineRestingControls = composerControlsCollapsed && restingControlsHost === null;
   const composerControlsVisibleInStrip =
     composerControlsCollapsed && restingControlsHost !== null && restingControlsVisible;

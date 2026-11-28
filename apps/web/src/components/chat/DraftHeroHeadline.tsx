@@ -11,13 +11,14 @@ import { scopedProjectKey, scopeProjectRef } from "@specweave-studio/client-runt
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
+import { useHeldOrder } from "~/hooks/useHeldOrder";
 import { useProjectCoordinatorHandoff } from "~/hooks/useProjectCoordinatorHandoff";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
@@ -156,10 +157,13 @@ export function DraftHeroHeadline({
   // A machine's "No project" folder stays, as its own item; archived projects and projects
   // a check or agent made for itself are not destinations. Percy is never offered to
   // another project's draft, but a draft that already targets it keeps it as its choice.
+  // Recent activity re-sorts projects; the open menu keeps its order.
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const menuProjectGroups = useHeldOrder(projectGroups, projectGroupKey, projectMenuOpen);
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
-        groups: projectGroups.map((group) => ({
+        groups: menuProjectGroups.map((group) => ({
           ...group,
           memberProjects: group.memberProjects.filter((project) => {
             const isCurrent =
@@ -176,7 +180,7 @@ export function DraftHeroHeadline({
         })),
         preferredProjectRef: activeProjectRef,
       }),
-    [activeProjectRef, projectGroups, scratchWorkspaceRootFor],
+    [activeProjectRef, menuProjectGroups, scratchWorkspaceRootFor],
   );
   const projectEntryByKey = useMemo(
     () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
@@ -347,7 +351,7 @@ export function DraftHeroHeadline({
   };
 
   const projectSelector = shouldShowProjectMenu ? (
-    <Menu>
+    <Menu onOpenChange={setProjectMenuOpen}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -509,4 +513,8 @@ export function DraftHeroHeadline({
       )}
     </div>
   );
+}
+
+function projectGroupKey(group: { readonly projectKey: string }): string {
+  return group.projectKey;
 }

@@ -111,11 +111,14 @@ describe("insertDictatedText", () => {
     expect(insertDictatedText("well ", "hello").value).toBe("well hello");
   });
 
-  it("replaces a selection, keeps punctuation tight and reports the caret", () => {
+  it("adds after a selection instead of replacing it, keeps punctuation tight and reports the caret", () => {
     expect(insertDictatedText("say XX now", "hello", 4, 6)).toEqual({
-      value: "say hello now",
-      caret: 9,
+      value: "say XX hello now",
+      caret: 12,
     });
+    expect(insertDictatedText("keep all of this", "and more", 0, 16).value).toBe(
+      "keep all of this and more",
+    );
     expect(insertDictatedText("say.", "hello", 3).value).toBe("say hello.");
   });
 });
