@@ -477,6 +477,36 @@ describe("ClaudeMcpElicitation", () => {
     expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
   });
 
+  it("keeps the server's cause when Stop then closes the CLI's output (1495)", async () => {
+    const h = harness({ longSettle: true });
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    controller.abort();
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+    // Stop marks, then its close ends the output, before the turn ends.
+    await Effect.runPromise(h.elicitations.endedHere);
+    await Effect.runPromise(h.elicitations.outputEnded);
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(await result).toEqual({ action: "cancel" });
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("ends the grace when the answer's commit fails, so the note comes before the turn's end (1495)", async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const result = h.ask({ requestedSchema: confirmSchema }, controller.signal);
+    await h.until(() => h.card() !== undefined);
+    handOffClaudeFormAnswers(h.requestId, { handOff: { name: "octo/repo" } });
+    controller.abort();
+    await new Promise((resolve) => setImmediate(resolve));
+    forgetUncommittedFormAnswer({ type: "runtime-request.respond", requestId: h.requestId });
+    // The grace never runs out here: the failed commit alone ends the wait.
+    await Effect.runPromise(h.elicitations.settleAborted);
+    expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+    expect(await result).toEqual({ action: "cancel" });
+  });
+
   it("shows the server's note before the turn ends, when the turn finishes inside the settle (1495)", async () => {
     const h = harness({ longSettle: true });
     const controller = new AbortController();

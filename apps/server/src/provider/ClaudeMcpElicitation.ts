@@ -145,7 +145,7 @@ export interface ClaudeQueryForms {
    * The adapter is ending this process's open calls itself (Stop, steer, a
    * close): the aborts that follow are not the server's. Run it before the
    * interrupt, the steer or the close. A card the SDK aborted already keeps
-   * its own cause.
+   * the server's cause, even when the close then ends the output.
    */
   readonly endedHere: Effect.Effect<void>;
   /** The CLI's output ended: every abort of this process's cards, even just before, was the exit's. */
@@ -185,8 +185,8 @@ interface PendingCard {
   readonly signal: AbortSignal;
   /** Why the SDK stopped waiting, decided once: the adapter's own end, or the server. */
   readonly abortCause: Deferred.Deferred<"here" | "server">;
-  /** Waiting out the settle after an abort. */
-  settling: boolean;
+  /** The SDK aborted the call; its note may still be on the way. */
+  aborted: boolean;
   /** The call ended, its notes shown. */
   readonly done: Deferred.Deferred<void>;
 }
@@ -312,15 +312,10 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
   // The server gave up: the adapter marked no end of the call by the time the
   // settle ran out, or the turn finished on its own meanwhile.
   const serverGaveUp = (card: PendingCard) =>
-    Effect.gen(function* () {
-      card.settling = true;
-      const cause = yield* Effect.raceFirst(
-        Deferred.await(card.abortCause),
-        settle.pipe(Effect.as("server" as const)),
-      );
-      card.settling = false;
-      return cause === "server";
-    });
+    Effect.raceFirst(
+      Deferred.await(card.abortCause),
+      settle.pipe(Effect.as("server" as const)),
+    ).pipe(Effect.map((cause) => cause === "server"));
   // Every dispatch settles its answer as it ends (1493); this only guards a
   // dispatch that never ends, and then leaves the card as the record says.
   const outcomeLimit =
@@ -462,7 +457,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         owner,
         signal,
         abortCause: yield* Deferred.make<"here" | "server">(),
-        settling: false,
+        aborted: false,
         done: yield* Deferred.make<void>(),
       };
       pending.set(id, card);
@@ -490,9 +485,17 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         // neither overwrites the recorded answer as cancelled. Otherwise the
         // form is marked closing first, so an answer that comes in before the
         // cancelled card lands is refused, never recorded (1493).
+        if (raced.by === "stop") card.aborted = true;
         const committed = raced.by !== "person" && !beginClosingClaudeForm(artifacts.request.id);
+        // A failed commit means no answer is on the way: the grace ends with it.
+        const commitFailed = commitOutcome(artifacts.request.id).pipe(
+          Effect.flatMap((outcome) => (outcome === "failed" ? Effect.void : Effect.never)),
+        );
         const awaited = committed
-          ? yield* Effect.raceFirst(Deferred.await(answer), grace.pipe(Effect.as(raced)))
+          ? yield* Effect.raceFirst(
+              Deferred.await(answer),
+              Effect.raceFirst(grace, commitFailed).pipe(Effect.as(raced)),
+            )
           : raced;
         // The first to settle the card wins; a person's answer that came in
         // at the same moment as a stop or the timer is kept.
@@ -563,13 +566,15 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       );
     });
 
-  const markHere = (owner: object, includeAborted: boolean) =>
+  // The app's own end decides every open card of the process: one the SDK
+  // already aborted was the server's, the rest are the app's. An output end
+  // the app did not start counts every card, aborted or not, as the exit's.
+  const markHere = (owner: object, intentional: boolean) =>
     Effect.suspend(() =>
       Effect.forEach(
-        [...pending.values()].filter(
-          (card) => card.owner === owner && (includeAborted || !card.signal.aborted),
-        ),
-        (card) => Deferred.succeed(card.abortCause, "here"),
+        [...pending.values()].filter((card) => card.owner === owner),
+        (card) =>
+          Deferred.succeed(card.abortCause, intentional && card.signal.aborted ? "server" : "here"),
         { discard: true },
       ),
     );
@@ -591,8 +596,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         .catch(() => CANCEL);
     return {
       onElicitation,
-      endedHere: markHere(owner, false),
-      outputEnded: markHere(owner, true),
+      endedHere: markHere(owner, true),
+      outputEnded: markHere(owner, false),
     };
   };
 
@@ -622,7 +627,7 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
 
   const settleAborted: ClaudeMcpElicitations["settleAborted"] = Effect.suspend(() =>
     Effect.forEach(
-      [...pending.values()].filter((card) => card.settling),
+      [...pending.values()].filter((card) => card.aborted),
       (card) =>
         Deferred.succeed(card.abortCause, "server").pipe(
           // Bounded: the turn's end never waits on a card for long.
