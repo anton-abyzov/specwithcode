@@ -70,20 +70,30 @@ nonisolated enum DictationText {
     return String(rest).trimmingCharacters(in: .whitespaces)
   }
 
+  /// `text` without its first `count` words and the punctuation after them.
+  static func dropWords(_ text: String, count: Int) -> String {
+    var index = text.startIndex
+    for _ in 0..<count {
+      while index < text.endIndex, !isWordCharacter(text[index]) { index = text.index(after: index) }
+      while index < text.endIndex, isWordCharacter(text[index]) { index = text.index(after: index) }
+    }
+    return String(text[index...].drop { $0.isWhitespace || $0.isPunctuation })
+  }
+
   private static func isWordCharacter(_ character: Character) -> Bool {
     character.isLetter || character.isNumber || character == "'"
   }
 
   /// The recognizer began a new phrase instead of revising the one it was
-  /// hearing: Apple's recognizer starts its transcript over after a pause, and
-  /// treating that as a revision erased everything said before the pause. A
-  /// revision keeps most of the opening words; a new phrase is shorter and
-  /// shares at most a word or two by chance.
+  /// hearing. Apple's on-device recognizer marks the end of a phrase before it
+  /// starts over (handled as a settled phrase); this catches a restart without
+  /// that mark. A new phrase arrives a word or two at a time and opens with a
+  /// different word; a revision ("twenty five dollars" to "$25") keeps its
+  /// opening words.
   static func isRestart(from previous: String, to next: String) -> Bool {
     let before = words(previous), after = words(next)
-    guard before.count >= 2, !after.isEmpty, after.count < before.count else { return false }
-    let shared = zip(before, after).prefix { $0 == $1 }.count
-    return shared < after.count && shared * 2 < before.count
+    guard before.count >= 2, (1...2).contains(after.count) else { return false }
+    return before.first != after.first
   }
 
   /// The languages the desktop offers; "" follows the phone's language.

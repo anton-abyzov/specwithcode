@@ -2994,13 +2994,17 @@ export default function Sidebar() {
     .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
     .join("\0");
 
-  // Results that reorder by themselves keep the highlight on its thread; only
-  // a new query (onSearchQueryChange) goes back to the first result.
-  const searchResultOrderRef = useRef(threadSearchResultOrderKey);
+  // Results that reorder by themselves keep the highlight on its thread; a
+  // new query (onSearchQueryChange) starts again at the first result.
+  const searchResultOrderRef = useRef({
+    order: threadSearchResultOrderKey,
+    query: threadSearchQuery,
+  });
   useEffect(() => {
-    const previous = searchResultOrderRef.current;
-    searchResultOrderRef.current = threadSearchResultOrderKey;
-    if (previous === threadSearchResultOrderKey) return;
+    const previous = searchResultOrderRef.current.order;
+    const sameQuery = searchResultOrderRef.current.query === threadSearchQuery;
+    searchResultOrderRef.current = { order: threadSearchResultOrderKey, query: threadSearchQuery };
+    if (previous === threadSearchResultOrderKey || !sameQuery) return;
     setActiveSearchResultIndex((index) =>
       followSearchHighlight(
         previous ? previous.split("\0") : [],
@@ -3008,7 +3012,7 @@ export default function Sidebar() {
         index,
       ),
     );
-  }, [threadSearchResultOrderKey]);
+  }, [threadSearchQuery, threadSearchResultOrderKey]);
 
   // Only the arrow keys move the list to the highlight; a live refresh or a
   // hover never scrolls it.

@@ -471,6 +471,10 @@ extension ProjectSummary {
   /// A project row's identity in a list. A project on several machines is
   /// shown through one copy, and that copy changes as machines connect and
   /// threads update; keyed by it, the row was removed and inserted again under
-  /// the person scrolling. The set of its copies stays the same.
-  var rowKey: AnyHashable { members.isEmpty ? AnyHashable(ref) : AnyHashable(Set(members.map(\.ref))) }
+  /// the person scrolling. The linked project's id stays the same while
+  /// copies load; without one, the set of its copies does.
+  var rowKey: AnyHashable {
+    if let logicalProjectId { return AnyHashable("logical:\(logicalProjectId)") }
+    return members.isEmpty ? AnyHashable(ref) : AnyHashable(Set(members.map(\.ref)))
+  }
 }

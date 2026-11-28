@@ -56,6 +56,7 @@ struct DictationTests {
     engine.emit(.partial("Okay"))
     #expect(draft() == "Notes: I want to fix the build and then ship it Okay")
     engine.emit(.final("Okay."))
+    engine.emit(.partial("Okay"))
     engine.emit(.partial("Okay so next"))
     #expect(draft() == "Notes: I want to fix the build and then ship it Okay. Okay so next")
     engine.emit(.partial("Okay so next I want to"))
@@ -142,6 +143,51 @@ struct DictationTests {
     #expect(text == "again")
   }
 
+  /// Review findings on PR 1016: a revision that shortens the phrase, and a
+  /// revised word after an edit, must not write the phrase twice.
+  @Test func revisionsNeverWriteAPhraseTwice() async throws {
+    let (engine, _, draft) = try await listening("")
+    engine.emit(.partial("I paid twenty five dollars"))
+    engine.emit(.partial("I paid $25"))
+    #expect(draft() == "I paid $25")
+    engine.emit(.final("I paid $25."))
+    engine.emit(.partial("I want to fix the bill"))
+    #expect(draft() == "I paid $25. I want to fix the bill")
+  }
+
+  @Test func aRevisedWordAfterAnEditIsNotRepeated() async throws {
+    var text = "N:"
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let engine = FakeSpeech()
+    let dictation = SpeechDictation(makeEngine: { engine })
+    dictation.start(language: "", draft: binding)
+    try await engine.started()
+    engine.emit(.partial("I want to fix the bill"))
+    text += " (typed)"
+    engine.emit(.partial("I want to fix the build please"))
+    #expect(text == "N: I want to fix the bill (typed) please")
+    dictation.stop()
+  }
+
+  /// Dictating in parts continues where the last part ended, even when the
+  /// field's cursor was not moved by the words dictation wrote.
+  @Test func aSecondPartContinuesAfterTheFirst() async throws {
+    var text = "Hello world"
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let engine = FakeSpeech()
+    let dictation = SpeechDictation(makeEngine: { engine })
+    dictation.start(language: "", draft: binding, cursor: 5)
+    try await engine.started()
+    engine.emit(.partial("big"))
+    #expect(text == "Hello big world")
+    dictation.stop()
+    // The field's cursor still says 5: the words were written from outside it.
+    dictation.toggle(language: "", draft: binding, cursor: 5)
+    engine.emit(.partial("and"))
+    #expect(text == "Hello big and world")
+    dictation.stop()
+  }
+
   @Test func theCursorIsTheEndOfASelection() {
     let text = "one two three"
     let range = text.index(text.startIndex, offsetBy: 4)..<text.index(text.startIndex, offsetBy: 7)
@@ -158,8 +204,10 @@ struct DictationTests {
     #expect(!DictationText.isRestart(from: "I want", to: "I want to"))
     #expect(!DictationText.isRestart(from: "hey", to: "hay"))
     #expect(!DictationText.isRestart(from: "I want to fix the build", to: "I want to fix that"))
+    #expect(!DictationText.isRestart(from: "I paid twenty five dollars", to: "I paid $25"))
+    #expect(!DictationText.isRestart(from: "Their is a cat", to: "There's a cat"))
     #expect(DictationText.isRestart(from: "fix the build", to: "then"))
-    #expect(DictationText.isRestart(from: "I want to fix it", to: "I think"))
+    #expect(DictationText.dropWords("I want to fix the build. Please", count: 6) == "Please")
     #expect(DictationText.remainder(of: "Fix the build. Then", after: "fix the build") == "Then")
     #expect(DictationText.remainder(of: "Fix it", after: "fix the build") == nil)
     #expect(DictationText.remainder(of: "Okay so next", after: "Okay.") == nil)

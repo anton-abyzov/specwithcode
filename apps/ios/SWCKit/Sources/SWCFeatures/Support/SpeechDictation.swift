@@ -44,12 +44,19 @@ final class SpeechDictation {
   @ObservationIgnored private var heard = ""
   /// The recognizer's last partial result, as it sent it.
   @ObservationIgnored private var lastPartial = ""
-  /// What the recognizer had settled when it last finished a phrase. Some
-  /// recognizers repeat it at the start of every later result.
+  /// What the recognizer had settled when it last finished a phrase.
   @ObservationIgnored private var settled = ""
-  /// The fewest words of `settled` worth stripping: any when they are the
-  /// phrase still being heard, three after a finished phrase.
-  @ObservationIgnored private var settledMinimum = 3
+  /// Whether the recognizer repeats `settled` at the start of its later
+  /// results (server recognition does; on-device recognition starts over).
+  /// Decided by the first result after a phrase settles.
+  @ObservationIgnored private var repeatsSettled: Bool?
+  /// Words at the start of later results that are already in the draft: the
+  /// phrase being heard when the person edited the draft.
+  @ObservationIgnored private var skipWords = 0
+  /// Where the words went when the mic last stopped, so dictating in parts
+  /// continues there even when the field's cursor was not moved by them.
+  @ObservationIgnored private var resume: (draft: String, cursor: Int?, caret: Int)?
+  @ObservationIgnored private var startCursor: Int?
   /// The draft as dictation last wrote it; anything else means the person
   /// edited it, and the edit wins.
   @ObservationIgnored private var written: String?
@@ -76,18 +83,25 @@ final class SpeechDictation {
     guard phase == .idle else { return }
     error = nil
     phase = .starting
-    (prefix, suffix) = DictationText.split(draft.wrappedValue, at: cursor)
+    var at = cursor
+    if let resume, resume.draft == draft.wrappedValue, resume.cursor == cursor { at = resume.caret }
+    startCursor = cursor
+    (prefix, suffix) = DictationText.split(draft.wrappedValue, at: at)
     heard = ""
     lastPartial = ""
     settled = ""
-    settledMinimum = 3
+    repeatsSettled = nil
+    skipWords = 0
     written = draft.wrappedValue
     let engine = makeEngine()
     self.engine = engine
+    let session = ObjectIdentifier(engine)
     Task {
       do {
         try await engine.start(locale: DictationText.locale(language)) { [weak self] event in
-          self?.handle(event, draft: draft)
+          // A stopped session's last result must not land in the next one.
+          guard let self, let current = self.engine, ObjectIdentifier(current) == session else { return }
+          self.handle(event, draft: draft)
         }
         if self.engine === engine, phase == .starting { phase = .listening }
         if self.engine === engine { restartSilenceTimer() }
@@ -98,6 +112,9 @@ final class SpeechDictation {
   }
 
   func stop() {
+    if let prefix, let written {
+      resume = (written, startCursor, DictationText.insert(heard, into: prefix).count)
+    }
     silenceTimer?.cancel()
     silenceTimer = nil
     engine?.stop()
@@ -126,15 +143,12 @@ final class SpeechDictation {
     guard var prefix else { return }
     if case .failed = event {} else { restartSilenceTimer() }
     // Typed, pasted or keyboard-dictated while listening: keep the draft as it
-    // is now and add later words at its end.
+    // is now and add later words at its end. The phrase being heard is in it.
     if let written, draft.wrappedValue != written {
       prefix = draft.wrappedValue
       suffix = ""
       heard = ""
-      if !lastPartial.isEmpty {
-        settled = lastPartial
-        settledMinimum = 1
-      }
+      if !lastPartial.isEmpty { skipWords = DictationText.words(lastPartial).count }
       lastPartial = ""
     }
     switch event {
@@ -144,16 +158,18 @@ final class SpeechDictation {
       if DictationText.isRestart(from: lastPartial, to: text) {
         prefix = DictationText.insert(heard, into: prefix)
         settled = ""
+        repeatsSettled = nil
+        skipWords = 0
       }
       lastPartial = text
-      heard = DictationText.remainder(of: text, after: settled, minimumWords: settledMinimum) ?? text
+      heard = newWords(in: text)
     case let .final(text):
       // A metadata-bearing result and the final callback can settle the same text.
       if lastPartial.isEmpty, text == settled { break }
-      let phrase = DictationText.remainder(of: text, after: settled, minimumWords: settledMinimum) ?? text
-      prefix = DictationText.insert(phrase, into: prefix)
+      prefix = DictationText.insert(newWords(in: text), into: prefix)
       settled = text
-      settledMinimum = 3
+      repeatsSettled = nil
+      skipWords = 0
       lastPartial = ""
       heard = ""
     case let .failed(message):
@@ -164,6 +180,19 @@ final class SpeechDictation {
     let next = DictationText.compose(prefix, heard, suffix)
     written = next
     draft.wrappedValue = next
+  }
+
+  /// The words of a result that are not in the draft yet.
+  private func newWords(in text: String) -> String {
+    if skipWords > 0 { return DictationText.dropWords(text, count: skipWords) }
+    guard !settled.isEmpty else { return text }
+    if repeatsSettled == nil {
+      repeatsSettled = DictationText.remainder(of: text, after: settled, minimumWords: 1) != nil
+        && DictationText.words(text).count > DictationText.words(settled).count
+    }
+    guard repeatsSettled == true else { return text }
+    return DictationText.remainder(of: text, after: settled, minimumWords: 1)
+      ?? DictationText.dropWords(text, count: DictationText.words(settled).count)
   }
 
   private func fail(_ message: String) {

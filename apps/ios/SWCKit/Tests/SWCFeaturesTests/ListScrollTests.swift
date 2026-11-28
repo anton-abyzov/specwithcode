@@ -19,6 +19,18 @@ struct ListScrollTests {
     #expect(alone.rowKey != led.rowKey)
   }
 
+  /// A linked project keeps its row while its copies load one machine at a time.
+  @Test func aLinkedProjectRowKeepsItsIdentityWhileCopiesLoad() {
+    let m4 = ProjectRef(environmentId: "m4", projectId: "p")
+    let m5 = ProjectRef(environmentId: "m5", projectId: "p")
+    var first = ProjectSummary(ref: m4, title: "SpecWeave", machineLabel: "m4", machineOnline: true)
+    first.logicalProjectId = "logical-1"
+    var both = ProjectSummary(ref: m5, title: "SpecWeave", machineLabel: "M5", machineOnline: true)
+    both.logicalProjectId = "logical-1"
+    both.members = [ProjectMember(ref: m5, machineLabel: "M5", machineOnline: true), ProjectMember(ref: m4, machineLabel: "m4", machineOnline: true)]
+    #expect(first.rowKey == both.rowKey)
+  }
+
   /// The drawer's folds live in the router, so closing and opening it keeps them.
   @Test func theDrawerRemembersItsFoldsAndOffset() {
     let router = AppRouter()
