@@ -26,7 +26,10 @@ public struct ComposerBar: View {
 
   /// - Parameters:
   ///   - placeholder: Overrides "Message…" (idle) and "Queue a message…" (running).
-  ///   - blockedReason: When set, the composer is disabled and shows this line above it.
+  ///   - blockedReason: When set, sending is off and this line shows above the
+  ///     composer. Typing and dictating stay on: the draft is kept, and turning
+  ///     the field off while a connection flickers closed the keyboard and cut
+  ///     keyboard dictation off mid-sentence.
   ///   - hasAttachments: Something to send even with no text.
   ///   - suggestion: A predicted next prompt, offered while the field is empty.
   ///   - focus: Lets the caller move focus into the field.
@@ -138,7 +141,6 @@ public struct ComposerBar: View {
           // Landscape phones have little height; a 6-line field would hide the transcript.
           .lineLimit(1...(verticalSizeClass == .compact ? 3 : 6))
           .focused(focus ?? $ownFocus)
-          .disabled(isBlocked)
           .padding(.vertical, 7)
           .padding(.leading, onAttach == nil && attachmentControl == nil ? WeaveSpacing.s2 : 0)
           .frame(minHeight: WeaveSize.innerControl)
@@ -148,7 +150,6 @@ public struct ComposerBar: View {
         if let onMic {
           WeaveIconButton(isDictating ? "mic.fill" : "mic", label: isDictating ? "Stop dictation" : "Dictate", style: isDictating ? .filled : .sunken, size: WeaveSize.innerControl, action: onMic)
             .frame(width: WeaveSize.innerControl, height: WeaveSize.innerControl)
-            .disabled(isBlocked && !isDictating)
             .accessibilityIdentifier("composer.mic")
         }
         trailingButton
@@ -158,7 +159,7 @@ public struct ComposerBar: View {
       .frame(minHeight: WeaveSize.composer)
       .weaveGlass(in: RoundedRectangle(cornerRadius: WeaveSize.composer / 2, style: .continuous))
       .contentShape(RoundedRectangle(cornerRadius: WeaveSize.composer / 2, style: .continuous))
-      .onTapGesture { if !isBlocked { (focus ?? $ownFocus).wrappedValue = true } }
+      .onTapGesture { (focus ?? $ownFocus).wrappedValue = true }
       // The whole capsule is the field's touch target; the identifier lets UI
       // tests measure it instead of the field's text line.
       .accessibilityElement(children: .contain)
@@ -172,6 +173,12 @@ public struct ComposerBar: View {
   @ViewBuilder private func field(_ prompt: String) -> some View {
     if let selection {
       TextField(prompt, text: $text, selection: selection, prompt: Text.weavePlaceholder(prompt), axis: .vertical)
+        // Dictation rewrites the draft from outside the field; a cursor left
+        // past the new end must not outlive it.
+        .onChange(of: text) { _, now in
+          guard case let .selection(range)? = selection.wrappedValue?.indices, range.upperBound > now.endIndex else { return }
+          selection.wrappedValue = nil
+        }
     } else {
       TextField(prompt, text: $text, prompt: Text.weavePlaceholder(prompt), axis: .vertical)
     }

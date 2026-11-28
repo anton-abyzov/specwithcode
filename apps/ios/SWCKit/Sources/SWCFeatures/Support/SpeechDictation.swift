@@ -47,6 +47,9 @@ final class SpeechDictation {
   /// What the recognizer had settled when it last finished a phrase. Some
   /// recognizers repeat it at the start of every later result.
   @ObservationIgnored private var settled = ""
+  /// The fewest words of `settled` worth stripping: any when they are the
+  /// phrase still being heard, three after a finished phrase.
+  @ObservationIgnored private var settledMinimum = 3
   /// The draft as dictation last wrote it; anything else means the person
   /// edited it, and the edit wins.
   @ObservationIgnored private var written: String?
@@ -77,6 +80,7 @@ final class SpeechDictation {
     heard = ""
     lastPartial = ""
     settled = ""
+    settledMinimum = 3
     written = draft.wrappedValue
     let engine = makeEngine()
     self.engine = engine
@@ -127,7 +131,10 @@ final class SpeechDictation {
       prefix = draft.wrappedValue
       suffix = ""
       heard = ""
-      settled = lastPartial.isEmpty ? settled : lastPartial
+      if !lastPartial.isEmpty {
+        settled = lastPartial
+        settledMinimum = 1
+      }
       lastPartial = ""
     }
     switch event {
@@ -139,11 +146,12 @@ final class SpeechDictation {
         settled = ""
       }
       lastPartial = text
-      heard = DictationText.remainder(of: text, after: settled) ?? text
+      heard = DictationText.remainder(of: text, after: settled, minimumWords: settledMinimum) ?? text
     case let .final(text):
-      let phrase = DictationText.remainder(of: text, after: settled) ?? text
+      let phrase = DictationText.remainder(of: text, after: settled, minimumWords: settledMinimum) ?? text
       prefix = DictationText.insert(phrase, into: prefix)
       settled = text
+      settledMinimum = 3
       lastPartial = ""
       heard = ""
     case let .failed(message):

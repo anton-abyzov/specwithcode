@@ -42,21 +42,23 @@ nonisolated enum DictationText {
 
   /// Words compared without case or punctuation, as the recognizer revises them.
   static func words(_ text: String) -> [String] {
-    text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
+    text.lowercased().split { !isWordCharacter($0) }.map(String.init)
   }
 
   /// What `text` adds after `heard` when the recognizer repeats words it already
-  /// reported (case and punctuation aside); nil when it does not start with them.
-  static func remainder(of text: String, after heard: String) -> String? {
+  /// reported (case and punctuation aside); nil when it does not start with
+  /// them. By default a phrase of one or two words is never stripped: a new
+  /// phrase can open with the same "Okay" by chance.
+  static func remainder(of text: String, after heard: String, minimumWords: Int = 3) -> String? {
     let expected = words(heard)
-    guard !expected.isEmpty else { return nil }
+    guard !expected.isEmpty, expected.count >= minimumWords else { return nil }
     var index = text.startIndex
     for word in expected {
-      while index < text.endIndex, !(text[index].isLetter || text[index].isNumber || text[index] == "'") {
+      while index < text.endIndex, !isWordCharacter(text[index]) {
         index = text.index(after: index)
       }
       var end = index
-      while end < text.endIndex, text[end].isLetter || text[end].isNumber || text[end] == "'" {
+      while end < text.endIndex, isWordCharacter(text[end]) {
         end = text.index(after: end)
       }
       guard text[index..<end].lowercased() == word else { return nil }
@@ -65,13 +67,20 @@ nonisolated enum DictationText {
     return String(text[index...]).trimmingCharacters(in: .whitespaces)
   }
 
+  private static func isWordCharacter(_ character: Character) -> Bool {
+    character.isLetter || character.isNumber || character == "'"
+  }
+
   /// The recognizer began a new phrase instead of revising the one it was
   /// hearing: Apple's recognizer starts its transcript over after a pause, and
-  /// treating that as a revision erased everything said before the pause.
+  /// treating that as a revision erased everything said before the pause. A
+  /// revision keeps most of the opening words; a new phrase is shorter and
+  /// shares at most a word or two by chance.
   static func isRestart(from previous: String, to next: String) -> Bool {
     let before = words(previous), after = words(next)
     guard before.count >= 2, !after.isEmpty, after.count < before.count else { return false }
-    return before.first != after.first
+    let shared = zip(before, after).prefix { $0 == $1 }.count
+    return shared < after.count && shared * 2 < before.count
   }
 
   /// The languages the desktop offers; "" follows the phone's language.
