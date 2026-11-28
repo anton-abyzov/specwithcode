@@ -157,7 +157,7 @@ export function ScreenShareSettingsView({
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {tx(
-                "Off until you turn it on here. Turning it on asks for Touch ID or your password. A device's first view is allowed by someone at this machine, and a notice stays on screen the whole time it is viewed. View only: nothing can be clicked or typed from the device.",
+                "Off until you turn it on here. Turning it on asks for Touch ID or your password. A device's first view is allowed by someone at this machine, and a notice stays on screen the whole time it is viewed. Viewing is view only. A device can click and type here only after someone at this machine allows control for it, with Touch ID.",
               )}
             </p>
           </div>

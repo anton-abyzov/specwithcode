@@ -146,12 +146,14 @@ function ScreenViewerSessionRun({
   }, [picture]);
 
   const live = model.phase.kind === "live" ? model.phase : null;
+  const [keyboardHere, setKeyboardHere] = useState(false);
   useScreenControlInput({
     enabled: live !== null && !live.locked && model.control.mode === "controlling",
     canvasRef,
     focusRef: areaRef,
     displayId: live?.displayId ?? null,
     send: (displayId, events) => sessionRef.current?.sendInput(displayId, events),
+    onKeyboard: setKeyboardHere,
   });
 
   return (
@@ -161,6 +163,7 @@ function ScreenViewerSessionRun({
       now={now}
       canvasRef={canvasRef}
       areaRef={areaRef}
+      keyboardHere={keyboardHere}
       picture={picture}
       onPicture={(next) => {
         setPicture(next);

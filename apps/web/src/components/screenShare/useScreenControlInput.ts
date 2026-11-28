@@ -25,10 +25,14 @@ export function useScreenControlInput(input: {
   /** The display shown; input is for it only. */
   readonly displayId: string | null;
   readonly send: (displayId: string, events: ReadonlyArray<ScreenShareInputEvent>) => void;
+  /** Whether keys go to the other machine now: the picture area has focus. */
+  readonly onKeyboard?: (here: boolean) => void;
 }): void {
   const { enabled, canvasRef, focusRef, displayId } = input;
   const sendRef = useRef(input.send);
   sendRef.current = input.send;
+  const keyboardRef = useRef(input.onKeyboard);
+  keyboardRef.current = input.onKeyboard;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -75,6 +79,13 @@ export function useScreenControlInput(input: {
     };
     const onContextMenu = (event: Event) => event.preventDefault();
     const key = (down: boolean) => (event: KeyboardEvent) => {
+      // Control+Option+Escape stays here: it gives the keyboard back to this window.
+      if (event.code === "Escape" && event.ctrlKey && event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (down) area.blur();
+        return;
+      }
       if (!isControlKey(event.code)) return;
       // The key is the other machine's now, not this window's shortcut.
       event.preventDefault();
@@ -86,6 +97,11 @@ export function useScreenControlInput(input: {
     const letGo = () => {
       pending.releaseAll();
       flush();
+    };
+    const onAreaFocus = () => keyboardRef.current?.(true);
+    const onAreaBlur = () => {
+      letGo();
+      keyboardRef.current?.(false);
     };
     const onVisibility = () => {
       if (document.hidden) letGo();
@@ -99,7 +115,8 @@ export function useScreenControlInput(input: {
     canvas.addEventListener("contextmenu", onContextMenu);
     area.addEventListener("keydown", onKeyDown);
     area.addEventListener("keyup", onKeyUp);
-    area.addEventListener("blur", letGo);
+    area.addEventListener("focus", onAreaFocus);
+    area.addEventListener("blur", onAreaBlur);
     window.addEventListener("blur", letGo);
     document.addEventListener("visibilitychange", onVisibility);
     area.focus({ preventScroll: true });
@@ -112,11 +129,13 @@ export function useScreenControlInput(input: {
       canvas.removeEventListener("contextmenu", onContextMenu);
       area.removeEventListener("keydown", onKeyDown);
       area.removeEventListener("keyup", onKeyUp);
-      area.removeEventListener("blur", letGo);
+      area.removeEventListener("focus", onAreaFocus);
+      area.removeEventListener("blur", onAreaBlur);
       window.removeEventListener("blur", letGo);
       document.removeEventListener("visibilitychange", onVisibility);
       letGo();
       clearInterval(timer);
+      keyboardRef.current?.(false);
     };
   }, [enabled, canvasRef, focusRef, displayId]);
 }

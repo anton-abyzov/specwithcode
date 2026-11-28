@@ -1117,7 +1117,7 @@ export class ScreenShareSessions {
       // "Always allow control" that could not be kept is control for this session, and the list says so.
       control.outcome = "allowed_once";
       this.auditLive(session);
-    } else if (outcome === "allowed_by_grant") this.deps.store.touchControlGrant(thumbprint);
+    }
     deps.controlled(true);
     let started: ScreenControlStart;
     try {
@@ -1141,6 +1141,9 @@ export class ScreenShareSessions {
     }
     control.link = started.link;
     control.mode = "on";
+    // Only control that really started counts as use: a helper that keeps failing
+    // does not keep an old grant alive.
+    if (outcome === "allowed_by_grant") this.deps.store.touchControlGrant(thumbprint);
     this.sendControl(session, {
       mode: "controlling",
       ...(control.blocked === null ? {} : { blocked: control.blocked }),

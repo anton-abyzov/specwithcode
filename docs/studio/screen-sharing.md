@@ -93,8 +93,10 @@ While a device controls the Mac:
 
 - The banner reads "Work laptop (ID 7F3A) is controlling this screen", and **Stop** ends control
   and the view.
-- The viewer's picture area has an amber edge. Pointer, scroll and keys go to the Mac while that
-  area has focus. **Stop control** goes back to viewing.
+- Pointer and scroll over the picture go to the Mac. Keys go to it only while the picture area has
+  focus; the area then has an amber edge and the viewer says so. Control+Option+Escape gives the
+  keyboard back to this window, so Tab reaches the buttons again. **Stop control** goes back to
+  viewing, and a grant that crosses it on the way does not bring control back.
 - Computer use on the Mac pauses, so an agent and a person never move the same pointer.
 - Nothing is typed on the Mac while a password field has focus there (macOS secure input), while a
   system prompt is open (SecurityAgent, the Touch ID dialog), while a browser is the front app, or

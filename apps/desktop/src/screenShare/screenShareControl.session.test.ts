@@ -116,6 +116,19 @@ describe("the control grant (AC-10, D-05)", () => {
     expect(r.store.hasControlGrant(device.device.thumbprint)).toBe(true);
   });
 
+  it("control that does not start does not restart the grant's clock", async () => {
+    const r = rig({ control: true });
+    const device = await makeDevice();
+    r.store.addControlGrant(device.device);
+    await r.advance(SCREEN_SHARE_GRANT_IDLE_MS - 60_000);
+    r.control.startResult = "unavailable";
+    const viewer = await live(r, device);
+    await viewer.tell(SCREEN_SHARE_RECORD.controlRequest, {});
+    expect(viewer.controls.at(-1)).toEqual({ mode: "viewing", reason: "unavailable" });
+    await r.advance(120_000);
+    expect(r.store.hasControlGrant(device.device.thumbprint)).toBe(false);
+  });
+
   it("a control grant ends 30 days after its last use", async () => {
     const r = rig({ control: true });
     const device = await makeDevice();

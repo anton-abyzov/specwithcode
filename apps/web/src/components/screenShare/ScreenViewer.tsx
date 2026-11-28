@@ -147,6 +147,8 @@ export interface ScreenViewerViewProps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   /** The area the picture is fitted into; its size is sent to the machine (1519). */
   areaRef?: RefObject<HTMLDivElement | null>;
+  /** While controlling: keys go to the machine because the picture area has focus. */
+  keyboardHere?: boolean;
   picture?: ScreenSharePicture;
   onPicture?: (picture: ScreenSharePicture) => void;
   /** Frames per second, size and delay, when the person asked to see them; null otherwise. */
@@ -171,6 +173,7 @@ export function ScreenViewerView({
   now,
   canvasRef,
   areaRef,
+  keyboardHere = false,
   picture,
   onPicture,
   statsLine,
@@ -194,7 +197,15 @@ export function ScreenViewerView({
   const warning = end?.kind === "machine_key_changed" || end?.kind === "code_mismatch";
   const control = model.control;
   const controlling = live && control.mode === "controlling";
-  const controlWords = live ? screenViewerControlWords(control) : null;
+  // What the machine says comes first; otherwise where the keys go now.
+  const controlWords = !live
+    ? null
+    : (screenViewerControlWords(control) ??
+      (!controlling
+        ? null
+        : keyboardHere
+          ? "Keys go to {machine}. Control+Option+Escape gives them back to this window."
+          : "Click the screen to type on {machine}."));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-screen-viewer={phase.kind}>
@@ -324,7 +335,7 @@ export function ScreenViewerView({
         aria-label={controlling ? tx("Controlling {machine}", { machine }) : undefined}
         data-screen-controlling={controlling ? "" : undefined}
         className={
-          controlling
+          controlling && keyboardHere
             ? "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted outline-none ring-2 ring-warning ring-inset"
             : "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted"
         }

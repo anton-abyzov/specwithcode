@@ -364,6 +364,15 @@ function onRecord(
     } catch {
       return ended(model, { kind: "handshake" });
     }
+    // After Stop, or after an answer, a grant still on its way does not bring control back:
+    // the view stays and tells the machine control is over.
+    if (model.control.mode === "viewing" && state.mode !== "viewing")
+      return state.mode === "controlling"
+        ? {
+            model,
+            effects: [{ t: "send", type: SCREEN_SHARE_RECORD.controlEnd, body: {} }],
+          }
+        : stay(model);
     const control: ScreenViewerControl =
       state.mode === "asking"
         ? { mode: "asking", requested: true }

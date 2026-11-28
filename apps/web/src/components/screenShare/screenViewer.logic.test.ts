@@ -505,6 +505,11 @@ describe("control (1519)", () => {
     const stopped = run([{ t: "stop_control" }, keyA], on.model);
     expect(sent(stopped.effects)).toEqual([{ type: SCREEN_SHARE_RECORD.controlEnd }]);
     expect(stopped.model.control.mode).toBe("viewing");
+    // A grant that crossed Stop on the way does not bring control back, and the machine hears so.
+    const late = run([control({ mode: "controlling" }), keyA], stopped.model);
+    expect(late.model.control.mode).toBe("viewing");
+    expect(sent(late.effects)).toEqual([{ type: SCREEN_SHARE_RECORD.controlEnd }]);
+    expect(run([control({ mode: "asking" })], stopped.model).model.control.mode).toBe("viewing");
   });
 
   it("sends no input while the machine is locked", () => {
