@@ -327,6 +327,16 @@ describe("review round 1: columns, tabs and long answers", () => {
     });
   });
 
+  it("counts no responses in a Sheet without a Responses tab", () => {
+    const sheet = {
+      v: 1,
+      kind: "sheet",
+      title: "B",
+      tabs: [{ name: "Costs", cells: { A1: "x", A2: "y" } }],
+    };
+    expect(formResponseCount(sheet as never)).toBe(0);
+  });
+
   it("puts the time in a new column when A1 holds a person's header", () => {
     const sheet = {
       v: 1,
