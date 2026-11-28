@@ -173,7 +173,8 @@ struct DictationTests {
     let dictation = SpeechDictation(makeEngine: { engine })
     dictation.start(language: "", draft: Binding(get: { box.text }, set: { box.text = $0 }), cursor: cursor)
     try await engine.started()
-    return (engine, dictation, { box.text })
+    // The draft reader holds the controller: the engine only reaches it weakly.
+    return (engine, dictation, { withExtendedLifetime(dictation) { box.text } })
   }
 
   @Test func aForgottenMicStopsAfterSilence() async throws {

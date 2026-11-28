@@ -64,7 +64,10 @@ nonisolated enum DictationText {
       guard text[index..<end].lowercased() == word else { return nil }
       index = end
     }
-    return String(text[index...]).trimmingCharacters(in: .whitespaces)
+    // Punctuation after the repeated words closed the settled phrase, which
+    // is already in the draft.
+    let rest = text[index...].drop { $0.isWhitespace || $0.isPunctuation }
+    return String(rest).trimmingCharacters(in: .whitespaces)
   }
 
   private static func isWordCharacter(_ character: Character) -> Bool {
