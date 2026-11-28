@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A fake child process needs plain streams.
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
