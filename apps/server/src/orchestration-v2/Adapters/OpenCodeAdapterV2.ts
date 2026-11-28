@@ -757,6 +757,105 @@ function permissionRuleEquals(
   );
 }
 
+const OPENCODE_RUNTIME_MODES = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+] as const satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"]>;
+
+/**
+ * Every rule set the app could have installed on a session for this policy's
+ * folder and sandbox: the policy in each runtime mode, with and without its
+ * explicit sandbox and approval settings.
+ */
+export function openCodeAppRuleSets(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): ReadonlyArray<PermissionRuleset> {
+  const {
+    sandboxPolicy: _sandboxPolicy,
+    approvalPolicy: _approvalPolicy,
+    ...plain
+  } = runtimePolicy;
+  return OPENCODE_RUNTIME_MODES.flatMap((runtimeMode) => [
+    openCodePermissionRules({ ...runtimePolicy, runtimeMode }),
+    openCodePermissionRules({ ...plain, runtimeMode }),
+  ]);
+}
+
+function ruleSetAt(rules: PermissionRuleset, start: number, ruleSet: PermissionRuleset): boolean {
+  return (
+    ruleSet.length > 0 &&
+    start + ruleSet.length <= rules.length &&
+    ruleSet.every((rule, index) => permissionRuleEquals(rule, rules[start + index]!))
+  );
+}
+
+/**
+ * Whether a session already runs under a policy: its rules hold the policy's
+ * rules in one run, followed by nothing but denies. Then an update is skipped,
+ * so a deny the session holds after them stays in force.
+ */
+export function openCodeSessionHoldsPolicy(
+  policyRules: PermissionRuleset,
+  sessionRules: PermissionRuleset,
+): boolean {
+  for (let start = sessionRules.length - policyRules.length; start >= 0; start -= 1) {
+    if (!ruleSetAt(sessionRules, start, policyRules)) continue;
+    return sessionRules.slice(start + policyRules.length).every((rule) => rule.action === "deny");
+  }
+  return false;
+}
+
+/**
+ * The rules a turn installs on a session: its policy's rules, then every deny
+ * the session holds outside a whole rule set the app installed. OpenCode
+ * appends what an update sends and applies the last matching rule, so a deny
+ * the session was given by someone else stays in force after a wider mode is
+ * installed, whatever its shape.
+ */
+export function openCodeSessionPermissionUpdate(
+  policyRules: PermissionRuleset,
+  sessionRules: PermissionRuleset,
+  appRuleSets: ReadonlyArray<PermissionRuleset>,
+): PermissionRuleset {
+  const written = Array.from(sessionRules, () => false);
+  for (const ruleSet of [policyRules, ...appRuleSets]) {
+    for (let start = 0; start < sessionRules.length; start += 1) {
+      if (!ruleSetAt(sessionRules, start, ruleSet)) continue;
+      for (let index = 0; index < ruleSet.length; index += 1) written[start + index] = true;
+    }
+  }
+  const keptDenies: Array<PermissionRuleset[number]> = [];
+  sessionRules.forEach((rule, index) => {
+    if (
+      rule.action === "deny" &&
+      !written[index] &&
+      !keptDenies.some((kept) => permissionRuleEquals(kept, rule))
+    ) {
+      keptDenies.push(rule);
+    }
+  });
+  return [...policyRules, ...keptDenies];
+}
+
+/**
+ * Denies someone else gave the session between the turn's read and its update:
+ * they sit before the rules the update appended, so the turn appends them again.
+ * `mergedRules` is the session's rule list the update returned.
+ */
+export function openCodeDeniesAddedDuringUpdate(
+  sentRules: PermissionRuleset,
+  mergedRules: PermissionRuleset,
+  policyRules: PermissionRuleset,
+  appRuleSets: ReadonlyArray<PermissionRuleset>,
+): PermissionRuleset {
+  const sentDenies = sentRules.slice(policyRules.length);
+  return openCodeSessionPermissionUpdate(policyRules, mergedRules, appRuleSets)
+    .slice(policyRules.length)
+    .filter((rule) => !sentDenies.some((sent) => permissionRuleEquals(sent, rule)));
+}
+
 /**
  * OpenCode task sessions inherit only the parent's deny/external-directory
  * rules and then add agent-specific restrictions such as disabling nested
@@ -1054,6 +1153,10 @@ export function makeOpenCodeAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
         const threads = new Map<string, OpenCodeThreadState>();
+        // The permission rules each root session was last given. A resumed
+        // session keeps the rules of the mode it was created in, so every turn
+        // installs its own policy's rules first when they differ.
+        const installedPermissionRules = new Map<string, PermissionRuleset>();
         const commandReceipts = new Map<string, Deferred.Deferred<void>>();
         const commandControllers = new Map<string, Set<AbortController>>();
         const pendingRequests = new Map<string, PendingOpenCodeRequest>();
@@ -3097,15 +3200,12 @@ export function makeOpenCodeAdapterV2(
               }
               // No title: OpenCode generates one from the first prompt only when
               // session.create leaves it unset (SessionPrompt.ensureTitle).
-              const response = yield* sdkCall(
-                "session.create",
-                { permission: openCodePermissionRules(threadInput.runtimePolicy) },
-                () =>
-                  client.session.create({
-                    permission: openCodePermissionRules(threadInput.runtimePolicy),
-                  }),
+              const permission = openCodePermissionRules(threadInput.runtimePolicy);
+              const response = yield* sdkCall("session.create", { permission }, () =>
+                client.session.create({ permission }),
               );
               const nativeSession = unwrapData("session.create", response);
+              installedPermissionRules.set(nativeSession.id, permission);
               const createdAt = yield* DateTime.now;
               const created = makeProviderThread({
                 idAllocator,
@@ -3198,6 +3298,53 @@ export function makeOpenCodeAdapterV2(
                 return yield* protocolError(
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
+              }
+              // A turn runs under its own policy's rules, also after the
+              // thread was lowered from Full access and its session resumed.
+              const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              const installed = installedPermissionRules.get(sessionId);
+              if (
+                installed === undefined ||
+                installed.length !== permission.length ||
+                !installed.every((rule, index) => permissionRuleEquals(rule, permission[index]!))
+              ) {
+                const current = unwrapData(
+                  "session.get",
+                  yield* sdkCall("session.get", { sessionID: sessionId }, () =>
+                    client.session.get({ sessionID: sessionId }),
+                  ),
+                );
+                const sessionRules = current.permission ?? [];
+                if (!openCodeSessionHoldsPolicy(permission, sessionRules)) {
+                  const appRuleSets = openCodeAppRuleSets(turnInput.runtimePolicy);
+                  const update = openCodeSessionPermissionUpdate(
+                    permission,
+                    sessionRules,
+                    appRuleSets,
+                  );
+                  const updated = unwrapData(
+                    "session.update",
+                    yield* sdkCall(
+                      "session.update",
+                      { sessionID: sessionId, permission: update },
+                      () => client.session.update({ sessionID: sessionId, permission: update }),
+                    ),
+                  );
+                  const missed = openCodeDeniesAddedDuringUpdate(
+                    update,
+                    updated.permission ?? [],
+                    permission,
+                    appRuleSets,
+                  );
+                  if (missed.length > 0) {
+                    yield* sdkCall(
+                      "session.update",
+                      { sessionID: sessionId, permission: missed },
+                      () => client.session.update({ sessionID: sessionId, permission: missed }),
+                    );
+                  }
+                }
+                installedPermissionRules.set(sessionId, permission);
               }
               const isCompaction =
                 turnInput.message.text.trim() === "/compact" &&
