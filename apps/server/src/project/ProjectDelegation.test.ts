@@ -28,7 +28,11 @@ it("keeps a moved worker's row Ultracode beside the caller's own options (1506)"
   };
   const on = { id: "ultracode", value: true };
   const high = { id: "effort", value: "high" };
-  const moved = { instanceId: work, model: "opus", options: [{ id: "effort", value: "medium" }, on] };
+  const moved = {
+    instanceId: work,
+    model: "opus",
+    options: [{ id: "effort", value: "medium" }, on],
+  };
   const effortOnly = { options: [high] };
   expect(projectDelegationTarget(project, coordinator, effortOnly, null, moved)?.options).toEqual([
     high,
