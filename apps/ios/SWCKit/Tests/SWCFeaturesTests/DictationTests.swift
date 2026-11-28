@@ -64,6 +64,34 @@ struct DictationTests {
     dictation.stop()
   }
 
+  // Recorded with en-US dictation and three seconds of silence between phrases.
+  @Test(arguments: [true, false])
+  func recordedPauseKeepsBothPhrases(onDeviceRequired: Bool) async throws {
+    let (engine, dictation, draft) = try await listening("")
+    defer { dictation.stop() }
+    let first = "I want to fix the build"
+    for text in ["I", "I want", "I want to", "I want to fix", "I want to fix the", first] {
+      engine.emit(.partial(text))
+    }
+    if onDeviceRequired {
+      // Apple supplied metadata while isFinal was false.
+      engine.emit(.final(first))
+      for text in ["And", "And then", "And then ship"] {
+        engine.emit(.partial(text))
+        #expect(draft() == first + " " + text)
+      }
+      engine.emit(.final("And then ship it"))
+      #expect(draft() == first + " And then ship it")
+    } else {
+      for suffix in [" and", " and then", " and then ship"] {
+        engine.emit(.partial(first + suffix))
+        #expect(draft() == first + suffix)
+      }
+      engine.emit(.final(first + " and then ship it"))
+      #expect(draft() == first + " and then ship it")
+    }
+  }
+
   @Test func aSettledPhraseStaysWhenTheNextStartsEmpty() async throws {
     let (engine, _, draft) = try await listening("")
     engine.emit(.partial("Fix the build"))
