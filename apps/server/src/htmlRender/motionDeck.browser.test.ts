@@ -193,6 +193,15 @@ describe("motion deck runtime", () => {
     await tab.waitForFunction(`SpecWithCodeDeck.current.audio.context.state === "suspended"`);
     await setHidden(false);
     await tab.waitForFunction(`SpecWithCodeDeck.current.audio.running === true`);
+    // Hidden again before the resume settles: the page stays silent.
+    await setHidden(true);
+    await tab.waitForFunction(`SpecWithCodeDeck.current.audio.context.state === "suspended"`);
+    await setHidden(false);
+    await setHidden(true);
+    await tab.waitForTimeout(1500);
+    expect(await state()).toBe("suspended");
+    await setHidden(false);
+    await tab.waitForFunction(`SpecWithCodeDeck.current.audio.running === true`);
     await tab.close();
   });
 
