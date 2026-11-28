@@ -183,6 +183,7 @@ struct DictationTests {
     dictation.stop()
     // The field's cursor still says 5: the words were written from outside it.
     dictation.toggle(language: "", draft: binding, cursor: 5)
+    try await engine.started(count: 2)
     engine.emit(.partial("and"))
     #expect(text == "Hello big and world")
     dictation.stop()
@@ -209,8 +210,7 @@ struct DictationTests {
     let late = engine.handler
     dictation.stop()
     dictation.start(language: "", draft: binding)
-    for _ in 0..<50 where engine.starts < 2 { await Task.yield() }
-    try #require(engine.starts == 2)
+    try await engine.started(count: 2)
     late?(.final("stale words"))
     #expect(text == "")
     dictation.stop()
@@ -306,7 +306,7 @@ struct DictationTests {
 @MainActor
 private final class FakeSpeech: SpeechEngine {
   private var onEvent: (@MainActor (SpeechEvent) -> Void)?
-  private(set) var starts = 0
+  private var starts = 0
   var handler: (@MainActor (SpeechEvent) -> Void)? { onEvent }
   private let failure: Error?
   private(set) var stopped = false
@@ -319,9 +319,9 @@ private final class FakeSpeech: SpeechEngine {
     starts += 1
   }
 
-  func started() async throws {
-    for _ in 0..<50 where onEvent == nil { await Task.yield() }
-    try #require(onEvent != nil)
+  func started(count: Int = 1) async throws {
+    for _ in 0..<50 where starts < count { await Task.yield() }
+    try #require(starts == count)
   }
 
   func emit(_ event: SpeechEvent) { onEvent?(event) }
