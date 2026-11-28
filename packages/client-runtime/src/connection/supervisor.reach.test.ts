@@ -133,6 +133,9 @@ const makeHarness = Effect.fn("TestReachHarness.make")(function* (options: {
   };
 });
 
+/** The longest of the waits, which the backoff reaches after a few failures. */
+const backoffCeiling = (waits: ReadonlyArray<number>) => Math.max(...waits);
+
 const makeSupervisor = (harness: Effect.Success<ReturnType<typeof makeHarness>>) =>
   EnvironmentSupervisor.make(ENTRY, { initiallyDesired: true }).pipe(
     Effect.provide(harness.dependencies),
@@ -258,6 +261,61 @@ describe("EnvironmentSupervisor recovery of a machine that was just connected", 
           (wait) => wait.waitMs === EnvironmentSupervisor.KNOWN_MACHINE_RETRY_MAX_DELAY_MS,
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps the two-minute cap after a relaunch for a machine used yesterday", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("2 days");
+      const yesterday = (yield* Clock.currentTimeMillis) - 24 * 60 * 60_000;
+      const harness = yield* makeHarness({ setup: () => Effect.fail(silent) });
+      const supervisor = yield* EnvironmentSupervisor.make(ENTRY, {
+        initiallyDesired: true,
+        lastConnected: { read: Effect.succeed(yesterday), write: () => Effect.void },
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const waits: Array<number> = [];
+      let attempt = 0;
+      while (waits.length < 12) {
+        const backoff = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt > attempt,
+        );
+        attempt = backoff.attempt;
+        const waitMs = backoff.retryAt! - (yield* Clock.currentTimeMillis);
+        waits.push(waitMs);
+        yield* TestClock.adjust(waitMs);
+      }
+      expect(backoffCeiling(waits)).toBe(EnvironmentSupervisor.KNOWN_MACHINE_RETRY_MAX_DELAY_MS);
+      // The earlier run's session sets the cap only; this run has had none yet.
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        lastConnectedAt: null,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("remembers when a session starts, hourly while it lasts, and when it ends", () =>
+    Effect.gen(function* () {
+      const written: Array<number> = [];
+      const harness = yield* makeHarness({
+        setup: (attempt) => (attempt === 1 ? Effect.void : Effect.never),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(ENTRY, {
+        initiallyDesired: true,
+        lastConnected: {
+          read: Effect.succeed(null),
+          write: (at) => Effect.sync(() => void written.push(at)),
+        },
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(written).toEqual([0]);
+      // A long session keeps the record fresh, in case the app closes before it ends.
+      yield* TestClock.adjust("3 hours");
+      expect(written.slice(1)).toEqual([3_600_000, 7_200_000, 10_800_000]);
+      yield* TestClock.adjust("10 minutes");
+      yield* harness.close();
+      yield* awaitState(supervisor.state, (state) => state.phase !== "connected");
+      expect(written.at(-1)).toBe(3 * 3_600_000 + 10 * 60_000);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

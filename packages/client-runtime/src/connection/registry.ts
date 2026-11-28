@@ -257,6 +257,7 @@ export const make = Effect.gen(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const githubRoutingPermissions = yield* GitHubRoutingPermissions;
   const accountOwners = yield* Persistence.AccountOwnersStore;
+  const lastConnected = yield* Persistence.LastConnectedStore;
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
@@ -429,6 +430,7 @@ export const make = Effect.gen(function* () {
             // policy to the loopback route only.
             thisMachine: entry.target._tag === "PrimaryConnectionTarget",
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            lastConnected: Persistence.lastConnectedFor(lastConnected, environmentId),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),

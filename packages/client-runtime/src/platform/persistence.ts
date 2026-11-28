@@ -171,3 +171,34 @@ export class AccountOwnersStore extends Context.Reference<{
     forgotten: () => Effect.void,
   }),
 }) {}
+
+/**
+ * When this device last had a session with each machine, kept across app
+ * restarts so a machine used this week keeps the short retry cap after a
+ * relaunch (1517). The default keeps nothing: every launch starts with none.
+ */
+export interface LastConnectedRecords {
+  readonly read: (environmentId: EnvironmentId) => Effect.Effect<number | null>;
+  readonly write: (environmentId: EnvironmentId, at: number) => Effect.Effect<void>;
+}
+
+export class LastConnectedStore extends Context.Reference<LastConnectedRecords>(
+  "@specweave-studio/client-runtime/platform/persistence/LastConnectedStore",
+  {
+    defaultValue: () => ({
+      read: () => Effect.succeed(null),
+      write: () => Effect.void,
+    }),
+  },
+) {}
+
+/** One machine's view of a `LastConnectedStore`, as the supervisor takes it. */
+export function lastConnectedFor(
+  store: LastConnectedRecords,
+  environmentId: EnvironmentId,
+): {
+  readonly read: Effect.Effect<number | null>;
+  readonly write: (at: number) => Effect.Effect<void>;
+} {
+  return { read: store.read(environmentId), write: (at) => store.write(environmentId, at) };
+}
