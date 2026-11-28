@@ -12,6 +12,7 @@
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type EnvironmentId,
   type PersonalShareStatus,
@@ -27,11 +28,18 @@ import {
   usePrimaryEnvironmentId,
   useRelayEnvironmentDiscovery,
 } from "../../state/environments";
-import { useEnvironmentScopeAccess, useEnvironmentsScopeAccess } from "../../state/session";
+import { requestConfirmDialog } from "../../confirmDialog";
+import { isElectron } from "../../env";
+import {
+  readEnvironmentScope,
+  useEnvironmentScopeAccess,
+  useEnvironmentsScopeAccess,
+} from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
+  joinAccountMachineForWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
@@ -76,6 +84,7 @@ import {
   type ShareCandidate,
   type ShareConfirmChoice,
 } from "./PercySharedConfirmDialog";
+import { connectOffHereFailure } from "./IncomingWorkerSetup";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -380,9 +389,22 @@ export function PercySharedSetting() {
   // The grant Settings > Machines makes, from this card; the machine is kept on this list.
   const allowMachine = async (environmentId: EnvironmentId) => {
     if (ownId === null) return;
+    const label = labelOf(environmentId);
+    // Every route hands one machine a key to the other: ask first, as Settings > Machines does.
+    const agreed = await requestConfirmDialog(
+      `${tx("Allow work between {here} and {machine}?", { here: ownLabel, machine: label })}\n${tx(
+        "One of the two machines receives a key to the other for a year: terminals, files, settings and sign-ins, plus access, updates and skills, at Full access. Project limits stay in force. Change or stop it in Settings > Machines.",
+      )}`,
+    );
+    if (agreed !== true) return;
     setBusy(true);
     setError(null);
-    const label = labelOf(environmentId);
+    // The Connect route needs the installed app's own sign-in there, with operate access.
+    const accountRoute =
+      isElectron &&
+      readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) &&
+      environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+        ?.environment.capabilities.fleetAccountJoinWorkers === true;
     const result = await allowShareMachine(
       {
         machines: () => readStudioFleetMachines(ownId),
@@ -390,6 +412,21 @@ export function PercySharedSetting() {
           (await allowStudioFleetWorkers(ownId, { id, access })).workers,
         allowHere: async (id, access) =>
           (await allowIncomingStudioFleetWorkers(ownId, id, access)).workers,
+        // Without a working saved key, the line goes over this app's Connect
+        // sign-in there, as Settings > Machines does for the account's machines.
+        throughAccount: accountRoute
+          ? async (access) =>
+              (
+                await joinAccountMachineForWorkers({
+                  here: ownId,
+                  coordinator: environmentId,
+                  coordinatorLabel: label,
+                  access,
+                }).catch((failure: unknown) => {
+                  throw connectOffHereFailure(failure, ownLabel, label);
+                })
+              ).workers
+          : undefined,
       },
       environmentId,
       label,

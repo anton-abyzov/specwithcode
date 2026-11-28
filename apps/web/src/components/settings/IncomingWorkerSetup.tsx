@@ -142,6 +142,17 @@ function connectOffHereMessage(hereLabel: string, coordinatorLabel: string): str
   return `SpecWithCode Connect is off on ${hereLabel}, so ${coordinatorLabel} has no address to reach it. On ${hereLabel}, turn on the SpecWithCode Connect switch in Settings > Machines, then choose Allow again.`;
 }
 
+/** `failure`, or the switch that fixes it when this machine has no Connect address to hand over. */
+export function connectOffHereFailure(
+  failure: unknown,
+  hereLabel: string,
+  coordinatorLabel: string,
+): unknown {
+  return isConnectOffHere(failure)
+    ? new Error(connectOffHereMessage(hereLabel, coordinatorLabel), { cause: failure })
+    : failure;
+}
+
 export function IncomingWorkerSaved({
   coordinatorLabel,
   access,
@@ -271,8 +282,8 @@ export function useIncomingWorkerAllow({
   // Without a sign-in there, this machine's server asks the coordinator itself.
   const fromHere = !manageThere && coordinatorFleetId !== undefined;
   // With neither, the two machines' shared SpecWithCode Connect account carries the line.
-  const throughAccount =
-    !manageThere && coordinatorFleetId === undefined && accountJoin === true && operateThere;
+  const accountRoute = accountJoin === true && operateThere;
+  const throughAccount = !manageThere && coordinatorFleetId === undefined && accountRoute;
   const unavailable = !isElectron
     ? tx("Open the installed desktop app to set this up.")
     : !connected && approvalCode !== undefined
@@ -303,9 +314,7 @@ export function useIncomingWorkerAllow({
       access,
     }).catch((failure: unknown) => {
       // This machine has no Connect address to hand over: name the switch that gives it one.
-      if (isConnectOffHere(failure))
-        throw new Error(connectOffHereMessage(hereLabel, coordinatorLabel), { cause: failure });
-      throw failure;
+      throw connectOffHereFailure(failure, hereLabel, coordinatorLabel);
     });
     if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
       throw new Error(
@@ -332,7 +341,17 @@ export function useIncomingWorkerAllow({
       const result = throughAccount
         ? await allowThroughAccount()
         : fromHere && coordinatorFleetId !== undefined
-          ? await allowIncomingFromHere(coordinatorFleetId)
+          ? await allowIncomingFromHere(coordinatorFleetId).catch((failure: unknown) => {
+              // The key saved there may be gone or refused (HTTP 401): the
+              // account's Connect sign-in carries the line without it.
+              if (!accountRoute) throw failure;
+              return allowThroughAccount().catch((second: unknown) => {
+                const said = [failure, second].map((each) =>
+                  each instanceof Error ? each.message : String(each),
+                );
+                throw new Error([...new Set(said)].join(" "), { cause: second });
+              });
+            })
           : await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
       onGranted({
         access,
