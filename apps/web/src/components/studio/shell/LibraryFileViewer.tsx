@@ -19,7 +19,9 @@ import { hostFilePreview, noPreviewReason } from "../../files/hostFilePreview";
 import { HostDocumentPreview, HostWorkbookPreview } from "../../files/OfficeDocumentPreview";
 import { useProjectFileQuery } from "../../files/projectFilesQueryState";
 import { SheetFileView } from "../../office/SheetFileView";
+import { FormFileView } from "../../office/form/FormFileView";
 import { WhiteboardFileView } from "../../office/whiteboard/WhiteboardFileView";
+import { isFormPath } from "@specweave-studio/shared/officeForm";
 import { isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 import { Button } from "../../ui/button";
 import { libraryFileType } from "../../../studio/projectPaneModel";
@@ -241,6 +243,7 @@ function LibraryFileBody(props: {
 }): ReactNode {
   const sheet = props.path.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX);
   const whiteboard = isWhiteboardPath(props.path);
+  const form = isFormPath(props.path);
   const host = hostFilePreview(props.path);
   const kind = filePreviewKind({ name: props.path });
   const asset =
@@ -251,6 +254,7 @@ function LibraryFileBody(props: {
   const readable =
     !sheet &&
     !whiteboard &&
+    !form &&
     host === "text" &&
     libraryFileType(props.path) !== "images" &&
     kind !== "pdf" &&
@@ -290,6 +294,15 @@ function LibraryFileBody(props: {
   if (sheet) {
     return (
       <SheetFileView
+        environmentId={props.environmentId}
+        cwd={props.workspaceRoot}
+        path={props.path}
+      />
+    );
+  }
+  if (form) {
+    return (
+      <FormFileView
         environmentId={props.environmentId}
         cwd={props.workspaceRoot}
         path={props.path}

@@ -9,7 +9,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { sheetContentRevision } from "@specweave-studio/shared/officeSheet";
+import { NEW_FILE_REVISION, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
+
+import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -1043,6 +1045,192 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             "leads outside the project",
           );
           expect(yield* fileSystem.exists(path.join(outsideDir, "away.excalidraw"))).toBe(false);
+        }),
+    );
+
+    it.effect("makes a sheet with the new-file revision only while it is missing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"), { recursive: true });
+        const sheet = (cell: string) =>
+          `{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{"A1":"${cell}"}}]}`;
+        // The canonical artifacts path and a sheet in a subfolder take different writers.
+        for (const relativePath of [
+          ".specweave/artifacts/intake-responses.sheet.json",
+          ".specweave/artifacts/team/intake-responses.sheet.json",
+        ]) {
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath,
+            contents: sheet("first"),
+            expectedRevision: NEW_FILE_REVISION,
+          });
+          const second = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath,
+              contents: sheet("second"),
+              expectedRevision: NEW_FILE_REVISION,
+            })
+            .pipe(Effect.flip);
+          expect(String(second.cause)).toContain("Conflict:");
+          expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toContain("first");
+        }
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "never makes a new sheet through a dangling link that points outside the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outside = yield* makeTempDir;
+          const folder = path.join(cwd, ".specweave", "artifacts", "team");
+          yield* fileSystem.makeDirectory(folder, { recursive: true });
+          const away = path.join(outside, "away.sheet.json");
+          yield* fileSystem.symlink(away, path.join(folder, "intake-responses.sheet.json"));
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/team/intake-responses.sheet.json",
+              contents:
+                '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}',
+              expectedRevision: NEW_FILE_REVISION,
+            })
+            .pipe(Effect.flip);
+          expect(String(refused.cause ?? refused)).toMatch(/outside|Conflict/);
+          expect(yield* fileSystem.exists(away)).toBe(false);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a new sheet whose name is a dangling link to a missing sheet in the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const folder = path.join(cwd, ".specweave", "artifacts");
+          yield* fileSystem.makeDirectory(folder, { recursive: true });
+          yield* fileSystem.symlink(
+            path.join(folder, "missing.sheet.json"),
+            path.join(folder, "intake-responses.sheet.json"),
+          );
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/intake-responses.sheet.json",
+              contents:
+                '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}',
+              expectedRevision: NEW_FILE_REVISION,
+            })
+            .pipe(Effect.flip);
+          expect(String(refused.cause ?? refused)).toMatch(/outside|Conflict/);
+          expect(yield* fileSystem.exists(path.join(folder, "missing.sheet.json"))).toBe(false);
+        }),
+    );
+
+    it.effect.skipIf(isWindows)(
+      "keeps a backslash in a new sheet's name as part of the name, never a way out",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const parent = yield* makeTempDir;
+          const cwd = path.join(parent, "project");
+          const forms = path.join(cwd, "forms");
+          yield* fileSystem.makeDirectory(path.join(forms, "team"), { recursive: true });
+          const sheet =
+            '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}';
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath: "forms/team\\west-responses.sheet.json",
+            contents: sheet,
+            expectedRevision: NEW_FILE_REVISION,
+          });
+          expect(
+            yield* fileSystem.exists(path.join(forms, "team\\west-responses.sheet.json")),
+          ).toBe(true);
+          expect(
+            yield* fileSystem.exists(path.join(forms, "team", "west-responses.sheet.json")),
+          ).toBe(false);
+          // Called directly too: a backslash never climbs out of the project.
+          yield* fileSystem.makeDirectory(path.join(cwd, "sub"), { recursive: true });
+          yield* Effect.promise(() =>
+            writeSheetFileCompareAndSet(
+              cwd,
+              "sub/..\\..\\escape.sheet.json",
+              sheet,
+              NEW_FILE_REVISION,
+            ),
+          );
+          expect(yield* fileSystem.exists(path.join(parent, "escape.sheet.json"))).toBe(false);
+        }),
+    );
+
+    it.effect("creates a form in a new folder and refuses a stale form save", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = ".specweave/artifacts/team/intake.form.json";
+        const initial = '{"v":1,"kind":"form","title":"Intake","items":[]}';
+        yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: initial });
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        expect(read.contents).toBe(initial);
+        const edited = initial.replace("Intake", "Intake v2");
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents: edited,
+          expectedRevision: sheetContentRevision(read.contents),
+        });
+        const stale = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath,
+            contents: initial,
+            expectedRevision: sheetContentRevision(read.contents),
+          })
+          .pipe(Effect.flip);
+        expect(String(stale.cause)).toContain("Conflict:");
+        expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toBe(edited);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a form that a symlinked folder would put outside the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outsideDir = yield* makeTempDir;
+          yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"), { recursive: true });
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, ".specweave", "artifacts"));
+
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/away.form.json",
+              contents: '{"v":1,"kind":"form","title":"Away","items":[]}',
+            })
+            .pipe(Effect.flip);
+
+          expect(String("cause" in refused ? refused.cause : refused)).toContain(
+            "leads outside the project",
+          );
+          expect(yield* fileSystem.exists(path.join(outsideDir, "away.form.json"))).toBe(false);
         }),
     );
 

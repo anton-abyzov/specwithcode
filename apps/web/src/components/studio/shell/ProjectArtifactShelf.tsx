@@ -25,6 +25,7 @@ import {
   PinIcon,
   PresentationIcon,
   ShapesIcon,
+  ClipboardListIcon,
   TableIcon,
 } from "lucide-react";
 import {
@@ -70,6 +71,7 @@ import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
 import { useNewSheetEntry } from "../../office/newSheetEntry";
+import { useNewFormEntry } from "../../office/form/newFormEntry";
 import { useNewWhiteboardEntry } from "../../office/whiteboard/newWhiteboardEntry";
 import { type ArtifactNewEntry, ArtifactNewMenu } from "./ArtifactNewMenu";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
@@ -89,6 +91,7 @@ const KIND_ICON: Record<ProjectArtifactKind, typeof FileTextIcon> = {
   link: LinkIcon,
   sheet: TableIcon,
   whiteboard: ShapesIcon,
+  form: ClipboardListIcon,
 };
 
 function extensionOf(artifact: ProjectArtifact): string | null {
@@ -657,6 +660,7 @@ export function ProjectArtifactShelf(props: {
       workspaceRoot: props.workspaceRoot,
     }),
     useNewDocumentEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
+    useNewFormEntry({ environmentId: props.environmentId, workspaceRoot: props.workspaceRoot }),
     ...useNewDesignEntries(props.designProject),
   ].filter((entry): entry is ArtifactNewEntry => entry !== null);
   const newMenu = (

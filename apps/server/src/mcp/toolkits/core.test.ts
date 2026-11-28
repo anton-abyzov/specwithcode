@@ -59,6 +59,7 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
 import { PullRequestsToolkit } from "./pullRequests/tools.ts";
 import { HtmlToolkit } from "./html/tools.ts";
 import { OfficeToolkit } from "./office/tools.ts";
+import { FormToolkit } from "./office/form.ts";
 import { WhiteboardToolkit } from "./office/whiteboard.ts";
 import { DocumentToolkit } from "./office/document.ts";
 import { ProjectKnowledgeToolkit } from "./projectKnowledge/tools.ts";
@@ -89,6 +90,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     HtmlToolkit,
     OfficeToolkit,
     WhiteboardToolkit,
+    FormToolkit,
     DocumentToolkit,
     ProjectKnowledgeToolkit,
     DesignToolkit,

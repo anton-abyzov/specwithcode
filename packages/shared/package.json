@@ -204,6 +204,10 @@
       "types": "./src/sheetCollab/index.ts",
       "import": "./src/sheetCollab/index.ts"
     },
+    "./officeForm": {
+      "types": "./src/officeForm/index.ts",
+      "import": "./src/officeForm/index.ts"
+    },
     "./officeWhiteboard": {
       "types": "./src/officeWhiteboard.ts",
       "import": "./src/officeWhiteboard.ts"

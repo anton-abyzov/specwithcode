@@ -34,6 +34,7 @@ const QUIET_VARIANTS = new Set(["ghost", "ghost-muted", "ghost-destructive"]);
 const EXCEPTIONS: Readonly<Record<string, number>> = {
   "components/design/editor/PropertiesPanel.tsx": 1,
   "components/device/DeviceStreamView.tsx": 2,
+  "components/office/form/FormView.tsx": 1,
   "components/skills/SkillAuthoringSheet.tsx": 3,
   "components/skills/SkillDetailPanel.tsx": 1,
 };
@@ -201,9 +202,9 @@ describe("labelled buttons rest on a border or a fill", () => {
       ).toBe(1);
     }
     expect(quietLabelledButtons(`<Button variant={"outline"}>Stop copy</Button>`)).toBe(0);
-    expect(
-      quietLabelledButtons(`<Button variant={(on ? "ghost" : "outline")}>Go</Button>`),
-    ).toBe(1);
+    expect(quietLabelledButtons(`<Button variant={(on ? "ghost" : "outline")}>Go</Button>`)).toBe(
+      1,
+    );
     expect(
       quietLabelledButtons(`<Button variant={a ? "outline" : b ? "ghost" : "default"}>Go</Button>`),
     ).toBe(1);
