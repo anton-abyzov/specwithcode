@@ -122,3 +122,34 @@ describe("small formats", () => {
     expect(formatElapsed(-5)).toBe("00:00");
   });
 });
+
+describe("control wording (1519)", () => {
+  const view = {
+    sid: "s",
+    label: "Work <laptop>",
+    shortId: "7F3A",
+    stage: "ask" as const,
+    kind: "control" as const,
+    code: "482913",
+    expiresAt: 1,
+  };
+
+  it("asks to control with Deny and Always allow control only, and never shows a code", () => {
+    const html = promptHtml(view);
+    expect(html).toContain("Work &#60;laptop&#62; (ID 7F3A) wants to control this Mac");
+    expect(html).toContain('<button id="deny">Deny</button>');
+    expect(html).toContain('<button id="always" class="primary">Always allow control</button>');
+    expect(html).not.toContain('id="once"');
+    expect(html).not.toContain("482");
+    expect(html).toContain('data-kind="control"');
+  });
+
+  it("the banner says controlling while it controls", () => {
+    expect(
+      bannerHtml({ label: "Work laptop", shortId: "7F3A", startedAt: 0, controlling: true }),
+    ).toContain("is controlling this screen");
+    expect(bannerHtml({ label: "Work laptop", shortId: "7F3A", startedAt: 0 })).toContain(
+      "is viewing this screen",
+    );
+  });
+});

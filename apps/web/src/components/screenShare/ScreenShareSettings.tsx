@@ -126,6 +126,17 @@ export function ScreenShareSettingsView({
     );
 
   const sessions = state.audit.slice(0, SESSIONS_SHOWN);
+  // Each device once, with what it may do: view, control, or both (1519).
+  const devices = [...state.grants, ...(state.controlGrants ?? [])]
+    .filter(
+      (grant, index, all) =>
+        all.findIndex((other) => other.thumbprint === grant.thumbprint) === index,
+    )
+    .map((grant) => ({
+      grant,
+      view: state.grants.find((other) => other.thumbprint === grant.thumbprint),
+      control: state.controlGrants?.find((other) => other.thumbprint === grant.thumbprint),
+    }));
   return (
     <SettingsSection
       id="screen-sharing"
@@ -146,7 +157,7 @@ export function ScreenShareSettingsView({
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {tx(
-                "Off until you turn it on here. Turning it on asks for Touch ID or your password. A device's first view is allowed by someone at this machine, and a notice stays on screen the whole time it is viewed. View only: nothing can be clicked or typed from the device.",
+                "Off until you turn it on here. Turning it on asks for Touch ID or your password. A device's first view is allowed by someone at this machine, and a notice stays on screen the whole time it is viewed. Viewing is view only. A device can click and type here only after someone at this machine allows control for it, with Touch ID.",
               )}
             </p>
           </div>
@@ -193,10 +204,15 @@ export function ScreenShareSettingsView({
             <EyeIcon className="size-4 shrink-0 text-success-foreground" aria-hidden />
             <p className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm">
               <span>
-                {tx("{device} is viewing this screen, since {when}.", {
-                  device: state.active.label,
-                  when: formatRelativeTimeLabel(state.active.startedAt),
-                })}
+                {tx(
+                  state.active.controlling === true
+                    ? "{device} is controlling this screen, viewing since {when}."
+                    : "{device} is viewing this screen, since {when}.",
+                  {
+                    device: state.active.label,
+                    when: formatRelativeTimeLabel(state.active.startedAt),
+                  },
+                )}
               </span>
               <ShortId id={state.active.shortId} />
             </p>
@@ -213,7 +229,7 @@ export function ScreenShareSettingsView({
 
         <div className={`space-y-2 ${ROW}`} data-screen-share-grants="">
           <p className="text-xs font-medium text-foreground">{tx("Always allowed devices")}</p>
-          {state.grants.length === 0 ? (
+          {devices.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {tx(
                 "None. Each device asks at this machine before it views, until you choose Always allow for it.",
@@ -221,7 +237,7 @@ export function ScreenShareSettingsView({
             </p>
           ) : (
             <ul className="space-y-2">
-              {state.grants.map((grant) => (
+              {devices.map(({ grant, view, control }) => (
                 <li
                   key={grant.thumbprint}
                   className="flex items-start gap-3"
@@ -232,12 +248,25 @@ export function ScreenShareSettingsView({
                       <span className="truncate">{grant.label}</span>
                       <ShortId id={grant.shortId} />
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      {tx("Allowed {allowed}, last viewed {viewed}. Ends after 30 days unused.", {
-                        allowed: formatRelativeTimeLabel(grant.grantedAt),
-                        viewed: formatRelativeTimeLabel(grant.lastUsedAt),
-                      })}
-                    </p>
+                    {view ? (
+                      <p className="text-xs text-muted-foreground">
+                        {tx("Allowed {allowed}, last viewed {viewed}. Ends after 30 days unused.", {
+                          allowed: formatRelativeTimeLabel(view.grantedAt),
+                          viewed: formatRelativeTimeLabel(view.lastUsedAt),
+                        })}
+                      </p>
+                    ) : null}
+                    {control ? (
+                      <p
+                        className="text-xs text-warning-foreground"
+                        data-screen-share-control-grant=""
+                      >
+                        {tx(
+                          "May also control this screen with nobody here, last {used}. Ends after 30 days unused.",
+                          { used: formatRelativeTimeLabel(control.lastUsedAt) },
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                   <Button
                     size="sm"
@@ -277,6 +306,9 @@ export function ScreenShareSettingsView({
                       }
                     >
                       {tx(sessionOutcome(entry))}
+                      {entry.control !== undefined && entry.control.outcome !== "refused"
+                        ? tx(", and controlled")
+                        : null}
                     </span>
                     {reason ? (
                       <span className="text-xs text-muted-foreground">{tx(reason)}</span>

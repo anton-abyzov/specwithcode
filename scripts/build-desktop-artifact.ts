@@ -37,6 +37,11 @@ import {
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
+import {
+  MAC_SCREEN_CONTROL_EXTRA_RESOURCES,
+  MAC_SCREEN_CONTROL_FILE_EXCLUSIONS,
+  stageMacScreenControlHelper,
+} from "./lib/mac-screen-control-helper.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import {
@@ -1046,6 +1051,7 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // The voice helper is an executable; it ships once at resources/voice.
   "!apps/desktop/prod-resources/voice",
   "!apps/desktop/prod-resources/voice/**/*",
+  ...MAC_SCREEN_CONTROL_FILE_EXCLUSIONS,
   // The specwithcode command shim is run by the shell; it ships once at resources/cli.
   "!apps/desktop/prod-resources/cli",
   "!apps/desktop/prod-resources/cli/**/*",
@@ -3043,6 +3049,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(platform === "win" ? WINDOWS_CLI_SHIM_EXTRA_RESOURCES : POSIX_CLI_SHIM_EXTRA_RESOURCES),
       ...(platform === "mac" ? MAC_SERVICE_UPDATER_EXTRA_RESOURCES : []),
       ...(platform === "mac" ? MAC_VOICE_EXTRA_RESOURCES : []),
+      ...(platform === "mac" ? MAC_SCREEN_CONTROL_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_VOICE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
@@ -4109,6 +4116,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       destinationDirectory: path.join(stageProdResourcesDir, "voice"),
       arch: options.arch,
       verbose: options.verbose,
+    });
+    yield* stageMacScreenControlHelper({
+      repoRoot,
+      destinationDirectory: path.join(stageProdResourcesDir, "screen-control"),
+      arch: options.arch,
+      run: (command, label) => runCommand(command, { label, verbose: options.verbose }),
     });
   }
   if (options.platform === "linux") {

@@ -15,6 +15,7 @@ import {
   SCREEN_SHARE_WIRE,
   isScreenShareSessionId,
   type ScreenShareFrameHeader,
+  type ScreenShareInputEvent,
 } from "@specweave-studio/contracts";
 import type { DpopPublicJwk } from "@specweave-studio/shared/dpop";
 import {
@@ -149,6 +150,20 @@ export class ScreenViewerSession {
   /** The picture area's size in device pixels and the picture choice; sent once the machine reads it. */
   setViewport(viewport: ScreenViewerViewport): void {
     this.enqueue(() => this.apply({ t: "viewport", viewport }));
+  }
+
+  /** 1519: asks the machine for control, or goes back to viewing. */
+  requestControl(): void {
+    this.enqueue(() => this.apply({ t: "request_control" }));
+  }
+
+  stopControl(): void {
+    this.enqueue(() => this.apply({ t: "stop_control" }));
+  }
+
+  /** Pointer, scroll and key events while controlling; dropped otherwise. */
+  sendInput(displayId: string, events: ReadonlyArray<ScreenShareInputEvent>): void {
+    this.enqueue(() => this.apply({ t: "input", displayId, events }));
   }
 
   end(): void {

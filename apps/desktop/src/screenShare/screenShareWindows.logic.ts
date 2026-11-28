@@ -54,6 +54,7 @@ export const promptHtml = (view: ScreenSharePromptView): string => {
       ? ""
       : `<p class="soft">${view.stage === "code" ? "Type this code on that device:" : "First time from this device. After you allow, type this code on it:"}</p>
 <p id="code" aria-label="Code ${escapeHtml(view.code.split("").join(" "))}">${escapeHtml(formatCode(view.code))}</p>`;
+  if (view.kind === "control") return controlPromptHtml(view, name, id, claimed);
   const actions =
     view.stage === "ask"
       ? `<div id="actions"><button id="deny">Deny</button><span class="gap"></span><button id="once">Allow once</button><button id="always" class="primary">Always allow this device</button></div>
@@ -82,6 +83,36 @@ ${claimed}${code}${actions}
   );
 };
 
+const PROMPT_STYLE = `
+#panel { margin: 2px; padding: 18px 20px; height: ${SCREEN_SHARE_PROMPT_SIZE.height - 4}px; border: 1px solid var(--line); border-radius: 16px; background: var(--base); display: flex; flex-direction: column; gap: 6px; }
+h1 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
+p { margin: 0; }
+.soft { color: var(--soft); }
+.small { font-size: 12px; line-height: 16px; }
+#actions { display: flex; gap: 8px; margin-top: auto; }
+.gap { flex: 1; }
+.primary { background: var(--accent); color: #fff; }
+`;
+
+/** 1519: a device that views this screen asks to control it. Deny, or allow for good with authentication. */
+const controlPromptHtml = (
+  view: ScreenSharePromptView,
+  name: string,
+  id: string,
+  claimed: string,
+): string =>
+  page(
+    "Screen control request",
+    PROMPT_STYLE,
+    `<main id="panel" role="alertdialog" aria-labelledby="title">
+<h1 id="title">${name} (ID ${id}) wants to control this Mac</h1>
+<p class="soft">It could click, scroll and press keys here, now and later, with nobody at this Mac. No typing in browsers, password fields or system prompts. A banner stays on screen while it controls, with Stop.</p>
+${claimed}<div id="actions"><button id="deny">Deny</button><span class="gap"></span><button id="always" class="primary">Always allow control</button></div>
+<p class="soft small">Allowing asks for Touch ID or your password. <span id="left"></span></p>
+</main>`,
+    { window: "prompt", sid: view.sid, expires: String(view.expiresAt), kind: "control" },
+  );
+
 export const bannerHtml = (view: ScreenShareBannerView): string =>
   page(
     "Screen sharing",
@@ -93,7 +124,7 @@ export const bannerHtml = (view: ScreenShareBannerView): string =>
 #stop { background: #fff; color: #1a1a1a; font-weight: 600; padding: 4px 14px; -webkit-app-region: no-drag; }
 `,
     `<main id="bar" role="status">
-<span id="who">${escapeHtml(displayName(view.label))} (ID ${escapeHtml(view.shortId)}) is viewing this screen</span>
+<span id="who">${escapeHtml(displayName(view.label))} (ID ${escapeHtml(view.shortId)}) is ${view.controlling === true ? "controlling" : "viewing"} this screen</span>
 <span id="elapsed">00:00</span><span class="gap"></span><button id="stop">Stop</button>
 </main>`,
     { window: "banner", started: String(view.startedAt) },
