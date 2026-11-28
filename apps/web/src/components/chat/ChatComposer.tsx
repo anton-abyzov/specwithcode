@@ -318,7 +318,7 @@ import { MachineSendTargetContext } from "~/studio/machineIdentity";
 import { useActionMachine } from "~/studio/actionMachine";
 import {
   ComposerPendingApprovalPanel,
-  isMcpElicitationFormApproval,
+  isMcpElicitationCardApproval,
 } from "./ComposerPendingApprovalPanel";
 import {
   ComposerPendingUserInputPanel,
@@ -7343,7 +7343,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </ComposerBanner.Content>
                     <ComposerBanner.Actions
-                      hidden={isMcpElicitationFormApproval(activePendingApproval)}
+                      hidden={isMcpElicitationCardApproval(activePendingApproval)}
                     >
                       <ComposerPendingApprovalActions
                         requestId={activePendingApproval.requestId}
