@@ -986,6 +986,44 @@ describe("SkillUpdates install", () => {
       }).pipe(Effect.provide(live)),
     );
 
+    it.live("reports a failure when the lock entry came from another repo", () =>
+      Effect.gen(function* () {
+        const fx = yield* fixture({
+          lock: {},
+          latest: {
+            "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+          },
+          connected: [repo()],
+          // Same name, folder, branch and SKILL.md, installed from someone else's repo.
+          afterInstall: () => ({
+            version: "1.0.12",
+            sha: NEW_SHA,
+            commit: OLD_COMMIT,
+            path,
+            source: "github:someone/vskill",
+          }),
+          project: true,
+        });
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "user" },
+        });
+        expect(result.outcomes![0]).toEqual(
+          expect.objectContaining({
+            outcome: "failed",
+            message: expect.stringContaining("from someone/vskill"),
+          }),
+        );
+        expect(result.outcomes![0]!.scope).toBeUndefined();
+        expect(
+          result.statuses.filter(
+            (status) => status.skill === "obsidian-brain" && status.repo === "anton-abyzov/vskill",
+          ),
+        ).toEqual([]);
+      }).pipe(Effect.provide(live)),
+    );
+
     it.live("reports a failure when the lock records the other scope", () =>
       Effect.gen(function* () {
         const fx = yield* fixture({

@@ -273,6 +273,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
             path: entry.sourceSkillPath ?? null,
             branch: entry.sourceBranch ?? null,
             scope: entry.scope ?? null,
+            /** The GitHub repo the entry was installed from, as `owner/name`. */
+            repo: /^github:([^/#\s]+\/[^/#\s]+?)(?:\.git)?$/.exec(entry.source ?? "")?.[1] ?? null,
             version: {
               version: entry.version,
               commit: entry.sourceCommitSha ?? null,
@@ -477,6 +479,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       // Success is the lock recording the compared content from the compared source.
       // A rewritten timestamp proves nothing.
       if (
+        after.repo?.toLowerCase() !== input.repo.toLowerCase() ||
         after.path !== input.source.path ||
         after.branch !== input.source.branch ||
         after.version.contentHash === null ||
@@ -484,7 +487,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       )
         return {
           ...failed(
-            `vskill finished, but the lock records ${formatSkillSourceVersion(after.version) || "another copy"} from ${after.path ?? "an unknown path"} on ${after.branch ?? "an unknown branch"}, not ${formatSkillSourceVersion(input.expected)} from ${input.source.path} on ${input.source.branch}. The source may have moved; check again.`,
+            `vskill finished, but the lock records ${formatSkillSourceVersion(after.version) || "another copy"} from ${after.repo ?? "an unknown repo"} ${after.path ?? "an unknown path"} on ${after.branch ?? "an unknown branch"}, not ${formatSkillSourceVersion(input.expected)} from ${input.repo} ${input.source.path} on ${input.source.branch}. The source may have moved; check again.`,
           ),
           after: after.version,
         };
