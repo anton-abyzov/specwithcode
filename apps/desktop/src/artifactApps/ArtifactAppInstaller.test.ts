@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -104,11 +105,6 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.deepEqual(again, { status: "already-installed", app: first.app });
         assert.equal(h.calls.dialogs.length, 1);
         assert.deepEqual(h.opened, [first.app.installId, first.app.installId]);
-
-        // Another thread's page with the same title is its own app, with its own name.
-        const other = yield* h.installer.install({ ...input, threadId: "thread-2" });
-        assert.equal(other.status, "installed");
-        if (other.status === "installed") assert.equal(other.app.name, "Morning dashboard 2");
       }),
     ),
   );
@@ -228,6 +224,168 @@ describe("ArtifactAppInstaller on macOS", () => {
         assert.isFalse(yield* h.installer.uninstall(result.app.installId));
         assert.isFalse(yield* h.installer.reveal(result.app.installId));
         assert.isFalse(yield* h.installer.uninstall("not-an-id"));
+      }),
+    ),
+  );
+});
+
+describe("ArtifactAppInstaller with the same title from another thread", () => {
+  const folderOf = (home: string, path: { join: (...parts: Array<string>) => string }) =>
+    path.join(home, "Applications", "SpecWithCode Apps");
+  const ALREADY = "Morning dashboard is already installed.";
+
+  it.effect("offers the installed app first and opens it without writing a launcher", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin" }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail("not installed");
+
+        // The person keeps the default, Open.
+        const other = yield* h.installer.install({ ...input, threadId: "thread-2" });
+        assert.deepEqual(other, { status: "already-installed", app: first.app });
+        assert.equal(h.calls.dialogs.length, 2);
+        assert.deepEqual(
+          h.calls.dialogs[1],
+          ArtifactAppInstaller.artifactAppAlreadyInstalledChoice("Morning dashboard"),
+        );
+        assert.equal(h.calls.dialogs[1]!.message, ALREADY);
+        assert.deepEqual(h.calls.dialogs[1]!.buttons, [
+          "Open Morning dashboard",
+          "Install another copy",
+          "Cancel",
+        ]);
+        assert.equal(h.calls.dialogs[1]!.defaultId, 0);
+        assert.equal(h.calls.dialogs[1]!.cancelId, 2);
+        assert.deepEqual(h.opened, [first.app.installId, first.app.installId]);
+        assert.deepEqual(yield* fileSystem.readDirectory(folderOf(home, path)), [
+          "Morning dashboard.app",
+        ]);
+        assert.deepEqual(yield* h.records.list, [first.app]);
+      }),
+    ),
+  );
+
+  it.effect("installs a second copy without asking again, and opens the newest after", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", answers: [0, 1] }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail("not installed");
+
+        const copy = yield* h.installer.install({ ...input, threadId: "thread-2" });
+        if (copy.status !== "installed") return assert.fail("no second copy");
+        assert.equal(copy.app.name, "Morning dashboard 2");
+        assert.equal(copy.app.threadId, "thread-2");
+        assert.deepEqual(
+          h.calls.dialogs.map((dialog) => dialog.message),
+          ["Install Morning dashboard as an app?", ALREADY],
+        );
+        assert.deepEqual(h.opened, [first.app.installId, copy.app.installId]);
+        assert.deepEqual((yield* fileSystem.readDirectory(folderOf(home, path))).sort(), [
+          "Morning dashboard 2.app",
+          "Morning dashboard.app",
+        ]);
+        assert.deepEqual(yield* h.records.list, [first.app, copy.app]);
+
+        // The copy's own page is the exact same page: no dialog, its own window.
+        const again = yield* h.installer.install({ ...input, threadId: "thread-2" });
+        assert.deepEqual(again, { status: "already-installed", app: copy.app });
+        assert.equal(h.calls.dialogs.length, 2);
+
+        // A third thread is offered the most recent of the two; on a tie, the later record.
+        const third = yield* h.installer.install({ ...input, threadId: "thread-3" });
+        assert.deepEqual(third, { status: "already-installed", app: copy.app });
+        assert.equal(h.calls.dialogs.length, 3);
+        assert.equal(h.calls.dialogs[2]!.message, "Morning dashboard 2 is already installed.");
+
+        // The install time decides, not the order of the records.
+        const later = DateTime.formatIso(
+          DateTime.add(DateTime.makeUnsafe(copy.app.installedAt), { minutes: 1 }),
+        );
+        const newerFirst = { ...first.app, installedAt: later };
+        yield* h.records.add(newerFirst);
+        assert.deepEqual(yield* h.records.list, [newerFirst, copy.app]);
+        const fourth = yield* h.installer.install({ ...input, threadId: "thread-4" });
+        assert.deepEqual(fourth, { status: "already-installed", app: newerFirst });
+        assert.equal(h.calls.dialogs[3]!.message, ALREADY);
+      }),
+    ),
+  );
+
+  it.effect("writes nothing when the person cancels", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", answers: [0, 2] }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail("not installed");
+
+        const other = yield* h.installer.install({ ...input, threadId: "thread-2" });
+        assert.deepEqual(other, { status: "cancelled" });
+        assert.equal(h.calls.dialogs.length, 2);
+        // Cancel answered the already-installed choice, not the install confirm.
+        assert.deepEqual(
+          h.calls.dialogs[1],
+          ArtifactAppInstaller.artifactAppAlreadyInstalledChoice("Morning dashboard"),
+        );
+        assert.deepEqual(h.opened, [first.app.installId]);
+        assert.deepEqual(yield* fileSystem.readDirectory(folderOf(home, path)), [
+          "Morning dashboard.app",
+        ]);
+        assert.deepEqual(yield* h.records.list, [first.app]);
+      }),
+    ),
+  );
+
+  it.effect("matches a title that differs only in case or compatibility characters", () =>
+    withHome(({ home, recordsPath }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin" }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail("not installed");
+
+        // A fullwidth M, capitals and doubled spaces name the same app.
+        for (const title of ["MORNING  DASHBOARD", "\uFF2Dorning dashboard"]) {
+          const other = yield* h.installer.install({ ...input, threadId: "thread-2", title });
+          assert.deepEqual(other, { status: "already-installed", app: first.app });
+        }
+        assert.deepEqual(
+          h.calls.dialogs.map((dialog) => dialog.message),
+          ["Install Morning dashboard as an app?", ALREADY, ALREADY],
+        );
+        // Another title is its own app.
+        const different = yield* h.installer.install({
+          ...input,
+          threadId: "thread-2",
+          title: "Evening dashboard",
+        });
+        assert.equal(different.status, "installed");
+        assert.equal(h.calls.dialogs.at(-1)!.message, "Install Evening dashboard as an app?");
+      }),
+    ),
+  );
+
+  it.effect("ignores, and keeps, another install whose launcher is no longer its own", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const h = yield* harness({ platform: "darwin", fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail("not installed");
+        const macOS = path.join(folderOf(home, path), "Morning dashboard.app", "Contents", "MacOS");
+        for (const entry of yield* fileSystem.readDirectory(macOS)) {
+          yield* fileSystem.writeFileString(path.join(macOS, entry), "#!/bin/sh\necho other\n");
+        }
+
+        const other = yield* h.installer.install({ ...input, threadId: "thread-2" });
+        if (other.status !== "installed") return assert.fail("not installed");
+        assert.equal(other.app.name, "Morning dashboard 2");
+        assert.deepEqual(
+          h.calls.dialogs.map((dialog) => dialog.message),
+          ["Install Morning dashboard as an app?", "Install Morning dashboard 2 as an app?"],
+        );
+        assert.deepEqual(yield* h.records.list, [first.app, other.app]);
+        assert.deepEqual(h.calls.trashed, []);
+        assert.deepEqual(h.closed, []);
       }),
     ),
   );

@@ -7,7 +7,7 @@ import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
 
-import type * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
+import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
 import { harness, hostPath, input, withHome } from "./artifactAppInstallerTestHarness.ts";
 
 const shimConfig = (loaderPath: string): ArtifactAppInstaller.ArtifactAppShimConfig => ({
@@ -484,6 +484,35 @@ describe("ArtifactAppInstaller with app shims", () => {
         const again = yield* h.installer.install(input);
         assert.equal(again.status, "failed");
         assert.equal(h.calls.openedApps.length, opened);
+      }),
+    ),
+  );
+
+  it.effect("does not open another thread's app whose launcher changed", () =>
+    withHome(({ home, recordsPath, fileSystem, path }) =>
+      Effect.gen(function* () {
+        const loader = yield* writeLoader(fileSystem, path, home);
+        const appShim = shimConfig(loader);
+        const h = yield* harness({ platform: "darwin", appShim, fileSystem }, home, recordsPath);
+        const first = yield* h.installer.install(input);
+        if (first.status !== "installed") return assert.fail(first.status);
+        const bundle = path.join(
+          home,
+          "Applications",
+          "SpecWithCode Apps",
+          "Morning dashboard.app",
+        );
+        const opened = h.calls.openedApps.length;
+        h.calls.tampered.add(hostPath(bundle));
+        // The same title from another thread, and the person picks Open.
+        const other = yield* h.installer.install({ ...input, threadId: "thread-2" });
+        assert.deepEqual(other, {
+          status: "failed",
+          message: ArtifactAppInstaller.artifactAppOtherUnconfirmedFailure("Morning dashboard"),
+        });
+        assert.equal(h.calls.dialogs.at(-1)?.message, "Morning dashboard is already installed.");
+        assert.equal(h.calls.openedApps.length, opened);
+        assert.deepEqual(yield* h.records.list, [first.app]);
       }),
     ),
   );

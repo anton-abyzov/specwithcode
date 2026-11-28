@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
@@ -97,9 +98,51 @@ const setup = (
     revealed: [] as Array<string>,
     uninstalled: [] as Array<string>,
     messages: [] as Array<string>,
+    /** Per native dialog: whether it opened as a sheet on a window. */
+    owners: [] as Array<boolean>,
     menus: [] as Array<ReadonlyArray<Electron.MenuItemConstructorOptions>>,
     shimIds: [] as Array<string>,
+    /** Whether the install has an open page window, and what was done to it. */
+    hasWindow: true,
+    minimized: false,
+    /** Whether the page answers an uninstall request (it shows the confirm itself). */
+    pageAcks: true,
+    crashed: false,
+    /** The native confirm's answer: 0 is Uninstall. */
+    confirmAnswer: 1,
+    /** Per page answer: whether the main process handed the confirm to the page. */
+    pageAccepted: [] as Array<boolean>,
+    /** Whether opening a page brings its window back. */
+    reopenRestores: false,
+    windowCalls: [] as Array<string>,
   };
+  // The page's answer to an uninstall request: the main process's ack handler, while one waits.
+  const ack: { handler: ((event: unknown, id: unknown) => unknown) | undefined; lastId: unknown } =
+    { handler: undefined, lastId: undefined };
+  const pageWindow = {
+    isDestroyed: () => false,
+    isMinimized: () => state.minimized,
+    restore: () => void state.windowCalls.push("restore"),
+    show: () => void state.windowCalls.push("show"),
+    focus: () => void state.windowCalls.push("focus"),
+    webContents: {
+      isDestroyed: () => false,
+      isCrashed: () => state.crashed,
+      ipc: {
+        handle: (_channel: string, handler: (event: unknown, id: unknown) => unknown) => {
+          ack.handler = handler;
+        },
+        removeHandler: () => {
+          ack.handler = undefined;
+        },
+      },
+      send: (channel: string, ...args: Array<unknown>) => {
+        state.windowCalls.push(`send ${channel}`);
+        ack.lastId = args[0];
+        if (state.pageAcks) state.pageAccepted.push(ack.handler?.({}, args[0]) === true);
+      },
+    },
+  } as unknown as Electron.BrowserWindow;
   // Set by the lifecycle as the app starts to quit, before any window closes.
   const shutdownBegun = Ref.makeUnsafe(false);
   const appListeners = new Map<string, Array<(...args: Array<any>) => void>>();
@@ -122,10 +165,11 @@ const setup = (
                   serverName: "com.specweave.studio.artifact-apps",
                   minimumSystemVersion: "13.0",
                 }),
-          showMessageBox: (_owner: unknown, options: Electron.MessageBoxOptions) =>
+          showMessageBox: (owner: Option.Option<unknown>, options: Electron.MessageBoxOptions) =>
             Effect.sync(() => {
               state.messages.push(`${options.message} ${options.detail ?? ""}`);
-              return 0;
+              state.owners.push(Option.isSome(owner));
+              return options.message.startsWith("Uninstall") ? state.confirmAnswer : 0;
             }),
         } as unknown as ArtifactAppInstaller.ArtifactAppInstallerHost["Service"]),
         Layer.mock(ArtifactAppShims.ArtifactAppShimServer)({
@@ -189,9 +233,14 @@ const setup = (
             Effect.sync(() => {
               if (options?.appShim !== undefined) state.openInShim.push(installId);
               if ((input.openResult ?? "opened") === "opened") state.shimIds = [installId];
+              if (state.reopenRestores) state.hasWindow = true;
               return input.openResult ?? "opened";
             }),
           onClosed: (listener) => Effect.sync(() => void closed.push(listener)),
+          windowForInstall: (installId) =>
+            Effect.sync(() =>
+              state.hasWindow && installId === ID ? Option.some(pageWindow) : Option.none(),
+            ),
           shimInstallIds: Effect.sync(() => state.shimIds),
         }),
         Layer.mock(ArtifactAppRecords.ArtifactAppRecords)({
@@ -218,6 +267,7 @@ const setup = (
     layer,
     state,
     emitApp,
+    ack,
     connect: (shim: FakeShim) => {
       for (const listener of connected) listener(shim.host);
     },
@@ -303,6 +353,127 @@ describe("ArtifactAppShims", () => {
       shim.emit("activate");
       yield* settle;
       assert.deepEqual(fixture.state.openInShim, [ID, ID]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("asks the page's window to confirm Uninstall from the app menu", () => {
+    const fixture = setup();
+    return Effect.gen(function* () {
+      yield* Layer.build(fixture.layer);
+      yield* settle;
+      const shim = fakeShim({ bundlePath: BUNDLE, cdHash: HASH });
+      fixture.connect(shim);
+      yield* settle;
+      const appMenu = fixture.state.menus[0]![0]!
+        .submenu as Array<Electron.MenuItemConstructorOptions>;
+      const labels = appMenu.map((item) => item.label);
+      assert.include(labels, "Show App in Finder");
+      const uninstall = appMenu.find((item) => item.label === "Uninstall Board…");
+      assert.isDefined(uninstall);
+
+      fixture.state.minimized = true;
+      (uninstall!.click as () => void)();
+      yield* settle;
+      assert.deepEqual(fixture.state.windowCalls, [
+        "restore",
+        "show",
+        "focus",
+        "send desktop:artifact-app-uninstall-request",
+      ]);
+      // The page took the confirm; nothing is removed here.
+      assert.deepEqual(fixture.state.pageAccepted, [true]);
+      assert.deepEqual(fixture.state.uninstalled, []);
+      assert.deepEqual(fixture.state.messages, []);
+      assert.isUndefined(fixture.ack.handler);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("confirms natively when the page does not answer, on its window", () => {
+    const fixture = setup();
+    return Effect.gen(function* () {
+      yield* Layer.build(fixture.layer);
+      yield* settle;
+      const shim = fakeShim({ bundlePath: BUNDLE, cdHash: HASH });
+      fixture.connect(shim);
+      yield* settle;
+      const appMenu = fixture.state.menus[0]![0]!
+        .submenu as Array<Electron.MenuItemConstructorOptions>;
+      const click = appMenu.find((item) => item.label === "Uninstall Board…")!.click as () => void;
+
+      // Still loading, or showing no confirm: no answer within the wait.
+      fixture.state.pageAcks = false;
+      click();
+      yield* settle;
+      assert.deepEqual(fixture.state.messages, []);
+      // More clicks while it is asked add no second question.
+      click();
+      yield* settle;
+      assert.equal(fixture.state.windowCalls.filter((call) => call.startsWith("send")).length, 1);
+      // A wrong request id is refused, and the request still waits.
+      assert.isFalse(fixture.ack.handler?.({}, -1));
+      yield* TestClock.adjust("1 second");
+      yield* settle;
+      assert.deepEqual(fixture.state.messages, [
+        `Uninstall Board? ${ArtifactAppShims.artifactAppUninstallConfirmation("Board").detail}`,
+      ]);
+      assert.deepEqual(fixture.state.owners, [true]);
+      // Cancel keeps it, and the page's late answer is refused: no second confirm.
+      assert.deepEqual(fixture.state.uninstalled, []);
+      assert.isUndefined(fixture.ack.handler);
+
+      // A crashed page is not asked; Uninstall in the native confirm removes it.
+      fixture.state.crashed = true;
+      fixture.state.confirmAnswer = 0;
+      click();
+      yield* settle;
+      assert.equal(fixture.state.messages.length, 2);
+      assert.deepEqual(fixture.state.uninstalled, [ID]);
+      assert.equal(fixture.state.windowCalls.filter((call) => call.startsWith("send")).length, 1);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("asks a page whose window was closed once it is back", () => {
+    const fixture = setup();
+    return Effect.gen(function* () {
+      yield* Layer.build(fixture.layer);
+      yield* settle;
+      const shim = fakeShim({ bundlePath: BUNDLE, cdHash: HASH });
+      fixture.connect(shim);
+      yield* settle;
+      const appMenu = fixture.state.menus[0]![0]!
+        .submenu as Array<Electron.MenuItemConstructorOptions>;
+      const click = appMenu.find((item) => item.label === "Uninstall Board…")!.click as () => void;
+
+      fixture.state.hasWindow = false;
+      fixture.state.reopenRestores = true;
+      click();
+      yield* settle;
+      assert.deepEqual(fixture.state.openInShim, [ID, ID]);
+      assert.include(fixture.state.windowCalls, "send desktop:artifact-app-uninstall-request");
+      assert.deepEqual(fixture.state.pageAccepted, [true]);
+      assert.deepEqual(fixture.state.messages, []);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect("brings the page back before confirming when it has no window", () => {
+    const fixture = setup();
+    return Effect.gen(function* () {
+      yield* Layer.build(fixture.layer);
+      yield* settle;
+      const shim = fakeShim({ bundlePath: BUNDLE, cdHash: HASH });
+      fixture.connect(shim);
+      yield* settle;
+      const appMenu = fixture.state.menus[0]![0]!
+        .submenu as Array<Electron.MenuItemConstructorOptions>;
+      const click = appMenu.find((item) => item.label === "Uninstall Board…")!.click as () => void;
+
+      // The window cannot come back: the confirm opens on its own, and Cancel keeps it.
+      fixture.state.hasWindow = false;
+      click();
+      yield* settle;
+      assert.deepEqual(fixture.state.openInShim, [ID, ID]);
+      assert.deepEqual(fixture.state.owners, [false]);
+      assert.deepEqual(fixture.state.uninstalled, []);
     }).pipe(Effect.scoped);
   });
 

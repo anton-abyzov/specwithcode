@@ -65,6 +65,8 @@ export interface DesktopArtifactAppsBridge extends DesktopArtifactAppPowersBridg
   listArtifactApps?: () => Promise<ReadonlyArray<DesktopArtifactApp>>;
   /** The install this window shows; null outside an installed-page window. */
   getArtifactApp?: () => Promise<DesktopArtifactApp | null>;
+  /** The page's own app menu asked to uninstall; the window shows its confirm. */
+  onArtifactAppUninstallRequest?: (listener: () => void) => () => void;
 }
 
 /**

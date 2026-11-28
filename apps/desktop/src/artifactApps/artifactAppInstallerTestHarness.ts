@@ -65,14 +65,17 @@ export const hostLayer = (input: {
   readonly home: string;
   readonly calls: HostCalls;
   readonly answer?: number;
+  /** Dialog answers in order; once used up, `answer` (or 0) answers. */
+  readonly answers?: ReadonlyArray<number>;
   readonly icns?: string;
   readonly fileSystem?: FileSystem.FileSystem;
   readonly installedAppNames?: ReadonlyArray<string>;
   readonly trashFails?: boolean;
   readonly appShim?: ArtifactAppInstaller.ArtifactAppShimConfig;
   readonly cdHashFails?: boolean;
-}) =>
-  Layer.succeed(
+}) => {
+  const answers = [...(input.answers ?? [])];
+  return Layer.succeed(
     ArtifactAppInstaller.ArtifactAppInstallerHost,
     ArtifactAppInstaller.ArtifactAppInstallerHost.of({
       platform: input.platform,
@@ -108,7 +111,7 @@ export const hostLayer = (input: {
       showMessageBox: (_owner, options) =>
         Effect.sync(() => {
           input.calls.dialogs.push(options);
-          return input.answer ?? 0;
+          return answers.shift() ?? input.answer ?? 0;
         }),
       codesign: (bundlePath) =>
         Effect.sync(() => {
@@ -169,6 +172,7 @@ export const hostLayer = (input: {
         }),
     }),
   );
+};
 
 export const windowsLayer = (opened: Array<string>, closed: Array<string>) =>
   Layer.succeed(
@@ -209,6 +213,8 @@ export const harness = (
   options: {
     readonly platform: NodeJS.Platform;
     readonly answer?: number;
+    /** Dialog answers in order; once used up, `answer` (or 0) answers. */
+    readonly answers?: ReadonlyArray<number>;
     readonly icns?: string;
     readonly fileSystem?: FileSystem.FileSystem;
     readonly installedAppNames?: ReadonlyArray<string>;

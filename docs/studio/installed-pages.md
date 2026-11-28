@@ -11,6 +11,27 @@ A page from a chat can be installed as an app. It gets a launcher in the system'
 | Windows                  | a Start menu shortcut                                                                | A window of SpecWithCode, grouped under the page's own taskbar id                           |
 | Linux                    | a `.desktop` entry that runs `xdg-open studio://app/artifact-app/<id>`               | A window of SpecWithCode, shown in the dock under the page's own entry                      |
 
+## Installing the same page twice
+
+Install as app on a page that is already installed (the same environment, thread and title) opens that app. No dialog is shown and nothing is written.
+
+A page with the same title in another thread is checked before the usual "Install <Name> as an app?" question. Titles match as app names do: after sanitizing, ignoring case, spacing, punctuation and look-alike characters, so "Morning dashboard" and "MORNING DASHBOARD" match. Only recorded installs count, and only those whose launcher is still the one SpecWithCode wrote; an app of the same name that SpecWithCode did not install never counts. When one matches, a single dialog says "<Name> is already installed." and offers:
+
+- **Open <Name>** (the default): opens the installed app; nothing new is written.
+- **Install another copy:** installs a second app, named "<Name> 2", that follows this page. The install question is not asked again.
+- **Cancel** (and Escape): nothing changes.
+
+When several installs match, the most recently installed one is offered. The other thread's install is never changed or removed by this check.
+
+## Uninstall
+
+Uninstall is not a button in the page's window. It is in two quieter places:
+
+- the window's **More** menu (the "…" button in its header), on every system: **Uninstall <Name>…**;
+- on macOS, the page's own app menu: **Uninstall <Name>…**.
+
+Both open the same confirm inside the page's window: "Uninstall <Name>?", with Cancel as the default. Confirming removes the launcher (to the Trash on macOS), forgets the install and closes the window; the page stays in its thread and can be installed again. The macOS menu item does not uninstall by itself: SpecWithCode focuses the page's window and asks it to show the confirm (`desktop:artifact-app-uninstall-request`), because a dialog from SpecWithCode, running in the background, could open behind the page. The page asks on `desktop:artifact-app-uninstall-ack` to show the confirm, and shows it only when the main process hands it over; a late answer is refused, so the page never opens a second confirm. If it does not answer within a second (it is still loading, crashed, or cannot show it), or it has no window, SpecWithCode opens the window if it can and shows the same question as a native sheet on it, with Cancel as the default.
+
 ## macOS: one app per page
 
 The launcher's executable is a copy of `app_shim_loader` from SpecWithCode's Electron framework. Its `Info.plist` names the running SpecWithCode.app (`ElectronAppShimHostPath`), its bundle id, and the shim server's name (`<bundle id>.artifact-apps`).
@@ -30,7 +51,7 @@ The checks defend against other processes connecting to the shim server or chang
 
 ### What the page's app does
 
-- **Menu bar:** the app menu is named after the page and has About, Show App in Finder, Uninstall, Hide, Hide Others, Show All and Quit. Edit, View (Reload, zoom, full screen) and Window menus follow.
+- **Menu bar:** the app menu is named after the page and has About, Show App in Finder, Uninstall <Name>… (which shows the confirm in the page's window, see [Uninstall](#uninstall)), Hide, Hide Others, Show All and Quit. Edit, View (Reload, zoom, full screen) and Window menus follow.
 - **Command-Q** quits the page's app only. SpecWithCode keeps running.
 - **Closing the window** quits the page's app, so no Dock icon is left with no window.
 - **Clicking its Dock icon,** or opening it again, brings its window forward or reopens it.
@@ -67,8 +88,10 @@ The window takes the page's identity only while the entry is on disk. Without it
 ## Code
 
 - `apps/desktop/src/artifactApps/ArtifactAppLaunchers.ts`: launcher file generators.
-- `apps/desktop/src/artifactApps/ArtifactAppInstaller.ts`: install, ownership checks, signing, hash records, upgrade.
-- `apps/desktop/src/artifactApps/ArtifactAppShims.ts`: shim server, verification, page menu, reopen and update message.
+- `apps/desktop/src/artifactApps/ArtifactAppInstaller.ts`: install, the same-title check, ownership checks, signing, hash records, upgrade.
+- `apps/desktop/src/artifactApps/ArtifactAppShims.ts`: shim server, verification, page menu (and its uninstall request to the window), reopen and update message.
+- `apps/web/src/components/artifactApps/ArtifactAppView.tsx`: the page window's header.
+- `apps/web/src/components/artifactApps/ArtifactAppUninstall.tsx`: the header's More menu, the Uninstall confirm and the app menu's uninstall request.
 - `apps/desktop/src/artifactApps/ArtifactAppWindows.ts`: page windows, in a shim or not.
 - `apps/desktop/src/electron/LinuxWindowIdentity.ts`: a Linux window's app id and `WM_CLASS`.
 - `apps/desktop/src/artifactApps/ArtifactAppShimRecords.ts`: the private hash and reopen files.

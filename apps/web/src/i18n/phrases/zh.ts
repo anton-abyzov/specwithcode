@@ -7,6 +7,7 @@ import { actionMachineZh } from "./actionMachine/zh";
 import { coordinatorMessagesZh } from "./coordinatorMessages/zh";
 import { providerSignInZh } from "./providerSignIn/zh";
 import { limitHopsZh } from "./limitHops/zh";
+import { installedPagesZh } from "./installedPages/zh";
 import { guidedTourZh } from "./guidedTour/zh";
 import { helperChatsZh } from "./helperChats/zh";
 
@@ -20,6 +21,7 @@ export const zh: PhraseCatalog = {
   ...coordinatorMessagesZh,
   ...providerSignInZh,
   ...limitHopsZh,
+  ...installedPagesZh,
   ...guidedTourZh,
   ...helperChatsZh,
   About: "关于",
