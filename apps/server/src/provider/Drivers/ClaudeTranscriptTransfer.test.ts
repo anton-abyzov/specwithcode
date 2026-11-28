@@ -32,6 +32,12 @@ it("reads the home from a Claude continuation key only", () => {
   assert.equal(claudeHomeFromContinuationKey("claude:home:/Users/a/.claude"), "/Users/a/.claude");
   assert.equal(claudeHomeFromContinuationKey("claude:home:"), null);
   assert.equal(claudeHomeFromContinuationKey("codex:account:one"), null);
+  // An open-model route's key names its endpoint before the home.
+  const endpoint = encodeURIComponent("https://api.deepseek.com/anthropic");
+  assert.equal(
+    claudeHomeFromContinuationKey(`claude:endpoint:${endpoint}:claude:home:/Users/a/.claude`),
+    "/Users/a/.claude",
+  );
   assert.ok(claudeHomesDiffer("claude:home:/a", "claude:home:/b"));
   assert.ok(!claudeHomesDiffer("claude:home:/a", "claude:home:/a/"));
   assert.ok(!claudeHomesDiffer("claude:home:/a", "codex:instance:x"));

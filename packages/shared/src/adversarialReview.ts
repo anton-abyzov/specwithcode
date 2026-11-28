@@ -27,6 +27,7 @@ import {
   withTrackEffort,
 } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./fallbackOptions.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
 import { describeModel, isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { fallbackSelectionKey, tierModelFor } from "./modelTiers.ts";
 import {
@@ -84,9 +85,10 @@ export function defaultReviewerChain(input: {
   /** The saved Sources order (`defaultModelProviders`): which source of a model is tried first. */
   readonly sourceOrder?: ReadonlyArray<ProviderInstanceId> | undefined;
 }): ReadonlyArray<ModelSelection> {
-  const preferred = input.tier === "regular"
-    ? defaultTrackSelections("review", input.providers, input.sourceOrder)
-    : [];
+  const preferred =
+    input.tier === "regular"
+      ? defaultTrackSelections("review", input.providers, input.sourceOrder)
+      : [];
   const picks = input.providers
     .filter((provider) => provider.enabled)
     .flatMap((provider) => {
@@ -113,12 +115,14 @@ export function namedReviewSourceKeys(
   reviewers: ReadonlyArray<ModelSelection>,
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlySet<string> {
-  return new Set(reviewers.flatMap((entry) => {
-    const fitted = fitSavedTrackEntry("review", entry, providers);
-    return fitted.instanceId === entry.instanceId
-      ? [fallbackSelectionKey(entry), fallbackSelectionKey(fitted)]
-      : [fallbackSelectionKey(entry)];
-  }));
+  return new Set(
+    reviewers.flatMap((entry) => {
+      const fitted = fitSavedTrackEntry("review", entry, providers);
+      return fitted.instanceId === entry.instanceId
+        ? [fallbackSelectionKey(entry), fallbackSelectionKey(fitted)]
+        : [fallbackSelectionKey(entry)];
+    }),
+  );
 }
 
 /** One step of the reviewer order: a model, then the same model on other providers. */
@@ -187,6 +191,8 @@ export function reviewerOrderGroups(input: {
       family,
     })) {
       if (provider.instanceId === entry.instanceId) continue;
+      // An open-model route reviews only as a reviewer the person listed (D-08).
+      if (isOpenModelRoute(provider)) continue;
       // The entry's effort goes with it, matched to the levels that source offers.
       const alternate = trackAlternate(
         entry,

@@ -15,6 +15,7 @@ import {
 
 import { effortRank, findEffortDescriptor } from "./effortLevel.ts";
 import { canTakeTurn, isClaudeApiKeyProvider, isPerTokenProvider } from "./providerFallback.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 
 /** Opus 5.5 under any of the spellings a catalog uses for it. */
@@ -145,7 +146,7 @@ export function defaultCoordinatorModelSelection(
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null {
   const free = providers
-    .filter((provider) => !isPerTokenProvider(provider) && usable(provider))
+    .filter((provider) => !billedPerToken(provider) && usable(provider))
     .map(automaticModels);
   const ready = free.filter((provider) => canTakeTurn(provider));
   const claude = ready.filter((provider) => provider.driver === "claudeAgent");
@@ -162,9 +163,13 @@ export function defaultCoordinatorModelSelection(
   return null;
 }
 
-/** Any driver signed in with an API key bills each turn to that key. */
+/**
+ * Any driver signed in with an API key bills each turn to that key. An
+ * open-model route counts too, whatever it bills: it runs only where the
+ * person put it (1513 D-08).
+ */
 function billedPerToken(provider: ServerProvider): boolean {
-  return isPerTokenProvider(provider);
+  return isPerTokenProvider(provider) || isOpenModelRoute(provider);
 }
 
 /**

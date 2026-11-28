@@ -44,6 +44,12 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
+  /**
+   * The open-model preset a Claude Code instance was made from: the
+   * snapshot's `openModelPreset`, or `openModelPresetOfEnvironment(environment)?.id`.
+   * Draws the vendor's mark instead of Claude's.
+   */
+  openModelPreset?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
   className?: string;
@@ -58,6 +64,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       driverKind: props.driverKind,
       acpRegistryAgentId: props.acpRegistryAgentId,
       acpRegistryIconUrl: props.acpRegistryIconUrl,
+      openModelPreset: props.openModelPreset,
     }) ??
     (isAcpRegistry ? providerBrandForName(props.acpRegistryAgentId, props.displayName) : null);
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";

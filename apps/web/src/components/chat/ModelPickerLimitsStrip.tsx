@@ -141,6 +141,7 @@ export function ModelPickerLimitsStrip(props: {
                 accentColor={chip.entry.accentColor}
                 acpRegistryAgentId={chip.entry.acpRegistryAgentId}
                 acpRegistryIconUrl={chip.entry.acpRegistryIconUrl}
+                openModelPreset={chip.entry.openModelPreset}
                 showBadge={false}
                 className="size-3.5 shrink-0"
                 iconClassName="size-3.5"

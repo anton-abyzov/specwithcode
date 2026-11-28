@@ -234,6 +234,6 @@ export function openModelRouteLabel(preset: OpenModelPreset): "Your key" | "Loca
 /** One line for tooltips: the vendor bills the key at its own list price. No numbers, no savings. */
 export function openModelPriceNote(preset: OpenModelPreset): string {
   return preset.kind === "local"
-    ? `Runs on ${preset.label} on this machine.`
+    ? `Runs on your own ${preset.label}.`
     : `${preset.label} bills your key at its own list price.`;
 }

@@ -128,6 +128,7 @@ export function ModelPickerSetupFooter(props: {
                     displayName={provider.displayName}
                     acpRegistryAgentId={provider.entry.acpRegistryAgentId}
                     acpRegistryIconUrl={provider.entry.acpRegistryIconUrl}
+                    openModelPreset={provider.entry.openModelPreset}
                     className="size-4 shrink-0"
                     iconClassName="size-4"
                   />

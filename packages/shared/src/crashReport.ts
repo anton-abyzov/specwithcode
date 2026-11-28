@@ -216,6 +216,8 @@ const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/(\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s?#'"]{1,2000})[?#][^\s'"]*/giu, "$1?<redacted>"],
   // Well-known token shapes.
   [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}/gu, "<redacted-key>"],
+  // Z.ai GLM keys: 32 hex, a dot, 16 alphanumerics. Before the hex rule, which leaves the tail.
+  [/\b[A-Fa-f0-9]{32}\.[A-Za-z0-9]{16}\b/gu, "<redacted-key>"],
   [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/gu, "<redacted-key>"],
   [
     /\b(?:xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})/gu,

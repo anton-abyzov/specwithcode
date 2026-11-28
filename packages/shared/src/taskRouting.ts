@@ -36,6 +36,7 @@ import {
   isPerTokenProvider,
   providerUsedPercent,
 } from "./providerFallback.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
 
 // ── Tiers ────────────────────────────────────────────────────────────
 
@@ -580,6 +581,12 @@ export function resolveTaskRouting(input: ResolveTaskRoutingInput): TaskRoutingD
       }
       if (isGeminiSpendProvider(provider)) {
         skipped.push(`${label}: Gemini spend is off`);
+        continue;
+      }
+      // An open-model route runs only where the person put it (1513): Auto
+      // may move down within the baseline's own route, never onto another.
+      if (isOpenModelRoute(provider) && provider.instanceId !== baseline.instanceId) {
+        skipped.push(`${label}: runs only where you put it`);
         continue;
       }
       for (const model of models) {

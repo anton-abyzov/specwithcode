@@ -139,6 +139,6 @@ describe("open-model presets", () => {
     expect(openModelPriceNote(preset("openrouter"))).toBe(
       "OpenRouter bills your key at its own list price.",
     );
-    expect(openModelPriceNote(preset("lmstudio"))).toBe("Runs on LM Studio on this machine.");
+    expect(openModelPriceNote(preset("lmstudio"))).toBe("Runs on your own LM Studio.");
   });
 });

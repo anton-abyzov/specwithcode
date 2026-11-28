@@ -15,13 +15,19 @@ import * as FileSystem from "effect/FileSystem";
 import type * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
 import { encodeClaudeProjectDir } from "../../usage/projectFolderSessions.ts";
+import { claudeHomeKeyOfContinuationKey } from "./ClaudeHome.ts";
 
 export const CLAUDE_HOME_CONTINUATION_KEY_PREFIX = "claude:home:";
 
-/** The config home a Claude instance's continuation key names, or null for other drivers. */
+/**
+ * The config home a Claude instance's continuation key names, or null for
+ * other drivers. An open-model route's key names its endpoint first; the home
+ * is read after it, so folder moves still relocate that route's transcripts.
+ */
 export function claudeHomeFromContinuationKey(continuationKey: string): string | null {
-  if (!continuationKey.startsWith(CLAUDE_HOME_CONTINUATION_KEY_PREFIX)) return null;
-  const home = continuationKey.slice(CLAUDE_HOME_CONTINUATION_KEY_PREFIX.length);
+  const homeKey = claudeHomeKeyOfContinuationKey(continuationKey);
+  if (!homeKey.startsWith(CLAUDE_HOME_CONTINUATION_KEY_PREFIX)) return null;
+  const home = homeKey.slice(CLAUDE_HOME_CONTINUATION_KEY_PREFIX.length);
   return home.length > 0 && NodePath.isAbsolute(home) ? home : null;
 }
 

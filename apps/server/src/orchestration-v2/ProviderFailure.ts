@@ -437,6 +437,7 @@ function replaceUnsafeControlCharacters(value: string): string {
 /**
  * Removes common credential forms before provider text crosses a transport
  * boundary. Cursor and xAI keys (`crsr_`, `grok_`, `xai_`, `xai-`) can appear bare; `grok-` is left alone because model ids use it.
+ * Z.ai GLM keys (32 hex, a dot, 16 alphanumerics) have no prefix and are matched by shape.
  */
 export function redactProviderFailureText(value: string): string {
   return replaceUnsafeControlCharacters(value)
@@ -451,6 +452,7 @@ export function redactProviderFailureText(value: string): string {
       "$1[REDACTED]",
     )
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
+    .replace(/\b[A-Fa-f0-9]{32}\.[A-Za-z0-9]{16}\b/gu, "[REDACTED]")
     .replace(/\b(?:(?:grok|xai|crsr)_|xai-)[A-Za-z0-9_-]{16,}\b/gu, "[REDACTED]")
     .trim();
 }

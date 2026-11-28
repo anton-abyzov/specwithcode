@@ -65,6 +65,7 @@ export function ReviewWithMenu({
             accentColor={defaultEntry.accentColor}
             acpRegistryAgentId={defaultEntry.acpRegistryAgentId}
             acpRegistryIconUrl={defaultEntry.acpRegistryIconUrl}
+            openModelPreset={defaultEntry.openModelPreset}
             className="size-3.5"
             iconClassName="size-3.5"
           />
@@ -103,6 +104,7 @@ export function ReviewWithMenu({
                     accentColor={entry.accentColor}
                     acpRegistryAgentId={entry.acpRegistryAgentId}
                     acpRegistryIconUrl={entry.acpRegistryIconUrl}
+                    openModelPreset={entry.openModelPreset}
                     className="size-4"
                     iconClassName="size-4"
                   />

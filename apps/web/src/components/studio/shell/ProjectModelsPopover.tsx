@@ -215,6 +215,7 @@ export function ProjectModelsPopover(props: {
               accentColor={coordinatorEntry.accentColor}
               acpRegistryAgentId={coordinatorEntry.acpRegistryAgentId}
               acpRegistryIconUrl={coordinatorEntry.acpRegistryIconUrl}
+              openModelPreset={coordinatorEntry.openModelPreset}
               showBadge={false}
               className="size-4 shrink-0"
               iconClassName="size-4"
@@ -243,6 +244,7 @@ export function ProjectModelsPopover(props: {
                   accentColor={trackEntry.accentColor}
                   acpRegistryAgentId={trackEntry.acpRegistryAgentId}
                   acpRegistryIconUrl={trackEntry.acpRegistryIconUrl}
+                  openModelPreset={trackEntry.openModelPreset}
                   showBadge={false}
                   className="size-4 shrink-0"
                   iconClassName="size-4"

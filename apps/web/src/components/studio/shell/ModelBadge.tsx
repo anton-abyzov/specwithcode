@@ -99,6 +99,7 @@ export function ModelBadgeMark(props: {
       accentColor={props.entry?.accentColor}
       acpRegistryAgentId={props.entry?.acpRegistryAgentId ?? guess?.agentId}
       acpRegistryIconUrl={props.entry?.acpRegistryIconUrl}
+      openModelPreset={props.entry?.openModelPreset}
       className="sws-model-mark"
       iconClassName="size-3.5"
     />

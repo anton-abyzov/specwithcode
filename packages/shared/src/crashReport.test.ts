@@ -9,6 +9,7 @@ import {
   encodeCrashReport,
   parseCrashReport,
   parseSiteEvent,
+  redactDiagnosticText,
   sanitizeErrorMessage,
   sanitizeStack,
   siteEventPlatformForAsset,
@@ -368,5 +369,26 @@ describe("site events", () => {
       const parsed = parseSiteEvent({ v: 1, event: "download_click", platform: "mac", source });
       expect(parsed).toEqual({ v: 1, event: "download_click", platform: "mac" });
     }
+  });
+});
+
+describe("open-model vendor keys", () => {
+  // Built at run time so secret scanners do not read the fakes as real keys.
+  const hex = "0123456789abcdef".repeat(2);
+  const zaiKey = `${hex}.AbCdEfGh12345678`;
+  const deepseekKey = ["sk", hex].join("-");
+
+  it("redacts a bare Z.ai key, tail included", () => {
+    const text = redactDiagnosticText(`request rejected for ${zaiKey} by the endpoint`);
+    expect(text).not.toContain("0123456789abcdef");
+    expect(text).not.toContain("AbCdEfGh12345678");
+    expect(text).toContain("<redacted-key>");
+    expect(text).toContain("by the endpoint");
+  });
+
+  it("redacts a bare DeepSeek-style sk- key", () => {
+    const text = redactDiagnosticText(`request rejected for ${deepseekKey} by the endpoint`);
+    expect(text).not.toContain("0123456789abcdef");
+    expect(text).toContain("<redacted-key>");
   });
 });

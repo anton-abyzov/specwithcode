@@ -218,6 +218,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
                 accentColor={entry.accentColor}
                 acpRegistryAgentId={entry.acpRegistryAgentId}
                 acpRegistryIconUrl={entry.acpRegistryIconUrl}
+                openModelPreset={entry.openModelPreset}
                 // The name sits beside the mark, so two Copilots need no initials badge on it.
                 showBadge={false}
                 className="size-4 shrink-0"

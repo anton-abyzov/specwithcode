@@ -195,6 +195,7 @@ export function SkillProviderMark({
       displayName={presence.label}
       acpRegistryAgentId={entry?.acpRegistryAgentId}
       acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+      openModelPreset={entry?.openModelPreset}
       className="z-auto"
       iconClassName={cn("size-3.5", dimmed ? "opacity-50" : "opacity-100")}
     />

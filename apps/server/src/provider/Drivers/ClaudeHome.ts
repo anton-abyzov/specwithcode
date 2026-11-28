@@ -1,6 +1,10 @@
 import * as NodeOS from "node:os";
 
 import type { ClaudeSettings } from "@specweave-studio/contracts";
+import {
+  OPEN_MODEL_PRESET_ENV,
+  openModelPresetById,
+} from "@specweave-studio/shared/openModelPresets";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -58,15 +62,75 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   );
 });
 
+const CLAUDE_ENDPOINT_KEY_PREFIX = "claude:endpoint:";
+
+/**
+ * One continuation group per Claude home and, for open-model preset
+ * instances, per endpoint: a native transcript holds signed thinking blocks
+ * one endpoint cannot replay for another, so a switch across endpoints takes
+ * the budgeted history handoff instead of a native resume (D-07).
+ */
 export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationGroupKey")(
   function* (
     config: Pick<ClaudeSettings, "homePath">,
     environment?: NodeJS.ProcessEnv,
   ): Effect.fn.Return<string, never, Path.Path> {
     const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `claude:home:${resolvedHomePath}`;
+    const homeKey = `claude:home:${resolvedHomePath}`;
+    const endpoint = claudeOpenModelEndpoint(environment);
+    return endpoint === null
+      ? homeKey
+      : `${CLAUDE_ENDPOINT_KEY_PREFIX}${encodeURIComponent(endpoint)}:${homeKey}`;
   },
 );
+
+/**
+ * The endpoint an open-model preset instance talks to: the lower-cased origin
+ * and path of `ANTHROPIC_BASE_URL`, without credentials, query or trailing
+ * slash. Null without the preset marker, so subscription instances and
+ * instances built by hand with a base URL keep their key (D-05). A marker
+ * instance never collapses to the plain home key: a missing base URL falls
+ * back to the preset's own, an unparseable one to its trimmed text.
+ */
+export function claudeOpenModelEndpoint(environment: NodeJS.ProcessEnv | undefined): string | null {
+  const preset = openModelPresetById(environment?.[OPEN_MODEL_PRESET_ENV]);
+  if (preset === undefined) return null;
+  const raw = environment?.ANTHROPIC_BASE_URL?.trim() || preset.baseUrl;
+  try {
+    const url = new URL(raw);
+    if (url.origin !== "null") {
+      return `${url.origin}${url.pathname.replace(/\/+$/, "")}`.toLowerCase();
+    }
+  } catch {
+    // Not a URL: the text itself still names an endpoint other than Anthropic's.
+  }
+  return raw.toLowerCase();
+}
+
+/**
+ * The endpoint a Claude continuation key names, or null for keys without one
+ * (subscription, hand-built and non-Claude instances). Marker keys read
+ * `claude:endpoint:<encoded endpoint>:claude:home:<home>`, a shape the home
+ * parser rejects, so nothing copies or relocates a transcript across them.
+ */
+export function claudeEndpointFromContinuationKey(continuationKey: string): string | null {
+  if (!continuationKey.startsWith(CLAUDE_ENDPOINT_KEY_PREFIX)) return null;
+  const rest = continuationKey.slice(CLAUDE_ENDPOINT_KEY_PREFIX.length);
+  const end = rest.indexOf(":");
+  if (end <= 0) return null;
+  try {
+    return decodeURIComponent(rest.slice(0, end));
+  } catch {
+    return null;
+  }
+}
+
+/** The plain `claude:home:<home>` part of a key, with any endpoint segment removed. */
+export function claudeHomeKeyOfContinuationKey(continuationKey: string): string {
+  if (claudeEndpointFromContinuationKey(continuationKey) === null) return continuationKey;
+  const rest = continuationKey.slice(CLAUDE_ENDPOINT_KEY_PREFIX.length);
+  return rest.slice(rest.indexOf(":") + 1);
+}
 
 export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesCacheKey")(
   function* (

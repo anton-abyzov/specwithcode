@@ -36,7 +36,9 @@ export function ThinkingMark({
   pulse = false,
   className,
 }: {
-  provider: Pick<ServerProvider, "driver" | "displayName" | "iconUrl"> | undefined;
+  provider:
+    | Pick<ServerProvider, "driver" | "displayName" | "iconUrl" | "openModelPreset">
+    | undefined;
   pulse?: boolean;
   className?: string;
 }) {
@@ -63,6 +65,7 @@ export function ThinkingMark({
         driverKind={provider.driver}
         displayName={provider.displayName ?? provider.driver}
         acpRegistryIconUrl={provider.iconUrl}
+        openModelPreset={provider.openModelPreset}
         className="z-auto size-full"
         iconClassName="size-full"
       />

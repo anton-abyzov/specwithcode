@@ -39,6 +39,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   providerAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
+  openModelPreset?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
   showSelection?: boolean;
@@ -81,6 +82,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         accentColor={props.providerAccentColor}
         acpRegistryAgentId={props.acpRegistryAgentId}
         acpRegistryIconUrl={props.acpRegistryIconUrl}
+        openModelPreset={props.openModelPreset}
         showBadge={false}
         className="size-4 shrink-0"
         iconClassName="size-4"

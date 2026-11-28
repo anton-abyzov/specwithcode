@@ -71,6 +71,11 @@ import {
   mergeNativeSubscriptionEnvironment,
 } from "../ProviderInstanceEnvironment.ts";
 import {
+  discoverOpenModelIds,
+  openModelRouteOf,
+  stampOpenModelSnapshot,
+} from "../openModelRoute.ts";
+import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
@@ -190,14 +195,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         accentColor,
         continuationGroupKey,
       });
+      // An open-model preset instance (its marker row) lists the vendor's or
+      // the local runtime's models and is billed to the person's key or machine.
+      const openModelRoute = openModelRouteOf(environment);
+      const openModelDiscovery: { ids: ReadonlyArray<string> | undefined } = { ids: undefined };
+      const discoverOpenModels =
+        openModelRoute === undefined || !enabled
+          ? Effect.void
+          : discoverOpenModelIds(openModelRoute).pipe(
+              Effect.map((ids) => {
+                openModelDiscovery.ids = ids;
+              }),
+            );
       // Known from the instance's own environment, not from a probe: the
       // usage-limit rule spends this key only where a person put one.
-      const apiKeyBilling = isDirectAnthropicApiKeyEnvironment(processEnv);
+      const apiKeyBilling =
+        openModelRoute === undefined && isDirectAnthropicApiKeyEnvironment(processEnv);
       const stampIdentity: typeof withIdentity = (snapshot) => {
         const stamped = withIdentity(snapshot);
-        return apiKeyBilling
-          ? { ...stamped, auth: { ...stamped.auth, apiKeyBilling: true } }
-          : stamped;
+        return stampOpenModelSnapshot(
+          apiKeyBilling ? { ...stamped, auth: { ...stamped.auth, apiKeyBilling: true } } : stamped,
+          openModelRoute,
+          openModelDiscovery.ids,
+        );
       };
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
@@ -306,6 +326,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                 catalogState.current(),
               ),
             ),
+            Effect.tap(() => discoverOpenModels),
             Effect.map(stampIdentity),
           ),
         ),

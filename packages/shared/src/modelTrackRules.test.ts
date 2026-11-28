@@ -295,6 +295,76 @@ describe("moves that cannot work", () => {
     ).toEqual({ entries: [hard[1], hard[0]] });
   });
 
+  it("lets the person add an open-model route to Daily or Complex by hand, not Review (1513)", () => {
+    const route = (preset: string, billing: "api" | "local") =>
+      provider(`claude_${preset}`, "claudeAgent", ["glm-5.4"], null, {
+        openModelPreset: preset,
+        auth: { status: "authenticated", type: "apiKey", label: "Your key" },
+        models: [
+          { slug: "glm-5.4", name: "GLM 5.4", isCustom: false, capabilities: null, billing },
+        ],
+      });
+    for (const source of [route("zai", "api"), route("ollama", "local")]) {
+      for (const track of ["daily", "complex", "review"] as const) {
+        // Review never spends a token-signed route, so it would be listed and never run.
+        expect(
+          trackEntryRefusal({
+            track,
+            model: { slug: "glm-5.4" },
+            providers: [...all, source],
+            existing: [],
+            instanceId: source.instanceId,
+          }),
+        ).toBe(track === "review" ? "per-token" : null);
+      }
+    }
+    // Every other per-token source is still refused: a hand-built key has no marker.
+    const byHand = route("zai", "api");
+    const { openModelPreset: _marker, ...unmarked } = byHand;
+    expect(
+      trackEntryRefusal({
+        track: "daily",
+        model: { slug: "glm-5.4" },
+        providers: [...all, unmarked],
+        existing: [],
+        instanceId: unmarked.instanceId,
+      }),
+    ).toBe("per-token");
+  });
+
+  it("never lists an open-model route as a source a row runs on by itself (1513)", () => {
+    const local = provider("claude_ollama", "claudeAgent", ["claude-opus-5-5"], null, {
+      openModelPreset: "ollama",
+      models: [
+        {
+          slug: "claude-opus-5-5",
+          name: "claude-opus-5-5",
+          isCustom: false,
+          capabilities: null,
+          billing: "local",
+        },
+      ],
+    });
+    const rows = describeTrack({
+      track: "daily",
+      saved: [],
+      providers: [...all, local],
+      nowMs: now,
+    });
+    const opusRow = rows.find((row) => row.model === "claude-opus-5-5");
+    expect(ids(opusRow!.sources).at(-1)).toBe("claude_ollama");
+    expect(opusRow?.sources.at(-1)).toMatchObject({ hold: null, used: false });
+    // Saved by the person on its own row, it runs there.
+    const saved = describeTrack({
+      track: "daily",
+      saved: [sel("claude_ollama", "claude-opus-5-5")],
+      providers: [...all, local],
+      nowMs: now,
+    });
+    expect(saved[0]?.sources[0]).toMatchObject({ used: true });
+    expect(ids(saved[0]!.sources)[0]).toBe("claude_ollama");
+  });
+
   it("names the family when every reviewer is in one", () => {
     const one = describeTrack({
       track: "review",
@@ -375,17 +445,23 @@ describe("usage unknown in Review", () => {
   });
 
   it("does not describe another model's scoped denial as an Opus refusal", () => {
-    expect(reason(withLimits({
-      ordinaryUsageAllowed: false,
-      nativeDenialObservedAt: fresh,
-      windows: [{
-        id: "weekly_fable",
-        kind: "weekly",
-        label: "Fable weekly",
-        modelScope: "fable",
-        usedPercent: 100,
-        resetsAt: reset,
-      }],
-    }))).toEqual({ kind: "no-model-window" });
+    expect(
+      reason(
+        withLimits({
+          ordinaryUsageAllowed: false,
+          nativeDenialObservedAt: fresh,
+          windows: [
+            {
+              id: "weekly_fable",
+              kind: "weekly",
+              label: "Fable weekly",
+              modelScope: "fable",
+              usedPercent: 100,
+              resetsAt: reset,
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ kind: "no-model-window" });
   });
 });

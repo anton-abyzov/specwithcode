@@ -29,6 +29,7 @@ import {
   type ModelPickerEffort,
 } from "./ModelPickerEffortStrip";
 import { ProviderGroupHeader } from "./ProviderGroupHeader";
+import { providerIconIdentity } from "./providerIconIdentity";
 import {
   ModelLegacySectionRow,
   ModelSearchGroupHeader,
@@ -57,7 +58,7 @@ import {
 } from "./modelPickerKeys";
 import { countModelSearchMatches } from "./modelPickerSearch";
 import { useCommandKeyHeld, useModelPickerSearch } from "./useModelPickerSearch";
-import { modelStatusIcons } from "./modelStatusIcons";
+import { modelStatusIconsFor } from "./modelStatusIcons";
 import { ModelPickerLimitsStrip } from "./ModelPickerLimitsStrip";
 import { providerShortLabels } from "./providerShortLabel";
 import { removeModelSearchWord } from "@specweave-studio/shared/modelSearchIntents";
@@ -409,8 +410,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
-          ...(entry.acpRegistryAgentId ? { acpRegistryAgentId: entry.acpRegistryAgentId } : {}),
-          ...(entry.acpRegistryIconUrl ? { acpRegistryIconUrl: entry.acpRegistryIconUrl } : {}),
+          ...providerIconIdentity(entry),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
@@ -1385,8 +1385,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                                 driverKind={model.driverKind}
                                 providerDisplayName={model.instanceDisplayName}
                                 providerAccentColor={model.instanceAccentColor}
-                                acpRegistryAgentId={model.acpRegistryAgentId}
-                                acpRegistryIconUrl={model.acpRegistryIconUrl}
+                                {...providerIconIdentity(model)}
                                 isFavorite={favoriteKeys.has(
                                   providerModelKey(model.instanceId, model.slug),
                                 )}
@@ -1406,7 +1405,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                                   runtimeModel,
                                   model.subProvider,
                                 )}
-                                status={modelStatusIcons({
+                                status={modelStatusIconsFor(rowEntry?.snapshot, {
                                   billing: runtimeModel?.billing,
                                   isNew: model.badge === "new",
                                   availability:
