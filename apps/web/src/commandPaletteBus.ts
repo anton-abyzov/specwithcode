@@ -10,7 +10,7 @@ export interface CommandPaletteLinkedThreads {
 const COMMAND_PALETTE_OPEN_EVENT = "studio:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
-  readonly open?: "add-project" | "new-assistant" | "new-thread-in";
+  readonly open?: "add-project" | "new-assistant" | "new-thread-in" | "whiteboards";
   /** An explicit add-project target never falls back to the local machine. */
   readonly environmentId?: EnvironmentId;
   readonly query?: string;

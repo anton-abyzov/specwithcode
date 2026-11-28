@@ -215,8 +215,17 @@ import {
   NEW_WHITEBOARD_TERMS,
   asksForWhiteboard,
   newWhiteboardDestination,
-  useNewWhiteboardShortcut,
+  openWhiteboardDestination,
+  useProjectWhiteboards,
+  useWhiteboardShortcut,
 } from "./office/whiteboard/quickWhiteboard";
+import {
+  limitGroupItems,
+  WHITEBOARD_PICKER_GROUP,
+  WHITEBOARD_SEARCH_GROUP,
+  WHITEBOARD_SEARCH_LIMIT,
+  whiteboardBoardItems,
+} from "./office/whiteboard/whiteboardPalette";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { canOpenProjectWindowFor, openProjectWindow } from "../lib/projectWindow";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -248,6 +257,7 @@ import {
   enumerateCommandPaletteItems,
   findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
+  type CommandPaletteGroup,
   type CommandPaletteOpenIntent,
   type CommandPaletteProject,
   type CommandPaletteSubmenuItem,
@@ -601,6 +611,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     [aideEnabled],
   );
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
+  const openWhiteboards = useCallback(() => dispatch({ _tag: "OpenWhiteboards" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   // Add folder found copies of the folder on other machines; the palette closes for it.
   const [folderSuggestion, setFolderSuggestion] = useState<FolderLinkSuggestionRequest | null>(
@@ -614,7 +625,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   useTimelineDetailShortcut();
-  useNewWhiteboardShortcut();
+  useWhiteboardShortcut();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
     strict: false,
@@ -743,6 +754,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       onOpenCommandPalette((detail) => {
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
+        } else if (detail.open === "whiteboards") {
+          openWhiteboards();
         } else if (detail.open === "add-project") {
           openAddProject(detail.environmentId);
         } else if (detail.open === "new-assistant") {
@@ -757,7 +770,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen(true);
         }
       }),
-    [openAddProject, openNewAssistant, openNewThreadIn, setOpen],
+    [openAddProject, openNewAssistant, openNewThreadIn, openWhiteboards, setOpen],
   );
 
   return (
@@ -3080,22 +3093,80 @@ function OpenCommandPaletteDialog(props: {
       projectGroups[0] ??
       null);
   // New whiteboard: the project in context first, and each other project when the query asks.
+  const newWhiteboardItems: CommandPaletteActionItem[] = [];
   for (const group of projectGroups) {
     const inContext = group.projectKey === contextualProjectGroup?.projectKey;
     if (!inContext && !asksForWhiteboard(deferredQuery)) continue;
-    actionItems.push({
+    newWhiteboardItems.push({
       kind: "action",
       value: `action:new-whiteboard:${group.projectKey}`,
-      searchTerms: ["new", ...NEW_WHITEBOARD_TERMS, group.displayName],
+      searchTerms: ["new", "create", ...NEW_WHITEBOARD_TERMS, group.displayName],
       title: inContext ? "New whiteboard" : `New whiteboard in ${group.displayName}`,
       description: group.displayName,
       icon: <ShapesIcon className={ITEM_ICON_CLASS} />,
-      ...(inContext ? { shortcutCommand: "whiteboard.new" as const } : {}),
       run: async () => {
         await navigate(newWhiteboardDestination(group.projectKey) as never);
       },
     });
   }
+  actionItems.push(...newWhiteboardItems);
+  // The project in context's boards: the picker lists them all, a typed query finds them by name.
+  const contextualWhiteboards = useProjectWhiteboards(
+    contextualProjectGroup
+      ? {
+          environmentId: contextualProjectGroup.environmentId,
+          projectId: contextualProjectGroup.id,
+        }
+      : null,
+  );
+  const whiteboardItems = contextualProjectGroup
+    ? whiteboardBoardItems({
+        projectKey: contextualProjectGroup.projectKey,
+        projectName: contextualProjectGroup.displayName,
+        boards: contextualWhiteboards,
+        icon: <ShapesIcon className={ITEM_ICON_CLASS} />,
+        openBoard: async (path) => {
+          await navigate(
+            openWhiteboardDestination(contextualProjectGroup.projectKey, path) as never,
+          );
+        },
+      })
+    : [];
+  const whiteboardPickerGroups: CommandPaletteGroup[] = [
+    {
+      value: WHITEBOARD_PICKER_GROUP,
+      label: contextualProjectGroup
+        ? `Whiteboards · ${contextualProjectGroup.displayName}`
+        : "Whiteboards",
+      items: [...newWhiteboardItems, ...whiteboardItems],
+    },
+  ];
+  const openWhiteboardPicker = useCallback(() => {
+    pushPaletteView({
+      addonIcon: <ShapesIcon className={ADDON_ICON_CLASS} />,
+      groups: [{ value: WHITEBOARD_PICKER_GROUP, label: "Whiteboards", items: [] }],
+    });
+  }, [pushPaletteView]);
+  actionItems.push({
+    kind: "submenu",
+    value: "action:whiteboards",
+    searchTerms: [...NEW_WHITEBOARD_TERMS, "whiteboards", "find", "open", "existing", "recent"],
+    title: "Whiteboards…",
+    description: "Find a board or make a new one",
+    icon: <ShapesIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "whiteboard.new",
+    addonIcon: <ShapesIcon className={ADDON_ICON_CLASS} />,
+    groups: [{ value: WHITEBOARD_PICKER_GROUP, label: "Whiteboards", items: [] }],
+  });
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "whiteboards") return;
+    clearOpenIntent();
+    browseNavigation.invalidate();
+    setAddProjectCloneFlow(null);
+    setNewProjectFlow(null);
+    setViewStack([]);
+    openWhiteboardPicker();
+  }, [browseNavigation, clearOpenIntent, openIntent, openWhiteboardPicker]);
   if (contextualProjectGroup) {
     actionItems.push({
       kind: "action",
@@ -3251,33 +3322,49 @@ function OpenCommandPaletteDialog(props: {
             })),
           },
         ]
-      : currentView?.groups[0]?.value === "themes"
-        ? changeThemeItem.groups
-        : currentView?.groups[0]?.value === "appearance"
-          ? changeAppearanceItem.groups
-          : (currentView?.groups ?? rootGroups);
+      : currentView?.groups[0]?.value === WHITEBOARD_PICKER_GROUP
+        ? whiteboardPickerGroups
+        : currentView?.groups[0]?.value === "themes"
+          ? changeThemeItem.groups
+          : currentView?.groups[0]?.value === "appearance"
+            ? changeAppearanceItem.groups
+            : (currentView?.groups ??
+              (deferredQuery.trim() === "" || whiteboardItems.length === 0
+                ? rootGroups
+                : [
+                    ...rootGroups,
+                    {
+                      value: WHITEBOARD_SEARCH_GROUP,
+                      label: "Whiteboards",
+                      items: whiteboardItems,
+                    },
+                  ]));
 
-  const filteredGroups = filterCommandPaletteGroups({
-    activeGroups,
-    query: deferredQuery,
-    isInSubmenu: currentView !== null,
-    projectSearchItems: projectSearchItems,
-    settingsSearchItems,
-    threadSearchItems:
-      linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
-        ? buildLinkedThreadActionItems({
-            ...linkedThreadSearch.linkedThreads,
-            query: linkedThreadSearch.query,
-            icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-            runThread: async (thread) => {
-              await navigate({
-                to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-              });
-            },
-          })
-        : allThreadItems,
-  });
+  const filteredGroups = limitGroupItems(
+    filterCommandPaletteGroups({
+      activeGroups,
+      query: deferredQuery,
+      isInSubmenu: currentView !== null,
+      projectSearchItems: projectSearchItems,
+      settingsSearchItems,
+      threadSearchItems:
+        linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
+          ? buildLinkedThreadActionItems({
+              ...linkedThreadSearch.linkedThreads,
+              query: linkedThreadSearch.query,
+              icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+              runThread: async (thread) => {
+                await navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+                });
+              },
+            })
+          : allThreadItems,
+    }),
+    WHITEBOARD_SEARCH_GROUP,
+    WHITEBOARD_SEARCH_LIMIT,
+  );
 
   const handleAddProjectForEnvironment = useCallback(
     async (input: {

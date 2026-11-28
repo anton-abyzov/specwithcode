@@ -198,6 +198,26 @@ export interface ProjectWorkspaceSearch {
    * shortcut asks for `whiteboard`. The page takes it once and drops it.
    */
   readonly new?: "whiteboard";
+  /**
+   * A one-shot request to open a whiteboard of the project by its
+   * project-relative path, as the whiteboard picker asks. Taken once and dropped.
+   */
+  readonly open?: string;
+}
+
+/** A project-relative `.excalidraw` path, with no way out of the project. */
+export function safeWhiteboardPath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const path = value.trim();
+  if (path.length === 0 || path.length > 1024 || !path.toLowerCase().endsWith(".excalidraw")) {
+    return null;
+  }
+  if (path.startsWith("/") || path.includes("\\") || /^[A-Za-z]:/.test(path)) return null;
+  if (path.split("/").some((part) => part === "" || part === "." || part === "..")) return null;
+  if ([...path].some((char) => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f)) {
+    return null;
+  }
+  return path;
 }
 
 /** An increment folder name: its number, then words joined by hyphens. Nothing else reaches the server. */
@@ -231,6 +251,7 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
     ...(pane ? { pane } : {}),
     ...(increment ? { increment } : {}),
     ...(raw.new === "whiteboard" ? { new: "whiteboard" as const } : {}),
+    ...(safeWhiteboardPath(raw.open) !== null ? { open: safeWhiteboardPath(raw.open)! } : {}),
   };
 }
 
