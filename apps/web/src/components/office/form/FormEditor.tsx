@@ -160,7 +160,7 @@ function OptionsEditor(props: {
         {(item.type === "choice" || item.type === "checkboxes") && item.other !== true ? (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             onClick={() => props.onChange({ ...item, other: true })}
           >
             {tx("Add “Other”")}
@@ -451,10 +451,10 @@ export function FormEditor(props: {
           <PlusIcon aria-hidden />
           {tx("Add question")}
         </Button>
-        <Button variant="ghost" size="sm" disabled={full} onClick={() => add("text")}>
+        <Button variant="outline" size="sm" disabled={full} onClick={() => add("text")}>
           {tx("Add title and text")}
         </Button>
-        <Button variant="ghost" size="sm" disabled={full} onClick={() => add("section")}>
+        <Button variant="outline" size="sm" disabled={full} onClick={() => add("section")}>
           {tx("Add section")}
         </Button>
       </div>
