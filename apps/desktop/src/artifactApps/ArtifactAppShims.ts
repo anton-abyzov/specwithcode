@@ -25,6 +25,10 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import {
+  ARTIFACT_APP_UNINSTALL_ACK_CHANNEL,
+  ARTIFACT_APP_UNINSTALL_REQUEST_CHANNEL,
+} from "../ipc/channels.ts";
 import * as ArtifactAppInstaller from "./ArtifactAppInstaller.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import * as ArtifactAppShimRecords from "./ArtifactAppShimRecords.ts";
@@ -50,8 +54,29 @@ export function artifactAppVersionMismatchMessage(name: string): Electron.Messag
   };
 }
 
+/**
+ * The app menu's Uninstall confirm when the page cannot show its own: it is loading,
+ * crashed or has no window. It opens as a sheet on the page's window when there is one.
+ */
+export function artifactAppUninstallConfirmation(name: string): Electron.MessageBoxOptions {
+  return {
+    type: "warning",
+    message: `Uninstall ${name}?`,
+    detail:
+      "Its launcher is removed from this computer. The page stays in its thread, and you can install it again.",
+    buttons: ["Uninstall", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+}
+
+/** How long the page has to say it will show the Uninstall confirm itself. */
+export const ARTIFACT_APP_UNINSTALL_ACK_WAIT = "1 second";
+
 export interface ArtifactAppShimMenuActions {
   readonly showInFinder: () => void;
+  /** Asks the page's window to show its uninstall confirm; nothing is removed here. */
   readonly uninstall: () => void;
 }
 
@@ -235,6 +260,65 @@ const make = Effect.gen(function* () {
       shim.quit();
     });
 
+  // The confirm shows inside the page's window: a native dialog from SpecWithCode, which
+  // runs in the background here, could open behind the page. The page answers that it
+  // will show it; a page that is loading, crashed or gone gets a native confirm instead,
+  // as a sheet on its window when it has one.
+  let lastUninstallRequest = 0;
+  const askPage = (contents: Electron.WebContents) =>
+    Effect.suspend(() => {
+      // Only this request's answer counts, not a late one to an earlier request.
+      const requestId = ++lastUninstallRequest;
+      let stopListening = () => {};
+      return Effect.callback<void>((resume) => {
+        const onAck = (_event: unknown, id: unknown) => {
+          if (id === requestId) resume(Effect.void);
+        };
+        contents.ipc.on(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, onAck);
+        stopListening = () =>
+          contents.ipc.removeListener(ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, onAck);
+        contents.send(ARTIFACT_APP_UNINSTALL_REQUEST_CHANNEL, requestId);
+      }).pipe(
+        Effect.timeoutOption(ARTIFACT_APP_UNINSTALL_ACK_WAIT),
+        Effect.map(Option.isSome),
+        Effect.ensuring(Effect.sync(() => stopListening())),
+      );
+    });
+
+  const requestUninstall = Effect.fn("desktop.artifactAppShims.requestUninstall")(function* (
+    installId: string,
+    shim: Electron.AppShimHost,
+  ) {
+    const usable = (found: Electron.BrowserWindow) =>
+      !found.isDestroyed() && !found.webContents.isDestroyed();
+    let window = yield* windows.windowForInstall(installId);
+    if (!Option.exists(window, usable)) {
+      // No page window: bring it back first, so the confirm has a window to sit on.
+      yield* windows.open(installId, { appShim: shim });
+      window = yield* windows.windowForInstall(installId);
+    }
+    const page = Option.filter(window, usable);
+    if (Option.isSome(page)) {
+      const contents = page.value.webContents;
+      yield* Effect.sync(() => {
+        if (page.value.isMinimized()) page.value.restore();
+        page.value.show();
+        page.value.focus();
+      });
+      const answered = yield* contents.isCrashed() ? Effect.succeed(false) : askPage(contents);
+      if (answered) return;
+    }
+    const app = yield* records.get(installId);
+    if (Option.isNone(app)) return;
+    yield* logInfo("page did not show its uninstall confirm; asking natively", { installId });
+    const choice = yield* host.showMessageBox(
+      page,
+      artifactAppUninstallConfirmation(app.value.name),
+    );
+    if (choice !== 0) return;
+    yield* installer.uninstall(installId);
+  });
+
   const connect = Effect.fn("desktop.artifactAppShims.connect")(function* (
     shim: Electron.AppShimHost,
   ) {
@@ -262,7 +346,7 @@ const make = Effect.gen(function* () {
       shim,
       artifactAppShimMenuTemplate(app.value.name, {
         showInFinder: () => runFork(installer.reveal(installId)),
-        uninstall: () => runFork(installer.uninstall(installId)),
+        uninstall: () => runFork(requestUninstall(installId, shim)),
       }),
     );
     // Its Dock icon clicked, or its app opened again: the window comes forward or back.

@@ -33,7 +33,11 @@ import {
   windowsArtifactAppShortcut,
   type LauncherFile,
 } from "./ArtifactAppLaunchers.ts";
-import { resolveArtifactAppName } from "./ArtifactAppName.ts";
+import {
+  foldArtifactAppName,
+  resolveArtifactAppName,
+  sanitizeArtifactAppName,
+} from "./ArtifactAppName.ts";
 import * as ArtifactAppGrants from "./ArtifactAppGrants.ts";
 import * as ArtifactAppRecords from "./ArtifactAppRecords.ts";
 import * as ArtifactAppShimRecords from "./ArtifactAppShimRecords.ts";
@@ -167,7 +171,32 @@ export function artifactAppInstallConfirmation(name: string): Electron.MessageBo
   };
 }
 
+/**
+ * Another thread's page with the same title is already installed: open that app, or
+ * install a second copy that follows this page. Open is the default; Escape cancels.
+ */
+export function artifactAppAlreadyInstalledChoice(name: string): Electron.MessageBoxOptions {
+  return {
+    type: "question",
+    message: `${name} is already installed.`,
+    detail:
+      "It was installed from a page with the same name. Open it, or install a second copy that follows this page.",
+    buttons: [`Open ${name}`, "Install another copy", "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  };
+}
+
+const UNCONFIRMED_LAUNCHER_FAILURE =
+  "This page's app could not be confirmed as the one SpecWithCode installed, so it was not opened. Try again; if it keeps failing, uninstall it and install it again.";
+
 const GENERIC_FAILURE = "SpecWithCode could not install this page as an app. Try again.";
+
+const installedTime = (app: DesktopArtifactApp) => {
+  const time = Date.parse(app.installedAt);
+  return Number.isNaN(time) ? 0 : time;
+};
 
 type LauncherLocationShim = Option.Option<
   Omit<ArtifactAppShimRecords.ArtifactAppShimRecord, "cdHash">
@@ -195,6 +224,11 @@ type LauncherLocation =
       readonly path: string;
       readonly contents: string;
     };
+
+interface SameTitleInstall {
+  readonly app: DesktopArtifactApp;
+  readonly location: LauncherLocation;
+}
 
 interface LauncherContext {
   readonly platform: NodeJS.Platform;
@@ -804,6 +838,39 @@ const make = Effect.gen(function* () {
     app.threadId === input.threadId &&
     app.title === input.title;
 
+  // Titles compare as their app names do: sanitized, then folded for case and look-alikes.
+  const titleKey = (title: string) => foldArtifactAppName(sanitizeArtifactAppName(title));
+
+  /**
+   * The newest recorded install of another page with this title whose launcher is
+   * still its own. Only records count: a name on disk or a reserved name is never
+   * taken for an install. A launcher that cannot be checked counts as not owned, so
+   * another page's record never blocks this install.
+   */
+  const sameTitleInstall = Effect.fn("desktop.artifactApps.sameTitleInstall")(function* (
+    input: DesktopArtifactAppInstallInput,
+    context: LauncherContext,
+  ) {
+    const key = titleKey(input.title);
+    if (key.length === 0) return Option.none<SameTitleInstall>();
+    // Newest first; records are kept in install order, so a later one wins a tie.
+    const candidates = (yield* records.list)
+      .filter((app) => !sameInstall(app, input) && titleKey(app.title) === key)
+      .toReversed()
+      .toSorted((a, b) => installedTime(b) - installedTime(a));
+    for (const app of candidates) {
+      const location = yield* locateRecorded(app, context);
+      if (Option.isNone(location)) continue;
+      const owned = yield* launcherPathOwned(
+        location.value,
+        location.value.path,
+        app.installId,
+      ).pipe(Effect.orElseSucceed(() => false));
+      if (owned) return Option.some<SameTitleInstall>({ app, location: location.value });
+    }
+    return Option.none<SameTitleInstall>();
+  });
+
   const installUnlocked = Effect.fn("desktop.artifactApps.install")(function* (
     input: DesktopArtifactAppInstallInput,
     owner: Option.Option<Electron.BrowserWindow>,
@@ -819,9 +886,7 @@ const make = Effect.gen(function* () {
         // A launcher that cannot be verified, changed or the check timed out, is never
         // started; say so, with a retry first.
         if (!(yield* openInstall(existing.installId, location.value))) {
-          return failed(
-            "This page's app could not be confirmed as the one SpecWithCode installed, so it was not opened. Try again; if it keeps failing, uninstall it and install it again.",
-          );
+          return failed(UNCONFIRMED_LAUNCHER_FAILURE);
         }
         return { status: "already-installed", app: existing } as const;
       }
@@ -844,6 +909,26 @@ const make = Effect.gen(function* () {
       yield* windows.close(existing.installId);
     }
 
+    // The same title from another thread: one dialog offers its app or a second copy.
+    // The other install is never changed here.
+    let confirmed = false;
+    const sameTitle = yield* sameTitleInstall(input, context);
+    if (Option.isSome(sameTitle)) {
+      const { app: other, location: otherLocation } = sameTitle.value;
+      const answer = yield* host.showMessageBox(
+        owner,
+        artifactAppAlreadyInstalledChoice(other.name),
+      );
+      if (answer === 0) {
+        if (!(yield* openInstall(other.installId, otherLocation))) {
+          return failed(UNCONFIRMED_LAUNCHER_FAILURE);
+        }
+        return { status: "already-installed", app: other } as const;
+      }
+      if (answer !== 1) return { status: "cancelled" } as const;
+      confirmed = true;
+    }
+
     const takenNames = [
       ...(yield* records.list).map((app) => app.name),
       ...(yield* takenNamesOnDisk(context)),
@@ -853,8 +938,10 @@ const make = Effect.gen(function* () {
       try: () => resolveArtifactAppName({ title: input.title, reservedNames, takenNames }),
       catch: (cause) => new ArtifactAppNameUnavailableError({ cause }),
     });
-    const choice = yield* host.showMessageBox(owner, artifactAppInstallConfirmation(name));
-    if (choice !== 0) return { status: "cancelled" } as const;
+    if (!confirmed) {
+      const choice = yield* host.showMessageBox(owner, artifactAppInstallConfirmation(name));
+      if (choice !== 0) return { status: "cancelled" } as const;
+    }
 
     const installId = newArtifactAppInstallId();
     const location = locateLauncher({ installId, name }, context, currentShim());

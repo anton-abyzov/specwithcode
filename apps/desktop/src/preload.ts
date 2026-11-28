@@ -298,6 +298,16 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.ARTIFACT_APP_POWER_EVENT_CHANNEL, handler);
     return () => ipcRenderer.removeListener(IpcChannels.ARTIFACT_APP_POWER_EVENT_CHANNEL, handler);
   },
+  onArtifactAppUninstallRequest: (listener) => {
+    // The ack tells the main process this page shows the confirm, so it does not ask too.
+    const handler = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+      ipcRenderer.send(IpcChannels.ARTIFACT_APP_UNINSTALL_ACK_CHANNEL, requestId);
+      listener();
+    };
+    ipcRenderer.on(IpcChannels.ARTIFACT_APP_UNINSTALL_REQUEST_CHANNEL, handler);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.ARTIFACT_APP_UNINSTALL_REQUEST_CHANNEL, handler);
+  },
   startFileDrag: (path) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, { path }),
   printDocumentPdf: (input) => ipcRenderer.invoke(IpcChannels.PRINT_DOCUMENT_PDF_CHANNEL, input),
   onNotificationBadgeClear: (listener) => {

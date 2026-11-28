@@ -10,7 +10,6 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@specweave-studio/shared/htmlRender";
-import { Trash2Icon } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
@@ -30,10 +29,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { useHtmlRenderSrc } from "../chat/HtmlRenderFrame";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
-import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
-import { toastManager } from "../ui/toast";
 import { ArtifactAppPermissions } from "./ArtifactAppPermissions";
+import { ArtifactAppUninstallMenu } from "./ArtifactAppUninstall";
 import {
   artifactAppPowerNotification,
   callArtifactAppPermissions,
@@ -327,8 +325,11 @@ function InstalledPageDocument(props: {
   );
 }
 
-/** The window's chrome: a draggable strip with the app's name, its permissions and Uninstall. */
-function ArtifactAppFrame(props: {
+/**
+ * The window's chrome: a draggable strip with the app's name, its permissions
+ * and a quiet More menu that holds Uninstall behind a confirm.
+ */
+export function ArtifactAppFrame(props: {
   readonly name: string | null;
   readonly installId?: string;
   readonly permissions?: DesktopArtifactAppPermissions | null;
@@ -340,21 +341,8 @@ function ArtifactAppFrame(props: {
   useEffect(() => {
     if (name !== null) document.title = name;
   }, [name]);
-  const [busy, setBusy] = useState(false);
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
-  const uninstall = bridge?.uninstallArtifactApp;
-  const onUninstall = async () => {
-    if (installId === undefined || typeof uninstall !== "function" || busy) return;
-    setBusy(true);
-    const removed = await uninstall({ installId }).catch(() => false);
-    if (removed) {
-      // The install is gone; this window has nothing left to show.
-      window.close();
-      return;
-    }
-    setBusy(false);
-    toastManager.add({ type: "error", title: tx("Could not uninstall the app") });
-  };
+  const canUninstall = typeof bridge?.uninstallArtifactApp === "function";
   const macosDesktop =
     isElectron && typeof navigator !== "undefined" && isMacPlatform(navigator.platform);
   return (
@@ -373,10 +361,9 @@ function ArtifactAppFrame(props: {
         {props.permissions != null && props.onPermissions !== undefined ? (
           <ArtifactAppPermissions permissions={props.permissions} onChange={props.onPermissions} />
         ) : null}
-        {installId !== undefined && typeof uninstall === "function" ? (
-          <Button variant="ghost" size="sm" onClick={() => void onUninstall()} disabled={busy}>
-            <Trash2Icon aria-hidden className="size-4" /> {tx("Uninstall")}
-          </Button>
+        {installId !== undefined && name !== null && canUninstall ? (
+          // A button, so the header's drag region leaves it clickable.
+          <ArtifactAppUninstallMenu name={name} installId={installId} />
         ) : null}
       </header>
       {props.children}
