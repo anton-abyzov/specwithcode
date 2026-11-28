@@ -49,17 +49,20 @@ export async function submitFormResponse(input: {
       return { ok: false, error: "The responses Sheet could not be read. Try again." };
     }
     if (read._tag === "gone") {
-      if (creates >= 2) {
-        return { ok: false, error: "The responses Sheet could not be made. Try again." };
-      }
-      creates += 1;
       // Made only if still missing, so a Sheet another window made meanwhile, with its
       // answers, is never replaced; that conflict just means the next read finds it.
-      // A machine on an older version reads the marker as a stale revision and refuses,
-      // so a Sheet still missing after that is made by a plain write once.
+      // Never a plain write: it could replace answers that landed in between.
+      if (creates >= 2) {
+        return {
+          ok: false,
+          error:
+            "The responses Sheet could not be made. Update SpecWithCode on the machine that holds this project, then try again.",
+        };
+      }
+      creates += 1;
       const made = await input.write(
         serializeSheetDocument(emptyResponsesSheet(input.document)),
-        creates === 1 ? NEW_FILE_REVISION : undefined,
+        NEW_FILE_REVISION,
       );
       if (made !== true && made !== "conflict") return { ok: false, error: made.error };
       continue;

@@ -58,6 +58,8 @@ export function FormView(props: {
   const edits = useRef(0);
   const savedEdits = useRef(0);
   const inFlight = useRef(false);
+  /** Sends the edit waiting for its timer; run when the view closes, so it is not lost. */
+  const pendingSave = useRef<(() => void) | null>(null);
   const queued = useRef<{ readonly document: FormDocument; readonly at: number } | null>(null);
 
   // A change on disk is taken in while nothing here is unsaved.
@@ -75,6 +77,7 @@ export function FormView(props: {
     if (draft === null || onSave === undefined || edits.current === savedEdits.current) return;
     const checked = validateFormDocument(draft);
     if (!checked.ok) {
+      pendingSave.current = null;
       setSave({ kind: "invalid", error: checked.error });
       return;
     }
@@ -104,9 +107,16 @@ export function FormView(props: {
       });
     };
     const at = edits.current;
-    const timer = setTimeout(() => send(draft, at), FORM_SAVE_DELAY_MS);
+    const flush = () => {
+      pendingSave.current = null;
+      send(draft, at);
+    };
+    pendingSave.current = flush;
+    const timer = setTimeout(flush, FORM_SAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [draft, onSave]);
+  // Closing the form, or switching to another file, saves an edit still waiting for its timer.
+  useEffect(() => () => pendingSave.current?.(), []);
 
   if (!parsed.ok && draft === null) {
     return (
@@ -119,6 +129,7 @@ export function FormView(props: {
     );
   }
   const document = draft!;
+  const saved = parsed.ok ? parsed.document : null;
   const change = (next: FormDocument) => {
     edits.current += 1;
     setDraft(next);
@@ -197,12 +208,26 @@ export function FormView(props: {
         {tab === "edit" && props.onSave ? (
           <FormEditor document={document} onChange={change} />
         ) : tab === "fill" ? (
-          <FormFill
-            // A form edited since is a new form to fill in.
-            key={serializeForm(document)}
-            document={document}
-            onSubmit={props.onSubmit ? (answers) => props.onSubmit!(document, answers) : undefined}
-          />
+          <>
+            {props.onSave && save.kind !== "saved" && saved !== null ? (
+              <p className="mx-auto max-w-2xl px-4 pt-4 text-muted-foreground text-xs" role="note">
+                {tx(
+                  "Fill in shows the saved form. Your latest edits appear here once they are saved.",
+                )}
+              </p>
+            ) : null}
+            <FormFill
+              // A form changed since is a new form to fill in.
+              key={serializeForm(saved ?? document)}
+              document={saved ?? document}
+              // Answers go only to the form as saved, never to a draft that may not save.
+              onSubmit={
+                props.onSubmit && saved !== null
+                  ? (answers) => props.onSubmit!(saved, answers)
+                  : undefined
+              }
+            />
+          </>
         ) : (
           props.responses
         )}

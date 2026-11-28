@@ -135,6 +135,13 @@ describe("form files", () => {
         responses: { sheet: "answers.sheet.json" },
       }),
     ).toBe(".specweave/artifacts/answers.sheet.json");
+    // A UNC share keeps its folders; a POSIX name with a backslash stays one name.
+    expect(responsesSheetPath("\\\\host\\share\\p\\.specweave\\artifacts\\a.form.json", form)).toBe(
+      "//host/share/p/.specweave/artifacts/a-responses.sheet.json",
+    );
+    expect(responsesSheetPath("/work/app/.specweave/artifacts/a\\b.form.json", form)).toBe(
+      "/work/app/.specweave/artifacts/a\\b-responses.sheet.json",
+    );
   });
 
   it("makes new items of every type that validate", () => {
@@ -276,7 +283,11 @@ describe("answers", () => {
     expect(cells.J1).toBe("Role");
     expect(cells.J3).toBe("Dev");
     expect(cells.B3).toBe("Ana");
-    expect(Object.keys(second.sheet.tabs[0]!.styles ?? {})).toEqual(["A1:J1"]);
+    // The existing header style is left as it was; only the new header cell is styled.
+    expect(second.sheet.tabs[0]!.styles).toEqual({
+      "A1:I1": { bold: true, fill: true },
+      J1: { bold: true, fill: true },
+    });
   });
 
   it("starts an empty responses Sheet with only its header row", () => {
@@ -357,7 +368,8 @@ describe("review round 1: columns, tabs and long answers", () => {
     });
     expect(tab.cells.A2).toBeUndefined();
     // A person's own style on row 1 stays.
-    expect(tab.styles?.["A1:C1"]).toEqual({ italic: true, bold: true, fill: true });
+    expect(tab.styles?.["A1:C1"]).toEqual({ italic: true });
+    expect(tab.styles?.["B1:C1"]).toEqual({ bold: true, fill: true });
   });
 
   it("keeps a 5,000-character answer whole and never splits a surrogate pair", () => {
@@ -368,5 +380,27 @@ describe("review round 1: columns, tabs and long answers", () => {
     expect(input.length).toBeLessThanOrEqual(5_000);
     expect(input.startsWith("'=")).toBe(true);
     expect(/[\uD800-\uDBFF]$/.test(input)).toBe(false);
+  });
+
+  it("finds the Responses tab without case and counts only rows with a time", () => {
+    const sheet = {
+      v: 1,
+      kind: "sheet",
+      title: "R",
+      tabs: [
+        {
+          name: "responses",
+          cells: { A1: "Submitted at", B1: "Name", A2: "t1", B2: "Ana", B100: "a note" },
+          styles: { "A1:B1": { bold: true, fill: true } },
+        },
+      ],
+    } as const;
+    expect(formResponseCount(sheet as never)).toBe(1);
+    const appended = appendFormResponse(sheet as never, titled(["Name"]), { q0: "Bea" }, "t2");
+    expect(appended.ok).toBe(true);
+    if (!appended.ok) return;
+    expect(appended.sheet.tabs).toHaveLength(1);
+    expect(appended.sheet.tabs[0]!.styles).toEqual({ "A1:B1": { bold: true, fill: true } });
+    expect(formResponseCount(appended.sheet)).toBe(2);
   });
 });

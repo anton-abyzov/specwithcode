@@ -167,21 +167,13 @@ function lastRow(tab: SheetTab): number {
 
 /** The tab named "Responses", or -1: answers never go into another tab a person made. */
 function responsesTabIndex(sheet: SheetDocument): number {
-  return sheet.tabs.findIndex((tab) => tab.name === RESPONSES_TAB);
+  // Tab names compare without case, as the Sheet's own validator does.
+  const wanted = RESPONSES_TAB.toLowerCase();
+  return sheet.tabs.findIndex((tab) => tab.name.toLowerCase() === wanted);
 }
 
-/** The header style this module writes; a person's own style on row 1 is kept. */
+/** The style given to header cells this module adds; existing styles are never changed. */
 const HEADER_STYLE = { bold: true, fill: true } as const;
-
-function isFormHeaderStyle(range: string, style: unknown): boolean {
-  if (!/^A1:[A-Z]+1$/.test(range) || typeof style !== "object" || style === null) return false;
-  const keys = Object.keys(style);
-  return (
-    keys.length === 2 &&
-    (style as Record<string, unknown>).bold === true &&
-    (style as Record<string, unknown>).fill === true
-  );
-}
 
 /** A responses Sheet with only its header row, as made with a new form. */
 export function emptyResponsesSheet(document: FormDocument): SheetDocument {
@@ -227,12 +219,14 @@ function withHeaders(
     const header = /^'+=/.test(value) ? value.slice(1) : value;
     if (!byHeader.has(header)) byHeader.set(header, address.col);
   }
+  let firstNew = Number.POSITIVE_INFINITY;
   if (!byHeader.has(SUBMITTED_AT_HEADER)) {
     // Column A when it is free, else a new column: the time never lands under a person's header.
     const col = cells.A1 === undefined ? 0 : width;
     cells[`${columnLetters(col)}1`] = SUBMITTED_AT_HEADER;
     byHeader.set(SUBMITTED_AT_HEADER, col);
     width = Math.max(width, col + 1);
+    firstNew = col;
   }
   const columns = new Map<string, number>();
   for (const { item, header } of questionHeaders(document)) {
@@ -240,20 +234,19 @@ function withHeaders(
     if (col === undefined) {
       col = width;
       width += 1;
+      firstNew = Math.min(firstNew, col);
       cells[`${columnLetters(col)}1`] = answerTextInput(header);
       byHeader.set(header, col);
     }
     columns.set(item.id, col);
   }
   const last = columnLetters(Math.max(width, 1) - 1);
-  // One header style, widened as columns are added, never a pile of older ones.
-  const kept = Object.entries(tab.styles ?? {}).filter(
-    ([range, style]) => !isFormHeaderStyle(range, style),
-  );
-  const header = `A1:${last}1`;
-  const own = Object.fromEntries(kept);
-  // A person's own style on exactly that range keeps its other settings.
-  const styles = { ...own, [header]: { ...own[header], ...HEADER_STYLE } };
+  // Only the header cells added now get the header style; a person's styles stay as they are.
+  const added = Number.isFinite(firstNew) ? `${columnLetters(firstNew)}1:${last}1` : null;
+  const styles =
+    added !== null && tab.styles?.[added] === undefined
+      ? { ...tab.styles, [added]: { ...HEADER_STYLE } }
+      : { ...tab.styles };
   const nextTab: SheetTab = { ...tab, cells, styles };
   const tabs =
     tabIndex >= sheet.tabs.length
@@ -322,5 +315,17 @@ export function appendFormResponse(
 export function formResponseCount(sheet: SheetDocument): number {
   const tab = sheet.tabs[responsesTabIndex(sheet)];
   if (tab === undefined) return 0;
-  return Math.max(lastRow(tab) - 1, 0);
+  // Rows with a submission time: notes or totals a person adds below do not count.
+  let column: number | null = null;
+  for (const [key, value] of Object.entries(tab.cells)) {
+    const address = parseCellAddress(key);
+    if (address?.row === 0 && value === SUBMITTED_AT_HEADER) column = address.col;
+  }
+  if (column === null) return 0;
+  let count = 0;
+  for (const [key, value] of Object.entries(tab.cells)) {
+    const address = parseCellAddress(key);
+    if (address !== null && address.row > 0 && address.col === column && value !== "") count += 1;
+  }
+  return count;
 }

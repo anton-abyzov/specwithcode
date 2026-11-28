@@ -1005,6 +1005,14 @@ describe("sheetRelativePath", () => {
       sheetRelativePath("C:\\Work\\App", "c:\\work\\app\\.specweave\\artifacts\\a.sheet.json"),
     ).toBe(".specweave/artifacts/a.sheet.json");
     expect(sheetRelativePath("C:\\Work\\App", "D:\\Work\\App\\a.sheet.json")).toBeNull();
+    // A UNC share, also when the path was already given forward slashes.
+    expect(
+      sheetRelativePath(
+        "\\\\host\\share\\App",
+        "//host/share/app/.specweave/artifacts/a.sheet.json",
+      ),
+    ).toBe(".specweave/artifacts/a.sheet.json");
+    expect(sheetRelativePath("\\\\host\\share\\App", "//host/other/a.sheet.json")).toBeNull();
     // POSIX filenames with literal backslashes (including drive-like prefixes) must not be rewritten.
     expect(sheetRelativePath("/work/app", "foo\\bar.sheet.json")).toBe("foo\\bar.sheet.json");
     expect(sheetRelativePath("/work/app", "/work/app/foo\\bar.sheet.json")).toBe(

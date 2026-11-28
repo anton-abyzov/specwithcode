@@ -157,6 +157,36 @@ export async function readResponsesSheetFile(
   return parsed.ok ? parsed.document : null;
 }
 
+/**
+ * Creates a file that must not exist yet, opened through the checked folder: the
+ * open refuses a symlink and a folder swapped since the check (`openInside`).
+ * False when a file of that name is already there.
+ */
+async function createInside(
+  realRoot: string,
+  relativePath: string,
+  text: string,
+): Promise<boolean> {
+  let writer: NodeFSP.FileHandle;
+  try {
+    writer = await openInside(
+      realRoot,
+      relativePath,
+      NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | NodeFS.constants.O_WRONLY,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    await writer.writeFile(text, "utf8");
+    await writer.sync();
+  } finally {
+    await writer.close().catch(() => undefined);
+  }
+  return true;
+}
+
 /** Writes an empty responses Sheet when none is there; never replaces one. */
 async function ensureResponsesSheet(
   realRoot: string,
@@ -166,17 +196,11 @@ async function ensureResponsesSheet(
   const folder = relativePath.split("/").slice(0, -1).join("/");
   if (!(await plainDirectory(realRoot, folder)))
     throw invalid(`${folder} leads outside the project.`);
-  const target = NodePath.join(realRoot, ...relativePath.split("/"));
-  try {
-    await NodeFSP.writeFile(target, serializeSheetDocument(emptyResponsesSheet(document)), {
-      encoding: "utf8",
-      flag: "wx",
-    });
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-    throw error;
-  }
+  return createInside(
+    realRoot,
+    relativePath,
+    serializeSheetDocument(emptyResponsesSheet(document)),
+  );
 }
 
 export async function writeFormArtifact(
@@ -210,7 +234,9 @@ export async function writeFormArtifact(
   const existing = await NodeFSP.lstat(target).catch(() => null);
   if (existing !== null && !existing.isFile())
     throw invalid(`${relativePath} leads outside the project.`);
-  const beforeText = existing === null ? null : await NodeFSP.readFile(target, "utf8");
+  // Read through the checked folder, so a file swapped in since the check is refused.
+  const beforeText =
+    existing === null ? null : await readTextInside(realRoot, relativePath, FORM_LIMITS.bytes);
   const beforeRevision = beforeText === null ? undefined : formRevision(beforeText);
   if (input.expectedRevision !== undefined && input.expectedRevision !== beforeRevision) {
     throw invalid(
@@ -235,12 +261,9 @@ export async function writeFormArtifact(
   if (beforeRevision !== undefined) {
     await writeSheetFileCompareAndSet(workspaceRoot, relativePath, text, beforeRevision, target);
   } else {
-    await NodeFSP.writeFile(target, text, { encoding: "utf8", flag: "wx" }).catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw invalid(`Conflict: form ${stem} was created by someone else meanwhile. Retry.`);
-      }
-      throw error;
-    });
+    if (!(await createInside(realRoot, relativePath, text))) {
+      throw invalid(`Conflict: form ${stem} was created by someone else meanwhile. Retry.`);
+    }
   }
   const sheetPath = responsesSheetPath(relativePath, parsed.document);
   const created = await ensureResponsesSheet(realRoot, sheetPath, parsed.document);

@@ -574,20 +574,14 @@ export async function writeSheetArtifact(
   return oneWriteAtATime(lockIdentity, () =>
     withKernelSheetLock(lockIdentity, stem, async () => {
       const createOnly = options.expectedRevision === NEW_FILE_REVISION;
-      if (
-        createOnly &&
-        (await NodeFSP.lstat(target).then(
-          () => true,
-          () => false,
-        ))
-      ) {
-        throw invalid(`Conflict: sheet ${stem} already exists. Re-read the sheet and retry.`);
-      }
       const before = await readFrom(realRoot, stem).catch((error: unknown) => {
         // A broken file of that name is replaced by a plain write, never merged into.
         if (options.merge === true || options.expectedRevision !== undefined) throw error;
         return null;
       });
+      if (createOnly && before !== null) {
+        throw invalid(`Conflict: sheet ${stem} already exists. Re-read the sheet and retry.`);
+      }
       if (options.expectedRevision !== undefined && !createOnly) {
         if (before === null) {
           throw invalid(
@@ -634,6 +628,17 @@ export async function writeSheetArtifact(
         throw error;
       }
       await writer.close();
+      if (createOnly) {
+        await publishNewFile(temporaryPath, target, `sheet ${stem}`);
+        return {
+          name: stem,
+          relativePath,
+          absolutePath: NodePath.join(NodePath.resolve(workspaceRoot), ...relativePath.split("/")),
+          document: validated.document,
+          revision: sheetContentRevision(text),
+          created: true,
+        };
+      }
       try {
         await NodeFSP.rename(temporaryPath, target);
       } catch (error) {
@@ -658,6 +663,33 @@ export async function writeSheetArtifact(
  * is provided by `WorkspaceFileSystem`, writes to that exact authorized path
  * instead of re-splitting `relativePath`.
  */
+/**
+ * Publishes a written temporary file at `target` only when nothing is there:
+ * a hard link fails on an existing name in one step, so a file another writer
+ * made after any check is never replaced. Where links are not supported the
+ * copy is still exclusive. The temporary file is always removed.
+ */
+async function publishNewFile(temporaryPath: string, target: string, label: string): Promise<void> {
+  try {
+    try {
+      await NodeFSP.link(temporaryPath, target);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS" && code !== "EXDEV") {
+        throw error;
+      }
+      await NodeFSP.copyFile(temporaryPath, target, NodeFS.constants.COPYFILE_EXCL);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw invalid(`Conflict: ${label} already exists. Re-read it and retry.`);
+    }
+    throw error;
+  } finally {
+    await NodeFSP.unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
 export async function writeSheetFileCompareAndSet(
   workspaceRoot: string,
   relativePath: string,
@@ -730,17 +762,17 @@ export async function writeSheetFileCompareAndSet(
       }
       await handle.close();
       if (requiredRevision !== undefined) {
+        if (requiredRevision === NEW_FILE_REVISION) {
+          await publishNewFile(tempPath, target, normalizedRel);
+          return;
+        }
         const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
         const conflict =
-          requiredRevision === NEW_FILE_REVISION
-            ? currentContents === null
-              ? null
-              : `Conflict: ${normalizedRel} already exists.`
-            : currentContents === null
-              ? `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`
-              : sheetContentRevision(currentContents) !== requiredRevision
-                ? `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${sheetContentRevision(currentContents)}).`
-                : null;
+          currentContents === null
+            ? `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`
+            : sheetContentRevision(currentContents) !== requiredRevision
+              ? `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${sheetContentRevision(currentContents)}).`
+              : null;
         if (conflict !== null) {
           await NodeFSP.unlink(tempPath).catch(() => undefined);
           throw invalid(conflict);

@@ -136,17 +136,24 @@ export function formRevision(raw: string): string {
 
 /** The responses Sheet's file name for a form file name, used when the form names none. */
 export function defaultResponsesSheetName(formFileName: string): string {
-  const base = formFileName.replace(/\\/g, "/").split("/").pop() ?? formFileName;
+  const base = formFileName.split("/").pop() ?? formFileName;
   const stem = isFormPath(base) ? base.slice(0, -FORM_SUFFIX.length) : base;
   return `${stem || "form"}${FORM_RESPONSES_SUFFIX}`;
 }
 
 /** The project-relative path of a form's responses Sheet, next to the form. */
 export function responsesSheetPath(formRelativePath: string, document: FormDocument): string {
-  const normalized = formRelativePath.replace(/\\/g, "/");
+  // A backslash separates folders only in a Windows-shaped path (a drive, a UNC share, or
+  // no forward slash at all); in a POSIX path it is part of a file name and stays.
+  const windows =
+    /^[A-Za-z]:[\\/]/.test(formRelativePath) ||
+    formRelativePath.startsWith("\\\\") ||
+    !formRelativePath.includes("/");
+  const normalized = windows ? formRelativePath.replace(/\\/g, "/") : formRelativePath;
   const slash = normalized.lastIndexOf("/");
   const folder = slash >= 0 ? normalized.slice(0, slash + 1) : "";
-  return `${folder}${document.responses?.sheet ?? defaultResponsesSheetName(normalized)}`;
+  const name = normalized.slice(slash + 1);
+  return `${folder}${document.responses?.sheet ?? defaultResponsesSheetName(name)}`;
 }
 
 function fail(error: string): { readonly ok: false; readonly error: string } {

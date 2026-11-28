@@ -138,6 +138,34 @@ describe("FormView", () => {
     expect(container.textContent).toContain("Saved");
   });
 
+  it("saves an edit still waiting for its timer when the form is closed", async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn(async () => true as const);
+    await render({ onSave });
+    const title = container.querySelector('input[aria-label="Form title"]') as HTMLInputElement;
+    await act(async () => setValue(title, "Closing"));
+    expect(onSave).not.toHaveBeenCalled();
+    await act(async () => root.render(<p>Another file</p>));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const saved = parseForm((onSave.mock.calls[0] as unknown as [string])[0]);
+    expect(saved.ok && saved.document.title).toBe("Closing");
+  });
+
+  it("fills in and submits the saved form, not an edit that has not saved", async () => {
+    vi.useFakeTimers();
+    const onSubmit = vi.fn(async () => ({ ok: true as const }));
+    await render({ onSave: async () => "conflict", onSubmit });
+    const title = container.querySelector('input[aria-label="Form title"]') as HTMLInputElement;
+    await act(async () => setValue(title, "Not saved"));
+    await act(async () => {
+      vi.advanceTimersByTime(FORM_SAVE_DELAY_MS + 10);
+    });
+    await act(async () => button("Fill in").click());
+    expect(container.textContent).toContain("Fill in shows the saved form.");
+    expect(container.textContent).toContain("Offsite");
+    expect(container.textContent).not.toContain("Not saved");
+  });
+
   it("does not save a form the file format would refuse, and says why", async () => {
     vi.useFakeTimers();
     const onSave = vi.fn(async () => true as const);
@@ -344,7 +372,7 @@ describe("submitFormResponse", () => {
     expect(sheet.ok && sheet.document.tabs[0]!.cells).toMatchObject({ B2: "First", B3: "Second" });
   });
 
-  it("makes the Sheet by a plain write when an older machine refuses the new-file marker", async () => {
+  it("never makes the Sheet by a plain write, even when an older machine refuses the marker", async () => {
     const store = sheetStore(null);
     const writes: Array<string | undefined> = [];
     const outcome = await submitFormResponse({
@@ -359,9 +387,9 @@ describe("submitFormResponse", () => {
         return store.write(next, revision);
       },
     });
-    expect(outcome).toEqual({ ok: true });
-    expect(writes[0]).toBe(NEW_FILE_REVISION);
-    expect(writes[1]).toBeUndefined();
+    expect(outcome.ok).toBe(false);
+    expect(writes.every((revision) => revision === NEW_FILE_REVISION)).toBe(true);
+    expect(store.contents).toBeNull();
   });
 
   it("retries on a conflict and gives up after five", async () => {
