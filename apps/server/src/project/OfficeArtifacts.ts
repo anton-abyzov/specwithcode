@@ -22,6 +22,7 @@ import {
   mergeSheetInput,
   parseSheetDocument,
   serializeSheetDocument,
+  NEW_FILE_REVISION,
   sheetContentRevision,
   sheetSlug,
   validateSheetDocument,
@@ -572,12 +573,22 @@ export async function writeSheetArtifact(
   const lockIdentity = await resolveSheetLockIdentity(target);
   return oneWriteAtATime(lockIdentity, () =>
     withKernelSheetLock(lockIdentity, stem, async () => {
+      const createOnly = options.expectedRevision === NEW_FILE_REVISION;
+      if (
+        createOnly &&
+        (await NodeFSP.lstat(target).then(
+          () => true,
+          () => false,
+        ))
+      ) {
+        throw invalid(`Conflict: sheet ${stem} already exists. Re-read the sheet and retry.`);
+      }
       const before = await readFrom(realRoot, stem).catch((error: unknown) => {
         // A broken file of that name is replaced by a plain write, never merged into.
         if (options.merge === true || options.expectedRevision !== undefined) throw error;
         return null;
       });
-      if (options.expectedRevision !== undefined) {
+      if (options.expectedRevision !== undefined && !createOnly) {
         if (before === null) {
           throw invalid(
             `Conflict: expected revision ${options.expectedRevision}, but sheet ${stem} does not exist yet.`,
@@ -721,11 +732,15 @@ export async function writeSheetFileCompareAndSet(
       if (requiredRevision !== undefined) {
         const currentContents = await NodeFSP.readFile(target, "utf8").catch(() => null);
         const conflict =
-          currentContents === null
-            ? `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`
-            : sheetContentRevision(currentContents) !== requiredRevision
-              ? `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${sheetContentRevision(currentContents)}).`
-              : null;
+          requiredRevision === NEW_FILE_REVISION
+            ? currentContents === null
+              ? null
+              : `Conflict: ${normalizedRel} already exists.`
+            : currentContents === null
+              ? `Conflict: expected revision ${requiredRevision}, but ${normalizedRel} does not exist.`
+              : sheetContentRevision(currentContents) !== requiredRevision
+                ? `Conflict: ${normalizedRel} changed on disk (expected ${requiredRevision}, current ${sheetContentRevision(currentContents)}).`
+                : null;
         if (conflict !== null) {
           await NodeFSP.unlink(tempPath).catch(() => undefined);
           throw invalid(conflict);

@@ -6,7 +6,11 @@ import {
   parseForm,
   serializeForm,
 } from "@specweave-studio/shared/officeForm";
-import { parseSheetDocument, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
+import {
+  NEW_FILE_REVISION,
+  parseSheetDocument,
+  sheetContentRevision,
+} from "@specweave-studio/shared/officeSheet";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -102,6 +106,35 @@ describe("FormView", () => {
     const saved = parseForm(contents);
     expect(saved.ok && saved.document.title).toBe("Offsite 2026");
     expect(saved.ok && saved.document.items).toHaveLength(5);
+    expect(container.textContent).toContain("Saved");
+  });
+
+  it("waits for a slow save, then sends the newer edit by the revision that save wrote", async () => {
+    vi.useFakeTimers();
+    const resolves: Array<() => void> = [];
+    const onSave = vi.fn(
+      (_contents: string, _revision: string) =>
+        new Promise<true>((resolve) => resolves.push(() => resolve(true))),
+    );
+    await render({ onSave });
+    const title = container.querySelector('input[aria-label="Form title"]') as HTMLInputElement;
+    await act(async () => setValue(title, "First"));
+    await act(async () => {
+      vi.advanceTimersByTime(FORM_SAVE_DELAY_MS + 10);
+    });
+    await act(async () => setValue(title, "Second"));
+    await act(async () => {
+      vi.advanceTimersByTime(FORM_SAVE_DELAY_MS + 10);
+    });
+    // The second edit is held while the first save is out.
+    expect(onSave).toHaveBeenCalledTimes(1);
+    await act(async () => resolves[0]!());
+    expect(onSave).toHaveBeenCalledTimes(2);
+    const calls = onSave.mock.calls as unknown as Array<[string, string]>;
+    expect(calls[1]![1]).toBe(formRevision(calls[0]![0]));
+    const saved = parseForm(calls[1]![0]);
+    expect(saved.ok && saved.document.title).toBe("Second");
+    await act(async () => resolves[1]!());
     expect(container.textContent).toContain("Saved");
   });
 
@@ -247,8 +280,10 @@ describe("submitFormResponse", () => {
           return "conflict";
         }
         if (
-          revision !== undefined &&
-          (contents === null || sheetContentRevision(contents) !== revision)
+          revision === NEW_FILE_REVISION
+            ? contents !== null
+            : revision !== undefined &&
+              (contents === null || sheetContentRevision(contents) !== revision)
         ) {
           return "conflict";
         }
@@ -268,12 +303,65 @@ describe("submitFormResponse", () => {
       write: store.write,
     });
     expect(outcome).toEqual({ ok: true });
-    expect(store.writes.map((each) => each.revision === undefined)).toEqual([true, false]);
+    expect(store.writes[0]!.revision).toBe(NEW_FILE_REVISION);
+    expect(store.writes[1]!.revision).not.toBe(NEW_FILE_REVISION);
     const sheet = parseSheetDocument(store.contents!);
     expect(sheet.ok && sheet.document.tabs[0]!.cells).toMatchObject({
       A2: "2026-11-28 10:00:00",
       B2: "Ana",
     });
+  });
+
+  it("never replaces a Sheet another window made after this one found it missing", async () => {
+    const store = sheetStore(null);
+    let reads = 0;
+    // Both windows found it missing; the other one made it and added its row first.
+    const read = async (): Promise<SheetRead> => {
+      reads += 1;
+      if (reads === 1) {
+        const other = await submitFormResponse({
+          document: FORM,
+          answers: { name: "First" },
+          submittedAt: "t0",
+          read: store.read,
+          write: store.write,
+        });
+        expect(other).toEqual({ ok: true });
+        return { _tag: "gone" };
+      }
+      return store.read();
+    };
+    expect(
+      await submitFormResponse({
+        document: FORM,
+        answers: { name: "Second" },
+        submittedAt: "t1",
+        read,
+        write: store.write,
+      }),
+    ).toEqual({ ok: true });
+    const sheet = parseSheetDocument(store.contents!);
+    expect(sheet.ok && sheet.document.tabs[0]!.cells).toMatchObject({ B2: "First", B3: "Second" });
+  });
+
+  it("makes the Sheet by a plain write when an older machine refuses the new-file marker", async () => {
+    const store = sheetStore(null);
+    const writes: Array<string | undefined> = [];
+    const outcome = await submitFormResponse({
+      document: FORM,
+      answers: { name: "Ana" },
+      submittedAt: "t",
+      read: store.read,
+      write: async (next, revision) => {
+        writes.push(revision);
+        // An older server treats the marker as a revision of a file that does not exist.
+        if (revision === NEW_FILE_REVISION) return "conflict";
+        return store.write(next, revision);
+      },
+    });
+    expect(outcome).toEqual({ ok: true });
+    expect(writes[0]).toBe(NEW_FILE_REVISION);
+    expect(writes[1]).toBeUndefined();
   });
 
   it("retries on a conflict and gives up after five", async () => {

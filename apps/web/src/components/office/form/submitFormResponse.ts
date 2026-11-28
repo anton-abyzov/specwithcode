@@ -2,7 +2,8 @@
  * Adding one response to a form's responses Sheet from a window: read the
  * Sheet, append the row, write it back by revision, and start over when
  * someone else wrote it in between. A missing Sheet is made header-only
- * first, so the row itself is always written against a revision.
+ * first, only if still missing, so the row itself is always written against a
+ * revision and a Sheet made meanwhile is never replaced.
  */
 import {
   type FormAnswers,
@@ -12,6 +13,7 @@ import {
   validateFormAnswers,
 } from "@specweave-studio/shared/officeForm";
 import {
+  NEW_FILE_REVISION,
   parseSheetDocument,
   serializeSheetDocument,
   sheetContentRevision,
@@ -34,24 +36,30 @@ export async function submitFormResponse(input: {
   readonly answers: FormAnswers;
   readonly submittedAt: string;
   readonly read: () => Promise<SheetRead>;
-  /** Writes the Sheet; with no revision only when it is missing. */
+  /** Writes the Sheet by revision; `NEW_FILE_REVISION` creates it only if missing. */
   readonly write: (contents: string, expectedRevision: string | undefined) => Promise<SheetWrite>;
 }): Promise<FormSubmitOutcome> {
   // Answers that do not fit are refused before anything is written, a missing Sheet included.
   const problem = validateFormAnswers(input.document, input.answers)[0];
   if (problem !== undefined) return { ok: false, error: problem.message };
-  let created = false;
+  let creates = 0;
   for (let attempt = 0; attempt < FORM_SUBMIT_ATTEMPTS; attempt += 1) {
     const read = await input.read();
     if (read._tag === "unavailable") {
       return { ok: false, error: "The responses Sheet could not be read. Try again." };
     }
     if (read._tag === "gone") {
-      if (created) return { ok: false, error: "The responses Sheet could not be made. Try again." };
-      created = true;
+      if (creates >= 2) {
+        return { ok: false, error: "The responses Sheet could not be made. Try again." };
+      }
+      creates += 1;
+      // Made only if still missing, so a Sheet another window made meanwhile, with its
+      // answers, is never replaced; that conflict just means the next read finds it.
+      // A machine on an older version reads the marker as a stale revision and refuses,
+      // so a Sheet still missing after that is made by a plain write once.
       const made = await input.write(
         serializeSheetDocument(emptyResponsesSheet(input.document)),
-        undefined,
+        creates === 1 ? NEW_FILE_REVISION : undefined,
       );
       if (made !== true && made !== "conflict") return { ok: false, error: made.error };
       continue;

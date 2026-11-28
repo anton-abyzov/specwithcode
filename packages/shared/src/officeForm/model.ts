@@ -351,19 +351,29 @@ export function formQuestions(document: FormDocument): ReadonlyArray<FormItem> {
   return document.items.filter(isFormQuestion);
 }
 
+/** The responses Sheet's first column; no question takes this header. */
+export const SUBMITTED_AT_HEADER = "Submitted at";
+
+/** A question's title as its column header: trimmed, or "Untitled question" when empty. */
+export function questionTitle(item: FormItem): string {
+  return item.title.trim().length > 0 ? item.title.trim() : "Untitled question";
+}
+
 /**
  * Each question's column header in the responses Sheet: its title, or
- * "Untitled question" when it has none; a title used again gets " (2)",
- * " (3)" in question order, so two questions never share a column.
+ * "Untitled question" when it has none. A header already taken, by an earlier
+ * question or by "Submitted at", gets the first free " (2)", " (3)", so two
+ * questions never share a column and no answer lands under the time.
  */
 export function questionHeaders(
   document: FormDocument,
 ): ReadonlyArray<{ readonly item: FormItem; readonly header: string }> {
-  const seen = new Map<string, number>();
+  const used = new Set<string>([SUBMITTED_AT_HEADER]);
   return formQuestions(document).map((item) => {
-    const title = item.title.trim().length > 0 ? item.title.trim() : "Untitled question";
-    const count = (seen.get(title) ?? 0) + 1;
-    seen.set(title, count);
-    return { item, header: count === 1 ? title : `${title} (${count})` };
+    const title = questionTitle(item);
+    let header = title;
+    for (let count = 2; used.has(header); count += 1) header = `${title} (${count})`;
+    used.add(header);
+    return { item, header };
   });
 }

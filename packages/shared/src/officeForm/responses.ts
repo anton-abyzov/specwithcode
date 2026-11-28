@@ -16,10 +16,15 @@ import {
   serializeSheetDocument,
   validateSheetDocument,
 } from "../officeSheet/model.ts";
-import { FORM_LIMITS, type FormDocument, type FormItem, questionHeaders } from "./model.ts";
+import {
+  FORM_LIMITS,
+  type FormDocument,
+  type FormItem,
+  SUBMITTED_AT_HEADER,
+  questionHeaders,
+} from "./model.ts";
 
 export const RESPONSES_TAB = "Responses";
-export const SUBMITTED_AT_HEADER = "Submitted at";
 
 /** One answer: text, the options picked, or a scale number. Absent or null when left empty. */
 export type FormAnswer = string | ReadonlyArray<string> | number | null;
@@ -118,8 +123,15 @@ export function validateFormAnswers(
  * stays text behind one apostrophe, as a pasted cell does.
  */
 export function answerTextInput(text: string): string {
-  const clipped = text.slice(0, SHEET_LIMITS.textChars - 1);
-  return /^'*=/.test(clipped) ? `'${clipped}` : clipped;
+  const formula = /^'*=/.test(text);
+  // Room for the apostrophe only when one is added; never half of a surrogate pair.
+  const room = SHEET_LIMITS.textChars - (formula ? 1 : 0);
+  let clipped = text;
+  if (clipped.length > room) {
+    const cut = /[\uD800-\uDBFF]/.test(clipped.charAt(room - 1)) ? room - 1 : room;
+    clipped = clipped.slice(0, cut);
+  }
+  return formula ? `'${clipped}` : clipped;
 }
 
 function answerCell(item: FormItem, answer: FormAnswer | undefined): SheetCellInput | null {
@@ -153,9 +165,22 @@ function lastRow(tab: SheetTab): number {
   return last;
 }
 
+/** The tab named "Responses", or -1: answers never go into another tab a person made. */
 function responsesTabIndex(sheet: SheetDocument): number {
-  const named = sheet.tabs.findIndex((tab) => tab.name === RESPONSES_TAB);
-  return named >= 0 ? named : 0;
+  return sheet.tabs.findIndex((tab) => tab.name === RESPONSES_TAB);
+}
+
+/** The header style this module writes; a person's own style on row 1 is kept. */
+const HEADER_STYLE = { bold: true, fill: true } as const;
+
+function isFormHeaderStyle(range: string, style: unknown): boolean {
+  if (!/^A1:[A-Z]+1$/.test(range) || typeof style !== "object" || style === null) return false;
+  const keys = Object.keys(style);
+  return (
+    keys.length === 2 &&
+    (style as Record<string, unknown>).bold === true &&
+    (style as Record<string, unknown>).fill === true
+  );
 }
 
 /** A responses Sheet with only its header row, as made with a new form. */
@@ -186,7 +211,9 @@ function withHeaders(
   readonly columns: ReadonlyMap<string, number>;
   readonly submittedAt: number;
 } {
-  const tabIndex = responsesTabIndex(sheet);
+  // A Sheet without a "Responses" tab gets one at the end, its own tabs untouched.
+  const found = responsesTabIndex(sheet);
+  const tabIndex = found >= 0 ? found : sheet.tabs.length;
   const tab = sheet.tabs[tabIndex] ?? { name: RESPONSES_TAB, cells: {} };
   const cells: Record<string, SheetCellInput> = { ...tab.cells };
   const byHeader = new Map<string, number>();
@@ -200,10 +227,12 @@ function withHeaders(
     const header = /^'+=/.test(value) ? value.slice(1) : value;
     if (!byHeader.has(header)) byHeader.set(header, address.col);
   }
-  if (!byHeader.has(SUBMITTED_AT_HEADER) && cells.A1 === undefined) {
-    cells.A1 = SUBMITTED_AT_HEADER;
-    byHeader.set(SUBMITTED_AT_HEADER, 0);
-    width = Math.max(width, 1);
+  if (!byHeader.has(SUBMITTED_AT_HEADER)) {
+    // Column A when it is free, else a new column: the time never lands under a person's header.
+    const col = cells.A1 === undefined ? 0 : width;
+    cells[`${columnLetters(col)}1`] = SUBMITTED_AT_HEADER;
+    byHeader.set(SUBMITTED_AT_HEADER, col);
+    width = Math.max(width, col + 1);
   }
   const columns = new Map<string, number>();
   for (const { item, header } of questionHeaders(document)) {
@@ -218,12 +247,17 @@ function withHeaders(
   }
   const last = columnLetters(Math.max(width, 1) - 1);
   // One header style, widened as columns are added, never a pile of older ones.
-  const kept = Object.entries(tab.styles ?? {}).filter(([range]) => !/^A1:[A-Z]+1$/.test(range));
-  const styles = { ...Object.fromEntries(kept), [`A1:${last}1`]: { bold: true, fill: true } };
+  const kept = Object.entries(tab.styles ?? {}).filter(
+    ([range, style]) => !isFormHeaderStyle(range, style),
+  );
+  const header = `A1:${last}1`;
+  const own = Object.fromEntries(kept);
+  // A person's own style on exactly that range keeps its other settings.
+  const styles = { ...own, [header]: { ...own[header], ...HEADER_STYLE } };
   const nextTab: SheetTab = { ...tab, cells, styles };
   const tabs =
-    sheet.tabs.length === 0
-      ? [nextTab]
+    tabIndex >= sheet.tabs.length
+      ? [...sheet.tabs, nextTab]
       : sheet.tabs.map((each, index) => (index === tabIndex ? nextTab : each));
   return {
     sheet: { ...sheet, tabs },

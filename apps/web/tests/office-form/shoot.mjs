@@ -123,8 +123,10 @@ const server = NodeHttp.createServer(async (req, res) => {
         return void res.writeHead(409).end();
       }
       if (
-        expectedRevision !== undefined &&
-        (current === null || sheetContentRevision(current) !== expectedRevision)
+        expectedRevision === "new-file"
+          ? current !== null
+          : expectedRevision !== undefined &&
+            (current === null || sheetContentRevision(current) !== expectedRevision)
       ) {
         return void res.writeHead(409).end();
       }

@@ -277,7 +277,14 @@ const TONES: ReadonlySet<string> = new Set(["accent", "muted", "positive", "nega
 const ALIGNS: ReadonlySet<string> = new Set(["left", "center", "right"]);
 const FORMAT_KINDS: ReadonlySet<string> = new Set(["number", "currency", "percent", "text"]);
 const CHART_TYPES: ReadonlySet<string> = new Set(["bar", "column", "line", "donut"]);
-const CHART_AGGREGATES: ReadonlySet<string> = new Set(["none", "sum", "avg", "count", "min", "max"]);
+const CHART_AGGREGATES: ReadonlySet<string> = new Set([
+  "none",
+  "sum",
+  "avg",
+  "count",
+  "min",
+  "max",
+]);
 const CHART_SORTS: ReadonlySet<string> = new Set([
   "none",
   "value-desc",
@@ -856,6 +863,13 @@ export const SHEET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/;
  * Leading byte order marks are left out: the file editor reads a sheet without its
  * mark, so the same file has one revision whether it was read raw or for editing.
  */
+/**
+ * The expected revision that means "create it; refuse if the file exists". A
+ * window making a file it found missing sends this, so a file someone else made
+ * in between is never replaced. No content revision has this shape.
+ */
+export const NEW_FILE_REVISION = "new-file";
+
 export function sheetContentRevision(raw: string): string {
   const text = raw.replace(/^\uFEFF+/, "");
   let h1 = 0x811c9dc5;

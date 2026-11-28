@@ -13,6 +13,8 @@ import {
   type FormScale,
   hasOptions,
   isFormQuestion,
+  questionTitle,
+  SUBMITTED_AT_HEADER,
   newFormItem,
 } from "@specweave-studio/shared/officeForm";
 import { ArrowDownIcon, ArrowUpIcon, CopyIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
@@ -251,6 +253,8 @@ function ItemCard(props: {
   readonly onMove: (by: -1 | 1) => void;
   readonly onDuplicate: () => void;
   readonly onDelete: () => void;
+  /** Another question has the same title, or the title is the time column's. */
+  readonly sharedTitle: boolean;
 }): ReactNode {
   const tx = useTx();
   const { item } = props;
@@ -297,6 +301,13 @@ function ItemCard(props: {
           ))}
         </select>
       </div>
+      {props.sharedTitle ? (
+        <p className="text-muted-foreground text-xs" role="note">
+          {tx(
+            "Another question uses this title. Its answers go to a numbered column, which can change when questions are deleted or moved; a unique title keeps them together.",
+          )}
+        </p>
+      ) : null}
       <Textarea
         size="sm"
         rows={1}
@@ -393,6 +404,14 @@ export function FormEditor(props: {
   const tx = useTx();
   const { document, onChange } = props;
   const full = document.items.length >= FORM_LIMITS.items;
+  // Titles that would share a column header without the numbering questionHeaders adds.
+  const titleUse = new Map<string, number>([[SUBMITTED_AT_HEADER, 1]]);
+  for (const item of document.items) {
+    if (isFormQuestion(item)) {
+      const title = questionTitle(item);
+      titleUse.set(title, (titleUse.get(title) ?? 0) + 1);
+    }
+  }
   const add = (type: FormItemType) =>
     onChange({
       ...document,
@@ -432,6 +451,7 @@ export function FormEditor(props: {
             item={item}
             index={index}
             count={document.items.length}
+            sharedTitle={isFormQuestion(item) && (titleUse.get(questionTitle(item)) ?? 0) > 1}
             onChange={(next) =>
               onChange({
                 ...document,

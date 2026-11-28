@@ -9,7 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { sheetContentRevision } from "@specweave-studio/shared/officeSheet";
+import { NEW_FILE_REVISION, sheetContentRevision } from "@specweave-studio/shared/officeSheet";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -1044,6 +1044,40 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           );
           expect(yield* fileSystem.exists(path.join(outsideDir, "away.excalidraw"))).toBe(false);
         }),
+    );
+
+    it.effect("makes a sheet with the new-file revision only while it is missing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"), { recursive: true });
+        const sheet = (cell: string) =>
+          `{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{"A1":"${cell}"}}]}`;
+        // The canonical artifacts path and a sheet in a subfolder take different writers.
+        for (const relativePath of [
+          ".specweave/artifacts/intake-responses.sheet.json",
+          ".specweave/artifacts/team/intake-responses.sheet.json",
+        ]) {
+          yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath,
+            contents: sheet("first"),
+            expectedRevision: NEW_FILE_REVISION,
+          });
+          const second = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath,
+              contents: sheet("second"),
+              expectedRevision: NEW_FILE_REVISION,
+            })
+            .pipe(Effect.flip);
+          expect(String(second.cause)).toContain("Conflict:");
+          expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toContain("first");
+        }
+      }),
     );
 
     it.effect("creates a form in a new folder and refuses a stale form save", () =>

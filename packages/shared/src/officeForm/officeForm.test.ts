@@ -293,3 +293,70 @@ describe("answers", () => {
     });
   });
 });
+
+describe("review round 1: columns, tabs and long answers", () => {
+  const titled = (titles: string[]): FormDocument => ({
+    v: 1,
+    kind: "form",
+    title: "T",
+    items: titles.map((title, index) => ({ id: `q${index}`, type: "short", title })),
+  });
+
+  it("never gives two questions, or a question and the time, one header", () => {
+    expect(
+      questionHeaders(titled(["Name", "Name", "Name (2)", "Submitted at"])).map((e) => e.header),
+    ).toEqual(["Name", "Name (2)", "Name (2) (2)", "Submitted at (2)"]);
+  });
+
+  it("adds a Responses tab instead of writing into a person's own tab", () => {
+    const budget = {
+      v: 1,
+      kind: "sheet",
+      title: "Budget",
+      tabs: [{ name: "Costs", cells: { A1: "Item", B1: "Cost" } }],
+    } as const;
+    const appended = appendFormResponse(budget as never, titled(["Name"]), { q0: "Ana" }, "t");
+    expect(appended.ok).toBe(true);
+    if (!appended.ok) return;
+    expect(appended.sheet.tabs[0]).toEqual(budget.tabs[0]);
+    expect(appended.sheet.tabs[1]!.name).toBe("Responses");
+    expect(appended.sheet.tabs[1]!.cells).toMatchObject({
+      A1: "Submitted at",
+      B1: "Name",
+      B2: "Ana",
+    });
+  });
+
+  it("puts the time in a new column when A1 holds a person's header", () => {
+    const sheet = {
+      v: 1,
+      kind: "sheet",
+      title: "R",
+      tabs: [{ name: "Responses", cells: { A1: "Notes" }, styles: { "A1:C1": { italic: true } } }],
+    } as const;
+    const appended = appendFormResponse(sheet as never, titled(["Name"]), { q0: "Ana" }, "t");
+    expect(appended.ok).toBe(true);
+    if (!appended.ok) return;
+    const tab = appended.sheet.tabs[0]!;
+    expect(tab.cells).toMatchObject({
+      A1: "Notes",
+      B1: "Submitted at",
+      C1: "Name",
+      B2: "t",
+      C2: "Ana",
+    });
+    expect(tab.cells.A2).toBeUndefined();
+    // A person's own style on row 1 stays.
+    expect(tab.styles?.["A1:C1"]).toEqual({ italic: true, bold: true, fill: true });
+  });
+
+  it("keeps a 5,000-character answer whole and never splits a surrogate pair", () => {
+    const long = "x".repeat(5_000);
+    expect(answerTextInput(long)).toBe(long);
+    const formula = `=${"😀".repeat(2_500)}`;
+    const input = answerTextInput(formula);
+    expect(input.length).toBeLessThanOrEqual(5_000);
+    expect(input.startsWith("'=")).toBe(true);
+    expect(/[\uD800-\uDBFF]$/.test(input)).toBe(false);
+  });
+});

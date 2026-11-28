@@ -57,6 +57,8 @@ export function FormView(props: {
   /** Counts edits, so a save that finishes after a newer edit does not mark the form saved. */
   const edits = useRef(0);
   const savedEdits = useRef(0);
+  const inFlight = useRef(false);
+  const queued = useRef<{ readonly document: FormDocument; readonly at: number } | null>(null);
 
   // A change on disk is taken in while nothing here is unsaved.
   useEffect(() => {
@@ -76,18 +78,33 @@ export function FormView(props: {
       setSave({ kind: "invalid", error: checked.error });
       return;
     }
-    const at = edits.current;
-    const timer = setTimeout(() => {
-      const contents = serializeForm(draft);
+    // One save at a time: a save sent while another is out would carry the
+    // revision from before it and be refused as a change on disk. The newest
+    // edit waits and goes out by the revision the first save wrote.
+    const send = (document: FormDocument, at: number) => {
+      if (inFlight.current) {
+        queued.current = { document, at };
+        return;
+      }
+      inFlight.current = true;
+      const contents = serializeForm(document);
       setSave({ kind: "saving" });
       void onSave(contents, savedRevision.current).then((outcome) => {
-        if (outcome === true) {
-          savedRevision.current = formRevision(contents);
-          savedEdits.current = Math.max(savedEdits.current, at);
-          setSave(edits.current === at ? { kind: "saved" } : { kind: "saving" });
-        } else setSave({ kind: outcome === "conflict" ? "conflict" : "failed" });
+        inFlight.current = false;
+        const next = queued.current;
+        queued.current = null;
+        if (outcome !== true) {
+          setSave({ kind: outcome === "conflict" ? "conflict" : "failed" });
+          return;
+        }
+        savedRevision.current = formRevision(contents);
+        savedEdits.current = Math.max(savedEdits.current, at);
+        if (next !== null && next.at > savedEdits.current) send(next.document, next.at);
+        else setSave(edits.current === at ? { kind: "saved" } : { kind: "saving" });
       });
-    }, FORM_SAVE_DELAY_MS);
+    };
+    const at = edits.current;
+    const timer = setTimeout(() => send(draft, at), FORM_SAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [draft, onSave]);
 
