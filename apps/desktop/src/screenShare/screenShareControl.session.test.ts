@@ -6,7 +6,7 @@ import {
   SCREEN_SHARE_PROMPT_MS,
   SCREEN_SHARE_RECORD,
 } from "@specweave-studio/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { AUTHENTICATE_PAUSE_MS, AUTHENTICATE_TRIES } from "./screenShareSession.logic.ts";
 import { live, makeDevice, rig, SID, type Rig } from "./screenShareSession.testkit.ts";
@@ -215,7 +215,7 @@ describe("control fails closed (AC-12)", () => {
     r.control.heldStart = new Promise((resolve) => (go = resolve));
     // Not awaited: the viewer's wait would wait on the helper this test holds.
     const told = viewer.tell(SCREEN_SHARE_RECORD.controlRequest, {});
-    while (r.control.starts === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+    await vi.waitFor(() => expect(r.control.starts).toBe(1));
     r.sessions.stop();
     go();
     await told;
