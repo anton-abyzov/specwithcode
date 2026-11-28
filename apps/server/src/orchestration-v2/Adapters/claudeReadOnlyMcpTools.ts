@@ -41,6 +41,7 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__design_system_get",
   "mcp__studio-code__sheet_read",
   "mcp__studio-code__whiteboard_read",
+  "mcp__studio-code__form_read",
   "mcp__studio-code__doc_read",
   // SpecWeave reads (1483): task list and task next, read-only commands in the own worktree.
   "mcp__studio-code__specweave_next_task",

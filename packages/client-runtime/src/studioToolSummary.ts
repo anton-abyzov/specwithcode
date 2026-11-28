@@ -557,6 +557,12 @@ export function summarizeStudioToolCalls(
     case "whiteboard-read":
       label = phrase("Read", "read", quantity(selected.length, "whiteboard"));
       break;
+    case "form-write":
+      label = phrase("Saved", "save", quantity(selected.length, "form"));
+      break;
+    case "form-read":
+      label = phrase("Read", "read", quantity(selected.length, "form"));
+      break;
     case "doc-write":
       label = phrase("Wrote", "write", quantity(selected.length, "document"));
       break;

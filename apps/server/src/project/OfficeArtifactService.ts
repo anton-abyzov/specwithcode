@@ -12,6 +12,15 @@ import * as Schema from "effect/Schema";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as DocumentSession from "../documents/DocumentSession.ts";
+import { formResponseCount } from "@specweave-studio/shared/officeForm";
+
+import {
+  type SavedForm,
+  readFormArtifact,
+  readResponsesSheetFile,
+  responsesSheetName,
+  writeFormArtifact,
+} from "./FormArtifacts.ts";
 import { type SavedSheet, readSheetArtifact, writeSheetArtifact } from "./OfficeArtifacts.ts";
 import { ProjectLibraryProblem } from "./ProjectLibrary.ts";
 import {
@@ -64,6 +73,24 @@ export class OfficeArtifactService extends Context.Service<
       readonly name?: string | undefined;
       readonly path?: string | undefined;
     }) => Effect.Effect<SavedWhiteboard, ProjectLibraryError>;
+    /** Save a form, and an empty responses Sheet beside it when it has none yet. */
+    readonly writeForm: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly form: unknown;
+      readonly name?: string | undefined;
+      readonly expectedRevision?: string | undefined;
+    }) => Effect.Effect<SavedForm, ProjectLibraryError>;
+    /**
+     * Read a form and count its responses. A responses Sheet open in a window is
+     * counted from its live session, which holds rows not yet in the file.
+     */
+    readonly readForm: (input: {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly name?: string | undefined;
+      readonly path?: string | undefined;
+    }) => Effect.Effect<SavedForm, ProjectLibraryError>;
     /** The project folder of a thread's own project, for the other office artifacts. */
     readonly projectFolder: (input: {
       readonly projectId: ProjectId;
@@ -169,6 +196,48 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
+    writeForm: (input) =>
+      locate(input.projectId, input.threadId).pipe(
+        Effect.flatMap((workspaceRoot) =>
+          Effect.tryPromise({
+            try: () =>
+              writeFormArtifact(workspaceRoot, {
+                form: input.form,
+                name: input.name,
+                expectedRevision: input.expectedRevision,
+              }),
+            catch: failure(input.projectId),
+          }),
+        ),
+      ),
+    readForm: (input) =>
+      Effect.gen(function* () {
+        const workspaceRoot = yield* locate(input.projectId, input.threadId);
+        const form = yield* Effect.tryPromise({
+          try: () => readFormArtifact(workspaceRoot, { name: input.name, path: input.path }),
+          catch: failure(input.projectId),
+        });
+        const { responsesPath, ...saved } = form;
+        const sheetName = responsesSheetName(responsesPath);
+        const shown =
+          sheetName === null
+            ? Option.none()
+            : yield* live.settle({ workspaceRoot, name: sheetName });
+        const sheet = Option.isSome(shown)
+          ? shown.value.document
+          : yield* Effect.promise(() =>
+              readResponsesSheetFile(workspaceRoot, responsesPath).catch(() => null),
+            );
+        return {
+          ...saved,
+          responses: {
+            relativePath: responsesPath,
+            sheetName,
+            count: sheet === null ? null : formResponseCount(sheet),
+            created: false,
+          },
+        } satisfies SavedForm;
+      }),
   });
 });
 
