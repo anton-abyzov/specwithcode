@@ -6,8 +6,8 @@
  * tests/screen-share render the same thing. `ViewScreenButton.tsx` adds the
  * session and the overlay.
  */
-import type { ScreenShareFrameHeader } from "@specweave-studio/contracts";
-import { MonitorIcon, MonitorOffIcon, ShieldAlertIcon } from "lucide-react";
+import type { ScreenShareFrameHeader, ScreenSharePicture } from "@specweave-studio/contracts";
+import { ActivityIcon, MonitorIcon, MonitorOffIcon, ShieldAlertIcon } from "lucide-react";
 import { type FormEvent, type RefObject, useState } from "react";
 
 import { useTx } from "../../i18n";
@@ -136,6 +136,13 @@ export interface ScreenViewerViewProps {
   /** Epoch milliseconds, for the time left. */
   now: number;
   canvasRef: RefObject<HTMLCanvasElement | null>;
+  /** The area the picture is fitted into; its size is sent to the machine (1519). */
+  areaRef?: RefObject<HTMLDivElement | null>;
+  picture?: ScreenSharePicture;
+  onPicture?: (picture: ScreenSharePicture) => void;
+  /** Frames per second, size and delay, when the person asked to see them; null otherwise. */
+  statsLine?: string | null;
+  onToggleStats?: () => void;
   onTypedCode: (code: string) => void;
   onChooseDisplay: (displayId: string) => void;
   /** Ends the view; the surface stays to say so. */
@@ -151,6 +158,11 @@ export function ScreenViewerView({
   model,
   now,
   canvasRef,
+  areaRef,
+  picture,
+  onPicture,
+  statsLine,
+  onToggleStats,
   onTypedCode,
   onChooseDisplay,
   onEnd,
@@ -185,6 +197,29 @@ export function ScreenViewerView({
           </span>
         ) : null}
         <span className="flex-1" />
+        {live && onPicture !== undefined && phase.features.includes("viewport") ? (
+          <Button
+            size="compact"
+            variant={picture === "low" ? "secondary" : "outline"}
+            aria-pressed={picture === "low"}
+            onClick={() => onPicture(picture === "low" ? "auto" : "low")}
+            data-screen-low-bandwidth=""
+          >
+            {tx("Low bandwidth")}
+          </Button>
+        ) : null}
+        {live && onToggleStats !== undefined ? (
+          <Button
+            size="compact"
+            variant={statsLine == null ? "ghost" : "secondary"}
+            aria-pressed={statsLine != null}
+            aria-label={tx("Picture details")}
+            onClick={onToggleStats}
+            data-screen-stats-toggle=""
+          >
+            <ActivityIcon />
+          </Button>
+        ) : null}
         {live && phase.displays.length > 1 ? (
           <div
             role="radiogroup"
@@ -217,7 +252,18 @@ export function ScreenViewerView({
         )}
       </header>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted">
+      {statsLine != null ? (
+        <p
+          className="shrink-0 border-b border-border px-3 py-1 font-mono text-xs text-muted-foreground tabular-nums sm:px-4"
+          data-screen-stats=""
+        >
+          {statsLine === "" ? tx("Waiting for the next picture…") : statsLine}
+        </p>
+      ) : null}
+      <div
+        ref={areaRef}
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted"
+      >
         <canvas
           ref={canvasRef}
           className={

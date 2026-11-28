@@ -35,6 +35,7 @@ import {
   type ScreenViewerEffect,
   type ScreenViewerEvent,
   type ScreenViewerModel,
+  type ScreenViewerViewport,
 } from "./screenViewer.logic";
 
 /** A WebSocket, as little of one as a view needs. Binary only on the way out. */
@@ -143,6 +144,11 @@ export class ScreenViewerSession {
 
   chooseDisplay(displayId: string): void {
     this.enqueue(() => this.apply({ t: "choose_display", displayId }));
+  }
+
+  /** The picture area's size in device pixels and the picture choice; sent once the machine reads it. */
+  setViewport(viewport: ScreenViewerViewport): void {
+    this.enqueue(() => this.apply({ t: "viewport", viewport }));
   }
 
   end(): void {

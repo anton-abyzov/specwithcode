@@ -97,7 +97,38 @@ export const SCREEN_SHARE_RECORD = {
   end: 18,
   /** Viewer to machine, first use only: `{ code }`, what a person read off the machine's screen. */
   confirmCode: 19,
+  /**
+   * Viewer to machine, 1519: `{ width, height, picture }`, the picture area in
+   * device pixels and the picture choice. Sent only to a machine whose `live`
+   * state lists `viewport` in its features; a slice-1 machine ends the session
+   * on any record it does not know.
+   */
+  viewport: 20,
 } as const;
+
+/**
+ * What a machine announces in its sealed `live` state (1519). A viewer sends a
+ * record of a feature only to a machine that named it, and the machine sends
+ * new frame fields only once it heard a new record from that viewer.
+ */
+export const SCREEN_SHARE_FEATURES = { viewport: "viewport" } as const;
+
+/** The picture a viewer asks for: sized to its window, small for slow links, or as slice 1 sent it. */
+export const ScreenSharePicture = Schema.Literals(["auto", "low", "classic"]);
+export type ScreenSharePicture = typeof ScreenSharePicture.Type;
+
+/** Bounds on the picture a viewer may ask for, in pixels on the long edge. */
+export const SCREEN_SHARE_PICTURE_MIN_EDGE = 640;
+export const SCREEN_SHARE_PICTURE_MAX_EDGE = 2880;
+export const SCREEN_SHARE_PICTURE_LOW_EDGE = 1280;
+/** Viewport records a machine reads per second; more are ignored. */
+export const SCREEN_SHARE_VIEWPORT_PER_SECOND = 4;
+/** While the picture changes the machine looks again this soon. */
+export const SCREEN_SHARE_FRAME_FAST_MS = 100;
+/** Unchanged looks before the machine slows down to `SCREEN_SHARE_FRAME_MIN_MS`. */
+export const SCREEN_SHARE_FAST_LOOKS = 3;
+/** A frame body is kept under this, below the record limit, by encoding it smaller. */
+export const SCREEN_SHARE_FRAME_BUDGET_BYTES = 3.5 * 1024 * 1024;
 
 /** Why the machine would not start, or ended, a session. Shown to the viewer in words. */
 export const ScreenShareEndReason = Schema.Literals([
@@ -237,6 +268,8 @@ export const ScreenShareSessionState = Schema.Union([
     displayId: Schema.String,
     /** Epoch milliseconds at which the machine will end the session. */
     endsAt: Schema.Number,
+    /** 1519: what this machine supports beyond slice 1. A slice-1 viewer ignores it. */
+    features: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   Schema.Struct({ phase: Schema.Literal("locked") }),
   Schema.Struct({ phase: Schema.Literal("ended"), reason: ScreenShareEndReason }),
@@ -250,6 +283,19 @@ export const ScreenShareFrameHeader = Schema.Struct({
   height: Schema.Int,
   /** The pointer in frame pixels, when it is on this display. */
   pointer: Schema.optionalKey(Schema.Struct({ x: Schema.Number, y: Schema.Number })),
+  /**
+   * 1519, only to a viewer that sent a viewport: how the last frames went, on
+   * the machine's own clock. `confirmMs` is from the start of the previous
+   * frame's capture to its "frame received".
+   */
+  stats: Schema.optionalKey(
+    Schema.Struct({
+      confirmMs: Schema.optionalKey(Schema.Number),
+      grabMs: Schema.Number,
+      encodeMs: Schema.Number,
+      quality: Schema.Number,
+    }),
+  ),
 });
 export type ScreenShareFrameHeader = typeof ScreenShareFrameHeader.Type;
 
@@ -401,6 +447,34 @@ export const ScreenShareLocalState = Schema.Struct({
 });
 export type ScreenShareLocalState = typeof ScreenShareLocalState.Type;
 
+/** A view of another machine starting in one of this app's windows (1519). */
+export const ScreenShareViewStart = Schema.Struct({
+  /** Chosen by the page, one per view: starting or ending it twice changes nothing. */
+  token: Schema.String,
+  environmentId: Schema.String,
+});
+export type ScreenShareViewStart = typeof ScreenShareViewStart.Type;
+
+/** `elsewhere`: another window already shows that machine and was brought forward. */
+export const ScreenShareViewStartResult = Schema.Literals(["ok", "elsewhere", "invalid"]);
+export type ScreenShareViewStartResult = typeof ScreenShareViewStartResult.Type;
+
+export const ScreenShareOpenViewer = Schema.Struct({
+  environmentId: Schema.String,
+  /** The machine's name as its card shows it; the window is titled after it. */
+  name: Schema.String,
+});
+export type ScreenShareOpenViewer = typeof ScreenShareOpenViewer.Type;
+
+export const ScreenShareOpenViewerResult = Schema.Literals([
+  "opened",
+  "focused",
+  "invalid",
+  "limit",
+  "failed",
+]);
+export type ScreenShareOpenViewerResult = typeof ScreenShareOpenViewerResult.Type;
+
 /**
  * What the app's own window may ask its main process about screen sharing on
  * this machine. It reaches only the machine the app runs on: a window showing
@@ -411,6 +485,12 @@ export interface ScreenShareBridge {
   /** Turning on asks the system for Touch ID or the password; the answer says what is true afterwards. */
   readonly setEnabled: (enabled: boolean) => Promise<ScreenShareLocalState>;
   readonly removeGrant: (thumbprint: string) => Promise<ScreenShareLocalState>;
-  /** Says this window is showing another machine's screen, so computer use here holds off. */
-  readonly setViewing: (viewing: boolean) => Promise<void>;
+  /**
+   * This window starts showing another machine's screen, so computer use here
+   * holds off until every view has ended. Absent on builds before 1519.
+   */
+  readonly beginView?: (input: ScreenShareViewStart) => Promise<ScreenShareViewStartResult>;
+  readonly endView?: (token: string) => Promise<void>;
+  /** Opens the machine's screen in a window of its own, or brings forward the one that shows it. */
+  readonly openViewer?: (input: ScreenShareOpenViewer) => Promise<ScreenShareOpenViewerResult>;
 }

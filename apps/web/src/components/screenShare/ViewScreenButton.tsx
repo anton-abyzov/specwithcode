@@ -2,88 +2,27 @@
  * "View screen" on another machine's card (1490). Shown only where that
  * machine says it can share its screen. Whether it does is decided there: by
  * its switch, and by a person at it the first time.
+ *
+ * In the desktop app the screen opens in a window of its own, one per machine
+ * (1519), so several machines can be watched side by side; "View in this
+ * window" keeps the view over this window. A browser tab has no windows to
+ * open and shows the view over the page.
  */
 import type { EnvironmentId } from "@specweave-studio/contracts";
-import { MonitorIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronDownIcon, MonitorIcon } from "lucide-react";
+import { useState } from "react";
 
 import { useTx } from "../../i18n";
 import { useServerConfigs } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Dialog, DialogOverlayPopup } from "../ui/dialog";
-import { browserMachineKeyPins, browserScreenViewerDeps } from "./screenShareBrowser";
-import { ScreenViewerSession } from "./screenShareClient";
-import { ScreenViewerView, clearScreenFrame, paintScreenFrame } from "./ScreenViewer";
-import { initialScreenViewer, type ScreenViewerModel } from "./screenViewer.logic";
-
-/** One view, start to end. A new one (View again) is a new instance. */
-function ScreenViewerRun({
-  environmentId,
-  machine,
-  onClose,
-  onRetry,
-}: {
-  environmentId: EnvironmentId;
-  machine: string;
-  onClose: () => void;
-  onRetry: () => void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const sessionRef = useRef<ScreenViewerSession | null>(null);
-  const [model, setModel] = useState<ScreenViewerModel>(() => initialScreenViewer(Date.now()));
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const session = new ScreenViewerSession({
-      ...browserScreenViewerDeps(environmentId),
-      onModel: setModel,
-      draw: (header, jpeg) => paintScreenFrame(canvasRef.current, header, jpeg),
-      clear: () => clearScreenFrame(canvasRef.current),
-    });
-    sessionRef.current = session;
-    session.start();
-    return () => {
-      sessionRef.current = null;
-      session.dispose();
-    };
-  }, [environmentId]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // While this window shows another machine's screen, computer use here holds off:
-  // its screenshots would carry that screen into a thread.
-  useEffect(() => {
-    const bridge = window.desktopBridge?.screenShare;
-    void bridge?.setViewing(true);
-    return () => {
-      void bridge?.setViewing(false);
-    };
-  }, []);
-
-  return (
-    <ScreenViewerView
-      machine={machine}
-      model={model}
-      now={now}
-      canvasRef={canvasRef}
-      onTypedCode={(code) => sessionRef.current?.typedCode(code)}
-      onChooseDisplay={(displayId) => sessionRef.current?.chooseDisplay(displayId)}
-      onEnd={() => sessionRef.current?.end()}
-      onClose={onClose}
-      onRetry={onRetry}
-      onForgetKey={() => {
-        browserMachineKeyPins.forget(environmentId);
-        onRetry();
-      }}
-    />
-  );
-}
+import { Group } from "../ui/group";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { toastManager } from "../ui/toast";
+import { ScreenViewerRun } from "./ScreenViewerRun";
 
 /** The viewer over the window. Closing it ends the view. */
-function ScreenViewer({
+function ScreenViewerDialog({
   environmentId,
   machine,
   open,
@@ -94,7 +33,6 @@ function ScreenViewer({
   open: boolean;
   onClose: () => void;
 }) {
-  const [attempt, setAttempt] = useState(0);
   return (
     <Dialog
       open={open}
@@ -111,18 +49,14 @@ function ScreenViewer({
         data-screen-viewer-overlay=""
       >
         {open ? (
-          <ScreenViewerRun
-            key={attempt}
-            environmentId={environmentId}
-            machine={machine}
-            onClose={onClose}
-            onRetry={() => setAttempt((value) => value + 1)}
-          />
+          <ScreenViewerRun environmentId={environmentId} machine={machine} onClose={onClose} />
         ) : null}
       </DialogOverlayPopup>
     </Dialog>
   );
 }
+
+const NAME_MAX = 120;
 
 export function ViewScreenButton({
   environmentId,
@@ -136,18 +70,71 @@ export function ViewScreenButton({
   const configs = useServerConfigs();
   const [open, setOpen] = useState(false);
   if (configs.get(environmentId)?.environment.capabilities.screenShare !== true) return null;
+  const openViewer = window.desktopBridge?.screenShare?.openViewer;
+
+  const inThisWindow = (
+    <ScreenViewerDialog
+      environmentId={environmentId}
+      machine={name}
+      open={open}
+      onClose={() => setOpen(false)}
+    />
+  );
+  if (openViewer === undefined)
+    return (
+      <>
+        <Button size="sm" variant="outline" onClick={() => setOpen(true)} data-view-screen="">
+          <MonitorIcon />
+          {tx("View screen")}
+        </Button>
+        {inThisWindow}
+      </>
+    );
+
+  const inOwnWindow = () => {
+    void openViewer({ environmentId, name: name.slice(0, NAME_MAX) }).then(
+      (result) => {
+        if (result === "limit")
+          toastManager.add({
+            type: "info",
+            title: tx("Too many screens are open"),
+            description: tx("Close one of the screen windows, then open this one again."),
+          });
+        else if (result === "failed" || result === "invalid")
+          toastManager.add({ type: "error", title: tx("Could not open the screen window") });
+      },
+      () => toastManager.add({ type: "error", title: tx("Could not open the screen window") }),
+    );
+  };
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)} data-view-screen="">
-        <MonitorIcon />
-        {tx("View screen")}
-      </Button>
-      <ScreenViewer
-        environmentId={environmentId}
-        machine={name}
-        open={open}
-        onClose={() => setOpen(false)}
-      />
+      <Group>
+        <Button size="sm" variant="outline" onClick={inOwnWindow} data-view-screen="">
+          <MonitorIcon />
+          {tx("View screen")}
+        </Button>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={tx("More ways to view")}
+                data-view-screen-more=""
+              >
+                <ChevronDownIcon />
+              </Button>
+            }
+          />
+          <MenuPopup align="end">
+            <MenuItem onClick={inOwnWindow}>{tx("View in its own window")}</MenuItem>
+            <MenuItem onClick={() => setOpen(true)} data-view-screen-here="">
+              {tx("View in this window")}
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      </Group>
+      {inThisWindow}
     </>
   );
 }

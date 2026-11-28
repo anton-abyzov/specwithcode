@@ -27,10 +27,13 @@
  * - The banner comes before the first frame. No banner, no session.
  * - The session is written to the list before the first frame. No entry, no session.
  * - From the viewer only four records are read; anything else ends the session.
+ *   1519 adds a fifth, `viewport`, which this machine announces in its `live`
+ *   state; only a viewer that saw that sends it, and only after it arrived do
+ *   frames carry anything slice 1 did not.
  */
 import {
   SCREEN_SHARE_CODE_TRIES,
-  SCREEN_SHARE_FRAME_MIN_MS,
+  SCREEN_SHARE_FEATURES,
   SCREEN_SHARE_HANDSHAKE_MS,
   SCREEN_SHARE_PROMPT_MS,
   SCREEN_SHARE_RECORD,
@@ -60,6 +63,13 @@ import {
   type ScreenShareTargetStart,
 } from "@specweave-studio/shared/screenShareChannel";
 
+import {
+  fastLooksAfter,
+  nextLookDelay,
+  parseViewport,
+  takeViewportTurn,
+  type Viewport,
+} from "./screenSharePicture.logic.ts";
 import type { ScreenShareStore } from "./ScreenShareStore.ts";
 
 /** One look at a display. */
@@ -72,11 +82,25 @@ export type ScreenShareGrab =
       readonly pointer?: { readonly x: number; readonly y: number };
       /** Equal for two pictures that are the same. */
       readonly digest: string;
+      /** 1519: how long the look and the encode took, and the quality it was encoded at. */
+      readonly grabMs?: number;
+      readonly encodeMs?: number;
+      readonly quality?: number;
     }
+  /** 1519: the picture is the one sent last (`previousDigest`); it was not encoded. */
+  | { readonly kind: "same" }
   /** The machine is locked, or it cannot be told that it is not. */
   | { readonly kind: "locked" }
   /** No picture this time: the capture failed or the display is asleep. */
   | { readonly kind: "none" };
+
+/** What one look asks of the capture (1519). */
+export interface ScreenShareLook {
+  /** The viewer's window and choice; null until it said them (slice 1's picture). */
+  readonly viewport: Viewport | null;
+  /** The digest of the picture sent last: a look that finds it again returns `same`. */
+  readonly previousDigest: string | null;
+}
 
 export interface ScreenSharePromptView {
   readonly sid: string;
@@ -123,7 +147,7 @@ export interface ScreenShareSessionDeps {
   };
   readonly capture: {
     readonly displays: () => ReadonlyArray<ScreenShareDisplay>;
-    readonly grab: (displayId: string) => Promise<ScreenShareGrab>;
+    readonly grab: (displayId: string, look?: ScreenShareLook) => Promise<ScreenShareGrab>;
     /** Keeps the display from sleeping while true. */
     readonly keepAwake: (on: boolean) => void;
   };
@@ -159,6 +183,17 @@ interface Session {
   showingLocked: boolean;
   frames: number;
   lastHeard: number;
+  /** 1519: the viewer's window and picture choice, once it said them. */
+  viewport: Viewport | null;
+  viewportTimes: Array<number>;
+  /** The newest viewport that came over the rate limit: applied once the limit allows. */
+  pendingViewport: Viewport | null;
+  /** Looks left at the fast pace after the last change. */
+  fastLooks: number;
+  /** When the capture of the frame now unconfirmed started. */
+  unconfirmedAt: number | null;
+  /** From the start of the last confirmed frame's capture to its "frame received". */
+  lastConfirmMs?: number;
   /** A sealed record was held back after the end, so nothing sealed after it would open. */
   gap?: true;
   /** Cancels for the timers this session holds: the stage's deadline, the time limit, the next frame. */
@@ -294,6 +329,11 @@ export class ScreenShareSessions {
       showingLocked: false,
       frames: 0,
       lastHeard: this.deps.now(),
+      viewport: null,
+      viewportTimes: [],
+      pendingViewport: null,
+      fastLooks: 0,
+      unconfirmedAt: null,
       inbox: Promise.resolve(),
     };
     this.session = session;
@@ -548,8 +588,26 @@ export class ScreenShareSessions {
         // A viewer can only have drawn what was sent.
         if (seq < 0 || seq > session.seq) return this.end(session, "protocol_error");
         session.lastHeard = this.deps.now();
-        if (seq === session.unconfirmed) session.unconfirmed = null;
+        if (seq === session.unconfirmed) {
+          if (session.unconfirmedAt !== null)
+            session.lastConfirmMs = session.lastHeard - session.unconfirmedAt;
+          session.unconfirmed = null;
+          session.unconfirmedAt = null;
+        }
         return;
+      }
+      if (type === SCREEN_SHARE_RECORD.viewport) {
+        const viewport = parseViewport(body);
+        if (viewport === null) return this.end(session, "protocol_error");
+        session.lastHeard = this.deps.now();
+        // A window being dragged says its size many times; a few a second are enough. The
+        // newest one over the limit is kept, so the last word is never lost.
+        if (!takeViewportTurn(session.viewportTimes, session.lastHeard)) {
+          session.pendingViewport = viewport;
+          return;
+        }
+        session.pendingViewport = null;
+        return this.applyViewport(session, viewport);
       }
       if (type === SCREEN_SHARE_RECORD.showDisplay && typeof body.displayId === "string") {
         if (!session.displays.some((display) => display.id === body.displayId))
@@ -610,27 +668,49 @@ export class ScreenShareSessions {
       displays: session.displays,
       displayId: session.displayId,
       endsAt: session.startedAt! + SCREEN_SHARE_SESSION_MAX_MS,
+      features: [SCREEN_SHARE_FEATURES.viewport],
     });
   }
 
-  /** One turn of the frame loop, then the next one a frame's time later. */
+  private applyViewport(session: Session, viewport: Viewport): void {
+    const before = session.viewport;
+    session.viewport = viewport;
+    // A new size needs nothing here: the digest carries the picture's size, so a picture
+    // that comes out bigger or smaller differs on its own. A new choice keeps the size and
+    // changes only the encoding, so the last one is not compared against.
+    if (before === null || before.picture !== viewport.picture) session.lastDigest = null;
+  }
+
+  /** One turn of the frame loop, then the next one soon while the picture changes. */
   private tick(session: Session): void {
     if (this.session !== session || session.phase !== "live") return;
     if (this.deps.now() - session.lastHeard > SCREEN_SHARE_SILENCE_MS)
       return this.end(session, "viewer_silent");
-    session.cancelTick = this.deps.after(SCREEN_SHARE_FRAME_MIN_MS, () => this.tick(session));
+    if (
+      session.pendingViewport !== null &&
+      takeViewportTurn(session.viewportTimes, this.deps.now())
+    ) {
+      this.applyViewport(session, session.pendingViewport);
+      session.pendingViewport = null;
+    }
+    session.cancelTick = this.deps.after(
+      nextLookDelay(session.fastLooks, session.viewport?.picture ?? null),
+      () => this.tick(session),
+    );
     // One frame on its way at a time: a slow viewer gets fewer frames, never a queue.
     if (session.unconfirmed !== null || session.grabbing) return;
     session.grabbing = true;
     const displayId = session.displayId;
+    const startedAt = this.deps.now();
     const looked = this.deps.capture
-      .grab(displayId)
+      .grab(displayId, { viewport: session.viewport, previousDigest: session.lastDigest })
       .catch((): ScreenShareGrab => ({ kind: "none" }))
       .then((grab) => {
         session.grabbing = false;
         if (this.session !== session || session.phase !== "live") return;
         if (session.displayId !== displayId) return;
         if (grab.kind === "locked") {
+          session.fastLooks = fastLooksAfter(session.fastLooks, false);
           if (!session.showingLocked) {
             session.showingLocked = true;
             session.lastDigest = null;
@@ -638,13 +718,34 @@ export class ScreenShareSessions {
           }
           return;
         }
-        if (grab.kind === "none") return;
+        if (grab.kind === "none") {
+          // A capture that keeps failing slows down like a still screen does.
+          session.fastLooks = fastLooksAfter(session.fastLooks, false);
+          return;
+        }
         if (session.showingLocked) this.sendLive(session);
-        if (grab.digest === session.lastDigest) return;
+        const changed = grab.kind === "frame" && grab.digest !== session.lastDigest;
+        session.fastLooks = fastLooksAfter(session.fastLooks, changed);
+        if (grab.kind !== "frame" || !changed) return;
         session.lastDigest = grab.digest;
         session.seq += 1;
         session.unconfirmed = session.seq;
+        session.unconfirmedAt = startedAt;
         session.frames += 1;
+        // New fields only to a viewer that has shown it knows them, by its viewport.
+        const stats =
+          session.viewport === null
+            ? {}
+            : {
+                stats: {
+                  ...(session.lastConfirmMs === undefined
+                    ? {}
+                    : { confirmMs: session.lastConfirmMs }),
+                  grabMs: grab.grabMs ?? 0,
+                  encodeMs: grab.encodeMs ?? 0,
+                  quality: grab.quality ?? 0,
+                },
+              };
         this.sendSealed(
           session,
           SCREEN_SHARE_RECORD.frame,
@@ -655,6 +756,7 @@ export class ScreenShareSessions {
               width: grab.width,
               height: grab.height,
               ...(grab.pointer === undefined ? {} : { pointer: grab.pointer }),
+              ...stats,
             },
             grab.jpeg,
           ),

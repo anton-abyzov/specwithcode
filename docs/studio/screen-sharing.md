@@ -23,6 +23,13 @@ Turning it off needs no authentication and ends a session that is running.
 On another of your devices that is signed in to SpecWithCode Connect and on that machine's approved
 list, open Settings > Machines and press "View screen" on the machine's card.
 
+In the desktop app the screen opens in a window of its own, titled "Screen of <machine>". Each
+machine gets one window, which remembers its size and place, so you can watch several machines side
+by side. Pressing "View screen" again brings that machine's window forward. The arrow beside the
+button offers "View in this window", which shows the screen over the app's window instead. A machine
+already shown somewhere is brought forward rather than opened twice, because a machine shows its
+screen to one viewer at a time. In a browser tab the screen shows over the page.
+
 What happens at the machine being viewed:
 
 - A prompt appears: "Work laptop (ID 7F3A) wants to view this Mac's screen", with Deny, Allow once
@@ -53,9 +60,21 @@ at the machine.
 
 ## What the viewer gets
 
-A picture of one display at a time, up to 1920 pixels on the long edge, a few times a second and
-only when the screen changed, with the pointer drawn on it. No sound, no clipboard, no files, no
-typing and no clicks in this version.
+A picture of one display at a time, only when the screen changed, with the pointer drawn on it. No
+sound, no clipboard, no files, no typing and no clicks in this version.
+
+When both ends run a release newer than 1.0.460, the picture is sized to the viewer's window and its pixel ratio
+(at least 640 and at most 2,880 pixels on the long edge, never more than the display has), and the
+machine looks again every 100 ms while the screen changes, every 330 ms once it is still. One
+picture is on its way at a time, so a slow link gets fewer pictures, never a backlog. "Low bandwidth"
+in the viewer's header caps the picture at 1,280 pixels and encodes it rougher, for a phone hotspot
+or a hotel network. The pulse button shows the frame rate, the size of the last picture and the
+time from the start of its capture to the viewer's confirmation, measured on the machine's own
+clock.
+
+An older viewer or an older machine gets what 1.0.443 gave: up to 1920 pixels, at most one picture
+every 330 ms. The machine says what it supports inside the sealed session, and neither end sends
+the other anything it does not know.
 
 The card of the machine being viewed keeps a list of recent sessions: which device, when, for how
 long, and how it was allowed or why it was refused. Pictures are never kept.
@@ -88,7 +107,9 @@ long, and how it was allowed or why it was refused. Pictures are never kept.
   sends. One WebSocket message is still read whole before its size is known, up to the server's
   general limit of 100 MB; a message over screen sharing's own limits then ends the session.
 - **Computer use on the viewing machine pauses** while the app shows another machine's screen, so
-  that screen does not end up in a thread's screenshots.
+  that screen does not end up in a thread's screenshots. Every view is counted on its own, and a
+  screen's own window counts from the moment it opens until it closes, so closing one of two views
+  does not resume computer use while the other is still on screen.
 
 ## What it does not protect against
 

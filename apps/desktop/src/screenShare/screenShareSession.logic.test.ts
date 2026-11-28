@@ -19,6 +19,7 @@ import {
   makeScreenShareSealer,
   startScreenShareViewer,
 } from "@specweave-studio/shared/screenShareChannel";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -27,6 +28,7 @@ import {
   ScreenShareSessions,
   type ScreenShareBannerView,
   type ScreenShareGrab,
+  type ScreenShareLook,
   type ScreenSharePromptView,
 } from "./screenShareSession.logic.ts";
 import { ScreenShareStore, type ScreenShareStoreIo } from "./ScreenShareStore.ts";
@@ -105,6 +107,7 @@ function rig(options?: { readonly enabled?: boolean; readonly supported?: boolea
     /** When set, the next look at the screen waits on this. */
     heldGrab: null as Promise<ScreenShareGrab> | null,
     grabbed: [] as Array<string>,
+    looks: [] as Array<ScreenShareLook | undefined>,
     awake: false,
     promptVisible: false,
     bannerVisible: false,
@@ -159,8 +162,9 @@ function rig(options?: { readonly enabled?: boolean; readonly supported?: boolea
         { id: "1", label: "Built-in display", primary: true },
         { id: "2", label: "Studio Display", primary: false },
       ],
-      grab: (displayId) => {
+      grab: (displayId, look) => {
         state.grabbed.push(displayId);
+        state.looks.push(look);
         const held = state.heldGrab;
         state.heldGrab = null;
         return held ?? Promise.resolve(state.grabs.shift() ?? { kind: "none" });
@@ -1112,5 +1116,143 @@ describe("the switch", () => {
     const r = rig({ enabled: false, supported: false });
     expect(await r.sessions.setEnabled(true)).toBe(false);
     expect(r.authReasons).toEqual([]);
+  });
+});
+
+/**
+ * What a 1.0.443 viewer reads (1490 slice 1), frozen here so a change to the
+ * shared schemas cannot hide a break. Copied from `packages/contracts` at that tag.
+ */
+const Slice1Display = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  primary: Schema.Boolean,
+});
+const Slice1State = Schema.Union([
+  Schema.Struct({ phase: Schema.Literal("waiting_for_approval") }),
+  Schema.Struct({ phase: Schema.Literal("needs_code"), triesLeft: Schema.Int }),
+  Schema.Struct({
+    phase: Schema.Literal("live"),
+    displays: Schema.Array(Slice1Display),
+    displayId: Schema.String,
+    endsAt: Schema.Number,
+  }),
+  Schema.Struct({ phase: Schema.Literal("locked") }),
+  Schema.Struct({ phase: Schema.Literal("ended"), reason: Schema.String }),
+]);
+const Slice1FrameHeader = Schema.Struct({
+  seq: Schema.Int,
+  displayId: Schema.String,
+  width: Schema.Int,
+  height: Schema.Int,
+  pointer: Schema.optionalKey(Schema.Struct({ x: Schema.Number, y: Schema.Number })),
+});
+
+describe("version skew with slice 1 (1519)", () => {
+  it("a new machine runs a whole session with a slice-1 viewer: nothing it would reject", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    r.state.grabs.push(frame("a"), frame("b"));
+    const viewer = await live(r, device);
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS + 1);
+    await viewer.drain();
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 1 });
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS + 1);
+    await viewer.drain();
+    const decodeState = Schema.decodeUnknownSync(Slice1State);
+    const decodeHeader = Schema.decodeUnknownSync(Slice1FrameHeader);
+    for (const state of viewer.states) expect(() => decodeState(state)).not.toThrow();
+    expect(viewer.frames).toHaveLength(2);
+    for (const sent of viewer.frames) {
+      expect(() => decodeHeader(sent.header)).not.toThrow();
+      // Nothing new reaches a viewer that never said it knows it.
+      expect("stats" in sent.header).toBe(false);
+    }
+    // Slice 1's picture and pace for a viewer that sent no viewport.
+    expect(r.state.looks.every((look) => look?.viewport === null)).toBe(true);
+    expect(r.closes).toEqual([]);
+  });
+
+  it("announces its features in the sealed live state", async () => {
+    const r = rig();
+    const viewer = await live(r, await makeDevice());
+    const liveState = viewer.states.find((state) => state.phase === "live");
+    expect(liveState).toMatchObject({ features: ["viewport"] });
+  });
+
+  it("a viewport changes the picture and the pace, and frames then carry stats", async () => {
+    const r = rig();
+    const device = await makeDevice();
+    r.state.grabs.push(frame("a"), frame("b"), frame("c"));
+    const viewer = await live(r, device);
+    // The first frame left before the viewer said anything: slice 1's, with nothing new.
+    expect(viewer.frames).toHaveLength(1);
+    expect("stats" in viewer.frames[0]!.header).toBe(false);
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 2560, height: 1680, picture: "auto" });
+    await r.advance(10);
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 1 });
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS);
+    await viewer.drain();
+    expect(viewer.frames).toHaveLength(2);
+    expect(viewer.frames[1]!.header.stats).toMatchObject({ confirmMs: 10, grabMs: 0 });
+    expect(r.state.looks.at(-1)).toEqual({
+      viewport: { width: 2560, height: 1680, picture: "auto" },
+      // The first viewport may change the picture: the one sent last is not compared against.
+      previousDigest: null,
+    });
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 2 });
+    // After a change the next look comes at the fast pace, well before another 330 ms.
+    await r.advance(101);
+    await viewer.drain();
+    expect(viewer.frames).toHaveLength(3);
+    expect(r.closes).toEqual([]);
+  });
+
+  it("a new size keeps the last digest; a new picture choice drops it", async () => {
+    const r = rig();
+    r.state.grabs.push(frame("a"), frame("b"));
+    const viewer = await live(r, await makeDevice());
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1200, height: 800, picture: "auto" });
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 1 });
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS);
+    await viewer.drain();
+    expect(viewer.frames).toHaveLength(2);
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 2 });
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1300, height: 800, picture: "auto" });
+    await r.advance(400);
+    expect(r.state.looks.at(-1)?.previousDigest).not.toBeNull();
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1300, height: 800, picture: "low" });
+    await r.advance(400);
+    expect(r.state.looks.at(-1)?.previousDigest).toBeNull();
+  });
+
+  it("applies the newest viewport over the rate once the rate allows", async () => {
+    const r = rig();
+    const viewer = await live(r, await makeDevice());
+    for (let index = 0; index < 8; index += 1)
+      await viewer.tell(SCREEN_SHARE_RECORD.viewport, {
+        width: 1000 + index,
+        height: 800,
+        picture: "auto",
+      });
+    // Nothing to send, so the loop keeps looking; the rate frees a second later
+    // and the next slow look uses the newest size.
+    await r.advance(1_500);
+    expect(r.state.looks.at(-1)?.viewport).toEqual({ width: 1007, height: 800, picture: "auto" });
+    expect(r.closes).toEqual([]);
+  });
+
+  it("ignores viewports past the rate and ends on a malformed one", async () => {
+    const r = rig();
+    const viewer = await live(r, await makeDevice());
+    for (let index = 0; index < 8; index += 1)
+      await viewer.tell(SCREEN_SHARE_RECORD.viewport, {
+        width: 1000 + index,
+        height: 800,
+        picture: "auto",
+      });
+    expect(r.closes).toEqual([]);
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1.5, height: 800, picture: "auto" });
+    expect(r.closes).toEqual([{ sid: SID, reason: "protocol_error" }]);
   });
 });

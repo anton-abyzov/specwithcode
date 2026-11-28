@@ -394,3 +394,67 @@ describe("words", () => {
     );
   });
 });
+
+/** The records a 1.0.443 machine reads from a viewer (1490 AC-10); any other ends its session. */
+const SLICE1_VIEWER_RECORDS = new Set([16, 17, 18, 19]);
+
+describe("version skew with slice 1 (1519)", () => {
+  const viewport = {
+    t: "viewport",
+    viewport: { width: 2560, height: 1680, picture: "auto" },
+  } as const;
+
+  it("sends a slice-1 machine nothing it does not read, whatever happens here", () => {
+    const { effects } = run([
+      viewport,
+      handshake(true),
+      state({ phase: "waiting_for_approval" }),
+      state(LIVE),
+      frame(1),
+      { t: "viewport", viewport: { width: 1200, height: 800, picture: "low" } },
+      { t: "choose_display", displayId: "2" },
+      { t: "tick", now: T0 + SCREEN_VIEWER_HEARTBEAT_MS },
+      { t: "end_here" },
+    ]);
+    const types = sent(effects).map((record) => record.type);
+    expect(types.length).toBeGreaterThan(0);
+    expect(types.every((type) => SLICE1_VIEWER_RECORDS.has(type))).toBe(true);
+  });
+
+  it("sends its viewport once the machine announced it, and again only when it changes", () => {
+    const announced = { ...LIVE, features: ["viewport"] } as ScreenShareSessionState;
+    const { effects, model } = run([
+      viewport,
+      handshake(true),
+      state(announced),
+      viewport,
+      state(announced),
+      { t: "viewport", viewport: { width: 1200, height: 800, picture: "low" } },
+    ]);
+    expect(sent(effects).filter((record) => record.type === SCREEN_SHARE_RECORD.viewport)).toEqual([
+      { type: SCREEN_SHARE_RECORD.viewport, width: 2560, height: 1680, picture: "auto" },
+      { type: SCREEN_SHARE_RECORD.viewport, width: 1200, height: 800, picture: "low" },
+    ]);
+    expect(model.phase).toMatchObject({ kind: "live", features: ["viewport"] });
+  });
+
+  it("draws a frame that carries the new stats", () => {
+    const withStats: ScreenViewerEvent = {
+      t: "record",
+      type: SCREEN_SHARE_RECORD.frame,
+      data: encodeScreenShareFrame(
+        {
+          seq: 1,
+          displayId: "1",
+          width: 2560,
+          height: 1655,
+          stats: { confirmMs: 140, grabMs: 30, encodeMs: 12, quality: 55 },
+        },
+        new Uint8Array([0xff, 0xd8, 1]),
+      ),
+      now: T0,
+    };
+    const { effects } = run([handshake(true), state(LIVE), withStats]);
+    expect(kinds(effects)).toContain("draw");
+  });
+});

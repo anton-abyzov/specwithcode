@@ -88,3 +88,16 @@ export function isArtifactAppWindow(): boolean {
     return false;
   }
 }
+
+/**
+ * True in a desktop window that shows one machine's screen (1519). Like an
+ * installed page's window it runs no workspace and has no main-window duties.
+ */
+export function isScreenViewerWindow(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.desktopBridge?.getWindowRole?.() === "screen-viewer";
+  } catch {
+    return false;
+  }
+}

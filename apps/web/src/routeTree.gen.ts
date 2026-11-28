@@ -45,6 +45,7 @@ import { Route as SettingsChromeRouteImport } from './routes/settings.chrome'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
+import { Route as ScreenEnvironmentIdRouteImport } from './routes/screen.$environmentId'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as DesignDesignKeyRouteImport } from './routes/design.$designKey'
 import { Route as ArtifactAppInstallIdRouteImport } from './routes/artifact-app.$installId'
@@ -238,6 +239,11 @@ const SettingsAgentsRoute = SettingsAgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => SettingsRoute,
 } as any)
+const ScreenEnvironmentIdRoute = ScreenEnvironmentIdRouteImport.update({
+  id: '/screen/$environmentId',
+  path: '/screen/$environmentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
@@ -319,6 +325,7 @@ export interface FileRoutesByFullPath {
   '/artifact-app/$installId': typeof ArtifactAppInstallIdRoute
   '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/screen/$environmentId': typeof ScreenEnvironmentIdRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -367,6 +374,7 @@ export interface FileRoutesByTo {
   '/artifact-app/$installId': typeof ArtifactAppInstallIdRoute
   '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/screen/$environmentId': typeof ScreenEnvironmentIdRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -417,6 +425,7 @@ export interface FileRoutesById {
   '/artifact-app/$installId': typeof ArtifactAppInstallIdRoute
   '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/screen/$environmentId': typeof ScreenEnvironmentIdRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -469,6 +478,7 @@ export interface FileRouteTypes {
     | '/artifact-app/$installId'
     | '/design/$designKey'
     | '/projects/$projectKey'
+    | '/screen/$environmentId'
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
@@ -517,6 +527,7 @@ export interface FileRouteTypes {
     | '/artifact-app/$installId'
     | '/design/$designKey'
     | '/projects/$projectKey'
+    | '/screen/$environmentId'
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
@@ -566,6 +577,7 @@ export interface FileRouteTypes {
     | '/artifact-app/$installId'
     | '/design/$designKey'
     | '/projects/$projectKey'
+    | '/screen/$environmentId'
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
@@ -615,6 +627,7 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   ArtifactAppInstallIdRoute: typeof ArtifactAppInstallIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  ScreenEnvironmentIdRoute: typeof ScreenEnvironmentIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -871,6 +884,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAgentsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/screen/$environmentId': {
+      id: '/screen/$environmentId'
+      path: '/screen/$environmentId'
+      fullPath: '/screen/$environmentId'
+      preLoaderRoute: typeof ScreenEnvironmentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projects/$projectKey': {
       id: '/projects/$projectKey'
       path: '/projects/$projectKey'
@@ -1079,6 +1099,7 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   ArtifactAppInstallIdRoute: ArtifactAppInstallIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  ScreenEnvironmentIdRoute: ScreenEnvironmentIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

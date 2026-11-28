@@ -1215,7 +1215,7 @@ export interface DesktopBridge extends DesktopUpdateBridge, DesktopArtifactAppsB
    * Which kind of app window this client runs in. Absent on desktop builds
    * that only have a main window.
    */
-  getWindowRole?: () => "main" | "project" | "artifact-app";
+  getWindowRole?: () => "main" | "project" | "artifact-app" | "screen-viewer";
   /** The project a project window was opened for; null in the main window. */
   getWindowProjectKey?: () => string | null;
   /**

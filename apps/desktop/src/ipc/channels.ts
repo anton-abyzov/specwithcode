@@ -189,6 +189,8 @@ export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";
 export const SCREEN_SHARE_GET_STATE_CHANNEL = "desktop:screen-share-get-state";
 export const SCREEN_SHARE_SET_ENABLED_CHANNEL = "desktop:screen-share-set-enabled";
 export const SCREEN_SHARE_REMOVE_GRANT_CHANNEL = "desktop:screen-share-remove-grant";
-export const SCREEN_SHARE_SET_VIEWING_CHANNEL = "desktop:screen-share-set-viewing";
+export const SCREEN_SHARE_BEGIN_VIEW_CHANNEL = "desktop:screen-share-begin-view";
+export const SCREEN_SHARE_END_VIEW_CHANNEL = "desktop:screen-share-end-view";
+export const SCREEN_SHARE_OPEN_VIEWER_CHANNEL = "desktop:screen-share-open-viewer";
 /** From the prompt and banner windows only; never exposed on the app's bridge. */
 export const SCREEN_SHARE_WINDOW_CHANNEL = "desktop:screen-share-window";
