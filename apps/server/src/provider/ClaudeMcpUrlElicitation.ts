@@ -7,16 +7,19 @@
  * - The link is checked first (`@specweave-studio/shared/mcpElicitationUrl`).
  *   A link that is not `http` or `https`, or that has user info, is declined
  *   with a note and gets no card.
- * - A thread that runs without the person (a delegated worker, a routine)
- *   declines with a note: only a person opens a link (D-02).
+ * - A turn that runs without the person declines with a note: a delegated
+ *   worker's or a routine's, or one an agent sent into the person's thread
+ *   (1498 review). Only a person opens a link (D-02).
  * - Otherwise a card shows the link exactly as the server sent it. Only the
  *   person's Open link opens it, in their own browser; the server never opens,
  *   fetches or changes it, and adds nothing to it.
  * - The card's "I'm done, continue" is the server's `accept` with no content;
  *   Decline and Cancel are the same as a form's. The orchestrator takes only
  *   the person's own press (`ClaudeFormResponses.ts`).
- * - One card per tool call: a retry after the person answered gets that
- *   answer back, and no new card.
+ * - One card per tool call: a retry of the same link after the person
+ *   answered gets that answer back, and no new card. A retry with another
+ *   link gets a new card if the person said "I'm done", since they never saw
+ *   that link; a Decline or Cancel still holds for the whole call.
  *
  * @module ClaudeMcpUrlElicitation
  */
@@ -25,6 +28,8 @@ import type {
   OrchestrationV2McpElicitation,
   ProviderApprovalDecision,
 } from "@specweave-studio/contracts";
+
+import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 import {
   checkMcpElicitationUrl,
   type McpElicitationUrlRefusal,
@@ -40,7 +45,27 @@ const REFUSAL_REASON: Record<McpElicitationUrlRefusal, string> = {
 export const urlRefusedNotice = (serverName: string, reason: McpElicitationUrlRefusal) =>
   `${serverName} asked you to open a link that ${REFUSAL_REASON[reason]}. SpecWithCode doesn't show links like that, so it was declined.`;
 export const urlUnattendedNotice = (serverName: string) =>
-  `${serverName} asked you to open a link, but this thread runs without you, so it was declined.`;
+  `${serverName} asked you to open a link, but this turn runs without you, so it was declined.`;
+
+/**
+ * The person did not start this turn: the thread is a worker's or a routine's,
+ * or an agent sent the message into the person's own thread.
+ */
+export function isClaudeTurnWithoutPerson(
+  input: ProviderAdapter.ProviderAdapterV2TurnInput,
+): boolean {
+  return (
+    input.appThread.createdBy !== "user" ||
+    input.message.scheduledTaskId !== undefined ||
+    input.message.createdBy !== "user"
+  );
+}
+
+/** The person's answer to one link of a tool call. */
+export interface ClaudeUrlAnswer {
+  readonly url: string;
+  readonly result: ElicitationResult;
+}
 
 /** What to do with a URL request: answer it now, or show its card. */
 export type ClaudeUrlPlan =
@@ -55,7 +80,7 @@ const DECLINE: ElicitationResult = { action: "decline" };
  */
 export function planClaudeUrlElicitation(
   request: ElicitationRequest,
-  options: { readonly unattended: boolean; readonly remembered: ElicitationResult | undefined },
+  options: { readonly unattended: boolean; readonly remembered: ClaudeUrlAnswer | undefined },
 ): ClaudeUrlPlan {
   const checked = checkMcpElicitationUrl(request.url);
   if (!checked.ok)
@@ -66,7 +91,13 @@ export function planClaudeUrlElicitation(
     };
   if (options.unattended)
     return { type: "answer", result: DECLINE, notice: urlUnattendedNotice(request.serverName) };
-  if (options.remembered !== undefined) return { type: "answer", result: options.remembered };
+  const remembered = options.remembered;
+  // "I'm done" counts only for the link the person saw; a refusal holds for the call.
+  if (
+    remembered !== undefined &&
+    (remembered.result.action !== "accept" || remembered.url === checked.link.url)
+  )
+    return { type: "answer", result: remembered.result };
   return {
     type: "card",
     elicitation: {
@@ -100,13 +131,13 @@ const REMEMBERED_CALLS = 200;
  * kept: a request that keys itself never comes again.
  */
 export function makeClaudeUrlAnswers() {
-  const answers = new Map<string, ElicitationResult>();
+  const answers = new Map<string, ClaudeUrlAnswer>();
   return {
     get: (callKey: string) => answers.get(callKey),
-    remember: (callKey: string, result: ElicitationResult) => {
+    remember: (callKey: string, answer: ClaudeUrlAnswer) => {
       if (!callKey.includes(":call:")) return;
       answers.delete(callKey);
-      answers.set(callKey, result);
+      answers.set(callKey, answer);
       if (answers.size > REMEMBERED_CALLS) answers.delete(answers.keys().next().value as string);
     },
   };

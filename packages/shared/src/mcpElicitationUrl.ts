@@ -5,7 +5,11 @@
  * registrable domain and shows the warnings, so both read the link the same
  * way.
  *
- * - Only `http` and `https` links are shown; anything else is refused.
+ * - Only `http` and `https` links are shown; anything else is refused. The
+ *   link must spell out `http://` or `https://`: a browser resolves
+ *   `https:host/path` against the page it is on, not to `host` (1498 review).
+ * - Whitespace, control characters and backslashes are refused: the parser
+ *   drops or rewrites them, so the link would not go where it reads.
  * - A link with user info (`user@host` or `user:pass@host`) is refused: it
  *   hides where it goes behind a name that looks like a host.
  * - A host in Punycode (`xn--`), a host that mixes scripts, and a link that is
@@ -42,9 +46,11 @@ export type McpElicitationUrlCheck =
   | { readonly ok: true; readonly link: McpElicitationUrl }
   | { readonly ok: false; readonly reason: McpElicitationUrlRefusal };
 
-// Suffixes under which a name is registered one label deeper. A short list of
-// the common ones, not the Public Suffix List: a miss highlights one label too
-// few, which still names the owner's own domain.
+// Suffixes under which a name is registered one label deeper: country second
+// levels, and hosting suffixes where each tenant is its own owner
+// (`tenant.gitlab.io`). A short list of the common ones, not the Public Suffix
+// List, which would weigh down the web bundle: a miss highlights one label too
+// few, and the full host is still shown beside it.
 const MULTI_LABEL_SUFFIXES = new Set([
   "ac.uk",
   "co.uk",
@@ -85,6 +91,35 @@ const MULTI_LABEL_SUFFIXES = new Set([
   "com.ua",
   "co.il",
   "github.io",
+  "gitlab.io",
+  "bitbucket.io",
+  "codeberg.page",
+  "readthedocs.io",
+  "firebaseapp.com",
+  "web.app",
+  "run.app",
+  "cloudfunctions.net",
+  "r2.dev",
+  "fly.dev",
+  "deno.dev",
+  "onrender.com",
+  "railway.app",
+  "replit.app",
+  "repl.co",
+  "glitch.me",
+  "surge.sh",
+  "now.sh",
+  "ngrok.io",
+  "ngrok.app",
+  "ngrok-free.app",
+  "amplifyapp.com",
+  "azurestaticapps.net",
+  "sharepoint.com",
+  "myshopify.com",
+  "wixsite.com",
+  "webflow.io",
+  "framer.app",
+  "blogspot.com",
   "pages.dev",
   "workers.dev",
   "vercel.app",
@@ -99,6 +134,8 @@ const MULTI_LABEL_SUFFIXES = new Set([
 export function checkMcpElicitationUrl(raw: unknown): McpElicitationUrlCheck {
   if (typeof raw !== "string" || raw.length === 0) return { ok: false, reason: "unparseable" };
   if (raw.length > MCP_ELICITATION_URL_MAX_LENGTH) return { ok: false, reason: "too-long" };
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0020\u007f\\]/.test(raw)) return { ok: false, reason: "unparseable" };
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -107,6 +144,7 @@ export function checkMcpElicitationUrl(raw: unknown): McpElicitationUrlCheck {
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
     return { ok: false, reason: "scheme" };
+  if (!/^https?:\/\//i.test(raw)) return { ok: false, reason: "unparseable" };
   // The parser keeps user info only in these fields; a bare `@` before the
   // host also counts, even when both are empty (`https://@evil.example`).
   if (parsed.username !== "" || parsed.password !== "" || hasEmptyUserInfo(raw))

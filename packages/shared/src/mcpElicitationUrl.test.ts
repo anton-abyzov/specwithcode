@@ -40,7 +40,6 @@ describe("checkMcpElicitationUrl", () => {
       "https://github.com@evil.example/login",
       "https://user:pass@example.com/",
       "https://@example.com/",
-      "https://good.example\\@evil.example/",
     ])
       expect(checkMcpElicitationUrl(raw)).toEqual({ ok: false, reason: "user-info" });
     // An @ after the host is part of the path or query, not user info.
@@ -83,10 +82,31 @@ describe("checkMcpElicitationUrl", () => {
       expect(link(raw).warnings).toEqual([]);
   });
 
+  it("refuses a link that would not go where it reads (1498 review)", () => {
+    for (const raw of [
+      // Resolved against the page it is on, not to example.test.
+      "https:example.test/sign-in",
+      "HTTPS:example.test",
+      "https:/example.test/",
+      "https:\\\\evil.example/x",
+      "https://\\evil.example/x",
+      "https://good.example\\@evil.example/",
+      " https://example.com/",
+      "https://example.com/ ",
+      "https://exa\tmple.com/",
+      "https://example.com/a\nb",
+      "https://example.com/\u007f",
+    ])
+      expect(checkMcpElicitationUrl(raw)).toEqual({ ok: false, reason: "unparseable" });
+    expect(link("HTTPS://Example.com/a").host).toBe("example.com");
+  });
+
   it("finds the registrable domain", () => {
     expect(registrableDomainOf("a.b.example.com")).toBe("example.com");
     expect(registrableDomainOf("login.example.co.uk")).toBe("example.co.uk");
     expect(registrableDomainOf("evil.github.io")).toBe("evil.github.io");
+    expect(registrableDomainOf("tenant.gitlab.io")).toBe("tenant.gitlab.io");
+    expect(registrableDomainOf("shop.myshopify.com")).toBe("shop.myshopify.com");
     expect(registrableDomainOf("example.com.")).toBe("example.com");
     expect(registrableDomainOf("localhost")).toBe("localhost");
     expect(registrableDomainOf("192.168.1.10")).toBe("192.168.1.10");

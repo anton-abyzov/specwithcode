@@ -22,7 +22,9 @@ type Event = ProviderAdapter.ProviderAdapterV2Event;
 // Request ids are unique per harness: a closing mark outlives its call (1493).
 let harnesses = 0;
 
-function harness(options: { thread?: "user" | "agent"; scheduled?: boolean } = {}) {
+function harness(
+  options: { thread?: "user" | "agent"; scheduled?: boolean; messageBy?: "user" | "agent" } = {},
+) {
   const prefix = `url${++harnesses}`;
   const events: Array<Event> = [];
   let requestCount = 0;
@@ -35,7 +37,7 @@ function harness(options: { thread?: "user" | "agent"; scheduled?: boolean } = {
       rootNodeId: "node-root",
       providerThread: { id: "provider-thread-1" },
       message: {
-        createdBy: "user",
+        createdBy: options.messageBy ?? "user",
         ...(options.scheduled === true ? { scheduledTaskId: "routine-1" } : {}),
       },
     } as unknown as ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -195,8 +197,13 @@ describe("ClaudeMcpUrlElicitation", () => {
     }
   });
 
-  it("declines a link in a thread that runs without the person, with a note", async () => {
-    for (const options of [{ thread: "agent" as const }, { scheduled: true }]) {
+  it("declines a link in a turn that runs without the person, with a note", async () => {
+    for (const options of [
+      { thread: "agent" as const },
+      { scheduled: true },
+      // An agent's message in the person's own thread (1498 review).
+      { messageBy: "agent" as const },
+    ]) {
       const h = harness(options);
       expect(await h.ask({ url: SIGN_IN })).toEqual({ action: "decline" });
       expect(h.cards()).toEqual([]);
@@ -208,15 +215,15 @@ describe("ClaudeMcpUrlElicitation", () => {
     const h = harness();
     h.toolCalls.set("toolu_sign_in", { toolName: "mcp__github__create_issue" });
     h.toolCalls.set("toolu_other", { toolName: "mcp__notion__search" });
-    const first = h.ask({ url: `${SIGN_IN}&attempt=1` }, undefined, "sdk-request-1");
+    const first = h.ask({ url: SIGN_IN }, undefined, "sdk-request-1");
     await h.until(() => h.cards().length === 1);
     await h.press(1, "accept");
     expect(await first).toEqual({ action: "accept" });
     // Claude Code retries the call; each retry has a new request and elicitation id.
     for (const attempt of [2, 3])
-      expect(
-        await h.ask({ url: `${SIGN_IN}&attempt=${attempt}` }, undefined, `sdk-request-${attempt}`),
-      ).toEqual({ action: "accept" });
+      expect(await h.ask({ url: SIGN_IN }, undefined, `sdk-request-${attempt}`)).toEqual({
+        action: "accept",
+      });
     expect(h.cards()).toHaveLength(1);
     // Another call of the same server asks the person again.
     h.toolCalls.delete("toolu_sign_in");
@@ -255,5 +262,26 @@ describe("ClaudeMcpUrlElicitation", () => {
     expect(await result).toEqual({ action: "cancel" });
     expect(h.cards()[0]?.status).toBe("cancelled");
     expect(h.notices()).toEqual([stoppedWaitingNotice("github")]);
+  });
+
+  it("asks again for another link after I'm done, and keeps a Decline for the call", async () => {
+    const h = harness();
+    h.toolCalls.set("toolu_sign_in", { toolName: "mcp__github__create_issue" });
+    const first = h.ask({ url: SIGN_IN }, undefined, "sdk-request-1");
+    await h.until(() => h.cards().length === 1);
+    await h.press(1, "accept");
+    expect(await first).toEqual({ action: "accept" });
+    // The person never saw this link: "I'm done" does not carry over to it.
+    const other = "https://billing.example.com/confirm";
+    const second = h.ask({ url: other }, undefined, "sdk-request-2");
+    await h.until(() => h.cards().length === 2);
+    expect((h.cards()[1]?.elicitation as { url?: string }).url).toBe(other);
+    await h.press(2, "decline");
+    expect(await second).toEqual({ action: "decline" });
+    // A Decline holds for the call, whatever link comes next.
+    expect(await h.ask({ url: "https://elsewhere.example/x" }, undefined, "sdk-request-3")).toEqual(
+      { action: "decline" },
+    );
+    expect(h.cards()).toHaveLength(2);
   });
 });

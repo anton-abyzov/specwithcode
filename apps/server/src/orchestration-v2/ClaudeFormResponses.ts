@@ -305,8 +305,12 @@ export function checkFormResponse(
     if (request.status !== "pending" || closing.has(request.id)) return { refusal: LINK_CLOSED };
     if (command.answeredByThreadId !== undefined) return { refusal: LINK_AGENT_REFUSAL };
     if (command.decision === "decline" || command.decision === "cancel") return {};
-    // Nothing is recorded or handed on: the server gets a bare accept.
-    return isLinkDoneAnswer(command.answers) ? {} : { refusal: LINK_NEEDS_CARD };
+    // Nothing is recorded or handed on: the server gets a bare accept. Only a
+    // plain accept: "always" means nothing for a link, and no decision would
+    // record an answer while the server got a cancel (1498 review).
+    return command.decision === "accept" && isLinkDoneAnswer(command.answers)
+      ? {}
+      : { refusal: LINK_NEEDS_CARD };
   }
   const form = claudeFormOf(item);
   // The Claude adapter records the request before its card: until the card

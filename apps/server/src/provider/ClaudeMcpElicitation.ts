@@ -77,6 +77,7 @@ import {
 import type * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import type * as ProviderAdapter from "../orchestration-v2/ProviderAdapter.ts";
 import {
+  isClaudeTurnWithoutPerson,
   makeClaudeUrlAnswers,
   planClaudeUrlElicitation,
   urlElicitationResult,
@@ -394,18 +395,18 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
         return DECLINE;
       }
       const nativeRequestId = `mcp-elicitation:${request.serverName}:${sdkRequestId}`;
-      const unattended = isUnattendedClaudeTurn(context.input);
       const callKey = claudeElicitationCallKey(context, request.serverName, sdkRequestId);
       if (request.mode === "url") {
         const plan = planClaudeUrlElicitation(request, {
-          unattended,
+          unattended: isClaudeTurnWithoutPerson(context.input),
           remembered: urlAnswers.get(callKey),
         });
         if (plan.type === "card")
           return yield* showCard(context, request, signal, owner, nativeRequestId, {
             elicitation: plan.elicitation,
             resultFor: (decision) => urlElicitationResult(decision),
-            remember: (result) => urlAnswers.remember(callKey, result),
+            remember: (result) =>
+              urlAnswers.remember(callKey, { url: plan.elicitation.url ?? "", result }),
           });
         // Keyed by the tool call, so a retried request replaces its own note.
         if (plan.notice !== undefined)

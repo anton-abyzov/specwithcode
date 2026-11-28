@@ -346,6 +346,22 @@ it.effect("takes only the person's I'm done on a link card (1498)", () =>
       yield* refusal(respond("wrong", { decision: "accept", answers: { linkDone: "yes" } })),
       LINK_NEEDS_CARD,
     );
+    // Only a plain accept: "always" means nothing for a link, and no decision
+    // would record an answer while the server got a cancel (1498 review).
+    for (const [tag, decision] of [
+      ["always", "acceptAlways"],
+      ["session", "acceptForSession"],
+      ["none", undefined],
+    ] as const)
+      assert.include(
+        yield* refusal(
+          respond(tag, {
+            ...(decision === undefined ? {} : { decision }),
+            answers: { ...MCP_ELICITATION_URL_DONE_ANSWER },
+          }),
+        ),
+        LINK_NEEDS_CARD,
+      );
     assert.equal((yield* status)?.status, "pending");
   }).pipe(Effect.provide(layerTest)),
 );
