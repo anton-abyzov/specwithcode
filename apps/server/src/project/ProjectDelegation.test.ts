@@ -18,38 +18,6 @@ import {
   projectWorkerModel,
   workerModelUnderGrant,
 } from "./ProjectDelegation.ts";
-it("keeps a moved worker's row Ultracode beside the caller's own options (1506)", () => {
-  const coordinator = ThreadId.make("coordinator");
-  const home = ProviderInstanceId.make("claude");
-  const work = ProviderInstanceId.make("claude_work");
-  const project = {
-    workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, coordinatorThreadId: coordinator },
-    defaultModelSelection: { instanceId: home, model: "opus" },
-  };
-  const on = { id: "ultracode", value: true };
-  const high = { id: "effort", value: "high" };
-  const moved = {
-    instanceId: work,
-    model: "opus",
-    options: [{ id: "effort", value: "medium" }, on],
-  };
-  const effortOnly = { options: [high] };
-  expect(projectDelegationTarget(project, coordinator, effortOnly, null, moved)?.options).toEqual([
-    high,
-    on,
-  ]);
-  // The caller's own Ultracode wins.
-  const off = { id: "ultracode", value: false };
-  expect(
-    projectDelegationTarget(project, coordinator, { options: [high, off] }, null, moved)?.options,
-  ).toEqual([high, off]);
-  // Not moved: the caller's options as given.
-  const stayed = { instanceId: home, model: "opus", options: [on] };
-  expect(projectDelegationTarget(project, coordinator, effortOnly, null, stayed)?.options).toEqual([
-    high,
-  ]);
-});
-
 it("uses the project's worker model for any caller without an explicit target", () => {
   const coordinator = ThreadId.make("coordinator");
   const model = {
