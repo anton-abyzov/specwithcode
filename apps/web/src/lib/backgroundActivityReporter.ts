@@ -20,7 +20,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { isArtifactAppWindow, isProjectWindow } from "./projectWindow";
+import { isArtifactAppWindow, isProjectWindow, isScreenViewerWindow } from "./projectWindow";
 import { randomUUID } from "./utils";
 
 const CLIENT_ID_STORAGE_KEY = "specweave-studio.backgroundActivity.clientId";
@@ -102,7 +102,8 @@ function getWindowId(): string {
  */
 export function backgroundActivityClientId(): string {
   const storedClientId = getStoredClientId();
-  if (!isProjectWindow() && !isArtifactAppWindow()) return storedClientId;
+  if (!isProjectWindow() && !isArtifactAppWindow() && !isScreenViewerWindow())
+    return storedClientId;
   const suffix = `:${getWindowId()}`.slice(0, CLIENT_ID_MAX_LENGTH - 1);
   return `${storedClientId.slice(0, CLIENT_ID_MAX_LENGTH - suffix.length)}${suffix}`;
 }

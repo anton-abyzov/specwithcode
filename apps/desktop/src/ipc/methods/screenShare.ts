@@ -15,6 +15,10 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   SCREEN_SHARE_HOST_PATH,
   ScreenShareLocalState,
+  ScreenShareOpenViewer,
+  ScreenShareOpenViewerResult,
+  ScreenShareViewStart,
+  ScreenShareViewStartResult,
   type ScreenShareHostLink,
 } from "@specweave-studio/contracts";
 import { currentScreenShareHostProof } from "@specweave-studio/shared/desktopBootstrapToken";
@@ -33,7 +37,10 @@ import {
   isThisMachineServiceUrl,
   resolveDesktopOwnerProof,
 } from "../../backend/desktopServiceCredential.ts";
+import { DESKTOP_WINDOW_ROLE_ARGUMENT, getDesktopUrl } from "../../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../../electron/ElectronSafeStorage.ts";
+import * as ElectronShell from "../../electron/ElectronShell.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import { makeScreenCapture, screenRecordingGranted } from "../../screenShare/ScreenCapture.ts";
 import { ScreenShareHost, type HostSocket } from "../../screenShare/ScreenShareHost.ts";
 import {
@@ -44,28 +51,20 @@ import {
 import { ScreenShareSessions } from "../../screenShare/screenShareSession.logic.ts";
 import { ScreenShareStore } from "../../screenShare/ScreenShareStore.ts";
 import { ScreenShareWindows } from "../../screenShare/ScreenShareWindows.ts";
+import { ScreenViewerWindows } from "../../screenShare/ScreenViewerWindows.ts";
+import { screenViewing } from "../../screenShare/screenViewing.logic.ts";
 import {
   SCREEN_SHARE_GET_STATE_CHANNEL,
   SCREEN_SHARE_REMOVE_GRANT_CHANNEL,
   SCREEN_SHARE_SET_ENABLED_CHANNEL,
-  SCREEN_SHARE_SET_VIEWING_CHANNEL,
+  SCREEN_SHARE_BEGIN_VIEW_CHANNEL,
+  SCREEN_SHARE_END_VIEW_CHANNEL,
+  SCREEN_SHARE_OPEN_VIEWER_CHANNEL,
 } from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
 export const SCREEN_SHARE_STORE_FILE = "screen-share.bin";
-
-/**
- * Windows of this app that are showing another machine's screen right now.
- * While there is one, computer use on this machine holds off: its screenshots
- * would carry the other machine's screen into a thread.
- */
-export const screenShareViewing = (() => {
-  const windows = new Set<number>();
-  return {
-    set: (id: number, viewing: boolean) => void (viewing ? windows.add(id) : windows.delete(id)),
-    active: () => windows.size > 0,
-  };
-})();
+export const SCREEN_VIEWER_PLACES_FILE = "screen-viewer-windows.json";
 
 export const SCREEN_SHARE_VIEWING_REFUSAL =
   "SpecWithCode is showing another machine's screen on this Mac right now, so computer use is paused here. It resumes when that view is closed.";
@@ -124,22 +123,77 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
   const ipc = yield* DesktopIpc.DesktopIpc;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
-  const viewing = DesktopIpc.makeIpcMethod({
-    channel: SCREEN_SHARE_SET_VIEWING_CHANNEL,
-    payload: Schema.Boolean,
-    result: Schema.Void,
-    handler: (on, event) =>
-      Effect.sync(() => {
-        if (event === undefined) return;
-        const id = event.sender.id;
-        const contents = Electron.webContents.fromId(id);
-        if (contents === undefined) return;
-        screenShareViewing.set(id, on);
-        // A window that closes or crashes while viewing stops counting.
-        if (on) contents.once("destroyed", () => screenShareViewing.set(id, false));
-      }),
+  // Views of other machines (1519): counted per view, one per machine, each in a window of its own if asked.
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const electronShell = yield* ElectronShell.ElectronShell;
+  const runWindowEffect = Effect.runPromiseWith(yield* Effect.context<never>());
+  const viewerWindows = new ScreenViewerWindows({
+    desktopUrl: getDesktopUrl(environment.isDevelopment),
+    preloadPath: environment.preloadPath,
+    platform: environment.platform,
+    roleArgument: DESKTOP_WINDOW_ROLE_ARGUMENT,
+    placesFile: environment.path.join(environment.stateDir, SCREEN_VIEWER_PLACES_FILE),
+    registry: screenViewing,
+    create: (options) =>
+      runWindowEffect(electronWindow.create(options).pipe(Effect.orElseSucceed(() => null))),
+    register: (window) => void runWindowEffect(electronWindow.registerSecondary(window)),
+    reveal: (window) => void runWindowEffect(electronWindow.reveal(window)),
+    openExternal: (url) =>
+      void runWindowEffect(electronShell.openExternal(url).pipe(Effect.ignore)),
   });
-  yield* ipc.handle(viewing);
+  // A page that reloads or whose process ends loses its views; one that closes loses everything.
+  const watched = new Set<number>();
+  const watch = (contents: Electron.WebContents) => {
+    const id = contents.id;
+    if (watched.has(id)) return;
+    watched.add(id);
+    contents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame && !details.isSameDocument) screenViewing.dropViews(id);
+    });
+    contents.on("render-process-gone", () => screenViewing.dropViews(id));
+    contents.once("destroyed", () => {
+      watched.delete(id);
+      screenViewing.release(id);
+    });
+  };
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: SCREEN_SHARE_BEGIN_VIEW_CHANNEL,
+      payload: ScreenShareViewStart,
+      result: ScreenShareViewStartResult,
+      handler: (input, event) =>
+        Effect.sync(() => {
+          const contents =
+            event === undefined ? undefined : Electron.webContents.fromId(event.sender.id);
+          if (contents === undefined) return "invalid" as const;
+          watch(contents);
+          const begun = screenViewing.begin(contents.id, input.token, input.environmentId);
+          if (begun.kind !== "elsewhere") return begun.kind;
+          viewerWindows.revealOwner(begun.owner);
+          return "elsewhere" as const;
+        }),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: SCREEN_SHARE_END_VIEW_CHANNEL,
+      payload: Schema.String,
+      result: Schema.Void,
+      handler: (token, event) =>
+        Effect.sync(() => {
+          if (event !== undefined) screenViewing.end(event.sender.id, token);
+        }),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: SCREEN_SHARE_OPEN_VIEWER_CHANNEL,
+      payload: ScreenShareOpenViewer,
+      result: ScreenShareOpenViewerResult,
+      handler: (input) => Effect.promise(() => viewerWindows.open(input.environmentId, input.name)),
+    }),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(() => viewerWindows.closeAll()));
 
   if (environment.platform !== "darwin") {
     // Other systems cannot show their screen yet. The window still asks, and hears "not here".

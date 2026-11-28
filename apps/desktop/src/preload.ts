@@ -63,9 +63,11 @@ const clientPlatform = process.platform;
 // Set by the shell when it creates the window (DESKTOP_WINDOW_ROLE_ARGUMENT).
 const windowRole = process.argv.includes("--studio-window-role=artifact-app")
   ? "artifact-app"
-  : process.argv.includes("--studio-window-role=project")
-    ? "project"
-    : "main";
+  : process.argv.includes("--studio-window-role=screen-viewer")
+    ? "screen-viewer"
+    : process.argv.includes("--studio-window-role=project")
+      ? "project"
+      : "main";
 // The project a project window was opened for (DESKTOP_WINDOW_PROJECT_ARGUMENT).
 const WINDOW_PROJECT_ARGUMENT = "--studio-window-project=";
 const windowProjectKey = (() => {
@@ -164,8 +166,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_SET_ENABLED_CHANNEL, enabled),
     removeGrant: (thumbprint) =>
       ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_REMOVE_GRANT_CHANNEL, thumbprint),
-    setViewing: (viewing) =>
-      ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_SET_VIEWING_CHANNEL, viewing),
+    beginView: (input) => ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_BEGIN_VIEW_CHANNEL, input),
+    endView: (token) => ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_END_VIEW_CHANNEL, token),
+    openViewer: (input) => ipcRenderer.invoke(IpcChannels.SCREEN_SHARE_OPEN_VIEWER_CHANNEL, input),
   },
   commandLineTool: (action) => ipcRenderer.invoke(IpcChannels.COMMAND_LINE_TOOL_CHANNEL, action),
   ...(clientPlatform === "darwin"

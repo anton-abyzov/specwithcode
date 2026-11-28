@@ -13,11 +13,15 @@
  *   live. A wrong code or an ended session saves nothing.
  * - One frame at a time: it is drawn, then confirmed. Nothing is queued.
  * - From the machine only two kinds of record are read. Anything else ends it.
+ * - A record slice 1 did not have (1519) goes only to a machine whose sealed
+ *   `live` state named it in its features: a slice-1 machine ends the session
+ *   on a record it does not know.
  */
 import {
   SCREEN_SHARE_CLOSE_ENDED,
   SCREEN_SHARE_CLOSE_REFUSED,
   SCREEN_SHARE_CODE_TRIES,
+  SCREEN_SHARE_FEATURES,
   SCREEN_SHARE_NO_PICTURE_MS,
   SCREEN_SHARE_RECORD,
   ScreenShareEndReason,
@@ -25,6 +29,7 @@ import {
   decodeScreenShareFrame,
   type ScreenShareDisplay,
   type ScreenShareFrameHeader,
+  type ScreenSharePicture,
 } from "@specweave-studio/contracts";
 import { screenShareCodeMatches } from "@specweave-studio/shared/screenShareChannel";
 import * as Schema from "effect/Schema";
@@ -74,6 +79,8 @@ export type ScreenViewerPhase =
       readonly locked: boolean;
       /** Live for a while with nothing to show: the display may be asleep. */
       readonly noPicture: boolean;
+      /** What the machine said it supports beyond slice 1; empty for a slice-1 machine. */
+      readonly features: ReadonlyArray<string>;
     }
   | { readonly kind: "ended"; readonly end: ScreenViewerEnd };
 
@@ -96,7 +103,21 @@ export interface ScreenViewerModel {
   readonly waitingSince: number;
   /** When this device last said anything about frames. */
   readonly lastSaidAt: number;
+  /** The picture area and choice here (1519), sent once the machine supports it. */
+  readonly viewport: ScreenViewerViewport | null;
+  /** The viewport last sent, as `viewportKey` writes it. */
+  readonly viewportSent: string | null;
 }
+
+export interface ScreenViewerViewport {
+  /** Device pixels: the picture area's size times the pixel ratio. */
+  readonly width: number;
+  readonly height: number;
+  readonly picture: ScreenSharePicture;
+}
+
+const viewportKey = (viewport: ScreenViewerViewport) =>
+  `${viewport.width}x${viewport.height}:${viewport.picture}`;
 
 export type ScreenViewerEvent =
   /** The machine's challenge checked out and the proof was sent. */
@@ -112,6 +133,8 @@ export type ScreenViewerEvent =
   | { readonly t: "record"; readonly type: number; readonly data: Uint8Array; readonly now: number }
   | { readonly t: "typed_code"; readonly text: string }
   | { readonly t: "choose_display"; readonly displayId: string }
+  /** The picture area changed size, or the picture choice changed. */
+  | { readonly t: "viewport"; readonly viewport: ScreenViewerViewport }
   | { readonly t: "end_here" }
   | {
       readonly t: "closed";
@@ -149,7 +172,23 @@ export const initialScreenViewer = (now: number): ScreenViewerModel => ({
   hasPicture: false,
   waitingSince: now,
   lastSaidAt: now,
+  viewport: null,
+  viewportSent: null,
 });
+
+/** The viewport record to send now, if the machine reads it and it is not the one already sent. */
+const viewportToSend = (
+  model: ScreenViewerModel,
+  features: ReadonlyArray<string>,
+): ScreenViewerEffect | null => {
+  if (model.viewport === null || !features.includes(SCREEN_SHARE_FEATURES.viewport)) return null;
+  if (model.viewportSent === viewportKey(model.viewport)) return null;
+  return {
+    t: "send",
+    type: SCREEN_SHARE_RECORD.viewport,
+    body: { ...model.viewport },
+  };
+};
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const decodeState = Schema.decodeUnknownSync(ScreenShareSessionState);
@@ -229,9 +268,15 @@ function onState(
         phase.kind === "live" && phase.displayId === state.displayId && !phase.locked;
       const save =
         model.codeMatched && !model.pinned && !model.pinSaved && model.machineKey !== null;
+      const features = state.features ?? [];
+      const viewport = viewportToSend(model, features);
       return {
         model: {
           ...model,
+          viewportSent:
+            viewport === null || model.viewport === null
+              ? model.viewportSent
+              : viewportKey(model.viewport),
           pinSaved: model.pinSaved || save,
           hasPicture: sameDisplay && model.hasPicture,
           waitingSince: sameDisplay ? model.waitingSince : now,
@@ -243,11 +288,13 @@ function onState(
             endsAt: state.endsAt,
             locked: false,
             noPicture: sameDisplay && phase.noPicture,
+            features,
           },
         },
         effects: [
           ...(save ? [{ t: "save_machine_key", machineKey: model.machineKey! } as const] : []),
           ...(sameDisplay ? [] : [{ t: "clear_picture" } as const]),
+          ...(viewport === null ? [] : [viewport]),
         ],
       };
     }
@@ -381,6 +428,13 @@ export function reduceScreenViewer(
             ],
           }
         : stay(model);
+    case "viewport": {
+      const next = { ...model, viewport: event.viewport };
+      const send = phase.kind === "live" ? viewportToSend(next, phase.features) : null;
+      return send === null
+        ? stay(next)
+        : { model: { ...next, viewportSent: viewportKey(event.viewport) }, effects: [send] };
+    }
     case "end_here":
       return ended(
         model,
@@ -550,3 +604,33 @@ export const screenViewerCanRetry = (end: ScreenViewerEnd): boolean =>
   end.kind !== "signed_out" &&
   end.kind !== "machine_key_changed" &&
   !(end.kind === "reason" && (end.reason === "unsupported" || end.reason === "device_removed"));
+
+/** What the viewer counts about the frames it drew (1519). */
+export interface ScreenViewerStats {
+  /** `performance.now()` of each frame drawn in the last 5 seconds. */
+  drawnAt: Array<number>;
+  /** Size of the last frame's JPEG. */
+  bytes: number;
+  header?: ScreenShareFrameHeader;
+}
+
+/**
+ * "4.8 fps · 212 KB · 140 ms": frames drawn per second over the last 5
+ * seconds, the last frame's size, and the machine's capture-to-confirm time
+ * for the frame before it, on the machine's own clock.
+ */
+export const screenViewerStatsLine = (stats: ScreenViewerStats, now: number): string => {
+  const recent = stats.drawnAt.filter((at) => now - at < 5_000);
+  const fps = recent.length / 5;
+  const parts = [`${fps.toFixed(1)} fps`, `${Math.round(stats.bytes / 1024)} KB`];
+  const machine = stats.header?.stats;
+  if (machine?.confirmMs !== undefined) parts.push(`${Math.round(machine.confirmMs)} ms`);
+  if (stats.header !== undefined) parts.push(`${stats.header.width}x${stats.header.height}`);
+  if (machine !== undefined)
+    parts.push(
+      `capture ${machine.grabMs} ms`,
+      `encode ${machine.encodeMs} ms`,
+      `q${machine.quality}`,
+    );
+  return parts.join(" · ");
+};

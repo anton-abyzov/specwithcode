@@ -5,6 +5,7 @@ import {
   makeFrameGrabber,
   makeLockWatch,
   pointerInFrame,
+  SAME_PICTURE,
   type LockState,
 } from "./screenCapture.logic.ts";
 
@@ -118,5 +119,30 @@ describe("one look at a display", () => {
       digest: () => "",
     });
     expect(await empty("1")).toEqual({ kind: "none" });
+  });
+
+  it("passes on an unchanged picture as `same` and keeps the capture's own digest and times", async () => {
+    const look = { viewport: null, previousDigest: "x" };
+    const same = makeFrameGrabber({
+      lockState: () => "unlocked",
+      still: (_displayId, asked) => Promise.resolve(asked === look ? SAME_PICTURE : null),
+      pointer: () => undefined,
+      digest: () => "",
+    });
+    expect(await same("1", look)).toEqual({ kind: "same" });
+    const timed = makeFrameGrabber({
+      lockState: () => "unlocked",
+      still: () =>
+        Promise.resolve({ ...still, digest: "bitmap", grabMs: 40, encodeMs: 9, quality: 55 }),
+      pointer: () => undefined,
+      digest: () => "jpeg-digest",
+    });
+    expect(await timed("1", look)).toMatchObject({
+      kind: "frame",
+      digest: "bitmap",
+      grabMs: 40,
+      encodeMs: 9,
+      quality: 55,
+    });
   });
 });

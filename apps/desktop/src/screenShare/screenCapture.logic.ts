@@ -4,7 +4,7 @@
  * frame is, where the pointer falls in it, and the rule that no picture taken
  * across a lock ever leaves.
  */
-import type { ScreenShareGrab } from "./screenShareSession.logic.ts";
+import type { ScreenShareGrab, ScreenShareLook } from "./screenShareSession.logic.ts";
 
 /** The size that fits within `maxEdge` on its longer side, keeping the shape. Never enlarges. */
 export const fitWithin = (
@@ -81,7 +81,15 @@ export interface Still {
   readonly jpeg: Uint8Array;
   readonly width: number;
   readonly height: number;
+  /** 1519: the digest of the picture before encoding, when the capture made one. */
+  readonly digest?: string;
+  readonly grabMs?: number;
+  readonly encodeMs?: number;
+  readonly quality?: number;
 }
+
+/** The capture found the picture it sent last and did not encode it again. */
+export const SAME_PICTURE = "same" as const;
 
 /**
  * One look at a display. The lock is checked right before and right after the
@@ -91,22 +99,26 @@ export interface Still {
 export const makeFrameGrabber =
   (deps: {
     readonly lockState: () => LockState;
-    readonly still: (displayId: string) => Promise<Still | null>;
+    readonly still: (
+      displayId: string,
+      look?: ScreenShareLook,
+    ) => Promise<Still | typeof SAME_PICTURE | null>;
     readonly pointer: (
       displayId: string,
       frame: { readonly width: number; readonly height: number },
     ) => { readonly x: number; readonly y: number } | undefined;
     readonly digest: (jpeg: Uint8Array) => string;
   }) =>
-  async (displayId: string): Promise<ScreenShareGrab> => {
+  async (displayId: string, look?: ScreenShareLook): Promise<ScreenShareGrab> => {
     if (deps.lockState() !== "unlocked") return { kind: "locked" };
-    let still: Still | null;
+    let still: Still | typeof SAME_PICTURE | null;
     try {
-      still = await deps.still(displayId);
+      still = await deps.still(displayId, look);
     } catch {
       still = null;
     }
     if (deps.lockState() !== "unlocked") return { kind: "locked" };
+    if (still === SAME_PICTURE) return { kind: "same" };
     if (still === null || still.jpeg.length === 0) return { kind: "none" };
     const pointer = deps.pointer(displayId, still);
     return {
@@ -115,7 +127,10 @@ export const makeFrameGrabber =
       width: still.width,
       height: still.height,
       ...(pointer === undefined ? {} : { pointer }),
-      digest: deps.digest(still.jpeg),
+      digest: still.digest ?? deps.digest(still.jpeg),
+      ...(still.grabMs === undefined ? {} : { grabMs: still.grabMs }),
+      ...(still.encodeMs === undefined ? {} : { encodeMs: still.encodeMs }),
+      ...(still.quality === undefined ? {} : { quality: still.quality }),
     };
   };
 

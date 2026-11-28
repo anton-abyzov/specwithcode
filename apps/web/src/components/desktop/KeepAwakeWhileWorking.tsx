@@ -163,7 +163,7 @@ export function KeepAwakeWhileWorking() {
   const shownToast = useRef<ReturnType<typeof toastManager.add> | null>(null);
   // One window speaks for the app: project and installed-page windows stay quiet.
   const role = window.desktopBridge?.getWindowRole?.();
-  const speaks = role !== "project" && role !== "artifact-app";
+  const speaks = role !== "project" && role !== "artifact-app" && role !== "screen-viewer";
   useEffect(() => {
     const closeShown = () => {
       if (shownToast.current !== null) toastManager.close(shownToast.current);

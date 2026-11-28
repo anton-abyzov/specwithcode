@@ -69,7 +69,7 @@ import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
-import { isArtifactAppWindow } from "../lib/projectWindow";
+import { isArtifactAppWindow, isScreenViewerWindow } from "../lib/projectWindow";
 import {
   AnchoredToastProvider,
   stackedThreadToast,
@@ -114,6 +114,8 @@ import { isChunkLoadError } from "../lib/chunkReloadGuard";
 
 /** Routes under this prefix are installed-page windows; see ArtifactAppLayout. */
 const ARTIFACT_APP_PATH_PREFIX = "/artifact-app/";
+/** Routes under this prefix are a machine's screen in a window of its own (1519). */
+const SCREEN_VIEWER_PATH_PREFIX = "/screen/";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -139,8 +141,9 @@ export const Route = createRootRoute({
       getDesktopSnapShotBridge() &&
       shouldResumeSnapShotSetupOnStartup() &&
       location.pathname !== "/settings/snap-shot" &&
-      // An installed page's window never takes over the main window's setup.
-      !location.pathname.startsWith(ARTIFACT_APP_PATH_PREFIX)
+      // An installed page's or a screen's window never takes over the main window's setup.
+      !location.pathname.startsWith(ARTIFACT_APP_PATH_PREFIX) &&
+      !location.pathname.startsWith(SCREEN_VIEWER_PATH_PREFIX)
     ) {
       throw redirect({ to: "/settings/snap-shot", replace: true });
     }
@@ -205,6 +208,27 @@ function RootRouteView() {
           description="Open SpecWithCode to use the rest of the app."
         />
       </StandalonePage>
+    );
+  }
+
+  // A screen's own window shows that screen only; any other route says so.
+  if (isScreenViewerWindow() && !pathname.startsWith(SCREEN_VIEWER_PATH_PREFIX)) {
+    return (
+      <StandalonePage tone="brand">
+        <StandalonePageHeader
+          eyebrow={APP_DISPLAY_NAME}
+          title="This window shows one machine's screen"
+          description="Open SpecWithCode to use the rest of the app."
+        />
+      </StandalonePage>
+    );
+  }
+
+  if (pathname.startsWith(SCREEN_VIEWER_PATH_PREFIX)) {
+    return (
+      <ArtifactAppLayout
+        authenticated={primaryEnvironmentAuthenticated || authGateState.status === "hosted-static"}
+      />
     );
   }
 
