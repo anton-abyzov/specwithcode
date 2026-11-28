@@ -351,6 +351,33 @@ describe("site events", () => {
     }),
   );
 
+  it.effect("logs the campaign source of a referral landing", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      const response = yield* harness.send(
+        siteRequest(
+          JSON.stringify({
+            v: 1,
+            event: "referral_landing",
+            platform: "other",
+            source: "anymodel",
+            page: "/code/",
+          }),
+          { origin: "https://spec-weave.com", "cf-connecting-ip": "203.0.113.8" },
+        ),
+      );
+      expect(response.status).toBe(202);
+      const line = harness.logs.find((entry) => entry.message[0] === Reports.SITE_EVENT_LOG_MESSAGE);
+      expect(line?.message[1]).toEqual({
+        log: "site_event",
+        event: "referral_landing",
+        platform: "other",
+        page: "/code/",
+        source: "anymodel",
+      });
+    }),
+  );
+
   it.effect("rejects oversized and invalid events", () =>
     Effect.gen(function* () {
       const harness = makeHarness();

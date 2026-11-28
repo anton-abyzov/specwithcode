@@ -741,6 +741,7 @@ export const SITE_EVENT_NAMES = [
   "chrome_extension_click",
   "github_star_click",
   "feedback_click",
+  "referral_landing",
 ] as const;
 export type SiteEventName = (typeof SITE_EVENT_NAMES)[number];
 
@@ -754,6 +755,17 @@ export interface SiteEvent {
   readonly placement?: string;
   /** Page path, e.g. `/code/download/`. */
   readonly page?: string;
+  /** Campaign tag from the link the visitor followed (`utm_source`), e.g. `anymodel`. */
+  readonly source?: string;
+}
+
+const SITE_EVENT_SOURCE_PATTERN = /^[a-z0-9._-]{1,32}$/u;
+
+/** A campaign source token: lowercase letters, digits, `.`, `_`, `-`, at most 32 characters. */
+export function siteEventSource(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const lowered = value.trim().toLowerCase();
+  return SITE_EVENT_SOURCE_PATTERN.test(lowered) ? lowered : undefined;
 }
 
 export const SITE_EVENT_MAX_BYTES = 1_024;
@@ -770,6 +782,7 @@ export function parseSiteEvent(value: unknown): SiteEvent | null {
     typeof record.page === "string" && /^\/[A-Za-z0-9/_.-]{0,80}$/u.test(record.page)
       ? record.page
       : undefined;
+  const source = siteEventSource(record.source);
   return {
     v: 1,
     event: record.event,
@@ -777,6 +790,7 @@ export function parseSiteEvent(value: unknown): SiteEvent | null {
     ...(asset ? { asset } : {}),
     ...(placement ? { placement } : {}),
     ...(page ? { page } : {}),
+    ...(source ? { source } : {}),
   };
 }
 

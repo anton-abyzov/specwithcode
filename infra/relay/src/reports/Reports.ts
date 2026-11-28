@@ -254,6 +254,7 @@ const make = Effect.gen(function* () {
       ...(event.asset ? { asset: event.asset } : {}),
       ...(event.placement ? { placement: event.placement } : {}),
       ...(event.page ? { page: event.page } : {}),
+      ...(event.source ? { source: event.source } : {}),
       ...(country ? { country } : {}),
     });
     yield* outcome("accepted");

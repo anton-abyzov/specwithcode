@@ -340,4 +340,33 @@ describe("site events", () => {
     expect(siteEventPlatformForAsset("SpecWithCode-1.0.1-x64.exe")).toBe("windows");
     expect(siteEventPlatformForAsset("x86_64.AppImage")).toBe("linux-appimage");
   });
+
+  it("keeps a campaign source on referral landings and other events", () => {
+    expect(
+      parseSiteEvent({
+        v: 1,
+        event: "referral_landing",
+        platform: "other",
+        source: "anymodel",
+        page: "/code/",
+      }),
+    ).toEqual({
+      v: 1,
+      event: "referral_landing",
+      platform: "other",
+      page: "/code/",
+      source: "anymodel",
+    });
+    expect(
+      parseSiteEvent({ v: 1, event: "download_click", platform: "mac", source: " AnyModel " })
+        ?.source,
+    ).toBe("anymodel");
+  });
+
+  it("drops an invalid source without rejecting the event", () => {
+    for (const source of ["a b", "x".repeat(33), "evil<script>", "", 42, null, "ünicode"]) {
+      const parsed = parseSiteEvent({ v: 1, event: "download_click", platform: "mac", source });
+      expect(parsed).toEqual({ v: 1, event: "download_click", platform: "mac" });
+    }
+  });
 });
