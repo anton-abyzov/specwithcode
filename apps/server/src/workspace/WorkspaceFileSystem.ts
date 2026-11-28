@@ -17,6 +17,7 @@ import {
   SHEET_LIMITS,
   sheetContentRevision,
 } from "@specweave-studio/shared/officeSheet";
+import { isFormPath } from "@specweave-studio/shared/officeForm";
 import { WHITEBOARD_LIMITS, isWhiteboardPath } from "@specweave-studio/shared/officeWhiteboard";
 import { writeSheetFileCompareAndSet } from "../project/OfficeArtifacts.ts";
 import * as NodePath from "node:path";
@@ -796,13 +797,15 @@ export const make = Effect.gen(function* () {
         : input.contents;
     const bytes = new TextEncoder().encode(contents);
 
-    // Sheets and whiteboards are saved by the locked compare-and-set writer, so an
+    // Sheets, whiteboards and forms are saved by the locked compare-and-set writer, so an
     // editor's autosave never overwrites a change made on disk since it read the file.
     if (
       target.relativePath.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX) ||
       destination.toLowerCase().endsWith(SHEET_ARTIFACT_SUFFIX) ||
       isWhiteboardPath(target.relativePath) ||
-      isWhiteboardPath(destination)
+      isWhiteboardPath(destination) ||
+      isFormPath(target.relativePath) ||
+      isFormPath(destination)
     ) {
       yield* Effect.tryPromise({
         try: async () => {
@@ -813,16 +816,16 @@ export const make = Effect.gen(function* () {
           // The sheet writer renames over the file, which Windows refuses while
           // the scan still holds it open.
           if (existing.kind === "text") await existing.handle.close();
-          // A whiteboard stays inside the project, also through a symlinked
+          // A whiteboard or form stays inside the project, also through a symlinked
           // folder: the editor opens only files that resolve inside it.
-          if (isWhiteboardPath(target.relativePath)) {
+          if (isWhiteboardPath(target.relativePath) || isFormPath(target.relativePath)) {
             const realRoot = await NodeFSP.realpath(input.cwd);
             const inside = NodePath.relative(realRoot, destination);
             if (inside.startsWith("..") || NodePath.isAbsolute(inside)) {
               throw new Error(`${target.relativePath} leads outside the project.`);
             }
           }
-          // A new whiteboard may be the first file in its folder.
+          // A new whiteboard or form may be the first file in its folder.
           if (existing.kind === "missing") {
             await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
           }

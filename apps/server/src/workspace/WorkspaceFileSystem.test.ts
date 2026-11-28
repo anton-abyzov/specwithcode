@@ -1046,6 +1046,64 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect("creates a form in a new folder and refuses a stale form save", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = ".specweave/artifacts/team/intake.form.json";
+        const initial = '{"v":1,"kind":"form","title":"Intake","items":[]}';
+        yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: initial });
+        const read = yield* workspaceFileSystem.readFile({ cwd, relativePath });
+        expect(read.contents).toBe(initial);
+        const edited = initial.replace("Intake", "Intake v2");
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath,
+          contents: edited,
+          expectedRevision: sheetContentRevision(read.contents),
+        });
+        const stale = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath,
+            contents: initial,
+            expectedRevision: sheetContentRevision(read.contents),
+          })
+          .pipe(Effect.flip);
+        expect(String(stale.cause)).toContain("Conflict:");
+        expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toBe(edited);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses a form that a symlinked folder would put outside the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outsideDir = yield* makeTempDir;
+          yield* fileSystem.makeDirectory(path.join(cwd, ".specweave"), { recursive: true });
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, ".specweave", "artifacts"));
+
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/away.form.json",
+              contents: '{"v":1,"kind":"form","title":"Away","items":[]}',
+            })
+            .pipe(Effect.flip);
+
+          expect(String("cause" in refused ? refused.cause : refused)).toContain(
+            "leads outside the project",
+          );
+          expect(yield* fileSystem.exists(path.join(outsideDir, "away.form.json"))).toBe(false);
+        }),
+    );
+
     it.effect("saves a sheet with a byte order mark at the revision its editor read", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
