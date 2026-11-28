@@ -120,6 +120,8 @@ export function useScreenControlInput(input: {
     window.addEventListener("blur", letGo);
     document.addEventListener("visibilitychange", onVisibility);
     area.focus({ preventScroll: true });
+    // Already focused (a new display, the same area): no focus event comes, so say it here.
+    keyboardRef.current?.(document.activeElement === area);
     return () => {
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerdown", onPointerDown);

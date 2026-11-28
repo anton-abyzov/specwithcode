@@ -39,6 +39,8 @@ export function startScreenControlHelper(input: {
   /** The helper went away without `stop`. */
   readonly onExit: () => void;
   readonly spawn?: Spawn;
+  /** Off for the helper that itself lets go of an earlier one's keys. */
+  readonly rescue?: boolean;
 }): Promise<ScreenControlStart> {
   return new Promise((resolve) => {
     let child: NodeChildProcess.ChildProcessWithoutNullStreams;
@@ -51,6 +53,12 @@ export function startScreenControlHelper(input: {
     let stopped = false;
     let buffered = "";
     let releaseWaiters: Array<() => void> = [];
+    // What the app last asked this helper to let go of, and whether it said it did.
+    let lastHeld: { keys: ReadonlyArray<string>; buttons: ReadonlyArray<string> } = {
+      keys: [],
+      buttons: [],
+    };
+    let released = true;
     const write = (command: unknown) => {
       if (stopped || child.stdin.destroyed) return;
       try {
@@ -92,6 +100,8 @@ export function startScreenControlHelper(input: {
             done();
           }
           releaseWaiters.push(finish);
+          lastHeld = { keys: held.keys, buttons: held.buttons };
+          released = false;
           write({ t: "release", keys: held.keys, buttons: held.buttons });
         }),
       stop,
@@ -124,6 +134,7 @@ export function startScreenControlHelper(input: {
               : null,
           );
         } else if (message.t === "released") {
+          released = true;
           const waiters = releaseWaiters;
           releaseWaiters = [];
           for (const waiter of waiters) waiter();
@@ -134,8 +145,12 @@ export function startScreenControlHelper(input: {
       clearTimeout(readyTimer);
       if (!started) resolve({ kind: "unavailable" });
     });
-    child.once("exit", () => {
+    child.once("exit", (_code, signal) => {
       clearTimeout(readyTimer);
+      // Killed, or gone before it said it let go: its own last release never ran, so a
+      // fresh helper lets go of what it may still hold.
+      if (started && (input.rescue ?? true) && (signal === "SIGKILL" || !released))
+        void releaseWithFreshHelper(input.path, lastHeld, input.spawn).catch(() => undefined);
       const unexpected = !stopped;
       stopped = true;
       for (const waiter of releaseWaiters) waiter();
@@ -160,6 +175,7 @@ export async function releaseWithFreshHelper(
     path,
     onBlocked: () => {},
     onExit: () => {},
+    rescue: false,
     ...(spawn === undefined ? {} : { spawn }),
   });
   if (started.kind !== "ok") return;

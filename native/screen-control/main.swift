@@ -296,8 +296,9 @@ func finish() -> Never {
   exit(0)
 }
 
-/// Lines waiting for the main queue, at most `queueLimit`; past it new input is dropped
-/// (a release or config never is). Each line keeps when it arrived.
+/// Lines waiting for the main queue, at most `queueLimit`; past it new input is dropped.
+/// A release or config line is never dropped, nor an input line that lets go of a key or
+/// button: what was pressed is always let go. Each line keeps when it arrived.
 let queueLimit = 256
 let queueLock = NSLock()
 var queued: [(at: Date, data: Data, input: Bool)] = []
@@ -306,7 +307,8 @@ var draining = false
 func enqueue(_ data: Data) {
   let input = data.range(of: Data("\"t\":\"input\"".utf8)) != nil
   queueLock.lock()
-  if input && queued.count >= queueLimit {
+  let letsGo = input && data.range(of: Data("\"down\":false".utf8)) != nil
+  if input && !letsGo && queued.count >= queueLimit {
     queueLock.unlock()
     return
   }
@@ -361,6 +363,7 @@ Thread.detachNewThread {
   var chunk = [UInt8](repeating: 0, count: 16 * 1024)
   while true {
     let count = read(0, &chunk, chunk.count)
+    if count < 0 && errno == EINTR { continue }
     if count <= 0 { break }
     var start = 0
     for index in 0..<count where chunk[index] == 0x0A {
