@@ -63,6 +63,7 @@ import {
   htmlRenderFromToolItem,
 } from "@specweave-studio/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
+import { mergeWakeNoticesIntoRunFolds } from "./threadWakeFold";
 
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
@@ -204,6 +205,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId;
       readonly label: string;
+      /** The wake notice that started this run, merged into its fold. */
+      readonly wakeLabel?: string;
       readonly expanded: boolean;
     }
   | {
@@ -1317,8 +1320,9 @@ export function deriveThreadFeedPresentation(
   ) {
     result.push(thinkingRow(activeWorkStartedAt, activeRunId));
   }
-  return result.map((row, index) => {
-    if (!isWorkLogFeedRow(row) || !isWorkLogFeedRow(result[index + 1])) return row;
+  const merged = mergeWakeNoticesIntoRunFolds(result);
+  return merged.map((row, index) => {
+    if (!isWorkLogFeedRow(row) || !isWorkLogFeedRow(merged[index + 1])) return row;
     let continued = continuedWorkLogRows.get(row);
     if (!continued) {
       continued = { ...row, continuesWorkLog: true };

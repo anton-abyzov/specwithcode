@@ -75,6 +75,7 @@ import {
 } from "@specweave-studio/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@specweave-studio/shared/path";
 import { foldLimitHops, sameLimitHopsRow, type LimitHopsRow } from "./limitHopGroups";
+import { mergeWakeNoticesIntoTurnFolds, type TurnFoldWake } from "./MessagesTimeline.wakeFold";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -826,6 +827,8 @@ type MessagesTimelineRowContent =
       activitySummary?: string;
       /** Concise only: the whole sentence the short label stands for, for its tooltip. */
       activityDetail?: string;
+      /** The wake notice that started this turn, merged into its fold. */
+      wake?: TurnFoldWake;
       expanded: boolean;
     } & ToolFailureCounts)
   | {
@@ -2476,7 +2479,7 @@ export function deriveMessagesTimelineRows(input: {
   const trailingAttached = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries),
   );
-  const attached =
+  const toolActivityRows =
     detail === "verbose"
       ? trailingAttached
       : foldToolActivity(trailingAttached, {
@@ -2485,6 +2488,7 @@ export function deriveMessagesTimelineRows(input: {
           terminalMessageIds: terminalAssistantMessageIds,
           isExpanded: (groupId) => isDisclosed(input.expandedWorkGroupIds, groupId, detail),
         });
+  const attached = mergeWakeNoticesIntoTurnFolds(toolActivityRows);
   const result = foldLimitHops(
     detail === "verbose"
       ? attached
@@ -2987,6 +2991,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.label === bf.label &&
         a.activitySummary === bf.activitySummary &&
         a.activityDetail === bf.activityDetail &&
+        a.wake?.label === bf.wake?.label &&
+        a.wake?.childThreadId === bf.wake?.childThreadId &&
         a.expanded === bf.expanded &&
         sameToolFailureCounts(a, bf)
       );

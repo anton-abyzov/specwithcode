@@ -15,6 +15,7 @@ import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
+import { splitWakeLabel } from "@specweave-studio/client-runtime/state/wake-label";
 import {
   type OrchestrationMessageContext,
   ThreadId,
@@ -1564,6 +1565,7 @@ function renderFeedEntry(
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
 
   if (entry.type === "run-fold") {
+    const wakeParts = entry.wakeLabel ? splitWakeLabel(entry.wakeLabel) : null;
     return (
       <Pressable
         accessibilityRole="button"
@@ -1575,9 +1577,30 @@ function renderFeedEntry(
           minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
         }}
       >
+        {wakeParts ? (
+          <View className="min-w-0 shrink flex-row">
+            <Text
+              key={`wake:${props.workRowSizing.textSizeKey}`}
+              numberOfLines={1}
+              className="shrink font-studio-medium text-sm text-foreground-muted"
+            >
+              {wakeParts.tail ? wakeParts.head : `${wakeParts.head} ·`}
+            </Text>
+            {wakeParts.tail ? (
+              <Text
+                key={`wake-tail:${props.workRowSizing.textSizeKey}`}
+                numberOfLines={1}
+                className="shrink-0 font-studio-medium text-sm text-foreground-muted"
+              >
+                {`${wakeParts.tail} ·`}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
         <Text
           key={props.workRowSizing.textSizeKey}
-          className="font-studio-medium text-sm tabular-nums text-foreground-muted"
+          numberOfLines={1}
+          className="shrink-0 font-studio-medium text-sm tabular-nums text-foreground-muted"
         >
           {entry.label}
         </Text>

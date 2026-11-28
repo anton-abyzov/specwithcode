@@ -292,6 +292,10 @@
       "types": "./src/state/subagentDisplay.ts",
       "default": "./src/state/subagentDisplay.ts"
     },
+    "./state/wake-label": {
+      "types": "./src/state/wakeLabel.ts",
+      "default": "./src/state/wakeLabel.ts"
+    },
     "./state/subagentRuntime": {
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
