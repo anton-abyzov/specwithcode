@@ -8240,6 +8240,12 @@ export function makeClaudeAdapterV2(
           buildApprovalRequestArtifacts,
           emitProviderEvent,
           releaseHeldRootFrames,
+          // Stop marks the turn before it interrupts; rollback and fork mark the process.
+          turnStopping: (context) =>
+            Effect.gen(function* () {
+              if ((yield* Ref.get(interruptedTurns)).has(context.providerTurnId)) return true;
+              return (yield* Ref.get(queryContext))?.stopping === true;
+            }),
           resolveItemOrdinal,
           idAllocator,
           runPromise,
