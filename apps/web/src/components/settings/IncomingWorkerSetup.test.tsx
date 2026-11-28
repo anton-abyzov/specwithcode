@@ -322,6 +322,71 @@ describe("incoming worker setup view", () => {
     });
     await act(async () => renderer!.unmount());
   });
+  it("hands the line over through Connect when m1 refuses the key this machine saved for it (HTTP 401)", async () => {
+    vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    vi.mocked(allowIncomingStudioFleetWorkers).mockReset();
+    vi.mocked(allowIncomingStudioFleetWorkers).mockRejectedValue(
+      new Error("M1 refused: M1 answered HTTP 401."),
+    );
+    vi.mocked(joinAccountMachineForWorkers).mockReset();
+    vi.mocked(joinAccountMachineForWorkers).mockResolvedValue(allowed);
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          coordinatorFleetId="m1"
+          accountJoin
+          onGranted={onGranted}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(allowIncomingStudioFleetWorkers).toHaveBeenCalledExactlyOnceWith(
+      here,
+      "m1",
+      "full-access",
+    );
+    expect(joinAccountMachineForWorkers).toHaveBeenCalledOnce();
+    expect(onGranted).toHaveBeenCalledOnce();
+    await act(async () => renderer!.unmount());
+  });
+  it("keeps the saved-key refusal when m1 cannot take a line through Connect", async () => {
+    vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    vi.mocked(allowIncomingStudioFleetWorkers).mockReset();
+    vi.mocked(allowIncomingStudioFleetWorkers).mockRejectedValue(
+      new Error("M1 refused: M1 answered HTTP 401."),
+    );
+    vi.mocked(joinAccountMachineForWorkers).mockReset();
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          coordinatorFleetId="m1"
+          accountJoin
+          onGranted={onGranted}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(joinAccountMachineForWorkers).not.toHaveBeenCalled();
+    expect(onGranted).not.toHaveBeenCalled();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("M1 refused: M1 answered HTTP 401.");
+    await act(async () => renderer!.unmount());
+  });
   it("reports an account join m1 did not confirm and grants nothing", async () => {
     vi.mocked(useEnvironmentScope).mockImplementation(connectSignInThere as never);
     vi.mocked(requestConfirmDialog).mockResolvedValue(true);

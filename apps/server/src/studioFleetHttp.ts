@@ -911,7 +911,9 @@ export const layer = HttpApiBuilder.group(
                 "message" in answer.body &&
                 typeof answer.body.message === "string"
                   ? answer.body.message
-                  : `${target.label} answered HTTP ${answer.status}.`;
+                  : answer.status === 401
+                    ? `${target.label} no longer accepts the key saved here for it (HTTP 401).`
+                    : `${target.label} answered HTTP ${answer.status}.`;
               const message = `${target.label} refused: ${said}`;
               return yield* answer.status === 401 || answer.status === 403
                 ? Effect.fail(new EnvironmentHttpForbiddenError({ message }))

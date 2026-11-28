@@ -90,4 +90,81 @@ describe("allowShareMachine: Allow on a Percy row with no access (1448)", () => 
     expect(result.ok).toBe(false);
     expect(calls).toEqual([]);
   });
+
+  it("hands the line over through Connect when the other machine refuses the saved key (HTTP 401)", async () => {
+    const calls: string[] = [];
+    const result = await allowShareMachine(
+      deps({
+        calls,
+        allowThere: async () => workers("not_allowed"),
+        allowHere: async () => {
+          throw new Error("M1 refused: M1 answered HTTP 401.");
+        },
+        throughAccount: async (access) => {
+          calls.push(`account ${access}`);
+          return workers("allowed", access);
+        },
+      }),
+      "env-m4",
+      "m4",
+    );
+    expect(result).toEqual({ ok: true, direction: "account" });
+    expect(calls).toEqual(["account full-access"]);
+  });
+
+  it("never uses the Connect route while a saved key still works", async () => {
+    const calls: string[] = [];
+    const result = await allowShareMachine(
+      deps({
+        calls,
+        throughAccount: async () => {
+          calls.push("account");
+          return workers("allowed");
+        },
+      }),
+      "env-m4",
+      "m4",
+    );
+    expect(result).toEqual({ ok: true, direction: "there" });
+    expect(calls).toEqual(["there id-env-m4 full-access"]);
+  });
+
+  it("allows a machine this machine does not list through Connect, at the default access", async () => {
+    const calls: string[] = [];
+    const result = await allowShareMachine(
+      deps({
+        calls,
+        throughAccount: async (access) => {
+          calls.push(`account ${access}`);
+          return workers("allowed", access);
+        },
+      }),
+      "env-win",
+      "win",
+    );
+    expect(result).toEqual({ ok: true, direction: "account" });
+    expect(calls).toEqual(["account full-access"]);
+  });
+
+  it("names every route's reason when all three fail", async () => {
+    const result = await allowShareMachine(
+      deps({
+        allowThere: async () => workers("not_allowed"),
+        allowHere: async () => {
+          throw new Error("M1 refused: M1 answered HTTP 401.");
+        },
+        throughAccount: async () => {
+          throw new Error("Connect to m1 first.");
+        },
+      }),
+      "env-m4",
+      "m1",
+    );
+    expect(result).toEqual({
+      ok: false,
+      reason: "refused",
+      message:
+        "m1 did not allow work with this machine. M1 refused: M1 answered HTTP 401. Connect to m1 first.",
+    });
+  });
 });

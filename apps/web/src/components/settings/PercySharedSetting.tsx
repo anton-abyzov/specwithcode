@@ -32,6 +32,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
+  joinAccountMachineForWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
 import { useMachineNicknames } from "../../studio/machineNickname";
@@ -76,6 +77,7 @@ import {
   type ShareCandidate,
   type ShareConfirmChoice,
 } from "./PercySharedConfirmDialog";
+import { connectOffHereFailure } from "./IncomingWorkerSetup";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -390,6 +392,23 @@ export function PercySharedSetting() {
           (await allowStudioFleetWorkers(ownId, { id, access })).workers,
         allowHere: async (id, access) =>
           (await allowIncomingStudioFleetWorkers(ownId, id, access)).workers,
+        // Without a working saved key, the line goes over this app's Connect
+        // sign-in there, as Settings > Machines does for the account's machines.
+        throughAccount:
+          environments.find((environment) => environment.environmentId === environmentId)
+            ?.serverConfig?.environment.capabilities.fleetAccountJoinWorkers === true
+            ? async (access) =>
+                (
+                  await joinAccountMachineForWorkers({
+                    here: ownId,
+                    coordinator: environmentId,
+                    coordinatorLabel: label,
+                    access,
+                  }).catch((failure: unknown) => {
+                    throw connectOffHereFailure(failure, ownLabel, label);
+                  })
+                ).workers
+            : undefined,
       },
       environmentId,
       label,

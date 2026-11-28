@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     environmentId: string;
     label: string;
     connection: { phase: string };
+    serverConfig?: { environment: { capabilities: Record<string, boolean> } };
   }>,
   projects: [] as unknown[],
   // Machines the relay lists under the window's Connect account.
@@ -60,6 +61,7 @@ const fleet = vi.hoisted(() => ({
   allowStudioFleetWorkers: vi.fn(),
   allowIncomingStudioFleetWorkers: vi.fn(),
   readStudioFleetMachines: vi.fn(),
+  joinAccountMachineForWorkers: vi.fn(),
 }));
 vi.mock("../../studio/fleet", () => fleet);
 vi.mock("../../studio/machineNickname", () => ({
@@ -832,6 +834,59 @@ describe("PercySharedSetting", () => {
     expect(mocks.set).toHaveBeenCalledWith({
       environmentId: "studio",
       input: { enabled: true, machines: ["m4"] },
+    });
+  });
+
+  it("hands the line over through Connect when the machine refuses the key saved here (HTTP 401)", async () => {
+    mocks.shared = { enabled: true, machines: [] };
+    mocks.environments = [
+      environment("studio", "Studio"),
+      {
+        ...environment("m1", "M1"),
+        serverConfig: { environment: { capabilities: { fleetAccountJoinWorkers: true } } },
+      },
+    ];
+    mocks.status.mockResolvedValue(
+      success(
+        statusOf({
+          enabled: true,
+          machines: [{ environmentId: "m1", label: "M1", state: "no_grant" }],
+        }),
+      ),
+    );
+    mocks.set.mockResolvedValue(success(statusOf({ enabled: true })));
+    fleet.readStudioFleetMachines.mockResolvedValue([
+      { id: "fleet-m1", environmentId: "m1", label: "M1" },
+    ]);
+    fleet.allowStudioFleetWorkers.mockReset();
+    fleet.allowStudioFleetWorkers.mockRejectedValue(
+      new Error("Could not allow workers on this machine. Refresh, then retry."),
+    );
+    fleet.allowIncomingStudioFleetWorkers.mockReset();
+    fleet.allowIncomingStudioFleetWorkers.mockRejectedValue(
+      new Error("M1 refused: M1 answered HTTP 401."),
+    );
+    fleet.joinAccountMachineForWorkers.mockResolvedValue({
+      id: "fleet-studio",
+      workers: {
+        status: "allowed",
+        access: "full-access",
+        expiresAt: null,
+        renewable: true,
+        problem: null,
+      },
+    });
+    await render();
+    await click(within(one({ "data-share-machine": "m1" }), { "data-share-allow": true })[0]!);
+    expect(fleet.joinAccountMachineForWorkers).toHaveBeenCalledWith({
+      here: "studio",
+      coordinator: "m1",
+      coordinatorLabel: "M1",
+      access: "full-access",
+    });
+    expect(mocks.set).toHaveBeenCalledWith({
+      environmentId: "studio",
+      input: { enabled: true, machines: ["m1"] },
     });
   });
 
