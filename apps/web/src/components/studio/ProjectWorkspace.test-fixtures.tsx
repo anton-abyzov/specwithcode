@@ -302,6 +302,11 @@ const noUnreachableEnvironments = vi.hoisted(() => new Set<string>());
 vi.mock("../settings/useReplacedMachineRecords", () => ({
   useRetiredMachineRecords: () => new Map(),
 }));
+const noRelayDiscovery = vi.hoisted(() => ({
+  environments: new Map(),
+  refreshing: false,
+  offline: false,
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     isReady: true,
@@ -327,6 +332,8 @@ vi.mock("../../state/environments", () => ({
   }),
   usePrimaryEnvironmentId: () => (state.primaryRegistered ? "primary" : null),
   useUnreachableEnvironmentIds: () => noUnreachableEnvironments,
+  // This window is not signed in to SpecWithCode Connect in these tests.
+  useRelayEnvironmentDiscovery: () => noRelayDiscovery,
   useEnvironment: (environmentId: string) => ({
     label: environmentId === "host" || environmentId === undefined ? "Test host" : environmentId,
     connection: {

@@ -32,7 +32,7 @@ const world = vi.hoisted(() => {
     environments: [] as Array<{
       environmentId: string;
       label: string;
-      connection: { deviceApprovalCode?: string };
+      connection: { deviceApprovalCode?: string; phase?: string };
     }>,
   };
   return {
@@ -151,6 +151,7 @@ vi.mock("../../studio/connectDevices", async () => {
 });
 
 import {
+  DeviceApprovalNoticesHost,
   DeviceApprovalPromptHost,
   DeviceWaitingForApprovalHost,
   useConnectDevices,
@@ -499,5 +500,35 @@ describe("Later kept by the machine (1447)", () => {
     world.state.pending = [{ ...second, id: "request-b2" }];
     await machineChanged();
     expect(rows()).toEqual(["request-b2"]);
+  });
+});
+
+describe("a device waiting on another machine this window is allowed on (1517 AC-03)", () => {
+  it("opens that machine's pop-up here, names it, and lets the code be typed from here", async () => {
+    world.state.environments = [
+      { environmentId: "env-m5", label: "m5", connection: { phase: "connected" } },
+    ];
+    // Requests on env-m5 are approved through the same fake as env-m4's.
+    world.state.otherPending = [first];
+    world.state.pending = [first];
+    await mount(() => <DeviceApprovalNoticesHost />);
+    expect(prompt()!.textContent).toContain("A new device wants to use m5");
+    expect(rows()).toEqual(["request-a"]);
+    await type("K7Q-X2M");
+    await press("Allow");
+    expect(world.state.log).toEqual(["approve request-a"]);
+  });
+
+  it("stays away from a machine this window waits on itself", async () => {
+    world.state.environments = [
+      {
+        environmentId: "env-m5",
+        label: "m5",
+        connection: { phase: "connected", deviceApprovalCode: "H8L2QF" },
+      },
+    ];
+    world.state.otherPending = [first];
+    await mount(() => <DeviceApprovalNoticesHost />);
+    expect(prompt()).toBeNull();
   });
 });

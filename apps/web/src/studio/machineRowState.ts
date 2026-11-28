@@ -136,6 +136,11 @@ export interface MachineRowInput {
   readonly needsUpdate?: { readonly version: string | null } | null;
   /** This window is served by the machine. */
   readonly window?: boolean;
+  /**
+   * Why this window cannot open the machine, or what it waits for (`machineRowReason`):
+   * the label of a row it cannot open, the first note of an offline row.
+   */
+  readonly reason?: MachineRowText | null;
 }
 
 /** The row for one machine: the first state that matches, then its notes. */
@@ -144,12 +149,16 @@ export function machineRowState(input: MachineRowInput): MachineRowState {
     return {
       kind: "cannot-open",
       pressable: false,
-      label: { text: "This window cannot open {machine}", values: { machine: input.machine } },
+      label: input.reason ?? {
+        text: "This window cannot open {machine}",
+        values: { machine: input.machine },
+      },
       action: "connect",
       notes: [],
       sync: null,
     };
   const notes: MachineRowText[] = [];
+  if (input.reach === "offline" && input.reason) notes.push(input.reason);
   if (input.reach === "offline")
     notes.push(
       input.lastSeen
@@ -195,4 +204,55 @@ export function machineReach(
   if (!connection) return "never-opened";
   if (connection.phase === "error" || connection.phase === "unsupported") return "refused";
   return connection.phase === "connected" ? "open" : "offline";
+}
+
+/** The words a row uses to say why it cannot open a machine; each is in every phrase catalog. */
+export const MACHINE_ROW_REASONS = {
+  connecting: "Connecting to {machine}…",
+  failed: "Could not connect to {machine}. Choose Connect… to try again.",
+  approval: "Waiting for approval: type {code} on {machine} or on a device it allows",
+  relayOffline: "{machine} is offline on SpecWithCode Connect",
+  pressConnect: "Choose Connect… to open {machine}",
+  signIn: "Sign in to SpecWithCode Connect on this device to open {machine}",
+} as const;
+
+/**
+ * What SpecWithCode Connect says of the machine for this device: `online` or `offline` when
+ * its account lists the machine, `signed-out` when this device lists no machine there,
+ * `unknown` while it looks or when the account does not list the machine.
+ */
+export type MachineRelayState = "online" | "offline" | "signed-out" | "unknown";
+
+/**
+ * Why a row cannot open its machine, in words a phone can act on (1517): the device waits
+ * for approval there (with the code to type), it is connecting, the last try failed, the
+ * machine is offline on Connect, Connect… opens it, or this device must sign in to Connect.
+ * An offline row only says it waits for approval; null leaves the row as it was.
+ */
+export function machineRowReason(input: {
+  readonly machine: string;
+  readonly reach: MachineReach;
+  /** The code the machine waits for, when it holds this device for approval. */
+  readonly approvalCode?: string | null;
+  readonly connecting?: boolean;
+  readonly failed?: boolean;
+  readonly relay: MachineRelayState;
+}): MachineRowText | null {
+  const machine = { machine: input.machine };
+  if (input.reach === "open") return null;
+  if (input.approvalCode)
+    return { text: MACHINE_ROW_REASONS.approval, values: { ...machine, code: input.approvalCode } };
+  if (input.reach === "offline") return null;
+  if (input.connecting) return { text: MACHINE_ROW_REASONS.connecting, values: machine };
+  if (input.failed) return { text: MACHINE_ROW_REASONS.failed, values: machine };
+  switch (input.relay) {
+    case "offline":
+      return { text: MACHINE_ROW_REASONS.relayOffline, values: machine };
+    case "online":
+      return { text: MACHINE_ROW_REASONS.pressConnect, values: machine };
+    case "signed-out":
+      return { text: MACHINE_ROW_REASONS.signIn, values: machine };
+    case "unknown":
+      return null;
+  }
 }
