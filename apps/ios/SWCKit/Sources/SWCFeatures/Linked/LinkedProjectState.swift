@@ -33,6 +33,18 @@ final class LinkedProjectState {
     (model.engine as? LinkedProjectEngine)?.linkedCopies(of: project, in: model) ?? []
   }
 
+  static func showsMachinesCard(_ copies: [LinkedProjectResolver.Copy], summary: ProjectSummary?) -> Bool {
+    if copies.count > 1 { return true }
+    var machines = Set(copies.map { $0.ref.environmentId })
+    for copy in copies { machines.formUnion(copy.listedMembers.map(\.environmentId)) }
+    if let summary {
+      machines.insert(summary.ref.environmentId)
+      machines.formUnion(summary.linkedMachineIds)
+      machines.formUnion(summary.members.filter(\.isLinked).map { $0.ref.environmentId })
+    }
+    return machines.count > 1
+  }
+
   /// Since when the coordinator's machine has been unreachable, or nil while
   /// it is reachable, switched off on this phone or still connecting.
   func unreachableSince(_ coordinator: LinkedProjectResolver.Copy) -> Date? {

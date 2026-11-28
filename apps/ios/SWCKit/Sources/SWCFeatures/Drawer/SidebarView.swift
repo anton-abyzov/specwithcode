@@ -139,33 +139,8 @@ struct SidebarView: View {
   }
 
   private var machineMenu: some View {
-    let current = router.activeSidebarMachine(in: model).flatMap { model.machine($0) }
-    return Menu {
-      Picker("Machine", selection: Binding(get: { router.activeSidebarMachine(in: model) }, set: { id in withAnimation(.snappy) { router.sidebarMachine = id } })) {
-        Text("All machines").tag(String?.none)
-        ForEach(model.machines) { machine in
-          Text("\(machine.displayName) · \(machine.statusLabel)").tag(String?.some(machine.id))
-        }
-      }
-    } label: {
-      HStack(spacing: WeaveSpacing.s1) {
-        if let current { MachineBadge(status: current.displayStatus, size: 15) }
-        Text(current?.displayName ?? "All machines")
-          .font(.weave(.callout, weight: .medium))
-          .lineLimit(1)
-        Image(systemName: "chevron.down")
-          .font(.system(size: 11, weight: .semibold))
-          .accessibilityHidden(true)
-      }
-      .foregroundStyle(Color.weave.ink)
-      .padding(.horizontal, WeaveSpacing.s3)
-      .frame(minHeight: WeaveSize.minTap)
-      .background(Color.weave.line, in: Capsule())
-      .contentShape(Capsule())
-    }
-    .accessibilityLabel("Machine")
-    .accessibilityValue(current.map { "\($0.displayName), \($0.statusLabel)" } ?? "All machines")
-    .accessibilityIdentifier("sidebar.machine-menu")
+    SidebarMachineMenu(rows: SidebarMachineMenu.rows(model.machines), selectedId: router.activeSidebarMachine(in: model))
+      .equatable()
   }
 
   private func machineChip<Label: View>(_ machine: String?, @ViewBuilder label: () -> Label) -> some View {

@@ -29,8 +29,11 @@ private struct LinkedProjectMachinesCardContent: View {
 
   var body: some View {
     let copies = state.copies(in: model)
-    if copies.count > 1 {
-      let rows = state.rows(copies)
+    let summary = model.project(state.project)
+    if LinkedProjectState.showsMachinesCard(copies, summary: summary) {
+      let unreached = summary?.members.filter(\.isUnreached) ?? []
+      let unreachedRefs = Set(unreached.map(\.ref))
+      let rows = state.rows(copies).filter { !unreachedRefs.contains($0.copy.ref) }
       let coordinator = LinkedProjectResolver.coordinator(copies)
       VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
         GroupedCard(label: "Machines", footer: "Each machine has the project's files and runs its own coordinator.") {
@@ -43,6 +46,9 @@ private struct LinkedProjectMachinesCardContent: View {
           }
           ForEach(rows) { row in
             copyRow(row)
+          }
+          ForEach(unreached) { member in
+            WeaveRow(member.machineLabel, subtitle: OrchestratorSwitcher.detail(member, approvalCode: model.machine(member.ref.environmentId)?.deviceApprovalCode), symbol: "laptopcomputer")
           }
           switchedOffRow(copies)
         }

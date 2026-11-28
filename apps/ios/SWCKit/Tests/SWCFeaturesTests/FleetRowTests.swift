@@ -98,8 +98,8 @@ struct OrchestratorSwitcherChoiceTests {
       ProjectMember(ref: ProjectRef(environmentId: "m1", projectId: "notes-2"), machineLabel: "M1", machineOnline: true),
     ]
     let choices = OrchestratorSwitcher.choices(members, current: current)
-    #expect(choices.map(\.ref.projectId) == ["notes-dup", "notes"])
-    #expect(choices.map(\.ref.environmentId) == ["m4", "m1"])
+    #expect(choices.map(\.ref.projectId) == ["notes", "notes-dup"])
+    #expect(choices.map(\.ref.environmentId) == ["m1", "m4"])
   }
 
   @Test func anotherMachineIsRepresentedByItsLinkedCopy() {
@@ -112,7 +112,7 @@ struct OrchestratorSwitcherChoiceTests {
       ProjectMember(ref: ProjectRef(environmentId: "m3", projectId: "app"), machineLabel: "M3", machineOnline: true, isCoordinator: true, isLinked: true),
     ]
     let choices = OrchestratorSwitcher.choices(members, current: current)
-    #expect(choices.map(\.ref) == [current, ProjectRef(environmentId: "m1", projectId: "app"), ProjectRef(environmentId: "m3", projectId: "app")])
+    #expect(choices.map(\.ref) == [ProjectRef(environmentId: "m1", projectId: "app"), ProjectRef(environmentId: "m3", projectId: "app"), current])
   }
 
   @Test func separateCheckoutsOnOneMachineEachStayOpenable() {
@@ -127,8 +127,9 @@ struct OrchestratorSwitcherChoiceTests {
       member("m1", "m1-copy", "/Users/b/work/easychamp-copy"),
     ]
     let choices = OrchestratorSwitcher.choices(members, current: current)
-    #expect(choices.map(\.ref.projectId) == ["main", "m1-main", "m1-copy"])
-    #expect(choices.map { OrchestratorSwitcher.title($0, among: choices) } == ["M4", "M1 · sw-easychamp", "M1 · easychamp-copy"])
+    #expect(choices == OrchestratorSwitcher.choices(members.reversed(), current: current))
+    #expect(choices.map(\.ref.projectId) == ["m1-dup", "m1-copy", "main"])
+    #expect(choices.map { OrchestratorSwitcher.title($0, among: choices) } == ["M1 · sw-easychamp", "M1 · easychamp-copy", "M4"])
   }
 
   @Test func sameFolderTwiceOnOneMachineHasNoSwitcher() {
