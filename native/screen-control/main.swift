@@ -297,9 +297,10 @@ func finish() -> Never {
 }
 
 /// Lines waiting for the main queue, at most `queueLimit`; past it new input is dropped.
-/// A release or config line is never dropped, nor an input line that lets go of a key or
-/// button: what was pressed is always let go. Each line keeps when it arrived.
+/// Input lines that let go of a key or button have room up to `letGoLimit`, so what was
+/// pressed is let go; release and config lines are never dropped. Each line keeps when it arrived.
 let queueLimit = 256
+let letGoLimit = 1_024
 let queueLock = NSLock()
 var queued: [(at: Date, data: Data, input: Bool)] = []
 var draining = false
@@ -308,7 +309,7 @@ func enqueue(_ data: Data) {
   let input = data.range(of: Data("\"t\":\"input\"".utf8)) != nil
   queueLock.lock()
   let letsGo = input && data.range(of: Data("\"down\":false".utf8)) != nil
-  if input && !letsGo && queued.count >= queueLimit {
+  if input && queued.count >= (letsGo ? letGoLimit : queueLimit) {
     queueLock.unlock()
     return
   }

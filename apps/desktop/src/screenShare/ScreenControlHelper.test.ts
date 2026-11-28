@@ -72,6 +72,41 @@ describe("screen control helper", () => {
     }
   });
 
+  it("a killed helper's rescue lets go of every release it never answered, not just the last", async () => {
+    vi.useFakeTimers();
+    try {
+      const helpers: Array<ReturnType<typeof fakeHelper>> = [];
+      const spawn = () => {
+        const helper = fakeHelper({ answerRelease: helpers.length > 0 });
+        helpers.push(helper);
+        return helper.child as never;
+      };
+      const started = await startScreenControlHelper({
+        path: "/helper",
+        onBlocked: () => {},
+        onExit: () => {},
+        spawn,
+      });
+      if (started.kind !== "ok") throw new Error("not started");
+      const first = started.link.release({ keys: ["MetaLeft"], buttons: [] });
+      await vi.advanceTimersByTimeAsync(600);
+      await first;
+      const second = started.link.release({ keys: ["KeyA"], buttons: ["left"] });
+      await vi.advanceTimersByTimeAsync(600);
+      await second;
+      started.link.stop();
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(helpers).toHaveLength(2);
+      expect(helpers[1]!.lines).toContainEqual({
+        t: "release",
+        keys: ["MetaLeft", "KeyA"],
+        buttons: ["left"],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a helper that let go and closed normally starts no other", async () => {
     let spawned = 0;
     const started = await startScreenControlHelper({
