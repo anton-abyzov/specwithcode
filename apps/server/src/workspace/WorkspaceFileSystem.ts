@@ -13,6 +13,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import {
+  NEW_FILE_REVISION,
   SHEET_ARTIFACT_SUFFIX,
   SHEET_LIMITS,
   sheetContentRevision,
@@ -816,9 +817,13 @@ export const make = Effect.gen(function* () {
           // The sheet writer renames over the file, which Windows refuses while
           // the scan still holds it open.
           if (existing.kind === "text") await existing.handle.close();
-          // A whiteboard or form stays inside the project, also through a symlinked
-          // folder: the editor opens only files that resolve inside it.
-          if (isWhiteboardPath(target.relativePath) || isFormPath(target.relativePath)) {
+          // A whiteboard, a form or a new Sheet stays inside the project, also through a
+          // symlinked folder or a dangling link: the editor opens only files inside it.
+          if (
+            isWhiteboardPath(target.relativePath) ||
+            isFormPath(target.relativePath) ||
+            input.expectedRevision === NEW_FILE_REVISION
+          ) {
             const realRoot = await NodeFSP.realpath(input.cwd);
             const inside = NodePath.relative(realRoot, destination);
             if (inside.startsWith("..") || NodePath.isAbsolute(inside)) {

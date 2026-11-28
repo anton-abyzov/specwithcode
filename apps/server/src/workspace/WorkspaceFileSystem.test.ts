@@ -1080,6 +1080,33 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "never makes a new sheet through a dangling link that points outside the project",
+      () =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outside = yield* makeTempDir;
+          const folder = path.join(cwd, ".specweave", "artifacts", "team");
+          yield* fileSystem.makeDirectory(folder, { recursive: true });
+          const away = path.join(outside, "away.sheet.json");
+          yield* fileSystem.symlink(away, path.join(folder, "intake-responses.sheet.json"));
+          const refused = yield* workspaceFileSystem
+            .writeFile({
+              cwd,
+              relativePath: ".specweave/artifacts/team/intake-responses.sheet.json",
+              contents:
+                '{"v":1,"kind":"sheet","title":"R","tabs":[{"name":"Responses","cells":{}}]}',
+              expectedRevision: NEW_FILE_REVISION,
+            })
+            .pipe(Effect.flip);
+          expect(String(refused.cause ?? refused)).toMatch(/outside|Conflict/);
+          expect(yield* fileSystem.exists(away)).toBe(false);
+        }),
+    );
+
     it.effect("creates a form in a new folder and refuses a stale form save", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

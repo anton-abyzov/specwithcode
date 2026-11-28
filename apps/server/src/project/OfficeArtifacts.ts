@@ -574,14 +574,24 @@ export async function writeSheetArtifact(
   return oneWriteAtATime(lockIdentity, () =>
     withKernelSheetLock(lockIdentity, stem, async () => {
       const createOnly = options.expectedRevision === NEW_FILE_REVISION;
-      const before = await readFrom(realRoot, stem).catch((error: unknown) => {
-        // A broken file of that name is replaced by a plain write, never merged into.
-        if (options.merge === true || options.expectedRevision !== undefined) throw error;
-        return null;
-      });
-      if (createOnly && before !== null) {
+      // A create-only write asks only whether the name is taken; a broken file there is
+      // taken too, and is never parsed or replaced.
+      if (
+        createOnly &&
+        (await NodeFSP.lstat(target).then(
+          () => true,
+          () => false,
+        ))
+      ) {
         throw invalid(`Conflict: sheet ${stem} already exists. Re-read the sheet and retry.`);
       }
+      const before = createOnly
+        ? null
+        : await readFrom(realRoot, stem).catch((error: unknown) => {
+            // A broken file of that name is replaced by a plain write, never merged into.
+            if (options.merge === true || options.expectedRevision !== undefined) throw error;
+            return null;
+          });
       if (options.expectedRevision !== undefined && !createOnly) {
         if (before === null) {
           throw invalid(
@@ -663,10 +673,12 @@ export async function writeSheetArtifact(
  * is never seen half written, and a refusal removes only the staging file.
  */
 async function renameIfFree(stagingPath: string, target: string, label: string): Promise<void> {
+  // A name taken by anything, a dangling link included, is not free.
   const present = await NodeFSP.lstat(target).then(
     () => true,
-    (error: NodeJS.ErrnoException) => {
+    async (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return false;
+      await NodeFSP.unlink(stagingPath).catch(() => undefined);
       throw error;
     },
   );
@@ -741,6 +753,11 @@ export async function writeSheetFileCompareAndSet(
       // A new file's staging copy is opened through the checked folder, so its
       // contents never land outside the project if a folder is swapped meanwhile.
       const stagingRel = `${normalizedRel}.${NodeCrypto.randomUUID()}.tmp`;
+      // A new file goes beside its staging copy, in the folder `openInside` checked,
+      // never to a destination a link elsewhere resolved to.
+      const destination = createOnly
+        ? NodePath.join(realRoot, ...normalizedRel.split("/"))
+        : target;
       const tempPath = createOnly
         ? NodePath.join(realRoot, ...stagingRel.split("/"))
         : `${target}.${NodeCrypto.randomUUID()}.tmp`;
@@ -764,7 +781,7 @@ export async function writeSheetFileCompareAndSet(
       }
       await handle.close();
       if (createOnly) {
-        await renameIfFree(tempPath, target, normalizedRel);
+        await renameIfFree(tempPath, destination, normalizedRel);
         return;
       }
       if (requiredRevision !== undefined) {

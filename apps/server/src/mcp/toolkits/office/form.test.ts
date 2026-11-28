@@ -65,6 +65,18 @@ describe("form artifacts on disk", () => {
     });
   });
 
+  it("saves a form beside a broken responses Sheet without touching or parsing it", async () => {
+    const root = scratchProject();
+    const sheetPath = NodePath.join(root, ".specweave/artifacts/team-offsite-responses.sheet.json");
+    NodeFS.mkdirSync(NodePath.dirname(sheetPath), { recursive: true });
+    NodeFS.writeFileSync(sheetPath, "{ not json");
+    const saved = await writeFormArtifact(root, { form });
+    expect(saved.created).toBe(true);
+    expect(saved.responses.created).toBe(false);
+    expect(saved.responses.count).toBeNull();
+    expect(NodeFS.readFileSync(sheetPath, "utf8")).toBe("{ not json");
+  });
+
   it("replaces a form by name, keeps its responses Sheet and refuses a stale revision", async () => {
     const root = scratchProject();
     const first = await writeFormArtifact(root, { form, name: "intake" });
