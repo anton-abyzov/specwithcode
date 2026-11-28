@@ -120,13 +120,17 @@ export class ScreenViewerWindows {
     if (openCount >= SCREEN_VIEWER_WINDOW_LIMIT) return "limit";
     this.opening.add(environmentId);
     try {
-      return (await this.create(environmentId, name, openCount)) ? "opened" : "failed";
+      return await this.create(environmentId, name, openCount);
     } finally {
       this.opening.delete(environmentId);
     }
   }
 
-  private async create(environmentId: string, name: unknown, openCount: number): Promise<boolean> {
+  private async create(
+    environmentId: string,
+    name: unknown,
+    openCount: number,
+  ): Promise<ScreenViewerOpenResult> {
     const title = screenViewerWindowTitle(name);
     const url = screenViewerWindowUrl(
       this.deps.desktopUrl,
@@ -174,7 +178,13 @@ export class ScreenViewerWindows {
         additionalArguments: [`${this.deps.roleArgument}${SCREEN_VIEWER_WINDOW_ROLE}`],
       },
     });
-    if (window === null) return false;
+    if (window === null) return "failed";
+    // Another window began viewing this machine while this one was being made: that one wins.
+    const holder = this.deps.registry.ownerOf(environmentId);
+    if (holder !== undefined && this.revealOwner(holder)) {
+      window.destroy();
+      return "focused";
+    }
     const owner = window.webContents.id;
     this.windows.set(environmentId, window);
     // Counted before its page loads: from now until it closes this machine shows a remote screen.
@@ -222,7 +232,7 @@ export class ScreenViewerWindows {
       (_event, _code, _description, _url, isMainFrame) => isMainFrame && show(),
     );
     void window.loadURL(url).catch(() => undefined);
-    return true;
+    return "opened";
   }
 
   closeAll(): void {

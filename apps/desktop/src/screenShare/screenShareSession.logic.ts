@@ -186,6 +186,8 @@ interface Session {
   /** 1519: the viewer's window and picture choice, once it said them. */
   viewport: Viewport | null;
   viewportTimes: Array<number>;
+  /** The newest viewport that came over the rate limit: applied once the limit allows. */
+  pendingViewport: Viewport | null;
   /** Looks left at the fast pace after the last change. */
   fastLooks: number;
   /** When the capture of the frame now unconfirmed started. */
@@ -329,6 +331,7 @@ export class ScreenShareSessions {
       lastHeard: this.deps.now(),
       viewport: null,
       viewportTimes: [],
+      pendingViewport: null,
       fastLooks: 0,
       unconfirmedAt: null,
       inbox: Promise.resolve(),
@@ -597,18 +600,14 @@ export class ScreenShareSessions {
         const viewport = parseViewport(body);
         if (viewport === null) return this.end(session, "protocol_error");
         session.lastHeard = this.deps.now();
-        // A window being dragged says its size many times; a few a second are enough.
-        if (!takeViewportTurn(session.viewportTimes, session.lastHeard)) return;
-        const before = session.viewport;
-        session.viewport = viewport;
-        if (
-          before === null ||
-          before.width !== viewport.width ||
-          before.height !== viewport.height ||
-          before.picture !== viewport.picture
-        )
-          session.lastDigest = null;
-        return;
+        // A window being dragged says its size many times; a few a second are enough. The
+        // newest one over the limit is kept, so the last word is never lost.
+        if (!takeViewportTurn(session.viewportTimes, session.lastHeard)) {
+          session.pendingViewport = viewport;
+          return;
+        }
+        session.pendingViewport = null;
+        return this.applyViewport(session, viewport);
       }
       if (type === SCREEN_SHARE_RECORD.showDisplay && typeof body.displayId === "string") {
         if (!session.displays.some((display) => display.id === body.displayId))
@@ -673,11 +672,30 @@ export class ScreenShareSessions {
     });
   }
 
+  private applyViewport(session: Session, viewport: Viewport): void {
+    const before = session.viewport;
+    session.viewport = viewport;
+    if (
+      before === null ||
+      before.width !== viewport.width ||
+      before.height !== viewport.height ||
+      before.picture !== viewport.picture
+    )
+      session.lastDigest = null;
+  }
+
   /** One turn of the frame loop, then the next one soon while the picture changes. */
   private tick(session: Session): void {
     if (this.session !== session || session.phase !== "live") return;
     if (this.deps.now() - session.lastHeard > SCREEN_SHARE_SILENCE_MS)
       return this.end(session, "viewer_silent");
+    if (
+      session.pendingViewport !== null &&
+      takeViewportTurn(session.viewportTimes, this.deps.now())
+    ) {
+      this.applyViewport(session, session.pendingViewport);
+      session.pendingViewport = null;
+    }
     session.cancelTick = this.deps.after(
       nextLookDelay(session.fastLooks, session.viewport?.picture ?? null),
       () => this.tick(session),
@@ -702,7 +720,11 @@ export class ScreenShareSessions {
           }
           return;
         }
-        if (grab.kind === "none") return;
+        if (grab.kind === "none") {
+          // A capture that keeps failing slows down like a still screen does.
+          session.fastLooks = fastLooksAfter(session.fastLooks, false);
+          return;
+        }
         if (session.showingLocked) this.sendLive(session);
         const changed = grab.kind === "frame" && grab.digest !== session.lastDigest;
         session.fastLooks = fastLooksAfter(session.fastLooks, changed);

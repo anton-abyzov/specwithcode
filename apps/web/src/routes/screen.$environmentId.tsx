@@ -25,7 +25,11 @@ function ScreenViewerRoute() {
 // A machine's screen in a window of its own (1519); __root.tsx gives this route a bare layout.
 export const Route = createFileRoute("/screen/$environmentId")({
   validateSearch: (raw: Record<string, unknown>): { name: string } => ({
-    name: typeof raw.name === "string" ? raw.name.slice(0, NAME_MAX) : "",
+    // The router reads search values as JSON: a machine named 42 arrives as a number.
+    name:
+      typeof raw.name === "string" || typeof raw.name === "number" || typeof raw.name === "boolean"
+        ? String(raw.name).slice(0, NAME_MAX)
+        : "",
   }),
   component: ScreenViewerRoute,
 });

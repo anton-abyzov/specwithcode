@@ -1208,6 +1208,22 @@ describe("version skew with slice 1 (1519)", () => {
     expect(r.closes).toEqual([]);
   });
 
+  it("applies the newest viewport over the rate once the rate allows", async () => {
+    const r = rig();
+    const viewer = await live(r, await makeDevice());
+    for (let index = 0; index < 8; index += 1)
+      await viewer.tell(SCREEN_SHARE_RECORD.viewport, {
+        width: 1000 + index,
+        height: 800,
+        picture: "auto",
+      });
+    // Nothing to send, so the loop keeps looking; the rate frees a second later
+    // and the next slow look uses the newest size.
+    await r.advance(1_500);
+    expect(r.state.looks.at(-1)?.viewport).toEqual({ width: 1007, height: 800, picture: "auto" });
+    expect(r.closes).toEqual([]);
+  });
+
   it("ignores viewports past the rate and ends on a malformed one", async () => {
     const r = rig();
     const viewer = await live(r, await makeDevice());

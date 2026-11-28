@@ -136,7 +136,9 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
     registry: screenViewing,
     create: (options) =>
       runWindowEffect(electronWindow.create(options).pipe(Effect.orElseSucceed(() => null))),
-    register: (window) => void runWindowEffect(electronWindow.registerSecondary(window)),
+    // A page window, as installed pages are: menu commands, SnapShot and the Dock keep going to app windows.
+    register: (window) =>
+      void runWindowEffect(electronWindow.registerSecondary(window, { role: "page" })),
     reveal: (window) => void runWindowEffect(electronWindow.reveal(window)),
     openExternal: (url) =>
       void runWindowEffect(electronShell.openExternal(url).pipe(Effect.ignore)),

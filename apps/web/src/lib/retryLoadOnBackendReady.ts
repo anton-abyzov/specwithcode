@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-import { isArtifactAppWindow } from "./projectWindow";
+import { isArtifactAppWindow, isScreenViewerWindow } from "./projectWindow";
 
 /**
  * How often an installed page's window retries a failed load. The shell tells
@@ -18,9 +18,11 @@ export function useRetryLoadOnBackendReady(loadFailed: boolean, retry: () => voi
   useEffect(() => {
     if (!loadFailed) return;
     const stopListening = window.desktopBridge?.onBackendReady?.(retry);
-    const timer = isArtifactAppWindow()
-      ? window.setInterval(retry, ARTIFACT_APP_LOAD_RETRY_MS)
-      : undefined;
+    // Page windows (installed pages, screen viewers) are not told the backend is back.
+    const timer =
+      isArtifactAppWindow() || isScreenViewerWindow()
+        ? window.setInterval(retry, ARTIFACT_APP_LOAD_RETRY_MS)
+        : undefined;
     return () => {
       stopListening?.();
       if (timer !== undefined) window.clearInterval(timer);
