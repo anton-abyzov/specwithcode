@@ -4,8 +4,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import * as NodeURL from "node:url";
+
 import {
+  MOTION_DECK_PARTS,
   inlineArtifactLibraries,
+  joinMotionDeck,
+  loadSpecWithCodeLibrary,
   rewriteLocalArtifactLibraries,
   wrapThreeCommonJs,
 } from "./localArtifactLibs.ts";
@@ -238,5 +243,33 @@ describe("inlineArtifactLibraries", () => {
     new Function("window", wrapped)(scope);
     expect(scope.THREE?.REVISION).toBe("180");
     expect(wrapped.startsWith("/*! three.js r180 | MIT License")).toBe(true);
+  });
+
+  it("joins the motion deck's parts and its font, licence included, into one library", () => {
+    const dir = NodeURL.fileURLToPath(new URL("./artifact-libs", import.meta.url));
+    const joined = joinMotionDeck(dir);
+    // The core comes first, so later parts find window.SpecWithCodeDeck.
+    expect(joined.startsWith("/*! SpecWithCode motion deck runtime |")).toBe(true);
+    const order = MOTION_DECK_PARTS.map((part) =>
+      joined.indexOf(NodeFS.readFileSync(NodePath.join(dir, part), "utf8").slice(0, 80)),
+    );
+    expect(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!))).toBe(true);
+    expect(joined).toContain("T.portal =");
+    expect(joined).toContain("D.world = function");
+    expect(joined).toContain("SIL Open Font License, Version 1.1");
+    expect(joined).toContain("Copyright 2020 The Archivo Project Authors");
+    expect(joined).toMatch(/D\.useFont\("data:font\/woff2;base64,[A-Za-z0-9+/=]{100000,}"\)/);
+    // The licence sits in a comment that its own text cannot close early.
+    const licenceComment = joined.slice(joined.indexOf("/*! Archivo"));
+    expect(licenceComment.indexOf("*/")).toBeGreaterThan(
+      licenceComment.indexOf("OTHER DEALINGS IN THE FONT SOFTWARE."),
+    );
+    // Development reads the same joined source.
+    expect(loadSpecWithCodeLibrary("motion-deck", undefined)).toBe(joined);
+    for (const part of MOTION_DECK_PARTS) {
+      expect(NodeFS.readFileSync(NodePath.join(dir, part), "utf8").split("\n").length).toBeLessThan(
+        1500,
+      );
+    }
   });
 });

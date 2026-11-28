@@ -10,79 +10,106 @@
     <script src="specwithcode:three"></script>
     <script src="specwithcode:motion-deck"></script>
     <style>
-      :root {
-        --swc-font:
-          "SF Pro Display", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-      }
       .kicker {
         position: absolute;
         left: calc(var(--u) * 120);
-        top: calc(var(--u) * 104);
-        font-size: calc(var(--u) * 22);
-        letter-spacing: 0.18em;
+        top: calc(var(--u) * 96);
+        font-size: calc(var(--u) * 20);
+        font-weight: 600;
+        font-stretch: 112%;
+        letter-spacing: 0.24em;
         text-transform: uppercase;
-        color: #a9b4c8;
+        color: rgba(255, 248, 236, 0.78);
       }
       .kicker b {
-        color: #ffd59a;
-        font-weight: 600;
-        margin-right: 0.9em;
+        display: inline-block;
+        min-width: 2.4em;
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .scrim {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(60% 46% at 22% 86%, rgba(4, 6, 12, 0.5), rgba(4, 6, 12, 0) 72%);
       }
       .head {
         position: absolute;
-        left: calc(var(--u) * 116);
-        bottom: calc(var(--u) * 150);
+        left: calc(var(--u) * 112);
+        bottom: calc(var(--u) * 196);
         margin: 0;
-        max-width: calc(var(--u) * 1180);
-        font-size: calc(var(--u) * 96);
-        line-height: 1.02;
-        font-weight: 600;
-        letter-spacing: -0.025em;
+        max-width: calc(var(--u) * 1300);
+        font-size: calc(var(--u) * 124);
+        color: #fffaf2;
+        text-shadow: 0 0 calc(var(--u) * 40) rgba(0, 0, 0, 0.25);
       }
       .sub {
         position: absolute;
         left: calc(var(--u) * 120);
-        bottom: calc(var(--u) * 96);
+        bottom: calc(var(--u) * 120);
         margin: 0;
-        font-size: calc(var(--u) * 28);
-        color: #b9c0cc;
-        letter-spacing: 0.005em;
-      }
-      .stack {
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: 100%;
-        background: radial-gradient(
-          70% 55% at 18% 92%,
-          rgba(3, 4, 10, 0.78),
-          rgba(3, 4, 10, 0) 70%
-        );
-      }
-      .stack > .head,
-      .stack > .sub {
-        transition: none;
+        max-width: calc(var(--u) * 1100);
+        font-size: calc(var(--u) * 30);
+        font-weight: 420;
+        line-height: 1.35;
+        color: rgba(255, 247, 236, 0.86);
       }
       .count {
         position: absolute;
         right: calc(var(--u) * 120);
-        top: calc(var(--u) * 92);
+        top: calc(var(--u) * 80);
         text-align: right;
+        color: #fffaf2;
       }
       .count .n {
-        font-size: calc(var(--u) * 132);
-        font-weight: 600;
-        letter-spacing: -0.03em;
-        color: #f6f2ea;
+        font-size: calc(var(--u) * 120);
+        font-weight: 300;
+        font-stretch: 118%;
+        letter-spacing: -0.02em;
       }
       .count .l {
         display: block;
-        margin-top: calc(var(--u) * 10);
-        font-size: calc(var(--u) * 22);
-        letter-spacing: 0.16em;
+        margin-top: calc(var(--u) * 12);
+        font-size: calc(var(--u) * 18);
+        letter-spacing: 0.24em;
         text-transform: uppercase;
-        color: #9fe3cf;
+        color: var(--accent);
+      }
+      .tag {
+        position: absolute;
+        font-size: calc(var(--u) * 18);
+        font-weight: 600;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: rgba(255, 250, 242, 0.92);
+        padding: calc(var(--u) * 8) calc(var(--u) * 14);
+        border: 1px solid rgba(255, 250, 242, 0.35);
+        border-radius: calc(var(--u) * 6);
+        background: rgba(8, 6, 20, 0.28);
+        backdrop-filter: blur(6px);
+      }
+      .mark {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 38%;
+        margin: 0;
+        text-align: center;
+        font-size: calc(var(--u) * 168);
+        color: #fffaf2;
+        text-shadow: 0 calc(var(--u) * 10) calc(var(--u) * 60) rgba(20, 40, 100, 0.55);
+      }
+      .mark-sub {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(38% + var(--u) * 210);
+        margin: 0;
+        text-align: center;
+        font-size: calc(var(--u) * 30);
+        font-weight: 450;
+        letter-spacing: 0.04em;
+        color: #fffaf2;
+        text-shadow: 0 0 calc(var(--u) * 18) rgba(20, 40, 90, 0.55);
       }
     </style>
   </head>
@@ -91,484 +118,720 @@
       (function () {
         "use strict";
         var D = window.SpecWithCodeDeck;
-
-        // Headlines that swap per beat: the outgoing line sinks while the next one rises.
-        function headlines(ctx, s, ids) {
-          ids.forEach(function (id, k) {
-            var node = ctx.$(id);
-            var shown =
-              s.win(k, 0, 1.1, "outQuart") *
-              (k + 1 < ids.length ? 1 - s.win(k + 1, 0, 0.35, "inQuad") : 1);
-            node.style.opacity = shown > 0.001 ? "1" : "0";
-            ctx.rise(node, shown, { stagger: 0.3 });
+        var ease = D.ease;
+        var V3 = function (x, y, z) {
+          return new THREE.Vector3(x, y, z);
+        };
+        function camera() {
+          return new THREE.PerspectiveCamera(38, 16 / 9, 0.5, 9000);
+        }
+        // Eases a camera between keyframes: position and look-at, each [x, y, z].
+        function pose(cam, from, to, k, look0, look1, drift, s) {
+          var p = V3(from[0], from[1], from[2]).lerp(V3(to[0], to[1], to[2]), k);
+          var l = V3(look0[0], look0[1], look0[2]).lerp(V3(look1[0], look1[1], look1[2]), k);
+          var t = s.time;
+          p.x += Math.sin(t * 0.13) * drift + s.mouse.x * drift * 1.5;
+          p.y += Math.sin(t * 0.21) * drift * 0.4 + s.mouse.y * drift * 0.6;
+          cam.position.copy(p);
+          cam.lookAt(l);
+        }
+        // A headline and its line underneath, swapped per beat: the outgoing pair leaves upward.
+        function lines(ctx, s, pairs, style, endBeat) {
+          pairs.forEach(function (pair, k) {
+            var head = ctx.$(pair[0]),
+              sub = ctx.$(pair[1]);
+            var inP = s.win(k, 0.2, 1.7);
+            var leave = k + 1 < pairs.length ? k + 1 : endBeat;
+            var out = leave === undefined ? 0 : s.win(leave, 0, 0.6, "inQuad");
+            head.style.visibility = inP > 0 && out < 1 ? "visible" : "hidden";
+            sub.style.visibility = head.style.visibility;
+            ctx.type(head, inP, { style: style, out: out, stagger: 0.45 });
+            ctx.type(sub, s.win(k, 0.9, 2.2), { style: "blur", out: out, stagger: 0.25 });
           });
         }
+        function kicker(n, word) {
+          return '<div class="scrim"></div><div class="kicker"><b>' + n + "</b>" + word + "</div>";
+        }
 
-        // ------------------------------------------------------------------ 1. constellation
-        var constellation = {
+        // ------------------------------------------------------------------ 1. plan: dawn
+        var plan = {
           id: "plan",
-          title: "Constellation",
-          transition: "iris",
+          title: "Plan",
           bed: { notes: [50, 57, 62, 69], color: "air", level: 0.14 },
           post: function (s) {
             return {
-              bloom: 1.25 + s.win(2, 0, 2.5) * 0.6,
-              threshold: 0.75,
-              vignette: 0.42,
-              grain: 0.035,
-              exposure: 1.05,
-              lift: [0.004, 0.006, 0.014],
+              tone: "agx",
+              exposure: 1.15,
+              bloom: 0.8,
+              threshold: 0.9,
+              halation: 0.35,
+              vignette: 0.36,
+              grain: 0.03,
+              contrast: 1.12,
+              saturation: 1.15,
+              shadows: [0.0, 0.012, 0.03],
+              highlights: [0.03, 0.012, -0.01],
             };
           },
           beats: [
-            { dur: 2.6, notes: "Open on noise. Thousands of points, each a loose idea." },
-            { dur: 3.2, notes: "The plan pulls them into one shape." },
-            { dur: 3.0, notes: "The shape turns, and starts to move." },
-          ],
-          html:
-            '<div class="kicker"><b>01</b>Plan</div>' +
-            '<div class="stack"><h1 class="head" id="h0">Every project starts as noise.</h1>' +
-            '<h1 class="head" id="h1">A plan gives it a shape.</h1>' +
-            '<h1 class="head" id="h2">Then the work starts to move.</h1></div>',
-          create: function (ctx) {
-            var THREE = ctx.THREE,
-              R = ctx.rng(7),
-              N = 14000;
-            var scene = new THREE.Scene();
-            scene.background = new THREE.Color(0.003, 0.004, 0.011);
-            var camera = new THREE.PerspectiveCamera(38, 16 / 9, 0.1, 200);
-            var start = new Float32Array(N * 3),
-              target = new Float32Array(N * 3),
-              seed = new Float32Array(N);
-            for (var i = 0; i < N; i++) {
-              // Start: a wide, flat drift of points.
-              var u = R() * Math.PI * 2,
-                r0 = Math.pow(R(), 0.5) * 14;
-              start[i * 3] = Math.cos(u) * r0;
-              start[i * 3 + 1] = (R() - 0.5) * 8;
-              start[i * 3 + 2] = Math.sin(u) * r0 - 4;
-              // Target: a four-armed spiral with a bright core.
-              var arm = i % 4,
-                t = Math.pow(R(), 0.7),
-                a = (arm * Math.PI) / 2 + t * 5.2 + ((R() - 0.5) * 0.5) / (0.3 + t);
-              var rad = 0.25 + t * 5.4,
-                spread = 0.12 + t * 0.35;
-              target[i * 3] = Math.cos(a) * rad + (R() - 0.5) * spread;
-              target[i * 3 + 1] = (R() - 0.5) * (0.5 - t * 0.35);
-              target[i * 3 + 2] = Math.sin(a) * rad + (R() - 0.5) * spread;
-              seed[i] = R();
-            }
-            var g = new THREE.BufferGeometry();
-            g.setAttribute("position", new THREE.BufferAttribute(start, 3));
-            g.setAttribute("aTarget", new THREE.BufferAttribute(target, 3));
-            g.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
-            var mat = new THREE.ShaderMaterial({
-              uniforms: {
-                uMorph: { value: 0 },
-                uTime: { value: 0 },
-                uScale: { value: 1 },
-                uBright: { value: 1 },
-                uSpin: { value: 0 },
-              },
-              vertexShader:
-                ctx.glsl.hash +
-                "attribute vec3 aTarget;attribute float aSeed;uniform float uMorph,uTime,uScale,uSpin;varying vec3 vColor;varying float vSeed;" +
-                "void main(){float m=smoothstep(aSeed*0.45,0.55+aSeed*0.45,uMorph);vec3 p=mix(position,aTarget,m);" +
-                "p+=vec3(sin(uTime*0.4+aSeed*40.0),cos(uTime*0.33+aSeed*17.0),sin(uTime*0.27+aSeed*9.0))*0.06*(1.0-m*0.6);" +
-                "float a=uSpin*(0.4+0.6/(0.6+length(p.xz)));float c=cos(a),s=sin(a);p.xz=mat2(c,-s,s,c)*p.xz;" +
-                "vec4 mv=modelViewMatrix*vec4(p,1.0);gl_Position=projectionMatrix*mv;" +
-                "float tw=0.65+0.35*sin(uTime*(1.0+aSeed*3.0)+aSeed*60.0);gl_PointSize=uScale*(1.6+aSeed*aSeed*5.0)*tw*(9.0/-mv.z);" +
-                "float core=1.0-smoothstep(0.0,2.2,length(aTarget.xz))*m;" +
-                "vColor=mix(vec3(0.55,0.72,1.25),vec3(1.6,1.05,0.55),core*0.8+aSeed*0.25)*(0.6+core*2.4);vSeed=aSeed;}",
-              fragmentShader:
-                "uniform float uBright;varying vec3 vColor;varying float vSeed;void main(){vec2 q=gl_PointCoord-0.5;float d=dot(q,q);" +
-                "float a=exp(-d*26.0)+exp(-d*180.0)*1.5;gl_FragColor=vec4(vColor*a*uBright,1.0);}",
-              transparent: true,
-              depthWrite: false,
-              blending: THREE.AdditiveBlending,
-            });
-            var points = new THREE.Points(g, mat);
-            points.frustumCulled = false;
-            scene.add(points);
-            // A faint dust layer far behind, for depth.
-            var dust = new Float32Array(3000 * 3);
-            for (var j = 0; j < 3000; j++) {
-              dust[j * 3] = (R() - 0.5) * 90;
-              dust[j * 3 + 1] = (R() - 0.5) * 50;
-              dust[j * 3 + 2] = -30 - R() * 40;
-            }
-            var dg = new THREE.BufferGeometry();
-            dg.setAttribute("position", new THREE.BufferAttribute(dust, 3));
-            scene.add(
-              new THREE.Points(
-                dg,
-                new THREE.PointsMaterial({
-                  color: new THREE.Color(0.35, 0.42, 0.6),
-                  size: 0.09,
-                  sizeAttenuation: true,
-                  depthWrite: false,
-                }),
-              ),
-            );
-            return {
-              scene: scene,
-              camera: camera,
-              beat: function (k) {
-                if (k > 0) ctx.audio.hit("chime", { note: [69, 74, 76][k], gain: 0.28, verb: 0.8 });
-                if (k === 1) ctx.audio.hit("rise", { gain: 0.12, dur: 2.4, note: 62 });
-              },
-              update: function (s) {
-                var morph = s.win(1, 0, 3.0, "inOutCubic");
-                mat.uniforms.uMorph.value = morph;
-                mat.uniforms.uTime.value = s.time;
-                mat.uniforms.uScale.value =
-                  (ctx.renderer.getDrawingBufferSize(new THREE.Vector2()).y / 1080) * 2.2;
-                mat.uniforms.uSpin.value =
-                  s.time * 0.05 +
-                  s.win(2, 0, 3.0, "inOutSine") * 1.2 +
-                  s.win(2, 0, 30, "linear") * 4;
-                mat.uniforms.uBright.value =
-                  0.55 +
-                  s.win(0, 0, 2.0, "outCubic") * 0.45 +
-                  s.win(2, 0.2, 1.8, "outCubic") * 0.35;
-                var push = s.win(2, 0, 3.0, "inOutCubic");
-                var dolly = 18 - morph * 3.5 - push * 4.5 + (1 - s.enter) * 6;
-                var tilt = 0.42 + morph * 0.28 - push * 0.32;
-                camera.position.set(
-                  Math.sin(s.mouse.x * 0.08) * dolly * 0.2,
-                  Math.sin(tilt) * dolly + s.mouse.y * 0.3,
-                  Math.cos(tilt) * dolly,
-                );
-                camera.lookAt(push * 0.6, -push * 0.2, 0);
-                headlines(ctx, s, ["#h0", "#h1", "#h2"]);
-              },
-            };
-          },
-        };
-
-        // ------------------------------------------------------------------ 2. task grid
-        var grid = {
-          id: "tasks",
-          title: "Task grid",
-          transition: "wipe",
-          bed: { notes: [52, 59, 64, 71], color: "glass", level: 0.13 },
-          post: {
-            bloom: 0.95,
-            threshold: 0.85,
-            vignette: 0.38,
-            grain: 0.03,
-            exposure: 1.0,
-            lift: [0.004, 0.005, 0.01],
-          },
-          beats: [
-            { dur: 2.2, notes: "A grid of tasks rises, one tile each." },
             {
-              dur: 5.5,
-              notes: "Agents pick them up. Amber is running, teal is done; the counter rolls.",
+              dur: 4,
+              notes:
+                "Every run starts from a plan: one spec with the goal, the tasks and the checks.",
             },
-            { dur: 2.6, notes: "Everything lands. The camera settles over the finished board." },
+            { dur: 4, notes: "The spec breaks into tasks, each small enough for one agent." },
+            { dur: 4, notes: "Nothing starts until the plan is clear." },
           ],
           html:
-            '<div class="kicker"><b>02</b>Do</div>' +
-            '<div class="count"><span class="n" id="odo"></span><span class="l">tasks finished</span></div>' +
-            '<div class="stack"><h1 class="head" id="g0">Each task is one small, checkable step.</h1>' +
-            '<h1 class="head" id="g1">Agents pick them up while you sleep.</h1>' +
-            '<h1 class="head" id="g2">You wake up to a finished board.</h1></div>',
+            '<div style="--accent:#ffcf9a">' +
+            kicker("01", "Plan") +
+            '<h1 class="head swc-display" id="h1">Start with a plan.</h1><p class="sub" id="s1">One spec holds the goal, the tasks and the checks.</p>' +
+            '<h1 class="head swc-display" id="h2">It splits into tasks.</h1><p class="sub" id="s2">Each one small enough for a single agent to finish.</p>' +
+            '<h1 class="head swc-display" id="h3">Then the work begins.</h1><p class="sub" id="s3">Every agent reads the same plan.</p></div>',
           create: function (ctx) {
-            var THREE = ctx.THREE,
-              R = ctx.rng(11),
-              COLS = 32,
-              ROWS = 18,
-              N = COLS * ROWS;
             var scene = new THREE.Scene();
-            scene.background = new THREE.Color(0.004, 0.005, 0.01);
-            var camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.1, 200);
-            var geo = new THREE.BoxGeometry(0.86, 0.16, 0.86);
-            var rank = new Float32Array(N),
-              cell = new Float32Array(N * 2);
-            var m4 = new THREE.Matrix4();
-            for (var i = 0; i < N; i++) {
-              var cx = (i % COLS) - (COLS - 1) / 2,
-                cz = Math.floor(i / COLS) - (ROWS - 1) / 2;
-              // Work flows roughly left to right, with some tasks finishing out of order.
-              rank[i] = Math.min(0.999, Math.max(0, ((i % COLS) / COLS) * 0.7 + R() * 0.3));
-              cell[i * 2] = cx;
-              cell[i * 2 + 1] = cz;
-            }
-            geo.setAttribute("aRank", new THREE.InstancedBufferAttribute(rank, 1));
-            geo.setAttribute("aCell", new THREE.InstancedBufferAttribute(cell, 2));
-            var mat = new THREE.ShaderMaterial({
-              uniforms: {
-                uRise: { value: 0 },
-                uDone: { value: 0 },
-                uTime: { value: 0 },
-                uSettle: { value: 0 },
-              },
-              vertexShader:
-                "attribute float aRank;attribute vec2 aCell;uniform float uRise,uDone,uTime,uSettle;varying vec3 vN;varying float vState,vTop,vRun;varying vec2 vUv;" +
-                "void main(){float d=length(aCell*vec2(0.6,1.0))/18.0;float r=clamp(uRise*1.8-d*1.3,0.0,1.0);r=1.0-pow(1.0-r,3.0);" +
-                "float done=step(aRank,uDone);float run=(1.0-done)*step(aRank,uDone+0.07);" +
-                "vec3 p=position;p.y*=1.0+done*1.2+run*(2.4+sin(uTime*7.0+aRank*90.0)*0.8);" +
-                "vec4 w=instanceMatrix*vec4(p,1.0);w.y+=(r-1.0)*3.5+done*0.12*(1.0-uSettle)+run*0.25;w.xz*=mix(1.12,1.0,r);" +
-                "vN=normal;vTop=step(0.5,normal.y);vState=done;vRun=run;vUv=position.xz/0.86+0.5;gl_Position=projectionMatrix*viewMatrix*w;}",
-              fragmentShader:
-                "uniform float uTime;varying vec3 vN;varying float vState,vTop,vRun;varying vec2 vUv;void main(){" +
-                "float l=0.35+0.65*max(dot(normalize(vN),normalize(vec3(0.4,1.0,0.3))),0.0);" +
-                "vec3 base=vec3(0.035,0.042,0.06)*l;vec2 e=min(vUv,1.0-vUv);float edge=1.0-smoothstep(0.0,0.07,min(e.x,e.y));" +
-                "base+=vec3(0.07,0.09,0.14)*edge*vTop;" +
-                "vec3 done=vec3(0.03,0.26,0.21)*(0.45+0.55*l)+vec3(0.35,1.9,1.45)*edge*vTop;" +
-                "vec3 run=vec3(1.9,0.95,0.22)*(0.7+0.3*sin(uTime*9.0))*(0.5+0.5*l);" +
-                "gl_FragColor=vec4(mix(mix(base,done,vState),run,vRun),1.0);}",
+            var cam = camera();
+            var world = ctx.world(scene, {
+              sun: [0.25, 0.07, -1],
+              sunColor: [4.2, 2.5, 1.5],
+              zenith: [0.1, 0.2, 0.42],
+              horizon: [1.05, 0.62, 0.45],
+              ground: [0.2, 0.14, 0.14],
+              fog: [0.8, 0.5, 0.42],
+              fogDensity: 0.00045,
+              fogHeight: 0.008,
             });
-            var mesh = new THREE.InstancedMesh(geo, mat, N);
-            for (var k = 0; k < N; k++) {
-              m4.makeTranslation(cell[k * 2], 0, cell[k * 2 + 1]);
-              mesh.setMatrixAt(k, m4);
-            }
-            mesh.frustumCulled = false;
-            scene.add(mesh);
-            var odo = ctx.odometer(ctx.$("#odo"));
-            var lastDone = 0;
+            world.sky({
+              clouds: 0.55,
+              cloudColor: [1.7, 1.2, 1.0],
+              cloudShade: [0.45, 0.36, 0.42],
+              sunSize: 0.0009,
+            });
+            world.terrain({
+              height: 260,
+              scale: 0.0024,
+              ridge: 0.75,
+              valley: 1,
+              valleyWidth: 90,
+              size: 5200,
+              segments: 380,
+              low: [0.2, 0.15, 0.13],
+              high: [0.42, 0.33, 0.3],
+              rock: [0.3, 0.24, 0.24],
+              snow: [1.0, 0.95, 0.94],
+              snowLine: 0.62,
+              plateau: { center: [0, -330], radius: 300, blend: 260, height: -24 },
+            });
+            world.water({ level: -60, color: [0.02, 0.04, 0.06] });
+            var spec = world.slab({
+              position: [0, -24, -600],
+              size: [120, 170, 6],
+              color: [1.0, 0.93, 0.82],
+              glow: 2.2,
+              seed: 0.42,
+              rows: 22,
+            });
+            var tasks = world.field({
+              cols: 64,
+              rows: 44,
+              spacing: 7,
+              jitter: 0.04,
+              center: [0, -330],
+              focus: [0, -600],
+              tile: [4.4, 2.8],
+              block: 9,
+              street: 1,
+              density: 0.92,
+              reach: 0,
+              soft: 30,
+              color: [1.0, 0.9, 0.75],
+              colorB: [1.0, 0.65, 0.35],
+              glow: 2.4,
+            });
+            world.motes({
+              count: 900,
+              center: [0, 30, -250],
+              box: [700, 160, 600],
+              color: [1.0, 0.8, 0.6],
+              size: 2.4,
+              glow: 1.6,
+            });
             return {
               scene: scene,
-              camera: camera,
+              camera: cam,
               beat: function (k) {
-                if (k === 2) ctx.audio.hit("chime", { note: 76, gain: 0.3, verb: 0.9 });
-                if (k === 0) ctx.audio.hit("boom", { gain: 0.18 });
+                if (k === 1) ctx.audio.hit("chime", { note: 74, gain: 0.18, verb: 0.8 });
+                if (k === 2) ctx.audio.hit("rise", { gain: 0.08, dur: 2.4, note: 62 });
               },
               update: function (s) {
-                var rise = s.win(0, 0, 2.0, "linear");
-                var done =
-                  s.win(1, 0, 5.2, "inOutQuad") * 0.93 + s.win(2, 0, 1.4, "outCubic") * 0.08;
-                var settle = s.win(2, 0, 2.4, "inOutCubic");
-                mat.uniforms.uRise.value = rise;
-                mat.uniforms.uDone.value = done;
-                mat.uniforms.uTime.value = s.time;
-                mat.uniforms.uSettle.value = settle;
-                var count = Math.round(1284 * Math.min(1, done));
-                odo.set(count);
-                if (count - lastDone >= 24) {
-                  ctx.audio.hit("tick", { gain: 0.08, pan: Math.random() * 1.2 - 0.6 });
-                  lastDone = count;
-                }
-                if (count < lastDone) lastDone = count;
-                ctx.$(".count").style.opacity = String(s.win(1, 0, 0.6));
-                var orbit =
-                  -0.5 + s.win(1, 0, 5.5, "inOutSine") * 0.45 + settle * 0.05 + s.mouse.x * 0.04;
-                var height = 15 - settle * 5 + (1 - s.enter) * 4,
-                  dist = 22 - settle * 4;
-                camera.position.set(
-                  Math.sin(orbit) * dist,
-                  height + s.mouse.y * 0.4,
-                  Math.cos(orbit) * dist,
+                lines(
+                  ctx,
+                  s,
+                  [
+                    ["#h1", "#s1"],
+                    ["#h2", "#s2"],
+                    ["#h3", "#s3"],
+                  ],
+                  "rise",
                 );
-                camera.lookAt(-3.5 + settle * 1.5, -3.2 + settle * 1.6, 2.5 - settle * 1.5);
-                headlines(ctx, s, ["#g0", "#g1", "#g2"]);
+                var k = ease.inOutSine(
+                  Math.min(
+                    1,
+                    (s.win(0, 0, 4, "linear") +
+                      s.win(1, 0, 4, "linear") +
+                      s.win(2, 0, 4, "linear")) /
+                      3,
+                  ),
+                );
+                pose(cam, [40, 30, 140], [-50, 110, 40], k, [0, 70, -600], [0, 10, -460], 2, s);
+                spec.set({
+                  progress: s.win(0, 0.5, 3.5, "inOutSine") * 0.4 + s.win(1, 0, 3.5) * 0.6,
+                });
+                tasks.set({
+                  reach: s.win(1, 0.2, 3.8, "inOutQuad") * 240 + s.win(2, 0, 3, "outCubic") * 260,
+                });
               },
             };
           },
         };
 
-        // ------------------------------------------------------------------ 3. linked nodes
-        var network = {
-          id: "handoff",
-          title: "Linked machines",
-          transition: "fade",
-          bed: { notes: [45, 52, 57, 64, 69], color: "warm", level: 0.15 },
+        // ------------------------------------------------------------------ 2. agents: night city
+        var agents = {
+          id: "agents",
+          title: "Agents in parallel",
+          transition: "portal",
+          bed: { notes: [45, 52, 57, 64], color: "warm", level: 0.13 },
           post: function (s) {
             return {
-              bloom: 1.15,
-              threshold: 0.8,
+              tone: "aces",
+              exposure: 1.05,
+              bloom: 0.9 + s.win(1, 0, 3) * 0.35,
+              threshold: 0.7,
+              halation: 0.45,
               vignette: 0.4,
-              grain: 0.032,
+              grain: 0.03,
+              contrast: 1.05,
+              saturation: 1.1,
+              shadows: [0.0, 0.01, 0.035],
               ca: 0.5,
-              exposure: 1.0 + s.win(2, 1.5, 3.0) * 0.15,
-              lift: [0.006, 0.004, 0.012],
             };
           },
           beats: [
-            { dur: 2.2, notes: "Machines appear: a laptop, a desktop, a server." },
-            { dur: 2.4, notes: "They link up." },
-            { dur: 4.0, notes: "Work travels between them as pulses. Close: one line." },
+            { dur: 4, notes: "SpecWithCode hands each task to its own agent." },
+            { dur: 5, notes: "They run side by side, each in its own worktree." },
+            { dur: 4, notes: "The board fills while you are away." },
           ],
           html:
-            '<div class="kicker"><b>03</b>Hand off</div>' +
-            '<div class="stack"><h1 class="head" id="n0">Your machines, one workspace.</h1>' +
-            '<h1 class="head" id="n1">Linked, so work can move.</h1>' +
-            '<h1 class="head" id="n2">Hand off. Pick up. Keep going.</h1>' +
-            '<p class="sub" id="nsub">An original SpecWithCode stage page, made with specwithcode:three and specwithcode:motion-deck.</p></div>',
+            '<div style="--accent:#ffc27a">' +
+            kicker("02", "Run") +
+            '<div class="count"><span class="n" id="n"></span><span class="l">tasks finished</span></div>' +
+            '<h1 class="head swc-display" id="h1">One agent per task.</h1><p class="sub" id="s1">Claude, Codex, Copilot and Gemini, on the subscriptions you already pay for.</p>' +
+            '<h1 class="head swc-display" id="h2">All of them at once.</h1><p class="sub" id="s2">Each in its own worktree, so nobody steps on anybody.</p>' +
+            '<h1 class="head swc-display" id="h3">The board fills overnight.</h1><p class="sub" id="s3">You wake up to finished work, not a blinking cursor.</p></div>',
           create: function (ctx) {
-            var THREE = ctx.THREE,
-              R = ctx.rng(23);
             var scene = new THREE.Scene();
-            scene.background = new THREE.Color(0.006, 0.004, 0.01);
-            var camera = new THREE.PerspectiveCamera(36, 16 / 9, 0.1, 200);
-            var nodes = [];
-            for (var i = 0; i < 11; i++) {
-              var a = (i / 11) * Math.PI * 2 + R() * 0.4,
-                r = i === 0 ? 0 : 3.2 + R() * 2.6;
-              nodes.push(
-                new THREE.Vector3(Math.cos(a) * r * 1.35, (R() - 0.5) * 2.4, Math.sin(a) * r * 0.8),
-              );
-            }
-            var edges = [];
-            for (var e = 1; e < nodes.length; e++) {
-              edges.push([0, e]);
-              if (R() > 0.35) edges.push([e, (e % (nodes.length - 1)) + 1]);
-            }
-            // Nodes: bright cores with a soft halo sprite.
-            var coreGeo = new THREE.IcosahedronGeometry(0.16, 2);
-            var cores = nodes.map(function (p, k) {
-              var m = new THREE.Mesh(
-                coreGeo,
-                new THREE.MeshBasicMaterial({
-                  color: k === 0 ? new THREE.Color(3.2, 2.2, 1.1) : new THREE.Color(1.1, 1.6, 3.0),
-                }),
-              );
-              m.position.copy(p);
-              scene.add(m);
-              return m;
+            var cam = camera();
+            var world = ctx.world(scene, {
+              sun: [-0.15, 0.03, -1],
+              sunColor: [1.8, 0.75, 0.4],
+              zenith: [0.008, 0.014, 0.045],
+              horizon: [0.34, 0.16, 0.15],
+              ground: [0.02, 0.02, 0.03],
+              fog: [0.14, 0.08, 0.09],
+              fogDensity: 0.0008,
+              fogHeight: 0.02,
             });
-            var haloPos = new Float32Array(nodes.length * 3);
-            nodes.forEach(function (p, k) {
-              p.toArray(haloPos, k * 3);
+            world.sky({
+              clouds: 0.35,
+              cloudColor: [0.5, 0.3, 0.3],
+              cloudShade: [0.05, 0.05, 0.08],
+              stars: 1,
             });
-            var haloGeo = new THREE.BufferGeometry();
-            haloGeo.setAttribute("position", new THREE.BufferAttribute(haloPos, 3));
-            var glow = {
-              uniforms: {
-                uScale: { value: 1 },
-                uSize: { value: 60 },
-                uAlpha: { value: 0 },
-                uColor: { value: new THREE.Color(0.5, 0.7, 1.4) },
-              },
-              vertexShader:
-                "uniform float uScale,uSize;void main(){vec4 mv=modelViewMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mv;gl_PointSize=uSize*uScale*(10.0/-mv.z);}",
-              fragmentShader:
-                "uniform float uAlpha;uniform vec3 uColor;void main(){vec2 q=gl_PointCoord-0.5;float d=dot(q,q);gl_FragColor=vec4(uColor*(exp(-d*14.0)*0.6+exp(-d*90.0))*uAlpha,1.0);}",
-              transparent: true,
-              depthWrite: false,
-              blending: THREE.AdditiveBlending,
-            };
-            var haloMat = new THREE.ShaderMaterial(glow);
-            var halos = new THREE.Points(haloGeo, haloMat);
-            halos.frustumCulled = false;
-            scene.add(halos);
-            // Links: each segment carries its own 0..1 along-edge value, so it can draw in.
-            var linkPos = new Float32Array(edges.length * 6),
-              linkT = new Float32Array(edges.length * 2),
-              linkSeed = new Float32Array(edges.length * 2);
-            edges.forEach(function (pair, k) {
-              nodes[pair[0]].toArray(linkPos, k * 6);
-              nodes[pair[1]].toArray(linkPos, k * 6 + 3);
-              linkT[k * 2] = 0;
-              linkT[k * 2 + 1] = 1;
-              linkSeed[k * 2] = linkSeed[k * 2 + 1] = k / edges.length;
+            world.terrain({
+              height: 110,
+              scale: 0.0026,
+              ridge: 0.45,
+              valley: 1,
+              valleyWidth: 26,
+              size: 5200,
+              segments: 380,
+              low: [0.05, 0.045, 0.045],
+              high: [0.09, 0.08, 0.08],
+              rock: [0.07, 0.065, 0.065],
+              snow: [0.4, 0.42, 0.5],
+              ambient: 0.6,
             });
-            var linkGeo = new THREE.BufferGeometry();
-            linkGeo.setAttribute("position", new THREE.BufferAttribute(linkPos, 3));
-            linkGeo.setAttribute("aT", new THREE.BufferAttribute(linkT, 1));
-            linkGeo.setAttribute("aSeed", new THREE.BufferAttribute(linkSeed, 1));
-            var linkMat = new THREE.ShaderMaterial({
-              uniforms: { uDraw: { value: 0 } },
-              vertexShader:
-                "attribute float aT,aSeed;varying float vT,vSeed;void main(){vT=aT;vSeed=aSeed;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}",
-              fragmentShader:
-                "uniform float uDraw;varying float vT,vSeed;void main(){float d=clamp(uDraw*1.6-vSeed*0.6,0.0,1.0);if(vT>d)discard;gl_FragColor=vec4(vec3(0.35,0.5,0.95)*(0.6+1.4*smoothstep(d-0.08,d,vT)),1.0);}",
-              transparent: true,
-              depthWrite: false,
-              blending: THREE.AdditiveBlending,
+            world.water({ level: -22, color: [0.004, 0.006, 0.01], glint: 0.6 });
+            var city = world.field({
+              cols: 190,
+              rows: 190,
+              spacing: 3.4,
+              center: [0, -260],
+              focus: [0, -40],
+              tile: [1.7, 1.05],
+              density: 0.82,
+              block: 14,
+              minHeight: -19,
+              on: 0,
+              soft: 30,
+              color: [1.0, 0.93, 0.82],
+              colorB: [1.0, 0.62, 0.3],
+              mixB: 0.18,
+              glow: 2.6,
             });
-            scene.add(new THREE.LineSegments(linkGeo, linkMat));
-            // Pulses: bright points that run along random links.
-            var P = 90,
-              pulsePos = new Float32Array(P * 3),
-              pulses = [];
-            for (var q = 0; q < P; q++)
-              pulses.push({
-                edge: Math.floor(R() * edges.length),
-                t: R(),
-                speed: 0.25 + R() * 0.5,
-                dir: R() > 0.5 ? 1 : -1,
-              });
-            var pulseGeo = new THREE.BufferGeometry();
-            pulseGeo.setAttribute("position", new THREE.BufferAttribute(pulsePos, 3));
-            var pulseMat = new THREE.ShaderMaterial(
-              Object.assign({}, glow, {
-                uniforms: {
-                  uScale: { value: 1 },
-                  uSize: { value: 16 },
-                  uAlpha: { value: 0 },
-                  uColor: { value: new THREE.Color(2.6, 1.7, 0.8) },
-                },
-              }),
-            );
-            var pulsePoints = new THREE.Points(pulseGeo, pulseMat);
-            pulsePoints.frustumCulled = false;
-            scene.add(pulsePoints);
-            var tmp = new THREE.Vector3(),
-              lastPop = 0;
+            world.motes({
+              count: 1200,
+              center: [0, 20, -200],
+              box: [700, 80, 700],
+              color: [1.0, 0.75, 0.45],
+              size: 1.6,
+              glow: 1.4,
+            });
+            var counter = ctx.odometer(ctx.$("#n"));
             return {
               scene: scene,
-              camera: camera,
+              camera: cam,
               beat: function (k) {
-                if (k === 1) ctx.audio.hit("whoosh", { gain: 0.18, dur: 1.4 });
-                if (k === 2) {
-                  ctx.audio.chord([45, 52, 59, 64, 71], 1.2);
-                  ctx.audio.hit("chime", { note: 81, gain: 0.25, verb: 0.9 });
-                }
+                if (k === 1) ctx.audio.hit("rise", { gain: 0.08, dur: 3, note: 57 });
               },
               update: function (s) {
-                var scale = ctx.renderer.getDrawingBufferSize(new THREE.Vector2()).y / 1080;
-                var appear = s.win(0, 0, 1.8, "outBack");
-                cores.forEach(function (m, k) {
-                  var a = ctx.clamp01(appear * 1.4 - k * 0.04);
-                  m.scale.setScalar(Math.max(0.001, a));
-                });
-                haloMat.uniforms.uScale.value = scale;
-                haloMat.uniforms.uAlpha.value = s.win(0, 0.2, 1.8, "outCubic");
-                linkMat.uniforms.uDraw.value = s.win(1, 0, 2.0, "inOutCubic");
-                var flow = s.win(2, 0, 1.0, "outCubic");
-                pulseMat.uniforms.uScale.value = scale;
-                pulseMat.uniforms.uAlpha.value = flow;
-                pulses.forEach(function (p, k) {
-                  p.t += s.dt * p.speed * (0.5 + flow);
-                  if (p.t > 1) {
-                    p.t -= 1;
-                    p.edge = Math.floor(Math.random() * edges.length);
-                    if (flow > 0.5 && s.time - lastPop > 0.12) {
-                      ctx.audio.hit("pop", {
-                        gain: 0.06,
-                        note: 79 + (k % 5) * 2,
-                        pan: Math.random() - 0.5,
-                        verb: 0.6,
-                      });
-                      lastPop = s.time;
-                    }
-                  }
-                  var pair = edges[p.edge],
-                    t = p.dir > 0 ? p.t : 1 - p.t;
-                  tmp.lerpVectors(nodes[pair[0]], nodes[pair[1]], t).toArray(pulsePos, k * 3);
-                });
-                pulseGeo.attributes.position.needsUpdate = true;
-                var orbit = s.time * 0.06 + s.mouse.x * 0.1,
-                  close = s.win(2, 1.5, 4.0, "inOutCubic");
-                var dist = 17 - close * 3 + (1 - s.enter) * 5;
-                camera.position.set(
-                  Math.sin(orbit) * dist,
-                  5.5 - close * 2 + s.mouse.y * 0.4,
-                  Math.cos(orbit) * dist,
+                lines(
+                  ctx,
+                  s,
+                  [
+                    ["#h1", "#s1"],
+                    ["#h2", "#s2"],
+                    ["#h3", "#s3"],
+                  ],
+                  "blur",
                 );
-                camera.lookAt(-2.6 + close * 0.8, -1.4 - close * 0.4, 0);
-                headlines(ctx, s, ["#n0", "#n1", "#n2"]);
-                var sub = ctx.$("#nsub");
-                sub.style.opacity = String(s.win(2, 1.6, 2.6, "outCubic"));
+                var lit =
+                  6 +
+                  s.win(0, 0.6, 3.6, "inQuad") * 40 +
+                  s.win(1, 0, 4.5, "inOutQuad") * 300 +
+                  s.win(2, 0, 3.5, "outCubic") * 520;
+                city.set({ on: lit });
+                counter.set(
+                  Math.round(
+                    3 +
+                      s.win(0, 0.6, 4) * 9 +
+                      s.win(1, 0, 5, "inQuad") * 880 +
+                      s.win(2, 0, 4, "outCubic") * 3150,
+                  ),
+                );
+                var k =
+                  s.win(0, 0, 4, "inOutSine") * 0.2 +
+                  s.win(1, 0, 5, "inOutSine") * 0.45 +
+                  s.win(2, 0, 4, "inOutSine") * 0.35;
+                pose(cam, [6, 8, 30], [30, 190, 330], k, [0, 0, -40], [0, -10, -330], 1.5, s);
               },
             };
           },
         };
 
-        D.start({ title: "Work that keeps going", scenes: [constellation, grid, network] });
+        // ------------------------------------------------------------------ 3. hand off: twilight sea
+        var handoff = {
+          id: "handoff",
+          title: "Hand off",
+          transition: "wash",
+          bed: { notes: [47, 54, 59, 66], color: "glass", level: 0.12 },
+          post: function (s) {
+            return {
+              tone: "agx",
+              exposure: 1.2,
+              bloom: 0.9,
+              threshold: 0.75,
+              halation: 0.4,
+              vignette: 0.36,
+              grain: 0.032,
+              contrast: 1.08,
+              saturation: 1.18,
+              shadows: [0.02, 0.0, 0.04],
+              highlights: [0.02, 0.0, 0.02],
+            };
+          },
+          beats: [
+            { dur: 4, notes: "A machine runs out of tokens, or you close the lid." },
+            { dur: 5, notes: "The thread moves to another machine with its history and worktree." },
+            { dur: 4, notes: "It carries on from the same line." },
+          ],
+          html:
+            '<div style="--accent:#f3a8ff">' +
+            kicker("03", "Hand off") +
+            '<div class="tag" id="ta" style="left:calc(var(--u)*300);top:calc(var(--u)*300)">MacBook · out of tokens</div>' +
+            '<div class="tag" id="tb" style="right:calc(var(--u)*260);top:calc(var(--u)*270)">Mac Studio · picks up</div>' +
+            '<h1 class="head swc-display" id="h1">Close the lid.</h1><p class="sub" id="s1">Or run out of tokens halfway through a task.</p>' +
+            '<h1 class="head swc-display" id="h2">The work moves on.</h1><p class="sub" id="s2">The thread, its history and its worktree go to your next machine.</p>' +
+            '<h1 class="head swc-display" id="h3">Same line, new machine.</h1><p class="sub" id="s3">Nothing to copy, nothing to explain twice.</p></div>',
+          create: function (ctx) {
+            var scene = new THREE.Scene();
+            var cam = camera();
+            var world = ctx.world(scene, {
+              sun: [0.05, 0.04, -1],
+              sunColor: [2.6, 1.1, 1.5],
+              zenith: [0.025, 0.02, 0.1],
+              horizon: [0.7, 0.28, 0.42],
+              ground: [0.05, 0.03, 0.07],
+              fog: [0.42, 0.2, 0.32],
+              fogDensity: 0.00045,
+              fogHeight: 0.03,
+            });
+            world.sky({
+              clouds: 0.7,
+              cloudScale: 0.9,
+              cloudColor: [1.4, 0.8, 1.1],
+              cloudShade: [0.25, 0.14, 0.3],
+              stars: 0.4,
+            });
+            world.terrain({
+              height: 150,
+              scale: 0.004,
+              ridge: 0.8,
+              base: -70,
+              size: 5200,
+              segments: 320,
+              seed: 31,
+              low: [0.08, 0.06, 0.09],
+              high: [0.2, 0.14, 0.2],
+              rock: [0.14, 0.1, 0.14],
+              snow: [0.9, 0.8, 0.95],
+              snowLine: 0.8,
+              ambient: 0.8,
+            });
+            world.water({ level: -8, color: [0.02, 0.01, 0.04], glint: 1.2 });
+            var left = world.slab({
+              position: [-130, -8, -260],
+              size: [44, 66, 5],
+              yaw: 0.45,
+              color: [1.0, 0.75, 0.95],
+              glow: 2.6,
+              seed: 0.2,
+              body: [0.015, 0.01, 0.02],
+            });
+            var right = world.slab({
+              position: [140, -8, -330],
+              size: [50, 74, 5],
+              yaw: -0.4,
+              color: [0.8, 0.9, 1.0],
+              glow: 0.2,
+              seed: 0.7,
+              body: [0.015, 0.01, 0.02],
+            });
+            var arc = world.arcs({
+              pairs: [{ from: [-120, 58, -255], to: [130, 64, -325], height: 120, width: 1.1 }],
+              color: [1.0, 0.6, 1.0],
+              glow: 3.2,
+              progress: 0,
+              packets: 4,
+              speed: 0.5,
+            });
+            world.motes({
+              count: 900,
+              center: [0, 30, -300],
+              box: [600, 120, 400],
+              color: [1.0, 0.7, 1.0],
+              size: 1.8,
+              glow: 1.2,
+            });
+            return {
+              scene: scene,
+              camera: cam,
+              beat: function (k) {
+                if (k === 1) ctx.audio.hit("whoosh", { gain: 0.3, dur: 2.2 });
+                if (k === 2) ctx.audio.hit("chime", { note: 78, gain: 0.2, verb: 0.9 });
+              },
+              update: function (s) {
+                lines(
+                  ctx,
+                  s,
+                  [
+                    ["#h1", "#s1"],
+                    ["#h2", "#s2"],
+                    ["#h3", "#s3"],
+                  ],
+                  "track",
+                );
+                var send = s.win(1, 0.3, 3.4, "inOutCubic");
+                arc.set({ progress: send });
+                left.set({ progress: 0.62, glow: 2.6 - s.win(1, 2.5, 4.5) * 1.8 });
+                right.set({
+                  glow: 0.2 + s.win(1, 2.6, 4.2) * 2.6,
+                  progress: 0.62 * s.win(1, 2.6, 4) + s.win(2, 0, 4) * 0.38,
+                });
+                var tagA = ctx.$("#ta"),
+                  tagB = ctx.$("#tb");
+                tagA.style.opacity = String(s.win(0, 1.4, 2.4) * (1 - s.win(2, 0, 0.8)));
+                tagB.style.opacity = String(s.win(1, 2.8, 3.8) * (1 - s.win(2, 0, 0.8) * 0.0));
+                var k =
+                  s.win(0, 0, 4, "inOutSine") * 0.25 +
+                  s.win(1, 0, 5, "inOutSine") * 0.5 +
+                  s.win(2, 0, 4, "inOutSine") * 0.25;
+                pose(cam, [-60, 30, 40], [40, 46, 30], k, [-60, 30, -280], [80, 30, -300], 2.5, s);
+              },
+            };
+          },
+        };
+
+        // ------------------------------------------------------------------ 4. review: ice and a scan
+        var review = {
+          id: "review",
+          title: "Review",
+          transition: "flaps",
+          bed: { notes: [52, 59, 64, 71], color: "glass", level: 0.11 },
+          post: function (s) {
+            return {
+              tone: "agx",
+              exposure: 1.05,
+              bloom: 0.8,
+              threshold: 0.85,
+              halation: 0.2,
+              vignette: 0.34,
+              grain: 0.026,
+              contrast: 1.12,
+              saturation: 1.12,
+              shadows: [0.0, 0.01, 0.03],
+            };
+          },
+          beats: [
+            { dur: 4, notes: "Every change gets a review before it lands." },
+            { dur: 5, notes: "A model from another family reads it line by line." },
+            { dur: 4, notes: "Findings go back to the agent; green work moves on." },
+          ],
+          html:
+            '<div style="--accent:#7ff5c8">' +
+            kicker("04", "Review") +
+            '<h1 class="head swc-display" id="h1">Nothing lands unread.</h1><p class="sub" id="s1">Every change waits for a review.</p>' +
+            '<h1 class="head swc-display" id="h2">A second model checks it.</h1><p class="sub" id="s2">From another family, so it does not share the first one’s blind spots.</p>' +
+            '<h1 class="head swc-display" id="h3">Green moves on.</h1><p class="sub" id="s3">Findings go back to the agent that wrote the code.</p></div>',
+          create: function (ctx) {
+            var scene = new THREE.Scene();
+            var cam = camera();
+            var world = ctx.world(scene, {
+              sun: [-0.5, 0.06, -1],
+              sunColor: [1.2, 1.5, 2.0],
+              zenith: [0.01, 0.035, 0.12],
+              horizon: [0.22, 0.36, 0.55],
+              ground: [0.08, 0.1, 0.14],
+              fog: [0.12, 0.2, 0.32],
+              fogDensity: 0.0006,
+              fogHeight: 0.01,
+            });
+            world.sky({
+              clouds: 0.4,
+              cloudColor: [0.5, 0.65, 0.9],
+              cloudShade: [0.05, 0.08, 0.14],
+              stars: 0.6,
+            });
+            world.terrain({
+              height: 180,
+              scale: 0.0026,
+              ridge: 0.9,
+              valley: 1,
+              valleyWidth: 70,
+              size: 5200,
+              segments: 380,
+              seed: 12,
+              low: [0.3, 0.36, 0.46],
+              high: [0.6, 0.68, 0.8],
+              rock: [0.1, 0.12, 0.16],
+              snow: [0.8, 0.86, 0.95],
+              snowLine: 0.4,
+              ambient: 0.8,
+              plateau: { center: [0, -260], radius: 320, blend: 260, height: -10 },
+            });
+            var board = world.field({
+              cols: 80,
+              rows: 54,
+              spacing: 7,
+              jitter: 0.03,
+              center: [0, -260],
+              tile: [4.6, 2.9],
+              block: 10,
+              street: 1,
+              density: 0.94,
+              color: [0.55, 0.75, 1.0],
+              colorB: [0.75, 0.85, 1.0],
+              glow: 2.2,
+              body: [0.06, 0.07, 0.09],
+              scan: -400,
+              passColor: [0.35, 1.0, 0.7],
+              failColor: [1.0, 0.35, 0.28],
+              fail: 0.035,
+              lift: 0.8,
+            });
+            world.motes({
+              count: 900,
+              center: [0, 30, -230],
+              box: [600, 100, 500],
+              color: [0.85, 0.95, 1.0],
+              size: 1.8,
+              glow: 1.0,
+              rise: -1.5,
+            });
+            return {
+              scene: scene,
+              camera: cam,
+              beat: function (k) {
+                if (k === 1) ctx.audio.hit("rise", { gain: 0.07, dur: 4, note: 64 });
+                if (k === 2) ctx.audio.hit("chime", { note: 76, gain: 0.18 });
+              },
+              update: function (s) {
+                lines(
+                  ctx,
+                  s,
+                  [
+                    ["#h1", "#s1"],
+                    ["#h2", "#s2"],
+                    ["#h3", "#s3"],
+                  ],
+                  "rise",
+                );
+                board.set({
+                  scan:
+                    -300 +
+                    s.win(1, 0.2, 4.8, "inOutSine") * 380 +
+                    s.win(2, 0, 3.5, "outCubic") * 240,
+                });
+                var k =
+                  s.win(0, 0, 4, "inOutSine") * 0.3 +
+                  s.win(1, 0, 5, "inOutSine") * 0.45 +
+                  s.win(2, 0, 4, "inOutSine") * 0.25;
+                pose(
+                  cam,
+                  [-140, 60, 0],
+                  [110, 90, -20],
+                  k,
+                  [-30, -10, -260],
+                  [40, -10, -300],
+                  2,
+                  s,
+                );
+              },
+            };
+          },
+        };
+
+        // ------------------------------------------------------------------ 5. ship: above the clouds
+        var ship = {
+          id: "ship",
+          title: "Ship",
+          transition: "slam",
+          bed: { notes: [50, 57, 62, 66, 69], color: "warm", level: 0.14 },
+          post: function (s) {
+            return {
+              tone: "agx",
+              exposure: 1.1,
+              bloom: 0.8 + s.win(1, 0, 2) * 0.4,
+              threshold: 0.85,
+              halation: 0.3,
+              vignette: 0.28,
+              grain: 0.026,
+              contrast: 1.06,
+              saturation: 1.15,
+              highlights: [0.02, 0.01, -0.01],
+            };
+          },
+          beats: [
+            { dur: 4, notes: "Reviewed work merges and ships." },
+            { dur: 4, notes: "A release goes out from the same place you planned it." },
+            { dur: 6, notes: "SpecWithCode: plan, run, hand off, review, ship." },
+          ],
+          html:
+            '<div style="--accent:#ffd27a">' +
+            kicker("05", "Ship") +
+            '<h1 class="head swc-display" id="h1">Then it ships.</h1><p class="sub" id="s1">Merged, released and checked, while you were doing something else.</p>' +
+            '<h1 class="head swc-display" id="h2">Work that keeps going.</h1><p class="sub" id="s2">Across agents, accounts and machines.</p>' +
+            '<h1 class="mark swc-display" id="h3">SpecWithCode</h1><p class="mark-sub" id="s3">Plan · Run · Hand off · Review · Ship</p></div>',
+          create: function (ctx) {
+            var scene = new THREE.Scene();
+            var cam = camera();
+            var world = ctx.world(scene, {
+              sun: [0.35, 0.16, -1],
+              sunColor: [4.2, 3.0, 1.9],
+              zenith: [0.006, 0.05, 0.3],
+              horizon: [0.45, 0.58, 0.85],
+              ground: [0.6, 0.64, 0.78],
+              fog: [0.5, 0.6, 0.82],
+              fogDensity: 0.00022,
+              fogHeight: 0.004,
+            });
+            world.sky({
+              clouds: 0.3,
+              cloudScale: 1.4,
+              cloudColor: [1.8, 1.8, 1.8],
+              cloudShade: [0.6, 0.66, 0.8],
+              sunSize: 0.0012,
+            });
+            // A sea of cloud: soft terrain in white, lit from above.
+            world.terrain({
+              height: 60,
+              scale: 0.005,
+              ridge: 0.15,
+              base: -30,
+              size: 6000,
+              segments: 320,
+              seed: 5,
+              low: [0.42, 0.48, 0.66],
+              high: [1.0, 0.98, 0.95],
+              rock: [0.8, 0.84, 0.95],
+              snow: [1.0, 1.0, 1.0],
+              snowLine: 2,
+              ambient: 1.1,
+            });
+            var beams = world.arcs({
+              pairs: [
+                { from: [-60, 0, -500], to: [180, 40, -900], height: 520, width: 2.6 },
+                { from: [-20, 0, -480], to: [260, 20, -760], height: 380, width: 1.6 },
+                { from: [-100, 0, -520], to: [80, 60, -1100], height: 640, width: 1.8 },
+              ],
+              color: [1.0, 0.72, 0.32],
+              glow: 4.5,
+              progress: 0,
+              packets: 3,
+              speed: 0.7,
+            });
+            world.motes({
+              count: 1400,
+              center: [0, 80, -500],
+              box: [900, 240, 700],
+              color: [1.0, 0.85, 0.55],
+              size: 2.2,
+              glow: 1.6,
+            });
+            return {
+              scene: scene,
+              camera: cam,
+              beat: function (k) {
+                if (k === 1) ctx.audio.hit("rise", { gain: 0.1, dur: 2.5, note: 62 });
+                if (k === 2) ctx.audio.hit("boom", { gain: 0.35 });
+              },
+              update: function (s) {
+                lines(
+                  ctx,
+                  s,
+                  [
+                    ["#h1", "#s1"],
+                    ["#h2", "#s2"],
+                  ],
+                  "drop",
+                  2,
+                );
+                var mark = ctx.$("#h3"),
+                  markSub = ctx.$("#s3");
+                ctx.type(mark, s.win(2, 0.3, 2.2), { style: "track", stagger: 0.35 });
+                ctx.type(markSub, s.win(2, 1.4, 2.8), { style: "blur", stagger: 0.3 });
+                beams.set({ progress: s.win(0, 0.4, 3.6, "inOutCubic") });
+                var k =
+                  s.win(0, 0, 4, "inOutSine") * 0.35 +
+                  s.win(1, 0, 4, "inOutSine") * 0.35 +
+                  s.win(2, 0, 6, "inOutSine") * 0.3;
+                pose(cam, [0, 60, 80], [-40, 110, 160], k, [40, 90, -600], [40, 160, -700], 3, s);
+              },
+            };
+          },
+        };
+
+        D.start({ title: "Work that keeps going", scenes: [plan, agents, handoff, review, ship] });
       })();
     </script>
   </body>

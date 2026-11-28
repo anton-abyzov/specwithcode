@@ -168,6 +168,14 @@
       "name": "Expo text editor implementation",
       "noticeFile": "apps/mobile/modules/studio-composer-editor/LICENSE",
       "sourceUrl": "https://github.com/expo/expo"
+    },
+    {
+      "bundles": ["server", "web"],
+      "license": "OFL-1.1",
+      "name": "Archivo",
+      "noticeFile": "apps/server/src/htmlRender/artifact-libs/fonts/OFL.txt",
+      "sourceUrl": "https://github.com/Omnibus-Type/Archivo",
+      "version": "5.3.0"
     }
   ],
   "packageOverrides": [

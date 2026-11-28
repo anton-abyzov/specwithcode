@@ -49,3 +49,7 @@ The iPhone and iPad app bundles the browser build of [Mermaid](https://github.co
 ## Live documents
 
 Live editing of sheets merges changes with [Yjs](https://github.com/yjs/yjs) `yjs` 13.6.33 (MIT License, Copyright (c) 2023 Kevin Jahns and the Yjs contributors), and the packages it depends on: [lib0](https://github.com/dmonad/lib0) 0.2.120 (MIT License, Copyright (c) 2019 Kevin Jahns) and [isomorphic.js](https://github.com/dmonad/isomorphic.js) 0.2.5 (MIT License, Copyright (c) 2020 Kevin Jahns). Each license text is in its repository's `LICENSE` file; the full list of bundled packages and their notices is in Settings, under open source licenses.
+
+## Motion pages
+
+The motion deck runtime that SpecWithCode inlines into stage pages (`specwithcode:motion-deck`) embeds the Latin subset of [Archivo](https://github.com/Omnibus-Type/Archivo) (SIL Open Font License 1.1, Copyright 2020 The Archivo Project Authors), from `@fontsource-variable/archivo` 5.3.0, unchanged, as the display face "SpecWithCode Display". Its license text ships beside it (`apps/server/src/htmlRender/artifact-libs/fonts/OFL.txt`) and inside every page that uses the runtime. Its tone-mapping constants follow [three.js](https://github.com/mrdoob/three.js) r180 (MIT License, Copyright 2010-2025 Three.js Authors).

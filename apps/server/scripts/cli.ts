@@ -24,7 +24,7 @@ import {
   ServerCliUnresolvedImportError,
 } from "./cliErrors.ts";
 import { publishPlatformsThenLauncher } from "./publishOrder.ts";
-import { wrapThreeCommonJs } from "../src/htmlRender/localArtifactLibs.ts";
+import { joinMotionDeck, wrapThreeCommonJs } from "../src/htmlRender/localArtifactLibs.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -131,9 +131,10 @@ const buildCmd = Command.make(
         // Pages name SpecWithCode's own libraries as specwithcode:<name>; publishing inlines them.
         const ownLibsDir = path.join(clientTarget, "artifact-libs");
         yield* fs.makeDirectory(ownLibsDir, { recursive: true });
-        yield* fs.copyFile(
-          path.join(serverDir, "src/htmlRender/artifact-libs/motion-deck.js"),
+        // The deck's source parts and its font, joined into the one script pages name.
+        yield* fs.writeFileString(
           path.join(ownLibsDir, "motion-deck.js"),
+          joinMotionDeck(path.join(serverDir, "src/htmlRender/artifact-libs")),
         );
         const threeCommonJs = NodeModule.createRequire(
           path.join(repoRoot, "packages/client-runtime/package.json"),

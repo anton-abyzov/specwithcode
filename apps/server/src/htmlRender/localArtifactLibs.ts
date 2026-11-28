@@ -158,6 +158,38 @@ function threeCommonJsPath(): string | null {
   }
 }
 
+/**
+ * The motion deck is one library made of source parts, joined in this order: the core defines
+ * `window.SpecWithCodeDeck`, and the later parts add sound, transitions, worlds and the font.
+ */
+export const MOTION_DECK_PARTS = [
+  "motion-deck.js",
+  "motion-deck-audio.js",
+  "motion-deck-fx.js",
+  "motion-deck-world.js",
+] as const;
+export const MOTION_DECK_FONT = "fonts/archivo-latin-wdth.woff2";
+export const MOTION_DECK_FONT_LICENSE = "fonts/OFL.txt";
+
+/**
+ * Joins the motion deck's parts from `dir` (the source `artifact-libs` folder) into one script.
+ * The font becomes a part that hands the deck a data URI, with the font's licence kept beside it.
+ */
+export function joinMotionDeck(dir: string): string {
+  const parts = MOTION_DECK_PARTS.map((part) =>
+    NodeFS.readFileSync(NodePath.join(dir, part), "utf8"),
+  );
+  const font = NodeFS.readFileSync(NodePath.join(dir, MOTION_DECK_FONT)).toString("base64");
+  const license = NodeFS.readFileSync(NodePath.join(dir, MOTION_DECK_FONT_LICENSE), "utf8")
+    .replace(/\*\//g, "* /")
+    .trim();
+  const fontPart =
+    "/*! Archivo (SpecWithCode Display) | SIL Open Font License 1.1 | Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo)\n" +
+    `${license}\n*/\n` +
+    `(function(){var D=window.SpecWithCodeDeck;if(D&&D.useFont)D.useFont("data:font/woff2;base64,${font}");})();\n`;
+  return `${parts.join("\n")}\n${fontPart}`;
+}
+
 /** The inline source of a SpecWithCode library: the build's copy first, then the dev checkout. */
 export function loadSpecWithCodeLibrary(
   name: SpecWithCodeArtifactLibrary,
@@ -170,7 +202,12 @@ export function loadSpecWithCodeLibrary(
     const dev = threeCommonJsPath();
     return dev === null ? null : loadCached([dev], wrapThreeCommonJs);
   }
-  return loadCached([...built, NodePath.join(moduleDir(), "artifact-libs", `${name}.js`)]);
+  const fromBuild = loadCached(built);
+  if (fromBuild !== null) return fromBuild;
+  const sourceDir = NodePath.join(moduleDir(), "artifact-libs");
+  return loadCached([NodePath.join(sourceDir, MOTION_DECK_PARTS[0])], () =>
+    joinMotionDeck(sourceDir),
+  );
 }
 
 function resolveDefaultMermaidPaths(staticDir?: string): ReadonlyArray<string> {
