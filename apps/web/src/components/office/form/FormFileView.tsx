@@ -42,9 +42,9 @@ export function responsesPathFor(formPath: string, text: string | undefined, cwd
   const parsed = text === undefined ? null : parseForm(text);
   const document: FormDocument =
     parsed?.ok === true ? parsed.document : { v: 1, kind: "form", title: "", items: [] };
-  // The project folder's shape says whether its machine separates folders with backslashes.
-  const windowsHost =
-    cwd.length === 0 ? undefined : /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith("\\\\");
+  // The project folder's shape says whether its machine separates folders with backslashes:
+  // a drive letter or a UNC share, written with either slash.
+  const windowsHost = cwd.length === 0 ? undefined : /^([A-Za-z]:[\\/]|\\\\|\/\/)/.test(cwd);
   return responsesSheetPath(formPath, document, windowsHost);
 }
 

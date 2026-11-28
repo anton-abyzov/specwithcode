@@ -154,7 +154,7 @@ export function responsesSheetPath(
   const windows =
     windowsHost ??
     (/^[A-Za-z]:[\\/]/.test(formRelativePath) ||
-      formRelativePath.startsWith("\\\\") ||
+      /^(\\\\|\/\/)/.test(formRelativePath) ||
       !formRelativePath.includes("/"));
   const normalized = windows ? formRelativePath.replace(/\\/g, "/") : formRelativePath;
   const slash = normalized.lastIndexOf("/");

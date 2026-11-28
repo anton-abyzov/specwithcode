@@ -28,6 +28,7 @@ import {
 import {
   SHEET_ARTIFACT_SUFFIX,
   SHEET_LIMITS,
+  NEW_FILE_REVISION,
   type SheetDocument,
   parseSheetDocument,
   serializeSheetDocument,
@@ -196,11 +197,21 @@ async function ensureResponsesSheet(
   const folder = relativePath.split("/").slice(0, -1).join("/");
   if (!(await plainDirectory(realRoot, folder)))
     throw invalid(`${folder} leads outside the project.`);
-  return createInside(
-    realRoot,
-    relativePath,
-    serializeSheetDocument(emptyResponsesSheet(document)),
-  );
+  // Through the Sheet writer and its lock, as a window's create is, never replacing a Sheet.
+  try {
+    await writeSheetFileCompareAndSet(
+      realRoot,
+      relativePath,
+      serializeSheetDocument(emptyResponsesSheet(document)),
+      NEW_FILE_REVISION,
+    );
+    return true;
+  } catch (error) {
+    if (error instanceof ProjectLibraryProblem && error.message.startsWith("Conflict:")) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export async function writeFormArtifact(

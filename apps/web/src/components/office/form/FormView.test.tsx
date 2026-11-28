@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { changeItemType, duplicateItem, moveItem } from "./FormEditor";
 import { fillAnswers, formPages } from "./FormFill";
+import { responsesPathFor } from "./FormFileView";
 import { FORM_SAVE_DELAY_MS, FormView } from "./FormView";
 import { type SheetRead, type SheetWrite, submitFormResponse } from "./submitFormResponse";
 
@@ -249,6 +250,19 @@ describe("FormView", () => {
     await act(async () => button("Submit").click());
     expect(onSubmit).toHaveBeenCalledWith(FORM, { name: "Ana", city: "Porto", food: ["Vegan"] });
     expect(container.textContent).toContain("Your response has been recorded.");
+  });
+});
+
+describe("responsesPathFor", () => {
+  it("reads a UNC project folder written with either slash as Windows", () => {
+    const text = serializeForm({ ...FORM, responses: { sheet: "answers.sheet.json" } });
+    expect(
+      responsesPathFor(
+        "\\\\host\\share\\Project\\forms\\intake.form.json",
+        text,
+        "//host/share/Project",
+      ),
+    ).toBe("//host/share/Project/forms/answers.sheet.json");
   });
 });
 

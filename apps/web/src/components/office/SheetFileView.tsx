@@ -31,8 +31,8 @@ import { SheetView } from "./SheetView";
 
 /** The path inside the folder, or null when the file is outside it. */
 export function sheetRelativePath(cwd: string, path: string): string | null {
-  // A drive letter or a UNC share (\\host\share) marks a Windows folder.
-  const windowsRoot = (value: string) => /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+  // A drive letter or a UNC share (\\host\share or //host/share) marks a Windows folder.
+  const windowsRoot = (value: string) => /^([A-Za-z]:[\\/]|\\\\|\/\/)/.test(value);
   const isWindows = windowsRoot(cwd) || (cwd.length === 0 && windowsRoot(path));
   if (isWindows) {
     const slashed = (value: string) => value.replace(/\\/g, "/");
