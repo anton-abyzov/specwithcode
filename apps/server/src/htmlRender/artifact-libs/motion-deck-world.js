@@ -159,7 +159,7 @@
             "if(uClouds>0.0&&v.y>0.0){vec2 cp=v.xz/(v.y+0.1)*uCloudScale+vec2(uTime*uCloudSpeed,0.0);" +
             "float n=swcFbm(cp);float n2=swcFbm(cp*2.3+3.7);float dens=smoothstep(0.62-uClouds*0.3,0.95-uClouds*0.2,n*0.72+n2*0.28)*smoothstep(0.0,0.1,v.y);" +
             "float ns=swcFbm(cp+uSun.xz*0.12);float lit=clamp(0.55+(n-ns)*3.5,0.0,1.0);" +
-            "vec3 cc=mix(uCloudShade,uCloudColor+uSunColor*0.55*pow(s,3.0),lit);cc=mix(cc,uHorizon,smoothstep(0.25,0.0,v.y)*0.7);c=mix(c,cc,dens*min(1.0,uClouds*1.6));}" +
+            "vec3 cc=mix(uCloudShade,uCloudColor+uSunColor*0.55*pow(s,3.0),lit);cc=mix(cc,uHorizon,(1.0-smoothstep(0.0,0.25,v.y))*0.7);c=mix(c,cc,dens*min(1.0,uClouds*1.6));}" +
             "gl_FragColor=vec4(c,1.0);}",
           extra,
           { side: THREE.BackSide, depthWrite: false },
@@ -188,7 +188,7 @@
         height.uTFlatC.value.set(o.plateau.center[0], o.plateau.center[1]);
         height.uTFlatR.value.set(
           o.plateau.radius,
-          o.plateau.radius + (o.plateau.blend || o.plateau.radius),
+          o.plateau.radius + Math.max(0.01, o.plateau.blend || o.plateau.radius),
         );
         height.uTFlatH.value = o.plateau.height || 0;
       }
@@ -222,7 +222,7 @@
             "float det=swcFbm(vWP.xz*0.035)*0.55+swcNoise(vWP.xz*0.6)*0.45;" +
             "vec3 alb=mix(uLow,uHigh,smoothstep(-0.25,0.45,hh+det*0.25-0.12));" +
             "alb=mix(alb,uRock,smoothstep(0.22,0.55,slope+det*0.18));" +
-            "alb=mix(alb,uSnow,smoothstep(uSnowLine-0.06,uSnowLine+0.06,hh+det*0.12)*smoothstep(0.6,0.3,slope));alb*=0.78+0.44*det;" +
+            "alb=mix(alb,uSnow,smoothstep(uSnowLine-0.06,uSnowLine+0.06,hh+det*0.12)*(1.0-smoothstep(0.3,0.6,slope)));alb*=0.78+0.44*det;" +
             "float ndl=dot(n,uSun);float diff=mix(max(ndl,0.0),max((ndl+0.35)/1.35,0.0),0.35);" +
             "vec3 sky=mix(uGround*0.6,uZenith*0.8+uHorizon*0.4,n.y*0.5+0.5);float ao=clamp(0.5+hh*0.7+n.y*0.25,0.25,1.0);" +
             "vec3 col=alb*(uSunColor*diff*1.1+sky*uAmbient*ao);gl_FragColor=vec4(swcFog(col,vWP),1.0);}",
@@ -299,7 +299,7 @@
         uStreet: { value: o.street === undefined ? 2 : o.street },
         uOn: { value: o.on === undefined ? 1e5 : o.on },
         uReach: { value: o.reach === undefined ? 1e5 : o.reach },
-        uSoft: { value: o.soft === undefined ? 20 : o.soft },
+        uSoft: { value: o.soft === undefined ? 20 : Math.max(0.01, o.soft) },
         uTileW: { value: (o.tile || [1.6, 1])[0] },
         uTileH: { value: (o.tile || [1.6, 1])[1] },
         uBig: { value: o.big === undefined ? 2.6 : o.big },
@@ -380,7 +380,7 @@
           "uniform vec3 uColor;uniform float uGlow,uProgress,uSpeed,uPackets;varying float vU;varying vec3 vN,vWP;" +
           "void main(){if(vU>uProgress)discard;vec3 v=normalize(cameraPosition-vWP);float core=pow(abs(dot(normalize(vN),v)),1.5);" +
           "float pk=pow(max(0.0,sin((vU*uPackets-uTime*uSpeed)*6.2832)),28.0);float head=exp(-pow((uProgress-vU)*40.0,2.0))*step(uProgress,0.995);" +
-          "float ends=smoothstep(0.0,0.04,vU)*smoothstep(1.0,0.96,vU);" +
+          "float ends=smoothstep(0.0,0.04,vU)*(1.0-smoothstep(0.96,1.0,vU));" +
           "gl_FragColor=vec4(uColor*uGlow*core*(0.35+pk*4.0+head*6.0)*ends,1.0);}",
         extra,
         { blending: THREE.AdditiveBlending, depthWrite: false, transparent: true },

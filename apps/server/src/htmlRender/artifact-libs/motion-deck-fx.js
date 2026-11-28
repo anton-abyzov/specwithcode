@@ -169,9 +169,9 @@
       "vec3 transition(vec2 uv){float e=eio(p);float lift=smoothstep(0.0,0.18,p);" +
       "vec3 col=B(uv)*(0.55+0.45*e);" +
       "vec2 sl=piece(uv,-1.0,e);float xl=tearX(sl.y);" +
-      "if(inside(sl)>0.5&&sl.x<xl){float fib=smoothstep(0.012,0.0,xl-sl.x)*lift;col=mix(A(sl),vec3(0.95,0.93,0.9),fib);col*=1.0-0.15*e;}" +
+      "if(inside(sl)>0.5&&sl.x<xl){float fib=(1.0-smoothstep(0.0,0.012,xl-sl.x))*lift;col=mix(A(sl),vec3(0.95,0.93,0.9),fib);col*=1.0-0.15*e;}" +
       "vec2 sr=piece(uv,1.0,e);float xr=tearX(sr.y);" +
-      "if(inside(sr)>0.5&&sr.x>=xr){float fib=smoothstep(0.012,0.0,sr.x-xr)*lift;col=mix(A(sr),vec3(0.95,0.93,0.9),fib);col*=1.0-0.15*e;}" +
+      "if(inside(sr)>0.5&&sr.x>=xr){float fib=(1.0-smoothstep(0.0,0.012,sr.x-xr))*lift;col=mix(A(sr),vec3(0.95,0.93,0.9),fib);col*=1.0-0.15*e;}" +
       "return col;}",
     cue: function (audio, dur) {
       for (var i = 0; i < 14; i++)
