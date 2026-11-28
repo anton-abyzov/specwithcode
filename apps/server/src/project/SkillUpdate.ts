@@ -272,6 +272,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         : {
             path: entry.sourceSkillPath ?? null,
             branch: entry.sourceBranch ?? null,
+            scope: entry.scope ?? null,
             version: {
               version: entry.version,
               commit: entry.sourceCommitSha ?? null,
@@ -646,7 +647,11 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           "scope_unsupported",
           "Open a project to install a skill for that project only.",
         );
-      const cwd = user ? deps.home : yield* deps.resolveCwd(folderOf(input));
+      // The view's folder is checked before anything is written, so a stale thread
+      // folder refuses the run instead of failing after the user lock changed.
+      const viewCwd = yield* deps.resolveCwd(folderOf(input));
+      const cwd = user ? deps.home : viewCwd;
+      const lockPath = user ? userLockPath : path.join(cwd, "vskill.lock");
       const result = yield* install({
         skill: ask.skill,
         lockName: ask.skill,
@@ -654,7 +659,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         visibility: read.visibility,
         user,
         cwd,
-        lockPath: user ? userLockPath : path.join(cwd, "vskill.lock"),
+        lockPath,
         source: { branch: read.branch, path: read.skill.path },
         expected: {
           version: read.skill.version,
@@ -662,10 +667,45 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           contentHash: read.skill.contentHash,
         },
       });
-      // The scope is the lock the copy was read back from; a failed run names none.
-      return yield* settle(input, [
-        result.outcome === "failed" ? result : { ...result, scope: user ? "user" : "project" },
-      ]);
+      if (result.outcome === "failed") return yield* settle(input, [result]);
+      // The scope is the lock the copy was read back from, and the entry's own record
+      // of it when vskill wrote one.
+      const written = yield* lockEntry(lockPath, ask.skill);
+      const scope = user ? "user" : "project";
+      if (written?.scope != null && written.scope !== scope)
+        return yield* settle(input, [
+          {
+            ...result,
+            outcome: "failed",
+            message: `vskill finished, but ${lockPath} records ${ask.skill} for ${written.scope === "user" ? "every project" : "one project"}, not ${user ? "every project" : "this project"}. Check it with vskill list.`,
+          },
+        ]);
+      const settled = yield* settle(input, [{ ...result, scope }]);
+      // With a copy in the project too, the project view lists the project lock's
+      // status, so the user copy this run wrote is added for "Also add on".
+      if (
+        !user ||
+        written === null ||
+        settled.statuses.some((status) => status.skill === ask.skill && status.lockScope === "user")
+      )
+        return settled;
+      return {
+        ...settled,
+        statuses: [
+          ...settled.statuses,
+          {
+            skill: ask.skill,
+            repo: repo.repo,
+            lockScope: "user",
+            installed: written.version,
+            ...(written.path !== null && written.branch !== null
+              ? { installedSource: { path: written.path, branch: written.branch } }
+              : {}),
+            latest: written.version,
+            state: "current",
+          } satisfies ProjectSkillSourceStatus,
+        ],
+      };
     });
 
   const update = (

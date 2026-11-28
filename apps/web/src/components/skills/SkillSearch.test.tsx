@@ -37,6 +37,7 @@ vi.mock("../../studio/fleet", () => ({
   useFleetSkillGithubSupported: () => true,
 }));
 import { SkillSearch } from "./SkillSearch";
+import { useSkillInstallScopePick } from "./skillInstallScope.logic";
 
 const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("project");
@@ -424,5 +425,32 @@ describe("skill search", () => {
     await type("reports");
     expect(host.querySelector("[data-stale]")).not.toBeNull();
     expect(button("Install").disabled).toBe(true);
+  });
+});
+
+describe("install scope pick (1440)", () => {
+  let pick: (scope: "user" | "project") => void = () => {};
+  function Probe({ resolved }: { readonly resolved: "user" | "project" }) {
+    const [chosen, choose] = useSkillInstallScopePick(resolved);
+    pick = choose;
+    return <output data-testid="chosen">{chosen}</output>;
+  }
+  const show = (resolved: "user" | "project") =>
+    act(async () => root.render(<Probe resolved={resolved} />));
+  const chosen = () => host.querySelector('[data-testid="chosen"]')!.textContent;
+
+  it("keeps a pick while the default holds, and drops it for good when the default changes", async () => {
+    await show("project");
+    await act(async () => pick("user"));
+    expect(chosen()).toBe("user");
+    // Another window saving the same default changes nothing.
+    await show("project");
+    expect(chosen()).toBe("user");
+    // A new default replaces the pick.
+    await show("user");
+    expect(chosen()).toBe("user");
+    // Changing back does not revive the old pick.
+    await show("project");
+    expect(chosen()).toBe("project");
   });
 });

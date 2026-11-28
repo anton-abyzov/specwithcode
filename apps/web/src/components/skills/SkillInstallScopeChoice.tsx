@@ -11,7 +11,6 @@ import {
 } from "@specweave-studio/contracts";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
 
 import { useTx } from "../../i18n";
 import { useProject } from "../../state/entities";
@@ -30,6 +29,7 @@ import {
   skillInstallScopeDefaultPatch,
   SOURCE_PHRASES,
   type ResolvedSkillInstallScope,
+  useSkillInstallScopePick,
 } from "./skillInstallScope.logic";
 
 const SCOPES: ReadonlyArray<SkillInstallScope> = ["user", "project"];
@@ -55,23 +55,13 @@ export function useSkillInstallScope(scope: SkillFolderScope): SkillInstallScope
     machineDefault: settings?.skillInstallScope ?? "project",
   });
   const supported = config?.environment.capabilities.skillInstallScope === true;
-  // A pick lasts until the default it started from changes.
-  const [picked, setPicked] = useState<{
-    readonly from: string;
-    readonly scope: SkillInstallScope;
-  } | null>(null);
-  const from = `${resolved.source}:${resolved.scope}`;
-  const chosen =
-    scope.userLevel === true
-      ? "user"
-      : picked !== null && picked.from === from
-        ? picked.scope
-        : resolved.scope;
+  const [picked, choose] = useSkillInstallScopePick(resolved.scope);
+  const chosen = scope.userLevel === true ? "user" : picked;
   return {
     scope: supported ? chosen : null,
     resolved,
     supported,
-    choose: (next) => setPicked({ from, scope: next }),
+    choose,
   };
 }
 

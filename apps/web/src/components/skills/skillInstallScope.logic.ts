@@ -15,6 +15,7 @@ import type {
   SkillInstallScope,
 } from "@specweave-studio/contracts";
 import { projectSettingsOverrideChangesPatch } from "@specweave-studio/shared/projectSettings";
+import { useState } from "react";
 
 export type SkillInstallScopeSource = "machine-view" | "project" | "assistant" | "machine";
 
@@ -94,4 +95,19 @@ export function skillInstallScopeDefaultPatch(input: {
     { [input.projectId]: change },
     input.perKey,
   );
+}
+
+/**
+ * A one-off pick over the resolved default. It lasts until the default's value
+ * changes; then it is dropped for good, so another window saving the same value,
+ * or a later change back, never revives it.
+ */
+export function useSkillInstallScopePick(resolved: SkillInstallScope) {
+  const [picked, setPicked] = useState<SkillInstallScope | null>(null);
+  const [pickedOver, setPickedOver] = useState(resolved);
+  if (pickedOver !== resolved) {
+    setPickedOver(resolved);
+    setPicked(null);
+  }
+  return [picked ?? resolved, setPicked] as const;
 }

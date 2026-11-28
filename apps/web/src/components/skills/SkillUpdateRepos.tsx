@@ -64,6 +64,8 @@ export function SkillUpdateRepos({
   const [changed, setChanged] = useState<ProjectSkillReposResult | null>(null);
   const [text, setText] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  // The scope a running install was sent with; the chooser may change meanwhile.
+  const [runScope, setRunScope] = useState<SkillInstallScope | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outcomes, setOutcomes] = useState<ReadonlyArray<ProjectSkillUpdateOutcome>>([]);
   const [statuses, setStatuses] = useState<ReadonlyArray<ProjectSkillSourceStatus>>([]);
@@ -112,6 +114,7 @@ export function SkillUpdateRepos({
 
   const install = async (repo: string, skill: string) => {
     setPending(`install:${repo}/${skill}`);
+    setRunScope(installScope);
     setError(null);
     setOutcomes([]);
     let done: Awaited<ReturnType<typeof run>>;
@@ -216,12 +219,12 @@ export function SkillUpdateRepos({
       {pending?.startsWith("install:") ? (
         <p role="status" className="flex items-center gap-1.5 text-xs text-foreground">
           <Spinner className="size-3" />
-          {installScope === null
+          {runScope === null
             ? tx("Installing {skill} on {machine}…", {
                 skill: pending.split("/").at(-1) ?? pending,
                 machine,
               })
-            : tx(PROGRESS_PHRASES[installScope], {
+            : tx(PROGRESS_PHRASES[runScope], {
                 skill: pending.split("/").at(-1) ?? pending,
                 machine,
               })}

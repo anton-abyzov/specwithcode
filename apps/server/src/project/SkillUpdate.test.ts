@@ -16,7 +16,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import { join } from "../nodePath.ts";
-import type { CliRun } from "./ProjectSkillsActionsCommon.ts";
+import { actionError, type CliRun } from "./ProjectSkillsActionsCommon.ts";
 import type { SkillSourceRead } from "./SkillRepoSources.ts";
 import {
   makeSkillUpdates,
@@ -53,7 +53,7 @@ interface LockEntry {
   readonly installedAt?: string;
 }
 
-const lockJson = (skills: Record<string, LockEntry>) =>
+const lockJson = (skills: Record<string, LockEntry>, scope: "user" | "project" = "user") =>
   `${JSON.stringify(
     {
       version: 1,
@@ -67,7 +67,7 @@ const lockJson = (skills: Record<string, LockEntry>) =>
             tier: "VERIFIED",
             installedAt: entry.installedAt ?? "2026-11-01T00:00:00.000Z",
             source: entry.source ?? "github:anton-abyzov/vskill",
-            scope: "user",
+            scope,
             sourceRepoUrl: "https://github.com/anton-abyzov/vskill",
             sourceSkillPath: entry.path ?? `skills/${name}/SKILL.md`,
             sourceBranch: entry.branch ?? "main",
@@ -179,6 +179,12 @@ interface Options {
   readonly states?: Partial<Record<string, "ok" | "cached" | "timeout" | "error">>;
   /** A project folder under home that the view resolves to; left out, the view is home. */
   readonly project?: boolean;
+  /** The project lock already holds these, and the view lists them from there. */
+  readonly projectLock?: Record<string, LockEntry>;
+  /** The view's folder is refused (a stale thread folder). */
+  readonly cwdRefused?: boolean;
+  /** The scope vskill records in the entries it writes; left out, the lock it wrote. */
+  readonly writtenScope?: "user" | "project";
 }
 
 const fixture = (options: Options) =>
@@ -190,6 +196,11 @@ const fixture = (options: Options) =>
       await NodeFSP.mkdir(join(home, ".agents"), { recursive: true });
       await NodeFSP.mkdir(projectDir, { recursive: true });
       await NodeFSP.writeFile(lockPath, lockJson(options.lock));
+      if (options.projectLock)
+        await NodeFSP.writeFile(
+          join(projectDir, "vskill.lock"),
+          lockJson(options.projectLock, "project"),
+        );
     });
     const calls: Call[] = [];
     const reads: Array<{ refresh: boolean }> = [];
@@ -221,9 +232,12 @@ const fixture = (options: Options) =>
             // vskill writes the user lock with --global and the folder's own lock without.
             if (args.includes("--global")) {
               lock = { ...lock, [name]: next };
-              await NodeFSP.writeFile(lockPath, lockJson(lock));
+              await NodeFSP.writeFile(lockPath, lockJson(lock, options.writtenScope ?? "user"));
             } else {
-              await NodeFSP.writeFile(join(cwd, "vskill.lock"), lockJson({ [name]: next }));
+              await NodeFSP.writeFile(
+                join(cwd, "vskill.lock"),
+                lockJson({ [name]: next }, options.writtenScope ?? "project"),
+              );
             }
           }
         }
@@ -235,19 +249,35 @@ const fixture = (options: Options) =>
       readSnapshot: (input) =>
         Effect.sync(() => {
           reads.push({ refresh: input.refresh === true });
+          const projectLock = options.projectLock ?? {};
           return snapshotOf(
-            Object.entries(lock).map(([name, entry]) =>
-              rowFor(
-                name,
-                lockPath,
-                entry,
-                installed && options.agentsAfter ? options.agentsAfter : undefined,
-              ),
-            ),
+            [
+              ...Object.entries(lock)
+                .filter(([name]) => !(name in projectLock))
+                .map(([name, entry]) =>
+                  rowFor(
+                    name,
+                    lockPath,
+                    entry,
+                    installed && options.agentsAfter ? options.agentsAfter : undefined,
+                  ),
+                ),
+              // With both copies the project view lists the project lock's entry.
+              ...Object.entries(projectLock).map(([name, entry]) => {
+                const row = rowFor(name, join(projectDir, "vskill.lock"), entry);
+                return {
+                  ...row,
+                  lock: { ...row.lock!, lockScope: "project" as const },
+                } as ProjectSkillRow;
+              }),
+            ],
             options.states,
           );
         }),
-      resolveCwd: () => Effect.succeed(options.project ? projectDir : home),
+      resolveCwd: () =>
+        options.cwdRefused
+          ? Effect.fail(actionError(projectId, "cwd_not_allowed", "That folder is gone."))
+          : Effect.succeed(options.project ? projectDir : home),
       invalidate: () => Effect.void,
       sources: {
         readSkill: (input) =>
@@ -853,6 +883,93 @@ describe("SkillUpdates install", () => {
           .pipe(Effect.flip);
         expect(error.message).toContain("Open a project");
         expect(fx.calls).toEqual([]);
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("offers Also add on after a user install even when the project holds a copy too", () =>
+      Effect.gen(function* () {
+        const fx = yield* fixture({
+          lock: {},
+          latest: {
+            "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+          },
+          connected: [repo()],
+          afterInstall: () => ({ version: "1.0.12", sha: NEW_SHA, commit: NEW_COMMIT, path }),
+          project: true,
+          projectLock: {
+            "obsidian-brain": { version: "1.0.11", sha: OLD_SHA, commit: OLD_COMMIT, path },
+          },
+        });
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "user" },
+        });
+        const user = result.statuses.filter(
+          (status) => status.skill === "obsidian-brain" && status.lockScope === "user",
+        );
+        expect(user).toEqual([
+          expect.objectContaining({
+            repo: "anton-abyzov/vskill",
+            state: "current",
+            installed: expect.objectContaining({ version: "1.0.12" }),
+          }),
+        ]);
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("refuses a stale view folder before a user install writes anything", () =>
+      Effect.gen(function* () {
+        const fx = yield* fixture({
+          lock: {},
+          latest: {
+            "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+          },
+          connected: [repo()],
+          afterInstall: () => ({ version: "1.0.12", sha: NEW_SHA, commit: NEW_COMMIT, path }),
+          project: true,
+          cwdRefused: true,
+        });
+        const error = yield* fx.service
+          .update({
+            projectId,
+            operation: "install",
+            install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "user" },
+          })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("cwd_not_allowed");
+        expect(installCalls(fx.calls)).toEqual([]);
+        const userLock = JSON.parse(
+          yield* Effect.promise(() => NodeFSP.readFile(fx.lockPath, "utf8")),
+        );
+        expect(userLock.skills).toEqual({});
+      }).pipe(Effect.provide(live)),
+    );
+
+    it.live("reports a failure when the lock records the other scope", () =>
+      Effect.gen(function* () {
+        const fx = yield* fixture({
+          lock: {},
+          latest: {
+            "obsidian-brain": latest("obsidian-brain", "1.0.12", NEW_SHA, "public", { path }),
+          },
+          connected: [repo()],
+          afterInstall: () => ({ version: "1.0.12", sha: NEW_SHA, commit: NEW_COMMIT, path }),
+          project: true,
+          writtenScope: "user",
+        });
+        const result = yield* fx.service.update({
+          projectId,
+          operation: "install",
+          install: { repo: "anton-abyzov/vskill", skill: "obsidian-brain", scope: "project" },
+        });
+        expect(result.outcomes![0]).toEqual(
+          expect.objectContaining({
+            outcome: "failed",
+            message: expect.stringContaining("records obsidian-brain for every project"),
+          }),
+        );
+        expect(result.outcomes![0]!.scope).toBeUndefined();
       }).pipe(Effect.provide(live)),
     );
 

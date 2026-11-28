@@ -55,6 +55,8 @@ export interface VskillLockEntry {
   readonly sourceSkillPath?: string | null;
   readonly sourceBranch?: string | null;
   readonly sourceCommitSha?: string | null;
+  /** The scope vskill recorded for this entry, when it records one. */
+  readonly scope?: "user" | "project" | null;
 }
 
 /** As the fleet's StudioFleetSkillName: owner, repository and skill segments. */
@@ -265,6 +267,7 @@ export function parseVskillLock(text: string): ReadonlyMap<string, VskillLockEnt
       sourceSkillPath: stringOrNull(entry.sourceSkillPath),
       sourceBranch: stringOrNull(entry.sourceBranch),
       sourceCommitSha: stringOrNull(entry.sourceCommitSha),
+      scope: entry.scope === "user" || entry.scope === "project" ? entry.scope : null,
     });
   }
   return entries;

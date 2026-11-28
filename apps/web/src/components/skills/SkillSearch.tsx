@@ -88,6 +88,8 @@ export function SkillSearch({
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
+  // The scope a running install was sent with; the chooser may change meanwhile.
+  const [runScope, setRunScope] = useState<SkillInstallScope | null>(null);
   const [outcomes, setOutcomes] = useState<ReadonlyArray<ProjectSkillUpdateOutcome>>([]);
   const [statuses, setStatuses] = useState<ReadonlyArray<ProjectSkillSourceStatus>>([]);
   const [noteMessage, setNoteMessage] = useState<string | null>(null);
@@ -145,6 +147,7 @@ export function SkillSearch({
   const install = async (entry: ProjectSkillSearchAvailable) => {
     const key = `${entry.repo}/${entry.skill.name}`;
     setInstalling(key);
+    setRunScope(installScope);
     setError(null);
     setOutcomes([]);
     let done: Awaited<ReturnType<typeof run>>;
@@ -220,12 +223,12 @@ export function SkillSearch({
           data-testid="skill-install-progress"
         >
           <Spinner className="size-3" />
-          {installScope === null
+          {runScope === null
             ? tx("Installing {skill} on {machine}…", {
                 skill: installing.split("/").at(-1) ?? installing,
                 machine,
               })
-            : tx(PROGRESS_PHRASES[installScope], {
+            : tx(PROGRESS_PHRASES[runScope], {
                 skill: installing.split("/").at(-1) ?? installing,
                 machine,
               })}
