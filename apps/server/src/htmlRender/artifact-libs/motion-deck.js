@@ -1087,7 +1087,10 @@
     }
     document.addEventListener("visibilitychange", function () {
       if (document.hidden) audio.suspend();
-      else loop();
+      else {
+        audio.wake();
+        loop();
+      }
     });
 
     // ---- frame loop

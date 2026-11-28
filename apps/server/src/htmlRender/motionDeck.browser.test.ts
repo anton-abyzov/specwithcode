@@ -172,6 +172,30 @@ describe("motion deck runtime", () => {
     },
   );
 
+  it("pauses sound while the page is hidden and plays it again when shown", async () => {
+    const tab = await open("#intro");
+    await ready(tab);
+    const state = () =>
+      tab.evaluate<string>(
+        `SpecWithCodeDeck.current.audio.context ? SpecWithCodeDeck.current.audio.context.state : "none"`,
+      );
+    const setHidden = (hidden: boolean) =>
+      tab.evaluate(`Object.defineProperty(document, "hidden", { configurable: true, get: () => ${hidden} });
+      document.dispatchEvent(new Event("visibilitychange"));`);
+    // Before any gesture, hiding and showing never creates or starts sound.
+    await setHidden(true);
+    await setHidden(false);
+    expect(await state()).toBe("none");
+    await tab.keyboard.press("m");
+    await tab.keyboard.press("m");
+    await tab.waitForFunction(`SpecWithCodeDeck.current.audio.running === true`);
+    await setHidden(true);
+    await tab.waitForFunction(`SpecWithCodeDeck.current.audio.context.state === "suspended"`);
+    await setHidden(false);
+    await tab.waitForFunction(`SpecWithCodeDeck.current.audio.running === true`);
+    await tab.close();
+  });
+
   it("rolls the counter and lifts words on beat windows", async () => {
     const tab = await open("#intro-2");
     await ready(tab);

@@ -19,6 +19,7 @@
     var muted = false;
     var beds = [];
     var pendingBed; // asked for before the reader's first gesture; starts on unlock
+    var pausedByHide = false;
     var lastHit = {};
     function midi(m) {
       return 440 * Math.pow(2, (m - 69) / 12);
@@ -105,8 +106,17 @@
         if (ac) master.gain.setTargetAtTime(muted ? 0 : 0.9, ac.currentTime, 0.06);
         return muted;
       },
+      // Hiding the page pauses sound; showing it again resumes only what hiding paused,
+      // so a deck nobody has touched yet still waits for a gesture.
       suspend: function () {
-        if (ac && ac.state === "running") ac.suspend().catch(function () {});
+        if (!ac || ac.state !== "running") return;
+        pausedByHide = true;
+        ac.suspend().catch(function () {});
+      },
+      wake: function () {
+        if (!ac || !pausedByHide) return;
+        pausedByHide = false;
+        ac.resume().catch(function () {});
       },
       // A sustained chord bed. notes: MIDI numbers. color: "warm", "glass", "dark" or "air".
       bed: function (spec) {
