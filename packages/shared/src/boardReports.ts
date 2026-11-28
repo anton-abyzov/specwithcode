@@ -17,7 +17,7 @@ export const BOARD_REPORT_GROUPS: ReadonlyArray<BoardReportGroup> = [
 
 const IMAGE = /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico|mp4|webm|mov|m4v)$/i;
 const DOCUMENT =
-  /\.(md|mdx|markdown|html?|pdf|docx|xlsx|pptx|csv|tsv|excalidraw|sheet\.json|canvas)$/i;
+  /\.(md|mdx|markdown|html?|pdf|docx|xlsx|pptx|csv|tsv|excalidraw|sheet\.json|form\.json|canvas)$/i;
 /** What `specweave task done --run` and `specweave verify` write. */
 const EVIDENCE_NAME = /^(task-[^/]*\.(txt|log)|verify\.(json|md))$/i;
 const REVIEW_NAME = /^review/i;

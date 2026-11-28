@@ -179,6 +179,7 @@ export const ARTIFACT_KIND_LABEL: Record<ThreadArtifactKind, string> = {
   native: "Artifact",
   sheet: "Sheet",
   whiteboard: "Whiteboard",
+  form: "Form",
 };
 
 export function shelfKindLabel(artifact: ThreadArtifact): string {

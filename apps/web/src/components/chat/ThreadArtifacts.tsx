@@ -31,6 +31,7 @@ import {
   LinkIcon,
   PanelRightOpenIcon,
   ShapesIcon,
+  ClipboardListIcon,
   TableIcon,
 } from "lucide-react";
 import { type ReactNode, type Ref, use, useEffect, useMemo, useRef, useState } from "react";
@@ -104,6 +105,7 @@ import {
 } from "./useArtifactShelfState";
 import { useArtifactFileChecks } from "./useMissingArtifactFiles";
 import { SheetFileView } from "../office/SheetFileView";
+import { FormFileView } from "../office/form/FormFileView";
 import { WhiteboardFileView } from "../office/whiteboard/WhiteboardFileView";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { ViewerImageStage } from "./ViewerImageStage";
@@ -125,6 +127,7 @@ const KIND_ICON: Record<ThreadArtifactKind, typeof FileIcon> = {
   native: GlobeIcon,
   sheet: TableIcon,
   whiteboard: ShapesIcon,
+  form: ClipboardListIcon,
 };
 
 /** What an artifact is, in the overlay header's words. */
@@ -1116,6 +1119,9 @@ function ArtifactBody(props: {
       <WhiteboardFileView environmentId={props.environmentId} cwd={props.cwd ?? ""} path={path} />
     );
   }
+  if (artifact.kind === "form" && path !== null) {
+    return <FormFileView environmentId={props.environmentId} cwd={props.cwd ?? ""} path={path} />;
+  }
   switch (artifact.kind) {
     case "markdown":
     case "code":
@@ -1289,6 +1295,7 @@ const CARD_KINDS = new Set<ThreadArtifactKind>([
   "markdown",
   "sheet",
   "whiteboard",
+  "form",
 ]);
 
 /**
