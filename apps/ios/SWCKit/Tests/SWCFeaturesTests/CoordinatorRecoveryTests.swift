@@ -6,6 +6,16 @@ import SWCWire
 
 @MainActor
 @Suite struct CoordinatorRecoveryTests {
+  @Test func theContinueBannerReplacesOnlyTheSameMachinesUnreachableLine() {
+    let project = ProjectRef(environmentId: "m4", projectId: "p")
+    let state = LinkedProjectState(project: project)
+    let copy = LinkedProjectResolver.Copy(ref: project, machineLabel: "M4", machineOnline: false,
+                                          binding: CoordinatorBinding(epoch: 1, state: .active))
+    #expect(state.unreachableLine([copy]) != nil)
+    #expect(state.unreachableLine([copy], coveredMachine: "m4") == nil)
+    #expect(state.unreachableLine([copy], coveredMachine: "other") != nil)
+  }
+
   @Test func settingsKeepTheProviderIdentityAndRestoreOriginalOptions() {
     let first = ModelChoice(instanceId: "a", provider: "A", slug: "model", name: "Model")
     let other = ModelChoice(instanceId: "b", provider: "B", slug: "model", name: "Model")

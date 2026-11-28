@@ -42,12 +42,13 @@ final class LinkedProjectState {
 
   /// "M4 unreachable · last synced 2:05 PM" while the coordinator's machine is
   /// unreachable, or that it is switched off on this phone.
-  func unreachableLine(_ copies: [LinkedProjectResolver.Copy]) -> String? {
+  func unreachableLine(_ copies: [LinkedProjectResolver.Copy], coveredMachine: String? = nil) -> String? {
     guard let coordinator = LinkedProjectResolver.coordinator(copies) else { return nil }
     switch LinkedProjectResolver.reach(coordinator) {
     case .reachable, .checking: return nil
     case .switchedOff: return LinkedProjectResolver.switchedOffCoordinatorLabel(machine: coordinator.machineLabel)
     case .unreachable:
+      guard coordinator.ref.environmentId != coveredMachine else { return nil }
       return LinkedProjectResolver.unreachableLabel(machine: coordinator.machineLabel, lastSyncedAt: LinkedProjectResolver.lastSynced(with: coordinator, statuses: statuses), now: now)
     }
   }

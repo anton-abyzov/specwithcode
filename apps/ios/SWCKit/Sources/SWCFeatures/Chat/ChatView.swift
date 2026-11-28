@@ -214,7 +214,7 @@ private struct ChatScreen: View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: WeaveSpacing.s4) {
         if case let .project(project) = target {
-          LinkedCoordinatorBanner(project: project)
+          LinkedCoordinatorBanner(project: project, coveredMachine: connectionNotice?.coveredMachine)
         }
         if !session.isLoaded {
           if showsOfflineTranscript {
@@ -1106,6 +1106,7 @@ private struct ChatScreen: View {
   private struct ConnectionNotice {
     let message: String
     let kind: WeaveNoticeKind
+    var coveredMachine: String? = nil
     var actionTitle = "Reconnect"
     let action: (() -> Void)?
   }
@@ -1136,7 +1137,7 @@ private struct ChatScreen: View {
       else if session.rows.isEmpty { message = "\(label) is offline." }
       else { message = session.sendBlockedReason == nil ? "\(label) is offline. Showing saved messages." : "Showing saved messages." }
       if let other = reachableOrchestrator {
-        return ConnectionNotice(message: message, kind: .warn, actionTitle: "Continue on \(other.machineLabel)'s coordinator", action: { showOrchestrator(other.ref) })
+        return ConnectionNotice(message: message, kind: .warn, coveredMachine: machineId, actionTitle: "Continue on \(other.machineLabel)'s coordinator", action: { showOrchestrator(other.ref) })
       }
       return ConnectionNotice(message: message, kind: .warn, action: { model.engine.reconnect(machineId: machineId) })
     }

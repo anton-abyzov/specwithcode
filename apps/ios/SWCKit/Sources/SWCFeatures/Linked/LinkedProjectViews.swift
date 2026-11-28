@@ -82,28 +82,31 @@ private struct LinkedProjectMachinesCardContent: View {
 /// threads while its coordinator's machine is unreachable.
 struct LinkedCoordinatorBanner: View {
   let project: ProjectRef
+  var coveredMachine: String? = nil
 
   var body: some View {
     // A new project gets new state, never the previous project's.
-    LinkedCoordinatorBannerContent(project: project).id(project)
+    LinkedCoordinatorBannerContent(project: project, coveredMachine: coveredMachine).id(project)
   }
 }
 
 private struct LinkedCoordinatorBannerContent: View {
   let project: ProjectRef
+  let coveredMachine: String?
 
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @State private var state: LinkedProjectState
 
-  init(project: ProjectRef) {
+  init(project: ProjectRef, coveredMachine: String?) {
+    self.coveredMachine = coveredMachine
     self.project = project
     self._state = State(initialValue: LinkedProjectState(project: project))
   }
 
   var body: some View {
     let copies = state.copies(in: model)
-    if let line = state.unreachableLine(copies) {
+    if let line = state.unreachableLine(copies, coveredMachine: coveredMachine) {
       Banner(line, kind: .warn, actionTitle: "Machines") { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(project, in: model)) }
         .accessibilityIdentifier("linked.banner")
         .task { await state.follow(model: model) }
