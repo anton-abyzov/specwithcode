@@ -50,8 +50,7 @@ export type McpElicitationUrlCheck =
 // levels, and hosting suffixes where each tenant is its own owner
 // (`tenant.gitlab.io`). A short list of the common ones, not the Public Suffix
 // List, which would weigh down the web bundle: a miss highlights one label too
-// few, and the full host is still shown beside it. Wildcard suffixes such as
-// `*.run.app` are left out: one label deeper still names a shared region.
+// few, and the full host is still shown beside it.
 const MULTI_LABEL_SUFFIXES = new Set([
   "ac.uk",
   "co.uk",
@@ -147,6 +146,9 @@ export function checkMcpElicitationUrl(raw: unknown): McpElicitationUrlCheck {
   // An explicit `//` and a host right after it: `https:host` resolves against
   // the page, and `https:///@host` reads as one host but opens another.
   if (!/^https?:\/\/[^/?#]/i.test(raw)) return { ok: false, reason: "unparseable" };
+  // A `.` or `..` segment, plain or as `%2e`, is folded away on opening, so the
+  // path opened would not be the path shown.
+  if (hasDotSegment(raw)) return { ok: false, reason: "unparseable" };
   // The parser keeps user info only in these fields; a bare `@` before the
   // host also counts, even when both are empty (`https://@evil.example`).
   if (parsed.username !== "" || parsed.password !== "" || hasEmptyUserInfo(raw))
@@ -183,8 +185,19 @@ export function registrableDomainOf(host: string): string {
   if (isIpHost(bare) || !bare.includes(".")) return bare;
   const labels = bare.split(".");
   const lastTwo = labels.slice(-2).join(".");
-  const depth = MULTI_LABEL_SUFFIXES.has(lastTwo.toLowerCase()) ? 3 : 2;
+  const suffix = lastTwo.toLowerCase();
+  const depth = WILDCARD_SUFFIXES.has(suffix) ? 4 : MULTI_LABEL_SUFFIXES.has(suffix) ? 3 : 2;
   return labels.slice(-depth).join(".");
+}
+
+// Wildcard suffixes (`*.run.app`): every name one label below is itself a
+// suffix, so a name is registered two labels deeper.
+const WILDCARD_SUFFIXES = new Set(["run.app"]);
+
+function hasDotSegment(raw: string): boolean {
+  const afterAuthority = raw.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "");
+  const path = afterAuthority.split(/[?#]/, 1)[0] ?? "";
+  return path.split("/").some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment));
 }
 
 function hasEmptyUserInfo(raw: string): boolean {

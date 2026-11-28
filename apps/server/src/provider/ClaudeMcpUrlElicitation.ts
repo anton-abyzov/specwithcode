@@ -20,7 +20,10 @@
  *   after the person said "I'm done" gets that answer back, and no new card.
  *   Any other link or message gets its own card, since the person never saw
  *   it. A Decline or Cancel holds for the whole call. Retries carry a new
- *   elicitation id, so the link and message are all that tell two asks apart.
+ *   elicitation id, so the link and message are all that tell two asks apart:
+ *   the same link and message again is the server asking the same thing, and
+ *   is answered as a retry (AC-05). "I'm done" carries no data and opens
+ *   nothing; what the person agrees to, they agree to at the linked site.
  *
  * @module ClaudeMcpUrlElicitation
  */

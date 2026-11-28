@@ -100,9 +100,21 @@ describe("checkMcpElicitationUrl", () => {
       "https:///@example.test/",
       "https:///example.test/",
       "https://?q=example.test",
+      // Dot segments are folded away on opening (round 3).
+      "https://example.com/account/%2e%2e/login",
+      "https://example.com/account/../login",
+      "https://example.com/./login",
+      "https://example.com/a/%2E/b",
     ])
       expect(checkMcpElicitationUrl(raw)).toEqual({ ok: false, reason: "unparseable" });
     expect(link("HTTPS://Example.com/a").host).toBe("example.com");
+    // Dots inside a segment, in the query or in the fragment are not segments.
+    for (const raw of [
+      "https://example.com/v1.2/..config",
+      "https://example.com/a?next=/../b",
+      "https://example.com/a#/../b",
+    ])
+      expect(link(raw).url).toBe(raw);
   });
 
   it("finds the registrable domain", () => {
@@ -111,7 +123,8 @@ describe("checkMcpElicitationUrl", () => {
     expect(registrableDomainOf("evil.github.io")).toBe("evil.github.io");
     expect(registrableDomainOf("tenant.gitlab.io")).toBe("tenant.gitlab.io");
     expect(registrableDomainOf("shop.myshopify.com")).toBe("shop.myshopify.com");
-    expect(registrableDomainOf("svc-abc.a.run.app")).toBe("run.app");
+    expect(registrableDomainOf("svc-abc.a.run.app")).toBe("svc-abc.a.run.app");
+    expect(registrableDomainOf("api.svc-abc.a.run.app")).toBe("svc-abc.a.run.app");
     expect(registrableDomainOf("example.com.")).toBe("example.com");
     expect(registrableDomainOf("localhost")).toBe("localhost");
     expect(registrableDomainOf("192.168.1.10")).toBe("192.168.1.10");
