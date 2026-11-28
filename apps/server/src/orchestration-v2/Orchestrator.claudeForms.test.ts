@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  MCP_ELICITATION_URL_DONE_ANSWER,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -32,6 +33,10 @@ import {
   forgetUncommittedFormAnswer,
   handOffClaudeFormAnswers,
   isClaudeFormAnswered,
+  LINK_AGENT_REFUSAL,
+  LINK_ALREADY_ANSWERED,
+  LINK_CLOSED,
+  LINK_NEEDS_CARD,
   settleFormAnswerDispatch,
   REDACTED_FORM_ANSWER,
   takeClaudeFormAnswers,
@@ -294,6 +299,99 @@ it.effect("takes one answer when two machines answer the same card at once", () 
       FORM_ALREADY_ANSWERED,
     );
     assert.equal((yield* status)?.status, "resolved");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+const signInLink: OrchestrationV2McpElicitation = {
+  serverName: "github",
+  mode: "url",
+  message: "Sign in to GitHub to continue.",
+  url: "https://github.com/login/device?code=ABCD",
+};
+
+it.effect("takes only the person's I'm done on a link card (1498)", () =>
+  Effect.gen(function* () {
+    const { respond, status } = yield* card("link-refusals", signInLink);
+    assert.include(
+      yield* refusal(
+        respond("agent", {
+          decision: "accept",
+          answers: { ...MCP_ELICITATION_URL_DONE_ANSWER },
+          answeredByThreadId: ThreadId.make("thread:some-agent"),
+        }),
+      ),
+      LINK_AGENT_REFUSAL,
+    );
+    assert.include(
+      yield* refusal(
+        respond("agent-decline", {
+          decision: "decline",
+          answeredByThreadId: ThreadId.make("thread:some-agent"),
+        }),
+      ),
+      LINK_AGENT_REFUSAL,
+    );
+    // What Full access and any automatic responder send.
+    assert.include(yield* refusal(respond("auto", { decision: "accept" })), LINK_NEEDS_CARD);
+    assert.include(
+      yield* refusal(
+        respond("extra", {
+          decision: "accept",
+          answers: { ...MCP_ELICITATION_URL_DONE_ANSWER, url: "https://evil.example" },
+        }),
+      ),
+      LINK_NEEDS_CARD,
+    );
+    assert.include(
+      yield* refusal(respond("wrong", { decision: "accept", answers: { linkDone: "yes" } })),
+      LINK_NEEDS_CARD,
+    );
+    assert.equal((yield* status)?.status, "pending");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("records a link card's I'm done with no answers and refuses a second press", () =>
+  Effect.gen(function* () {
+    const { respond, status, requestId } = yield* card("link-done", signInLink);
+    yield* respond("person", {
+      decision: "accept",
+      answers: { ...MCP_ELICITATION_URL_DONE_ANSWER },
+    });
+    const resolved = yield* status;
+    assert.equal(resolved?.status, "resolved");
+    assert.equal(resolved?.decision, "accept");
+    assert.isUndefined(resolved?.answers);
+    // Nothing is handed on: the server gets a bare accept.
+    assert.isUndefined(takeClaudeFormAnswers(requestId));
+    assert.equal(claudeFormCommitOutcome(requestId), "committed");
+    assert.include(
+      yield* refusal(respond("again", { decision: "decline" })),
+      LINK_ALREADY_ANSWERED,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("lets the person decline or cancel a link card, and refuses one closing", () =>
+  Effect.gen(function* () {
+    const declined = yield* card("link-decline", signInLink);
+    yield* declined.respond("person", { decision: "decline" });
+    assert.equal((yield* declined.status)?.status, "resolved");
+    const cancelled = yield* card("link-cancel", signInLink);
+    yield* cancelled.respond("person", { decision: "cancel" });
+    assert.equal((yield* cancelled.status)?.status, "resolved");
+    // Stop or the SDK's abort is closing the card: a late press is refused.
+    const closing = yield* card("link-closing", signInLink);
+    assert.isTrue(beginClosingClaudeForm(closing.requestId));
+    assert.include(
+      yield* refusal(
+        closing.respond("late", {
+          decision: "accept",
+          answers: { ...MCP_ELICITATION_URL_DONE_ANSWER },
+        }),
+      ),
+      LINK_CLOSED,
+    );
+    assert.equal((yield* closing.status)?.status, "pending");
   }).pipe(Effect.provide(layerTest)),
 );
 

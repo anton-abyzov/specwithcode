@@ -11,15 +11,19 @@
  *   effect carry a redacted summary, and the raw answers reach the Claude
  *   adapter through an in-process hand-off. A restart loses the hand-off, but
  *   it also ends the Claude process that was waiting for it.
+ * - A link card (URL mode, 1498) follows the same rules. Its accept is the
+ *   person's "I'm done, continue", which sends the card's own done answer and
+ *   carries nothing on; any other accept is refused.
  */
-import type {
-  OrchestrationV2McpElicitation,
-  OrchestrationV2RuntimeRequest,
-  OrchestrationV2TurnItem,
-  ProviderApprovalDecision,
-  ProviderUserInputAnswers,
-  RuntimeRequestId,
-  ThreadId,
+import {
+  MCP_ELICITATION_URL_DONE_ANSWER,
+  type OrchestrationV2McpElicitation,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2TurnItem,
+  type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
+  type RuntimeRequestId,
+  type ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import {
@@ -35,6 +39,11 @@ export const FORM_NEEDS_CARD = "Submit this form from its card in the thread.";
 export const FORM_ALREADY_ANSWERED = "This form was already answered.";
 export const FORM_CLOSED = "This form was closed.";
 export const FORM_OPENING = "This form is still opening. Try again in a moment.";
+export const LINK_AGENT_REFUSAL =
+  "Only the user can answer this link request. Wait for their answer.";
+export const LINK_NEEDS_CARD = "Answer this link request from its card in the thread.";
+export const LINK_ALREADY_ANSWERED = "This link request was already answered.";
+export const LINK_CLOSED = "This link request was closed.";
 
 /** The prefix of the native id the Claude adapter gives an MCP form's request. */
 export const CLAUDE_FORM_NATIVE_PREFIX = "mcp-elicitation:";
@@ -244,6 +253,27 @@ export function claudeFormOf(
     : undefined;
 }
 
+/** The link a Claude MCP card asks the person to open (URL mode, 1498). */
+export function claudeLinkOf(
+  item: OrchestrationV2TurnItem | undefined,
+): OrchestrationV2McpElicitation | undefined {
+  return item?.type === "approval_request" &&
+    item.requestKind === "mcp-elicitation" &&
+    item.elicitation?.mode === "url"
+    ? item.elicitation
+    : undefined;
+}
+
+/** The card's own "I'm done, continue": exactly its done answer, nothing else. */
+function isLinkDoneAnswer(answers: ProviderUserInputAnswers | undefined): boolean {
+  if (answers === undefined) return false;
+  const expected = Object.entries(MCP_ELICITATION_URL_DONE_ANSWER);
+  const given = Object.entries(answers);
+  return (
+    given.length === expected.length && expected.every(([key, value]) => answers[key] === value)
+  );
+}
+
 export interface ClaudeFormResponseCheck {
   /** Set when the answer is refused; the card stays open. */
   readonly refusal?: string;
@@ -270,6 +300,14 @@ export function checkFormResponse(
   },
 ): ClaudeFormResponseCheck | undefined {
   const { request, item } = context;
+  if (claudeLinkOf(item) !== undefined && isClaudeFormRequest(request)) {
+    if (request.status === "resolved") return { refusal: LINK_ALREADY_ANSWERED };
+    if (request.status !== "pending" || closing.has(request.id)) return { refusal: LINK_CLOSED };
+    if (command.answeredByThreadId !== undefined) return { refusal: LINK_AGENT_REFUSAL };
+    if (command.decision === "decline" || command.decision === "cancel") return {};
+    // Nothing is recorded or handed on: the server gets a bare accept.
+    return isLinkDoneAnswer(command.answers) ? {} : { refusal: LINK_NEEDS_CARD };
+  }
   const form = claudeFormOf(item);
   // The Claude adapter records the request before its card: until the card
   // lands, the request is still a form, and only Decline or Cancel go through.
