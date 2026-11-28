@@ -17,6 +17,7 @@ import {
   SCREEN_VIEWER_MIN_SIZE,
   SCREEN_VIEWER_WINDOW_ROLE,
   isScreenViewerNavigationAllowed,
+  isScreenViewerRouteKept,
   parseViewerPlaces,
   placeViewerWindow,
   rememberViewerPlace,
@@ -96,6 +97,13 @@ export class ScreenViewerWindows {
     }
   }
 
+  /** Whether this renderer is one of the viewer windows: those show one machine and open none. */
+  owns(contentsId: number): boolean {
+    for (const window of this.windows.values())
+      if (!window.isDestroyed() && window.webContents.id === contentsId) return true;
+    return false;
+  }
+
   /** Brings forward the window that shows this renderer, if any. */
   revealOwner(owner: number): boolean {
     const contents = Electron.webContents.fromId(owner);
@@ -116,7 +124,10 @@ export class ScreenViewerWindows {
     const owner = this.deps.registry.ownerOf(environmentId);
     if (owner !== undefined && this.revealOwner(owner)) return "focused";
     if (this.opening.has(environmentId)) return "focused";
-    const openCount = [...this.windows.keys()].filter((id) => this.live(id) !== undefined).length;
+    // Windows still being made count too, or quick opens of several machines pass the limit.
+    const openCount =
+      [...this.windows.keys()].filter((id) => this.live(id) !== undefined).length +
+      this.opening.size;
     if (openCount >= SCREEN_VIEWER_WINDOW_LIMIT) return "limit";
     this.opening.add(environmentId);
     try {
@@ -213,6 +224,11 @@ export class ScreenViewerWindows {
       if (/^https?:/i.test(target)) this.deps.openExternal(target);
     };
     window.webContents.on("will-navigate", guard);
+    // A route change inside the page that leaves this machine goes back to it.
+    window.webContents.on("did-navigate-in-page", (_event, target, isMainFrame) => {
+      if (isMainFrame && !isScreenViewerRouteKept(url, target) && !window.isDestroyed())
+        void window.loadURL(url).catch(() => undefined);
+    });
     window.webContents.on("will-redirect", (event) => {
       if (event.isMainFrame === true) guard(event, event.url);
     });

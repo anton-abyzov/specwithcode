@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isScreenViewerNavigationAllowed,
+  isScreenViewerRouteKept,
   parseViewerPlaces,
   placeViewerWindow,
   rememberViewerPlace,
@@ -30,6 +31,16 @@ describe("screen viewer window", () => {
     expect(isScreenViewerNavigationAllowed(own, "studio://app/#/settings")).toBe(false);
     expect(isScreenViewerNavigationAllowed(own, "https://example.com/")).toBe(false);
     expect(isScreenViewerNavigationAllowed(own, "not a url")).toBe(false);
+  });
+
+  it("stays on its own machine's route inside the page", () => {
+    const own = "studio://app/#/screen/studio-mac?name=Work%20Mac";
+    expect(isScreenViewerRouteKept(own, "studio://app/#/screen/studio-mac?name=Other")).toBe(true);
+    expect(isScreenViewerRouteKept(own, "studio://app/#/screen/other-mac?name=Work%20Mac")).toBe(
+      false,
+    );
+    expect(isScreenViewerRouteKept(own, "studio://app/#/settings")).toBe(false);
+    expect(isScreenViewerRouteKept(own, "not a url")).toBe(false);
   });
 
   it("remembers places per machine and forgets the oldest past the limit", () => {

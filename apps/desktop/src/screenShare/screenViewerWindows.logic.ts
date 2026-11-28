@@ -67,6 +67,24 @@ export const isScreenViewerNavigationAllowed = (windowUrl: string, targetUrl: st
   }
 };
 
+/**
+ * Whether a route change inside the page keeps the window on its own machine.
+ * The renderer routes by hash, which no navigation event can stop, so the
+ * window checks each one after it happens and goes back when it left.
+ */
+export const isScreenViewerRouteKept = (windowUrl: string, targetUrl: string): boolean => {
+  const route = (url: string): string | null => {
+    try {
+      const parsed = new URL(url);
+      return `${parsed.origin}${parsed.pathname}${parsed.hash.split("?")[0]}`;
+    } catch {
+      return null;
+    }
+  };
+  const own = route(windowUrl);
+  return own !== null && own === route(targetUrl);
+};
+
 const isBounds = (value: unknown): value is WindowBounds => {
   if (typeof value !== "object" || value === null) return false;
   const bounds = value as Record<string, unknown>;

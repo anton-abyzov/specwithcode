@@ -149,9 +149,8 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
     const id = contents.id;
     if (watched.has(id)) return;
     watched.add(id);
-    contents.on("did-start-navigation", (details) => {
-      if (details.isMainFrame && !details.isSameDocument) screenViewing.dropViews(id);
-    });
+    // On commit, not on start: a navigation that is abandoned leaves the old page and its views.
+    contents.on("did-navigate", () => screenViewing.dropViews(id));
     contents.on("render-process-gone", () => screenViewing.dropViews(id));
     contents.once("destroyed", () => {
       watched.delete(id);
@@ -192,7 +191,10 @@ export const installScreenShare = Effect.fn("desktop.ipc.installScreenShare")(fu
       channel: SCREEN_SHARE_OPEN_VIEWER_CHANNEL,
       payload: ScreenShareOpenViewer,
       result: ScreenShareOpenViewerResult,
-      handler: (input) => Effect.promise(() => viewerWindows.open(input.environmentId, input.name)),
+      handler: (input, event) =>
+        event !== undefined && viewerWindows.owns(event.sender.id)
+          ? Effect.succeed("invalid" as const)
+          : Effect.promise(() => viewerWindows.open(input.environmentId, input.name)),
     }),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => viewerWindows.closeAll()));
