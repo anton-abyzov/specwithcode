@@ -105,6 +105,10 @@ describe("checkMcpElicitationUrl", () => {
       "https://example.com/account/../login",
       "https://example.com/./login",
       "https://example.com/a/%2E/b",
+      // Bidirectional controls reorder the shown text (round 4).
+      "https://example.com/\u202egnp.exe",
+      "https://example.com/a\u2066b\u2069",
+      "https://example.com/\u200f",
     ])
       expect(checkMcpElicitationUrl(raw)).toEqual({ ok: false, reason: "unparseable" });
     expect(link("HTTPS://Example.com/a").host).toBe("example.com");
@@ -125,6 +129,7 @@ describe("checkMcpElicitationUrl", () => {
     expect(registrableDomainOf("shop.myshopify.com")).toBe("shop.myshopify.com");
     expect(registrableDomainOf("svc-abc.a.run.app")).toBe("svc-abc.a.run.app");
     expect(registrableDomainOf("api.svc-abc.a.run.app")).toBe("svc-abc.a.run.app");
+    expect(registrableDomainOf("svc.region.mtls.run.app")).toBe("svc.region.mtls.run.app");
     expect(registrableDomainOf("example.com.")).toBe("example.com");
     expect(registrableDomainOf("localhost")).toBe("localhost");
     expect(registrableDomainOf("192.168.1.10")).toBe("192.168.1.10");

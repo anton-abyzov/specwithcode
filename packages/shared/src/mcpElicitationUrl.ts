@@ -135,6 +135,9 @@ export function checkMcpElicitationUrl(raw: unknown): McpElicitationUrlCheck {
   if (raw.length > MCP_ELICITATION_URL_MAX_LENGTH) return { ok: false, reason: "too-long" };
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0020\u007f\\]/.test(raw)) return { ok: false, reason: "unparseable" };
+  // Bidirectional controls can reorder the link as the card shows it.
+  if (/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(raw))
+    return { ok: false, reason: "unparseable" };
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -185,14 +188,21 @@ export function registrableDomainOf(host: string): string {
   if (isIpHost(bare) || !bare.includes(".")) return bare;
   const labels = bare.split(".");
   const lastTwo = labels.slice(-2).join(".");
-  const suffix = lastTwo.toLowerCase();
-  const depth = WILDCARD_SUFFIXES.has(suffix) ? 4 : MULTI_LABEL_SUFFIXES.has(suffix) ? 3 : 2;
+  const lower = bare.toLowerCase();
+  const wildcard = WILDCARD_SUFFIXES.find((suffix) => lower.endsWith(`.${suffix}`));
+  const depth =
+    wildcard !== undefined
+      ? wildcard.split(".").length + 2
+      : MULTI_LABEL_SUFFIXES.has(lastTwo.toLowerCase())
+        ? 3
+        : 2;
   return labels.slice(-depth).join(".");
 }
 
 // Wildcard suffixes (`*.run.app`): every name one label below is itself a
 // suffix, so a name is registered two labels deeper.
-const WILDCARD_SUFFIXES = new Set(["run.app"]);
+// Longest first.
+const WILDCARD_SUFFIXES = ["mtls.run.app", "run.app"];
 
 function hasDotSegment(raw: string): boolean {
   const afterAuthority = raw.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "");
