@@ -25,8 +25,8 @@ import {
   UNATTENDED_MCP_ELICITATION_TIMEOUT_MS,
   unattendedTimeoutNotice,
   unreadableFormNotice,
-  urlModeNotice,
 } from "./ClaudeMcpElicitation.ts";
+import { urlRefusedNotice } from "./ClaudeMcpUrlElicitation.ts";
 
 type Event = ProviderAdapter.ProviderAdapterV2Event;
 
@@ -312,15 +312,6 @@ describe("ClaudeMcpElicitation", () => {
     expect(h.notices()).toEqual([secretFieldNotice("github", "GitHub token")]);
   });
 
-  it("declines URL mode visibly without a card or a link", async () => {
-    const h = harness();
-    const result = await h.ask({ mode: "url", url: "https://evil.example/login" });
-    expect(result).toEqual({ action: "decline" });
-    expect(h.card()).toBeUndefined();
-    expect(h.notices()).toEqual([urlModeNotice("github")]);
-    expect(JSON.stringify(h.events)).not.toContain("evil.example");
-  });
-
   it("shows one URL note per tool call, however often the call retries (1495)", async () => {
     const h = harness();
     // The probe's -32042 call: three retries, each with a new request and elicitation id.
@@ -329,17 +320,18 @@ describe("ClaudeMcpElicitation", () => {
     for (const attempt of [1, 2, 3])
       expect(
         await h.ask(
-          { mode: "url", url: `https://example.com/sign-in?attempt=${attempt}` },
+          { mode: "url", url: `ftp://example.com/sign-in?attempt=${attempt}` },
           undefined,
           `sdk-request-${attempt}`,
         ),
       ).toEqual({ action: "decline" });
-    expect(h.shownNotices()).toEqual([urlModeNotice("github")]);
+    expect(h.shownNotices()).toEqual([urlRefusedNotice("github", "scheme")]);
     // Another tool call of the same server gets its own note.
     h.toolCalls.delete("toolu_open");
     h.toolCalls.set("toolu_open_again", { toolName: "mcp__github__open_link" });
-    await h.ask({ mode: "url", url: "https://example.com/sign-in" }, undefined, "sdk-request-4");
-    expect(h.shownNotices()).toEqual([urlModeNotice("github"), urlModeNotice("github")]);
+    await h.ask({ mode: "url", url: "ftp://example.com/sign-in" }, undefined, "sdk-request-4");
+    const refused = urlRefusedNotice("github", "scheme");
+    expect(h.shownNotices()).toEqual([refused, refused]);
   });
 
   it("finds the tool call by the CLI's tool-name form of the server name", () => {
@@ -367,9 +359,10 @@ describe("ClaudeMcpElicitation", () => {
     const h = harness();
     h.toolCalls.set("toolu_a", { toolName: "mcp__github__open_link" });
     h.toolCalls.set("toolu_b", { toolName: "mcp__github__open_link" });
-    await h.ask({ mode: "url", url: "https://example.com/a" }, undefined, "sdk-request-a");
-    await h.ask({ mode: "url", url: "https://example.com/b" }, undefined, "sdk-request-b");
-    expect(h.shownNotices()).toEqual([urlModeNotice("github"), urlModeNotice("github")]);
+    await h.ask({ mode: "url", url: "ftp://example.com/a" }, undefined, "sdk-request-a");
+    await h.ask({ mode: "url", url: "ftp://example.com/b" }, undefined, "sdk-request-b");
+    const refused = urlRefusedNotice("github", "scheme");
+    expect(h.shownNotices()).toEqual([refused, refused]);
   });
 
   it("cancels a form it cannot show, with a note", async () => {
