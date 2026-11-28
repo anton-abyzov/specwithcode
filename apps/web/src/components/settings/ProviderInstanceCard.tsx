@@ -1,5 +1,6 @@
 "use client";
 
+import { openModelPresetOfEnvironment } from "@specweave-studio/shared/openModelPresets";
 import { useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 import { Spinner } from "~/components/ui/spinner";
@@ -741,6 +742,7 @@ export function ProviderInstanceCard({
           ? undefined
           : (readConfigString(instance.config, "registryIconUrl") ?? undefined)
       }
+      openModelPreset={openModelPresetOfEnvironment(instance.environment)?.id}
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"

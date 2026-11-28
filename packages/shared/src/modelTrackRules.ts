@@ -32,6 +32,7 @@ import {
   withTrackEffort,
 } from "./modelTracks.ts";
 import { type ModelFamily, modelFamily } from "./modelVendor.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
 import {
   canTakeTurn,
   isGeminiSpendProvider,
@@ -235,7 +236,10 @@ export function describeTrack(input: {
   // The order the resolvers walk: the entry's own source (for a built-in row,
   // the best one before room is read), then the others by the Sources order,
   // the maker's harness and, outside Review, the most room. Held sources come
-  // last and are never started on unless the person named one.
+  // last and are never started on unless the person named one. An open-model
+  // route is held whatever it bills (1513), with no hold label of its own.
+  const held = (provider: ServerProvider, slug: string) =>
+    sourceHold(provider, slug) !== null || isOpenModelRoute(provider);
   const sourcesOf = (
     slug: string,
     free: boolean,
@@ -258,7 +262,7 @@ export function describeTrack(input: {
           : {}),
       });
     const open = (list: ReturnType<typeof ranked>) =>
-      list.filter((choice) => sourceHold(choice.provider, choice.slug) === null);
+      list.filter((choice) => !held(choice.provider, choice.slug));
     const first =
       named ?? open(ranked(false))[0]?.provider.instanceId ?? ranked(false)[0]?.provider.instanceId;
     const all = ranked(true);
@@ -266,8 +270,7 @@ export function describeTrack(input: {
       ...all.filter(({ provider }) => provider.instanceId === first),
       ...open(all).filter(({ provider }) => provider.instanceId !== first),
       ...all.filter(
-        (choice) =>
-          choice.provider.instanceId !== first && sourceHold(choice.provider, choice.slug) !== null,
+        (choice) => choice.provider.instanceId !== first && held(choice.provider, choice.slug),
       ),
     ].map(({ provider, slug: served }) => {
       const hold = sourceHold(provider, served);
@@ -277,7 +280,7 @@ export function describeTrack(input: {
         status: sourceStatus(provider, input.nowMs, served),
         hold,
         used:
-          hold === null ||
+          !held(provider, served) ||
           (provider.instanceId === named &&
             (input.track !== "review" ||
               !isPaidModelOn(provider, served) ||
@@ -383,7 +386,13 @@ export function trackEntryRefusal(input: {
   readonly model: { readonly slug: string; readonly name?: string };
   readonly existing: ReadonlyArray<ModelSelection>;
   readonly providers: ReadonlyArray<ServerProvider>;
-  /** The source picked for the new entry: one billed per token is never added to a track. */
+  /**
+   * The source picked for the new entry: one billed per token is never added
+   * to a track, except an open-model route (1513), which the person adds by
+   * hand to Daily or Complex and which runs only where they put it. Review
+   * never spends a key, so a keyed route keeps its refusal there; a local
+   * route may review.
+   */
   readonly instanceId?: ProviderInstanceId | undefined;
 }): TrackEntryRefusal | null {
   const names = (selection: ModelSelection) =>
@@ -395,7 +404,9 @@ export function trackEntryRefusal(input: {
   if (input.existing.length >= MAX_LANE_MODELS) return "full";
   if (input.track !== "daily" && isFreeTrackModel(input.model)) return "free-in-hard-track";
   const source = input.providers.find((entry) => entry.instanceId === input.instanceId);
-  return source === undefined ? null : sourceHold(source, input.model.slug);
+  if (source === undefined) return null;
+  const hold = sourceHold(source, input.model.slug);
+  return isOpenModelRoute(source) && input.track !== "review" ? null : hold;
 }
 
 /**

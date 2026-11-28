@@ -1,4 +1,5 @@
 import { resolveOfficialAcpRegistryIconUrl } from "@specweave-studio/contracts";
+import { openModelPresetById } from "@specweave-studio/shared/openModelPresets";
 
 import { cn } from "~/lib/utils";
 import { GitHubCopilotIcon } from "./GitHubCopilotIcon";
@@ -18,13 +19,16 @@ import {
   JunieLogo,
   KimiLogo,
   KiroLogo,
+  LmStudioLogo,
   MetaLogo,
   MistralLogo,
   OllamaLogo,
   OpenAILogo,
   OpenCodeLogo,
+  OpenRouterLogo,
   PiLogo,
   QwenLogo,
+  ZaiLogo,
 } from "./ProviderLogoMarks";
 
 /** A provider's brand; several drivers and registry agents can share one. */
@@ -50,7 +54,10 @@ export type ProviderBrand =
   | "factory"
   | "amp"
   | "junie"
-  | "deepseek";
+  | "deepseek"
+  | "zai"
+  | "openrouter"
+  | "lmstudio";
 
 const LOGO_BY_BRAND: Readonly<Record<ProviderBrand, Icon>> = {
   claude: ClaudeLogo,
@@ -75,6 +82,9 @@ const LOGO_BY_BRAND: Readonly<Record<ProviderBrand, Icon>> = {
   amp: AmpLogo,
   junie: JunieLogo,
   deepseek: DeepSeekLogo,
+  zai: ZaiLogo,
+  openrouter: OpenRouterLogo,
+  lmstudio: LmStudioLogo,
 };
 
 const BRAND_BY_DRIVER: Readonly<Record<string, ProviderBrand>> = {
@@ -123,12 +133,34 @@ export function acpAgentIdFromIconUrl(iconUrl: string | null | undefined): strin
   );
 }
 
+export function isProviderBrand(value: string): value is ProviderBrand {
+  return Object.hasOwn(LOGO_BY_BRAND, value);
+}
+
+/**
+ * The vendor brand of a Claude Code instance made from an open-model preset
+ * (its `SPECWITHCODE_OPEN_MODEL_PRESET` marker), or null. Other drivers, and
+ * Claude instances without the marker, keep their own mark.
+ */
+export function openModelBrandFor(
+  driverKind: string,
+  openModelPreset: string | null | undefined,
+): ProviderBrand | null {
+  if (driverKind !== "claudeAgent") return null;
+  const brand = openModelPresetById(openModelPreset)?.brand;
+  return brand && isProviderBrand(brand) ? brand : null;
+}
+
 /** The bundled brand for a driver, or for an ACP Registry agent by its registry identity. */
 export function providerBrandFor(input: {
   readonly driverKind: string;
   readonly acpRegistryAgentId?: string | null | undefined;
   readonly acpRegistryIconUrl?: string | null | undefined;
+  /** The open-model preset id a Claude Code instance was made from. */
+  readonly openModelPreset?: string | null | undefined;
 }): ProviderBrand | null {
+  const openModelBrand = openModelBrandFor(input.driverKind, input.openModelPreset);
+  if (openModelBrand) return openModelBrand;
   if (input.driverKind !== "acpRegistry") return BRAND_BY_DRIVER[input.driverKind] ?? null;
   const agentId =
     input.acpRegistryAgentId?.trim() || acpAgentIdFromIconUrl(input.acpRegistryIconUrl);

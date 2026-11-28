@@ -4,9 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import { OPEN_MODEL_PRESET_ENV } from "@specweave-studio/shared/openModelPresets";
 
+import { claudeHomeFromContinuationKey } from "./ClaudeTranscriptTransfer.ts";
 import {
+  claudeEndpointFromContinuationKey,
+  claudeHomeKeyOfContinuationKey,
   claudeNotSignedInMessage,
+  claudeOpenModelEndpoint,
   claudeSignedOutMessage,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -65,6 +70,66 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         );
       }),
     );
+
+    it.effect("keeps the plain home key for every instance without the preset marker", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const home = path.resolve("/tmp/claude-endpoint-home");
+        const plain = `claude:home:${home}`;
+        const handBuilt = { ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic" };
+        const unknownMarker = { [OPEN_MODEL_PRESET_ENV]: "not-a-preset", ...handBuilt };
+        for (const environment of [undefined, {}, handBuilt, unknownMarker]) {
+          expect(yield* makeClaudeContinuationGroupKey({ homePath: home }, environment)).toBe(
+            plain,
+          );
+          expect(claudeOpenModelEndpoint(environment)).toBeNull();
+        }
+        expect(claudeEndpointFromContinuationKey(plain)).toBeNull();
+        expect(claudeHomeKeyOfContinuationKey(plain)).toBe(plain);
+        expect(claudeEndpointFromContinuationKey("codex:home:/tmp/codex")).toBeNull();
+      }),
+    );
+
+    it.effect("folds a preset instance's endpoint into its continuation key", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const home = path.resolve("/tmp/claude-endpoint-home");
+        const environment = {
+          [OPEN_MODEL_PRESET_ENV]: "deepseek",
+          ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+          ANTHROPIC_AUTH_TOKEN: "sk-test-not-a-real-key",
+        };
+        const key = yield* makeClaudeContinuationGroupKey({ homePath: home }, environment);
+
+        expect(key).toBe(
+          `claude:endpoint:${encodeURIComponent("https://api.deepseek.com/anthropic")}:claude:home:${home}`,
+        );
+        expect(key).not.toContain("sk-test");
+        expect(claudeEndpointFromContinuationKey(key)).toBe("https://api.deepseek.com/anthropic");
+        expect(claudeHomeKeyOfContinuationKey(key)).toBe(`claude:home:${home}`);
+        // Folder moves still find the home; crossing endpoints is refused in the switch.
+        expect(claudeHomeFromContinuationKey(key)).toBe("/tmp/claude-endpoint-home");
+      }),
+    );
+
+    it("normalizes a preset endpoint and never drops it", () => {
+      const endpoint = (preset: string, baseUrl?: string) =>
+        claudeOpenModelEndpoint({
+          [OPEN_MODEL_PRESET_ENV]: preset,
+          ...(baseUrl === undefined ? {} : { ANTHROPIC_BASE_URL: baseUrl }),
+        });
+      const deepseek = "https://api.deepseek.com/anthropic";
+      expect(endpoint("deepseek", deepseek)).toBe(deepseek);
+      expect(endpoint("DeepSeek", " HTTPS://API.DeepSeek.com/Anthropic/ ")).toBe(deepseek);
+      expect(endpoint("deepseek", "https://user:pw@api.deepseek.com:443/anthropic?x=1#y")).toBe(
+        deepseek,
+      );
+      expect(endpoint("ollama", "http://127.0.0.1:11500/")).toBe("http://127.0.0.1:11500");
+      expect(endpoint("ollama")).toBe("http://localhost:11434");
+      expect(endpoint("ollama", "")).toBe("http://localhost:11434");
+      expect(endpoint("kimi", "not a url")).toBe("not a url");
+      expect(endpoint("kimi")).not.toBe(endpoint("deepseek"));
+    });
 
     it("points the signed-out hint at the configured Claude home", () => {
       expect(claudeSignedOutMessage({ configDir: undefined, cwd: "/synthetic" })).toContain(

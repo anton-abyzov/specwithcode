@@ -8,12 +8,14 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@specweave-studio/contracts";
+import { OPEN_MODEL_PRESET_ENV } from "@specweave-studio/shared/openModelPresets";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import { makeClaudeContinuationGroupKey } from "../provider/Drivers/ClaudeHome.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -153,6 +155,132 @@ it.effect(
       assert.equal(result.transition.type, "restart_and_resume");
       assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+/** Environments as the Claude driver merges them; only the marker makes a preset instance. */
+const subscriptionEnv = {} satisfies NodeJS.ProcessEnv;
+const presetEnv = (preset: string, baseUrl: string): NodeJS.ProcessEnv => ({
+  [OPEN_MODEL_PRESET_ENV]: preset,
+  ANTHROPIC_BASE_URL: baseUrl,
+  ANTHROPIC_AUTH_TOKEN: "sk-test-not-a-real-key",
+});
+const deepseekEnv = presetEnv("deepseek", "https://api.deepseek.com/anthropic");
+const kimiEnv = presetEnv("kimi", "https://api.moonshot.ai/anthropic");
+const handBuiltEnv = { ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic" };
+
+/**
+ * Plans a switch from the current instance to the other one, both on Claude
+ * homes under a temp root, with the native transcript written to `withTranscript`.
+ */
+const planClaudeSwitch = (input: {
+  readonly from: { readonly home: string; readonly env: NodeJS.ProcessEnv };
+  readonly to: { readonly home: string; readonly env: NodeJS.ProcessEnv };
+  readonly withTranscript: string;
+}) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-switch-endpoints-" });
+    const home = (name: string) => path.join(root, name);
+    const transcriptDir = path.join(home(input.withTranscript), "projects", "-repo");
+    yield* fs.makeDirectory(transcriptDir, { recursive: true });
+    yield* fs.writeFileString(path.join(transcriptDir, "sess-1.jsonl"), "{}\n");
+    const keyOf = (side: typeof input.from) =>
+      makeClaudeContinuationGroupKey({ homePath: home(side.home) }, side.env);
+    const metadata = {
+      [currentInstanceId]: { continuationKey: yield* keyOf(input.from) },
+      [otherInstanceId]: { continuationKey: yield* keyOf(input.to) },
+    };
+    return yield* Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      return yield* service.plan({
+        projection: projectionWithNativeThread(),
+        targetModelSelection: { instanceId: otherInstanceId, model: "gpt-5.1-codex" },
+      });
+    }).pipe(Effect.provide(layerTest(metadata)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.effect("hands off, never resumes, when a Claude thread changes endpoint on one home", () =>
+  Effect.gen(function* () {
+    const onto = yield* planClaudeSwitch({
+      from: { home: "claude", env: subscriptionEnv },
+      to: { home: "claude", env: deepseekEnv },
+      withTranscript: "claude",
+    });
+    assert.equal(onto.transition.type, "create_with_handoff", "subscription to a preset");
+    assert.deepEqual(onto.releaseProviderSessionIds, [currentSessionId]);
+
+    const off = yield* planClaudeSwitch({
+      from: { home: "claude", env: deepseekEnv },
+      to: { home: "claude", env: subscriptionEnv },
+      withTranscript: "claude",
+    });
+    assert.equal(off.transition.type, "create_with_handoff", "a preset back to subscription");
+
+    const between = yield* planClaudeSwitch({
+      from: { home: "claude", env: deepseekEnv },
+      to: { home: "claude", env: kimiEnv },
+      withTranscript: "claude",
+    });
+    assert.equal(between.transition.type, "create_with_handoff", "two preset endpoints");
+  }),
+);
+
+it.effect("hands off between endpoints on separate homes even with the transcript there", () =>
+  Effect.gen(function* () {
+    for (const [from, to] of [
+      [subscriptionEnv, deepseekEnv],
+      [deepseekEnv, subscriptionEnv],
+      [deepseekEnv, kimiEnv],
+    ] as const) {
+      const result = yield* planClaudeSwitch({
+        from: { home: "a", env: from },
+        to: { home: "b", env: to },
+        withTranscript: "a",
+      });
+      assert.equal(result.transition.type, "create_with_handoff");
+    }
+  }),
+);
+
+it.effect("still resumes natively on the same endpoint and home", () =>
+  Effect.gen(function* () {
+    const samePreset = yield* planClaudeSwitch({
+      from: { home: "claude", env: deepseekEnv },
+      to: {
+        home: "claude",
+        env: presetEnv("deepseek", "HTTPS://API.DeepSeek.com/anthropic/"),
+      },
+      withTranscript: "claude",
+    });
+    assert.equal(samePreset.transition.type, "restart_and_resume", "one preset endpoint");
+    assert.deepEqual(samePreset.releaseProviderSessionIds, [currentSessionId]);
+
+    const subscriptions = yield* planClaudeSwitch({
+      from: { home: "claude", env: subscriptionEnv },
+      to: { home: "claude", env: subscriptionEnv },
+      withTranscript: "claude",
+    });
+    assert.equal(subscriptions.transition.type, "restart_and_resume", "two subscriptions");
+  }),
+);
+
+it.effect("keeps today's behaviour for a base URL instance built by hand (no marker)", () =>
+  Effect.gen(function* () {
+    const sameHome = yield* planClaudeSwitch({
+      from: { home: "claude", env: subscriptionEnv },
+      to: { home: "claude", env: handBuiltEnv },
+      withTranscript: "claude",
+    });
+    assert.equal(sameHome.transition.type, "restart_and_resume");
+
+    const otherHome = yield* planClaudeSwitch({
+      from: { home: "a", env: subscriptionEnv },
+      to: { home: "b", env: handBuiltEnv },
+      withTranscript: "a",
+    });
+    assert.equal(otherHome.transition.type, "restart_and_resume", "transcript copied across");
+  }),
 );
 
 it.effect(

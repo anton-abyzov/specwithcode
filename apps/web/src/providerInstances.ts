@@ -58,6 +58,8 @@ export interface ProviderInstanceEntry {
   readonly acpRegistryAgentId?: string | undefined;
   /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
   readonly acpRegistryIconUrl?: string | undefined;
+  /** The open-model preset a Claude Code instance was made from, for the vendor's mark. */
+  readonly openModelPreset?: string | undefined;
   /** Where an ACP instance's agent comes from: the user's own command or a Studio-managed install. */
   readonly acpSource?: "local" | "registry" | undefined;
   readonly continuationGroupKey?: string | undefined;
@@ -145,6 +147,7 @@ export function deriveProviderInstanceEntries(
       ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
         : {}),
+      ...(snapshot.openModelPreset ? { openModelPreset: snapshot.openModelPreset } : {}),
       continuationGroupKey: snapshot.continuation?.groupKey,
       enabled: snapshot.enabled,
       installed: snapshot.installed,

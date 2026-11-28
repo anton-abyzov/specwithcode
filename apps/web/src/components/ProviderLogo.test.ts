@@ -1,6 +1,7 @@
+import { OPEN_MODEL_PRESETS } from "@specweave-studio/shared/openModelPresets";
 import { describe, expect, it } from "vite-plus/test";
 
-import { providerBrandFor } from "./ProviderLogo";
+import { isProviderBrand, providerBrandFor } from "./ProviderLogo";
 
 describe("providerBrandFor", () => {
   it("maps built-in drivers to their vendor's mark", () => {
@@ -40,5 +41,36 @@ describe("providerBrandFor", () => {
       }),
     ).toBeNull();
     expect(providerBrandFor({ driverKind: "acpRegistry", acpRegistryAgentId: "kilo" })).toBeNull();
+  });
+});
+
+describe("open-model marks", () => {
+  it("draws the vendor's mark for a Claude Code instance made from a preset", () => {
+    expect(
+      OPEN_MODEL_PRESETS.map((preset) =>
+        providerBrandFor({ driverKind: "claudeAgent", openModelPreset: preset.id }),
+      ),
+    ).toEqual(["deepseek", "kimi", "zai", "openrouter", "ollama", "lmstudio"]);
+    expect(OPEN_MODEL_PRESETS.every((preset) => isProviderBrand(preset.brand))).toBe(true);
+  });
+
+  it("keeps every other instance's mark as before", () => {
+    // No marker (an instance built by hand with its own base URL), or an unknown one.
+    expect(providerBrandFor({ driverKind: "claudeAgent" })).toBe("claude");
+    expect(providerBrandFor({ driverKind: "claudeAgent", openModelPreset: "mistral" })).toBe(
+      "claude",
+    );
+    // Pi and OpenCode routes never take a preset mark.
+    expect(providerBrandFor({ driverKind: "pi", openModelPreset: "deepseek" })).toBe("pi");
+    expect(providerBrandFor({ driverKind: "opencode", openModelPreset: "openrouter" })).toBe(
+      "opencode",
+    );
+    expect(
+      providerBrandFor({
+        driverKind: "acpRegistry",
+        acpRegistryAgentId: "gemini",
+        openModelPreset: "kimi",
+      }),
+    ).toBe("gemini");
   });
 });

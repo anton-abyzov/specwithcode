@@ -27,6 +27,8 @@ import {
   isFreeTrackModel,
   providersForModel,
 } from "./modelTracks.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
+import { isPaidModelOn } from "./providerFallback.ts";
 
 export const MODEL_TIER_LABELS: Record<ModelLane, string> = {
   routine: "Everyday work",
@@ -154,13 +156,18 @@ function tierFallbackChain(
       : tierOfModel(saved, input.defaultModelSelection?.model)) ??
     "routine";
   const other = first === "complex" ? "routine" : "complex";
-  // Hard work never continues on a free model: the wait for a reset costs less.
+  // Hard work never continues on a free model: the wait for a reset costs
+  // less. Nor on an open-model route put on Daily: it runs only there (1513).
+  const onOpenModelRoute = (entry: ModelSelection) =>
+    isOpenModelRoute(providers.find((provider) => provider.instanceId === entry.instanceId));
   const rest =
     input.threadModelMode === "tracks"
       ? []
       : first === "complex"
-      ? lanes[other].filter((entry) => !isFreeTrackModel({ slug: entry.model }))
-      : lanes[other];
+        ? lanes[other].filter(
+            (entry) => !isFreeTrackModel({ slug: entry.model }) && !onOpenModelRoute(entry),
+          )
+        : lanes[other];
   const ranked = [
     ...followNewestReleases(lanes[first], providers).map((entry) => ({
       entry,
@@ -198,11 +205,41 @@ function tierFallbackChain(
       preferFree: isFreeTrackModel({ slug: entry.model }),
       usedPercent: options.usedPercent as Parameters<typeof providersForModel>[0]["usedPercent"],
     })) {
-      if (provider.instanceId !== entry.instanceId)
+      // An open-model route serves only an entry that names it (1513).
+      if (provider.instanceId !== entry.instanceId && !isOpenModelRoute(provider))
         push({ instanceId: provider.instanceId, model: slug }, fromBuiltIn);
     }
   }
   return { order, builtIn };
+}
+
+/**
+ * Whether an automatic move (the same model elsewhere, a proven or
+ * coordinator model, any ready source) passes `model` on `provider` over:
+ * billed per token (`isPaidModelOn`), or an open-model route (1513), which
+ * runs only on a track or thread the person put it on.
+ */
+export function isAutoPickHeld(
+  provider: ServerProvider | undefined,
+  model: string | undefined,
+): boolean {
+  return isPaidModelOn(provider, model) || isOpenModelRoute(provider);
+}
+
+/**
+ * The fallback's check for its home and any ready source: a model its router
+ * or API bills per token, or an open-model route (1513) the project default
+ * does not name. A per-token sign-in that reports usage may still be home.
+ */
+export function isHeldOffHome(
+  provider: ServerProvider | undefined,
+  model: string | undefined,
+  rule: { readonly defaultModelSelection?: ModelSelection | null | undefined },
+): boolean {
+  return (
+    isPaidModelBilling(providerModelBilling(provider, model)) ||
+    (isOpenModelRoute(provider) && rule.defaultModelSelection?.instanceId !== provider?.instanceId)
+  );
 }
 
 /**

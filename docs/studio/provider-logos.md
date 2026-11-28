@@ -15,7 +15,7 @@ it from `ProviderLogoMarks.tsx`, so a provider looks the same everywhere.
 - Multicolour marks keep their brand colours; monochrome marks follow the
   surrounding text colour, so they read in light and dark themes.
 
-The marks were checked in October 2026. Each is a trademark of its owner and is
+The marks were checked in October 2026; Z.ai, OpenRouter and LM Studio on November 28, 2026. Each is a trademark of its owner and is
 used only to identify that provider.
 
 | Brand                                      | Source                                                                             |
@@ -38,6 +38,9 @@ used only to identify that provider.
 | goose, Cline, Auggie, Factory Droid, Junie | Vendor-submitted ACP Registry icons                                                |
 | Amp                                        | Amp mark (lobehub `amp`, same as the Amp ACP adapter)                              |
 | DeepSeek                                   | DeepSeek whale, #4D6BFE (lobehub `deepseek-color`)                                 |
+| Z.ai                                       | Z.ai favicon, dark tile with a white Z (`z-cdn.chatglm.cn/z-ai/static/logo.svg`)   |
+| OpenRouter                                 | OpenRouter glyph, #7624F4 light and #C8FF00 dark (openrouter.ai `brand/v2`)        |
+| LM Studio                                  | LM Studio app icon (`lm-studio-icon-color.svg`, lmstudio.ai/brand)                 |
 
 To add a provider, add its SVG as a component in `ProviderLogoMarks.tsx`
 (prefix gradient ids with `useId()`), add the brand to `ProviderLogo.tsx` and

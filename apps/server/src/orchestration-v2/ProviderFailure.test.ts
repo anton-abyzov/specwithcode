@@ -61,6 +61,7 @@ import {
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
+  redactProviderFailureText,
   shouldHoldQueueAfterFailure,
   simulatedUsageLimitFailure,
 } from "./ProviderFailure.ts";
@@ -118,6 +119,17 @@ it("redacts bare Cursor and xAI keys from provider failures", () => {
   assert.equal(
     failure.message,
     "Key [REDACTED] was rejected; [REDACTED] and [REDACTED] too, also [REDACTED]. grok_short and grok-code-fast-1-preview-0825 stay.",
+  );
+});
+
+it("redacts bare Z.ai and DeepSeek-style keys from provider failures", () => {
+  // Built at run time so secret scanners do not read the fakes as real keys.
+  const hex = "0123456789abcdef".repeat(2);
+  assert.equal(
+    redactProviderFailureText(
+      `Key ${hex}.AbCdEfGh12345678 was rejected; ${["sk", hex].join("-")} too. glm-5.4 stays.`,
+    ),
+    "Key [REDACTED] was rejected; [REDACTED] too. glm-5.4 stays.",
   );
 });
 

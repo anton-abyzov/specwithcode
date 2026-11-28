@@ -41,6 +41,7 @@ type BannerProvider = {
   readonly displayName?: string | undefined;
   readonly acpRegistryAgentId?: string | undefined;
   readonly iconUrl?: string | undefined;
+  readonly openModelPreset?: string | undefined;
 };
 
 /** The provider's logo when the notice knows whose limit it is, the gauge otherwise. */
@@ -51,6 +52,7 @@ function bannerIcon(provider: BannerProvider | null | undefined) {
       displayName={provider.displayName ?? String(provider.driver)}
       acpRegistryAgentId={provider.acpRegistryAgentId}
       acpRegistryIconUrl={provider.iconUrl}
+      openModelPreset={provider.openModelPreset}
       showBadge={false}
       className="size-4 shrink-0"
       iconClassName="size-4"

@@ -112,6 +112,8 @@ tool, which refuses skills reserved for manual invocation.
 
 ## OpenRouter
 
+The app has presets that set this up for you, for OpenRouter and five other vendors and local runtimes: see [Open models](../studio/open-models.md).
+
 Create a Claude instance with its own config directory, such as
 `~/.claude_openrouter`, and keep **Binary path** set to `claude`. In that instance's
 **Environment variables**, use:

@@ -160,6 +160,7 @@ export function ModelSearchSignInOffers(props: {
             accentColor={offer.entry.accentColor}
             acpRegistryAgentId={offer.entry.acpRegistryAgentId}
             acpRegistryIconUrl={offer.entry.acpRegistryIconUrl}
+            openModelPreset={offer.entry.openModelPreset}
             showBadge={false}
             className="size-4 shrink-0"
             iconClassName="size-4"

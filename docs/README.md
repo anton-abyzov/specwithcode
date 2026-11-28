@@ -40,7 +40,7 @@
 - [Provision a machine](./user/provision-a-machine.md)
 - [Running in the background](./user/background-service.md)
 - [Updating SpecWithCode](./user/updating.md)
-- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [ACP](./user/providers-acp.md)
+- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [ACP](./user/providers-acp.md) · [Open models](./studio/open-models.md)
 
 ---
 

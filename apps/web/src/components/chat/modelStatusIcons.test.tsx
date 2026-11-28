@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { AvailabilityText, ModelAvailability } from "../../studio/modelAvailability";
 import { TooltipProvider } from "../ui/tooltip";
-import { modelStatusIcons, ModelStatusIcons } from "./modelStatusIcons";
+import { modelStatusIcons, ModelStatusIcons, modelStatusIconsFor } from "./modelStatusIcons";
 
 const NOW = Date.parse("2026-11-10T12:00:00Z");
 const text = (long: string, label = "label"): AvailabilityText => ({
@@ -113,6 +113,74 @@ describe("modelStatusIcons", () => {
     expect(icons({ billing: "unknown" })).toEqual([]);
     expect(icons({})).toEqual([]);
     expect(icons({ isNew: true }).map((icon) => icon.kind)).toEqual(["new"]);
+  });
+});
+
+describe("modelStatusIconsFor an open-model route", () => {
+  const forRoute = (
+    openModelPreset: string | undefined,
+    input: Omit<Parameters<typeof modelStatusIcons>[0], "nowMs">,
+  ) => modelStatusIconsFor(openModelPreset ? { openModelPreset } : {}, { ...input, nowMs: NOW });
+
+  it("adds the list-price note to the per-token tooltip and keeps the accessible name", () => {
+    expect(forRoute("deepseek", { billing: "api" })).toEqual([
+      {
+        kind: "perToken",
+        label: "Billed per token",
+        tooltip: "Billed per token. DeepSeek bills your key at its own list price.",
+      },
+    ]);
+    // The availability's words speak of plans; a route says only how it bills.
+    expect(
+      forRoute("openrouter", {
+        availability: {
+          state: { kind: "perToken" },
+          text: text("Billed per token, not to a subscription."),
+        },
+      })[0],
+    ).toMatchObject({
+      tooltip: "Billed per token. OpenRouter bills your key at its own list price.",
+    });
+  });
+
+  it("says where a local route runs, once", () => {
+    expect(forRoute("ollama", { billing: "local" })).toEqual([
+      {
+        kind: "local",
+        label: "Local model",
+        tooltip: "Local model. Runs on your own Ollama.",
+      },
+    ]);
+  });
+
+  it("never draws a plan ring, even when the row reads subscription billing and usage", () => {
+    const kinds = (preset: string) =>
+      forRoute(preset, {
+        billing: "subscription",
+        availability: { state: room(40), text: text("40% left.") },
+      }).map((icon) => icon.kind);
+    expect(kinds("kimi")).toEqual(["perToken"]);
+    expect(kinds("lmstudio")).toEqual(["local"]);
+  });
+
+  it("leaves a route without the marker exactly as before (D-05)", () => {
+    // A Claude instance built by hand with a base URL, Pi or OpenCode serving DeepSeek
+    // or Ollama, and an unknown preset id all carry no usable marker.
+    const cases: ReadonlyArray<Omit<Parameters<typeof modelStatusIcons>[0], "nowMs">> = [
+      { billing: "api" },
+      { billing: "local" },
+      { billing: "subscription", availability: { state: room(40), text: text("40% left.") } },
+      { availability: { state: { kind: "perToken" }, text: text("Per token.") } },
+    ];
+    for (const input of cases) {
+      const plain = icons(input);
+      expect(forRoute(undefined, input)).toEqual(plain);
+      expect(forRoute("mistral", input)).toEqual(plain);
+      expect(modelStatusIconsFor(null, { ...input, nowMs: NOW })).toEqual(plain);
+    }
+    expect(icons({ billing: "local" })[0]).toMatchObject({
+      tooltip: "Local model: runs on this machine",
+    });
   });
 });
 

@@ -63,6 +63,7 @@ import { ProviderWizardAuthenticationStep } from "./ProviderWizardAuthentication
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { AddClaudeAccountDialog } from "./AddClaudeAccountDialog";
+import { AddOpenModelDialog } from "./AddOpenModelDialog";
 import { ClaudeAI } from "../Icons";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 
@@ -130,6 +131,7 @@ export function AddProviderInstanceDialog({
   const [wizardStep, setWizardStep] = useState(0);
   const [addingChatGptAccount, setAddingChatGptAccount] = useState(false);
   const [addingClaudeAccount, setAddingClaudeAccount] = useState(false);
+  const [addingOpenModel, setAddingOpenModel] = useState(false);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
   const [identityByDriver, setIdentityByDriver] = useState<Record<string, ProviderIdentityDraft>>(
     {},
@@ -413,6 +415,19 @@ export function AddProviderInstanceDialog({
     );
   }
 
+  if (addingOpenModel) {
+    return (
+      <AddOpenModelDialog
+        open={open}
+        environmentId={environmentId}
+        onOpenChange={(next) => {
+          if (!next) onOpenChange(false);
+        }}
+        {...(onCreated ? { onCreated } : {})}
+      />
+    );
+  }
+
   if (addingChatGptAccount) {
     return (
       <AddManagedCodexAccountDialog
@@ -527,6 +542,21 @@ export function AddProviderInstanceDialog({
                     )}
                   </p>
                 ) : null}
+                <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 ring-1 ring-black/5 dark:ring-white/5">
+                  <p className="min-w-0 text-xs text-muted-foreground">
+                    {tx(
+                      "DeepSeek, Kimi, Z.ai GLM or OpenRouter with your own key, or Ollama and LM Studio on this machine.",
+                    )}
+                  </p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={isPreparingRegistryAgent}
+                    onClick={() => setAddingOpenModel(true)}
+                  >
+                    {tx("Add an open model")}
+                  </Button>
+                </div>
               </div>
 
               {wizardStep === 0 ? (

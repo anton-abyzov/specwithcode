@@ -28,6 +28,7 @@ import {
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
 import { newestOfFamily } from "./modelTiers.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
 import {
   isGeminiSpendProvider,
   isPerTokenProvider,
@@ -162,8 +163,13 @@ export function providersForModel<P extends TrackProvider>(input: {
     .map((entry) => entry.choice);
 }
 
-/** A source the app never starts work on by itself: billed per token, or billing unknown. */
+/**
+ * A source the app never starts work on by itself: billed per token, billing
+ * unknown, or an open-model route (1513), which runs only where the person
+ * put it, whatever it bills. Callers keep a source the person named first.
+ */
 export function isHeldSource(provider: ServerProvider, slug?: string | undefined): boolean {
+  if (isOpenModelRoute(provider)) return true;
   // The model's own billing counts too: a plan source can list one model it bills per use.
   const billing = providerModelBilling(provider, slug);
   if (billing === "unknown" || isPaidModelBilling(billing)) return true;

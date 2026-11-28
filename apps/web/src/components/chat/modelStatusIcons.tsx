@@ -3,7 +3,7 @@
  * not read", "Billed per token") now sits in each icon's tooltip and accessible
  * name. Missing data is not a warning: unknown billing draws nothing.
  */
-import type { ServerProviderModel } from "@specweave-studio/contracts";
+import type { ServerProvider, ServerProviderModel } from "@specweave-studio/contracts";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import { CircleDashedIcon, CircleSlashIcon, CoinsIcon, HardDriveIcon } from "lucide-react";
 
@@ -15,6 +15,7 @@ import {
 } from "../../studio/modelAvailability";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MeterRing } from "./ModelUsage";
+import { openModelPickerLabel } from "./openModelPickerLabel";
 
 export type ModelStatusIcon =
   | { readonly kind: "new"; readonly label: string; readonly tooltip: string }
@@ -46,12 +47,12 @@ function shortReset(resetsAt: number | null, nowMs: number): string | null {
 
 const USAGE_NOT_REPORTED = "Usage not reported by this provider";
 
-/**
- * The icons a model row shows, in order: new, usage (ring, limit reached or
- * unknown), then how it is billed (per token, local). A subscription and
- * unreported billing show nothing.
- */
-export function modelStatusIcons(input: {
+/** A short status followed by the open-model price note. */
+function withNote(text: string, note: string): string {
+  return `${text}. ${note}`;
+}
+
+type ModelStatusInput = {
   readonly billing?: ServerProviderModel["billing"] | undefined;
   readonly isNew?: boolean;
   /** The row's usage state and its words; null when the picker shows no usage. */
@@ -60,15 +61,38 @@ export function modelStatusIcons(input: {
     readonly text: AvailabilityText;
   } | null;
   readonly nowMs: number;
-}): ReadonlyArray<ModelStatusIcon> {
+};
+
+/**
+ * The icons a model row shows, in order: new, usage (ring, limit reached or
+ * unknown), then how it is billed (per token, local). A subscription and
+ * unreported billing show nothing.
+ */
+export function modelStatusIcons(input: ModelStatusInput): ReadonlyArray<ModelStatusIcon> {
+  return modelStatusIconsFor(null, input);
+}
+
+/**
+ * {@link modelStatusIcons} for a row of `route`. A row of an open-model route
+ * (the provider carries the preset marker) is always per token or local, never
+ * a plan, and its tooltip gains the preset's list-price note. Any other route,
+ * including one built by hand with a base URL, gets the plain icons.
+ */
+export function modelStatusIconsFor(
+  route: Pick<ServerProvider, "openModelPreset"> | null | undefined,
+  input: ModelStatusInput,
+): ReadonlyArray<ModelStatusIcon> {
   const icons: ModelStatusIcon[] = [];
+  const open = openModelPickerLabel(route);
   if (input.isNew) icons.push({ kind: "new", label: "New model", tooltip: "New" });
-  const perToken =
-    input.billing === "api" ||
-    input.billing === "paid-router" ||
-    input.availability?.state.kind === "perToken";
+  const perToken = open
+    ? open.label === "Your key"
+    : input.billing === "api" ||
+      input.billing === "paid-router" ||
+      input.availability?.state.kind === "perToken";
+  const local = open ? open.label === "Local" : input.billing === "local";
   const usage = input.availability;
-  if (usage && !perToken && input.billing !== "local") {
+  if (usage && !perToken && !local) {
     const { state, text } = usage;
     switch (state.kind) {
       case "room":
@@ -119,16 +143,21 @@ export function modelStatusIcons(input: {
     }
   }
   if (perToken) {
+    // A route's own words replace the plan-oriented availability text.
     icons.push({
       kind: "perToken",
       label: "Billed per token",
-      tooltip: usage?.state.kind === "perToken" ? usage.text.long : "Billed per token",
+      tooltip: open
+        ? withNote("Billed per token", open.note)
+        : usage?.state.kind === "perToken"
+          ? usage.text.long
+          : "Billed per token",
     });
-  } else if (input.billing === "local") {
+  } else if (local) {
     icons.push({
       kind: "local",
       label: "Local model",
-      tooltip: "Local model: runs on this machine",
+      tooltip: open ? withNote("Local model", open.note) : "Local model: runs on this machine",
     });
   }
   return icons;

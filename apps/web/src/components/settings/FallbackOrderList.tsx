@@ -167,6 +167,7 @@ export function ModelOrderList(props: {
         accentColor={entry.accentColor}
         acpRegistryAgentId={entry.acpRegistryAgentId}
         acpRegistryIconUrl={entry.acpRegistryIconUrl}
+        openModelPreset={entry.openModelPreset}
         className="shrink-0"
         iconClassName={size}
       />

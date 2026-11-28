@@ -280,6 +280,7 @@ import {
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
+import { providerIconIdentity } from "./chat/providerIconIdentity";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { requestChatSettings } from "../studio/chatSettingsRequest";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
@@ -427,8 +428,7 @@ function SidebarProviderStack(props: {
       driverKind={currentEntry.driverKind}
       displayName={currentEntry.displayName}
       accentColor={currentEntry.accentColor}
-      acpRegistryAgentId={currentEntry.acpRegistryAgentId}
-      acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
+      {...providerIconIdentity(currentEntry)}
       showBadge={showInstanceBadge}
       // Glyph dims, badge stays saturated; offset matches the composer trigger.
       iconClassName="size-3.5 opacity-60"
@@ -448,8 +448,7 @@ function SidebarProviderStack(props: {
             key={instanceId}
             driverKind={entry.driverKind}
             displayName={entry.displayName}
-            acpRegistryAgentId={entry.acpRegistryAgentId}
-            acpRegistryIconUrl={entry.acpRegistryIconUrl}
+            {...providerIconIdentity(entry)}
             iconClassName="size-3 opacity-35 grayscale"
           />
         );
@@ -545,8 +544,7 @@ function SidebarThreadTooltip({
                 providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
               }
               accentColor={providerEntry?.accentColor}
-              acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
-              acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
+              {...providerIconIdentity(providerEntry)}
               // Initials would swallow a size-3 glyph: accent dot, name in label.
               showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
               badgeContent="none"

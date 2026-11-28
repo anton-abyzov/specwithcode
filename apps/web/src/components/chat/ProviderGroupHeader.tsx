@@ -8,6 +8,8 @@ import type { ModelPickerUsage } from "./ModelUsage";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { providerUsageLink } from "@specweave-studio/shared/providerUsageLinks";
 import { UsagePageLink } from "../usage/AccountHeader";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { openModelPickerLabel } from "./openModelPickerLabel";
 
 /** A subscription sign-in, not an API key or a cloud backend billed elsewhere. */
 function isPlanAccount(auth: ProviderInstanceEntry["snapshot"]["auth"]): boolean {
@@ -17,11 +19,19 @@ function isPlanAccount(auth: ProviderInstanceEntry["snapshot"]["auth"]): boolean
   return !["apikey", "bedrock", "amazonbedrock", "vertex", "foundry"].includes(type);
 }
 
-/** The plan and account a provider signs in with, from its auth snapshot. */
+/**
+ * The plan and account a provider signs in with, from its auth snapshot. An
+ * open-model route shows "Your key" or "Local" with its list-price note instead,
+ * and no account: the turns never use a plan or the stored sign-in.
+ */
 export function providerGroupAccount(entry: ProviderInstanceEntry): {
   readonly plan: string | null;
   readonly email: string | null;
+  /** The plan pill's tooltip, for open-model routes only. */
+  readonly note?: string;
 } {
+  const open = openModelPickerLabel(entry.snapshot);
+  if (open) return { plan: open.label, email: null, note: open.note };
   const auth = entry.snapshot.auth;
   return {
     plan: auth.status === "authenticated" ? (auth.label ?? null) : null,
@@ -59,13 +69,13 @@ export const ProviderGroupHeader = memo(function ProviderGroupHeader(props: {
   readonly usage: ModelPickerUsage | undefined;
 }) {
   const { entry } = props;
-  const { plan, email } = providerGroupAccount(entry);
+  const { plan, email, note } = providerGroupAccount(entry);
   const limit = providerGroupUsage(entry, props.usage);
   const link = providerUsageLink({
     driver: entry.driverKind,
     agentId: entry.acpRegistryAgentId,
     label: entry.displayName,
-    subscription: isPlanAccount(entry.snapshot.auth),
+    subscription: !note && isPlanAccount(entry.snapshot.auth),
   });
   return (
     <div
@@ -78,13 +88,30 @@ export const ProviderGroupHeader = memo(function ProviderGroupHeader(props: {
         accentColor={entry.accentColor}
         acpRegistryAgentId={entry.acpRegistryAgentId}
         acpRegistryIconUrl={entry.acpRegistryIconUrl}
+        openModelPreset={entry.openModelPreset}
         className="size-4 shrink-0"
         iconClassName="size-4"
       />
       <span className="sws-picker-group-name shrink-0 truncate text-sm text-foreground">
         {entry.displayName}
       </span>
-      {plan ? (
+      {plan && note ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className="sws-picker-pill shrink-0"
+                data-model-picker-group-plan="open-model"
+              />
+            }
+          >
+            {plan}
+          </TooltipTrigger>
+          <TooltipPopup side="top" align="start" className="max-w-64">
+            {note}
+          </TooltipPopup>
+        </Tooltip>
+      ) : plan ? (
         <span className="sws-picker-pill shrink-0" data-model-picker-group-plan="">
           {plan}
         </span>

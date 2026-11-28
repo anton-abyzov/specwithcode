@@ -78,6 +78,8 @@ export type ModelPickerItem = {
   instanceAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
+  /** The open-model preset the instance was made from, for the vendor's mark (1513). */
+  openModelPreset?: string | undefined;
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;

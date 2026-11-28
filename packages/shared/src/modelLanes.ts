@@ -45,6 +45,7 @@ import {
 } from "./taskRouting.ts";
 import { followNewestReleases, MODEL_TIER_LABELS } from "./modelTiers.ts";
 import { withRunnableTrackUltracode, withTrackEntryUltracode } from "./modelTracks.ts";
+import { isOpenModelRoute } from "./openModelPresets.ts";
 
 /** The lanes as the person ranks them: model tiers (see `modelTiers`). */
 export const LANE_LABELS: Record<ModelLane, string> = MODEL_TIER_LABELS;
@@ -352,8 +353,10 @@ const PAID_API_TIER: Record<TaskRoutingSettings["paidApi"], ModelTier | null> = 
  * choice, so a model billed per token, by a paid router or with unknown
  * billing needs their consent: the model is in one of their lanes, or Auto is
  * on and its paid-API setting covers its tier, as Auto checks. With Auto off
- * that setting is hidden and has no effect, so it grants nothing. A rule the person made
- * from the routing chip (`recordedBy: "person"`) is never checked here.
+ * that setting is hidden and has no effect, so it grants nothing. An
+ * open-model route (1513) needs a lane whatever it bills, local included.
+ * A rule the person made from the routing chip (`recordedBy: "person"`) is
+ * never checked here.
  */
 export function learnedPreferenceBillingBlock(
   selection: ModelSelection,
@@ -363,6 +366,8 @@ export function learnedPreferenceBillingBlock(
   if ([...input.lanes.complex, ...input.lanes.routine].some((entry) => selectionKey(entry) === key))
     return null;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  if (isOpenModelRoute(provider))
+    return "runs only on a track you put it on; a learned preference never picks it";
   const model = findModel(provider, selection.model);
   const billing = billingOf(provider, model);
   if (billing === "subscription" || billing === "local") return null;

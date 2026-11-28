@@ -1,4 +1,10 @@
 import type { ProviderInstanceEnvironment } from "@specweave-studio/contracts";
+import {
+  OPEN_MODEL_BLANKED_CREDENTIALS,
+  OPEN_MODEL_PRESET_ENV,
+  openModelPresetById,
+  openModelPresetOfEnvironment,
+} from "@specweave-studio/shared/openModelPresets";
 import { setWindowsPath } from "@specweave-studio/shared/shell";
 
 import { expandHomePath } from "../pathExpansion.ts";
@@ -235,6 +241,78 @@ export function mergeProviderInstanceEnvironment(
   return next;
 }
 
+/** Claude Code's model slots a local runtime fills with the model a turn launches on. */
+const OPEN_MODEL_SLOT_VARIABLES = [
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+] as const;
+
+/**
+ * Credentials an open-model instance must never pass on from the host: its
+ * own bearer row, the Anthropic key, the claude.ai token and the cloud switches.
+ */
+const OPEN_MODEL_HOST_CREDENTIALS = ["ANTHROPIC_AUTH_TOKEN", ...OPEN_MODEL_BLANKED_CREDENTIALS];
+
+/**
+ * A Claude instance made from an open-model preset (its marker row, D-05)
+ * sends turns to a vendor or local endpoint. Every credential its own rows do
+ * not set is blanked, so a host `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`
+ * or cloud switch never reaches that endpoint, and Claude Code's subprocess
+ * scrub keeps the preset's key out of Bash, hooks and stdio MCP servers.
+ * Model slots the rows leave unset are blanked too, so a host value naming a
+ * Claude model never reaches the endpoint (`withOpenModelSlots` fills them).
+ * Instances without the marker are returned untouched.
+ */
+function withOpenModelHardening(
+  next: NodeJS.ProcessEnv,
+  environment: ProviderInstanceEnvironment | undefined,
+  provider: "codex" | "claudeAgent" | undefined,
+): NodeJS.ProcessEnv {
+  const preset = openModelPresetOfEnvironment(environment);
+  // Only the instance's own row marks a route; a marker inherited from the
+  // host must not turn a subscription or hand-built instance into one.
+  if (preset === undefined) delete next[OPEN_MODEL_PRESET_ENV];
+  if (provider !== "claudeAgent" || preset === undefined) return next;
+  const own = new Set(environment?.map((variable) => variable.name));
+  // In place: a spread copy would freeze PATH (see `followBasePath`).
+  for (const name of [...OPEN_MODEL_HOST_CREDENTIALS, ...OPEN_MODEL_SLOT_VARIABLES])
+    if (!own.has(name)) next[name] = "";
+  // A keyed route whose secret is missing must still send a bearer of its own:
+  // an empty one would let Claude Code fall back to the claude.ai login and
+  // send that token to the vendor. The vendor answers this one with 401.
+  if (
+    preset.kind === "key" &&
+    !next.ANTHROPIC_AUTH_TOKEN?.trim() &&
+    !next.ANTHROPIC_API_KEY?.trim()
+  )
+    next.ANTHROPIC_AUTH_TOKEN = OPEN_MODEL_MISSING_KEY;
+  next.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "1";
+  return next;
+}
+
+/** The bearer a keyed route sends when its key is missing from the secret store. */
+export const OPEN_MODEL_MISSING_KEY = "specwithcode-missing-key";
+
+/**
+ * A local preset instance lists the runtime's models rather than fixed ones,
+ * so its launch environment may name no model for Claude Code's background
+ * and subagent slots, which would then ask the runtime for a Claude model it
+ * does not have. Each slot the instance leaves unset runs the launching
+ * model. Keyed presets, hand-built instances and every other launch are
+ * returned as they are.
+ */
+export function withOpenModelSlots(
+  environment: NodeJS.ProcessEnv,
+  apiModelId: string,
+): NodeJS.ProcessEnv {
+  if (openModelPresetById(environment[OPEN_MODEL_PRESET_ENV])?.kind !== "local") return environment;
+  const unset = OPEN_MODEL_SLOT_VARIABLES.filter((name) => !environment[name]?.trim());
+  if (unset.length === 0 || apiModelId.trim().length === 0) return environment;
+  return { ...environment, ...Object.fromEntries(unset.map((name) => [name, apiModelId])) };
+}
+
 /** Empty overrides prevent extendEnv:true from restoring parent API credentials. */
 export function mergeNativeSubscriptionEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
@@ -243,12 +321,17 @@ export function mergeNativeSubscriptionEnvironment(
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   if (hasExplicitProviderApiEnvironment(environment, provider))
-    return mergeProviderInstanceEnvironment(environment, baseEnv, platform);
+    return withOpenModelHardening(
+      mergeProviderInstanceEnvironment(environment, baseEnv, platform),
+      environment,
+      provider,
+    );
   const next = { ...mergeProviderInstanceEnvironment(environment, baseEnv, platform) };
   // This second copy would freeze PATH as the first would have (see `followBasePath`).
   const isPath = pathNameTest(platform);
   if (!environment?.some((variable) => isPath(variable.name)))
     followBasePath(next, baseEnv, isPath, platform);
   for (const key of NATIVE_AUTH_ENVIRONMENT_KEYS) next[key] = "";
+  delete next[OPEN_MODEL_PRESET_ENV];
   return next;
 }

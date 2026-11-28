@@ -52,6 +52,9 @@ const BRANDS: ReadonlyArray<ProviderBrand> = [
   "amp",
   "junie",
   "deepseek",
+  "zai",
+  "openrouter",
+  "lmstudio",
 ];
 const INSTANCES: ReadonlyArray<readonly [string, string, string?]> = [
   ["claudeAgent", "Claude"],

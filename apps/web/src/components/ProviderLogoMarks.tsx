@@ -761,3 +761,75 @@ export const DeepSeekLogo: Icon = (props) => {
     </svg>
   );
 };
+
+// Z.ai: the vendor's own favicon, https://z-cdn.chatglm.cn/z-ai/static/logo.svg (read November 28, 2026).
+export const ZaiLogo: Icon = (props) => {
+  return (
+    <svg viewBox="0 0 30 30" aria-hidden="true" data-provider-logo="zai" {...props}>
+      <path
+        d="M24.51 28.51H5.49c-2.21 0-4-1.79-4-4V5.49c0-2.21 1.79-4 4-4h19.03c2.21 0 4 1.79 4 4v19.03C28.51 26.72 26.72 28.51 24.51 28.51z"
+        fill="#2D2D2D"
+        stroke="#FFFFFF"
+        strokeWidth="0.6317"
+        strokeMiterlimit="10"
+      />
+      <path
+        d="M15.47 7.1l-1.3 1.85c-.2.29-.54.47-.9.47h-7.1V7.09C6.16 7.1 15.47 7.1 15.47 7.1zM24.3 7.1L13.14 22.91H5.7L16.86 7.1H24.3zM14.53 22.91l1.31-1.86c.2-.29.54-.47.9-.47h7.09v2.33H14.53z"
+        fill="#FFFFFF"
+      />
+    </svg>
+  );
+};
+
+// OpenRouter: the vendor's glyph, https://openrouter.ai/brand/v2/openrouter-glyph-{light,dark}.svg (read November 28, 2026).
+export const OpenRouterLogo: Icon = (props) => {
+  const glyph =
+    "M303.9475,17.19926c42.79734,0,77.48933,34.69327,77.48933,77.48933s-34.69199,77.48933-77.48933,77.48933l76.86166,76.86244c9.76367,9.76313,2.84903,26.45667-10.95697,26.45667h-220.88335c-71.32686,0-129.14889-57.82202-129.14889-129.14889S77.64197,17.19926,148.96884,17.19926h154.97866ZM148.96884,68.85881c-42.79607,0-77.48933,34.69327-77.48933,77.48933s34.69327,77.48933,77.48933,77.48933,77.48933-34.69327,77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z";
+  return (
+    <svg viewBox="0 0 401.4 401.4" aria-hidden="true" data-provider-logo="openrouter" {...props}>
+      {/* The vendor's light and dark glyphs, one per theme. */}
+      <path transform="translate(0 53.85)" className="dark:hidden" fill="#7624F4" d={glyph} />
+      <path transform="translate(0 53.85)" className="hidden dark:block" fill="#C8FF00" d={glyph} />
+    </svg>
+  );
+};
+
+// LM Studio: the vendor's app icon, lm-studio-icon-color.svg from https://lmstudio.ai/brand (read November 28, 2026).
+export const LmStudioLogo: Icon = (props) => {
+  const uid = useId().replaceAll(":", "");
+  return (
+    <svg viewBox="0 0 512 512" aria-hidden="true" data-provider-logo="lmstudio" {...props}>
+      <path
+        d="M0 179.2C0 116.474 0 85.1112 12.2073 61.1531C22.9451 40.0789 40.0789 22.9451 61.1531 12.2073C85.1112 0 116.474 0 179.2 0H332.8C395.526 0 426.889 0 450.847 12.2073C471.921 22.9451 489.055 40.0789 499.793 61.1531C512 85.1112 512 116.474 512 179.2V332.8C512 395.526 512 426.889 499.793 450.847C489.055 471.921 471.921 489.055 450.847 499.793C426.889 512 395.526 512 332.8 512H179.2C116.474 512 85.1112 512 61.1531 499.793C40.0789 489.055 22.9451 471.921 12.2073 450.847C0 426.889 0 395.526 0 332.8V179.2Z"
+        fill={`url(#${uid}-lmstudio-bg)`}
+      />
+      <g fill="#FFFFFF">
+        <rect opacity="0.25" x="128" y="84" width="224" height="44" rx="22" />
+        <rect x="64" y="84" width="224" height="44" rx="22" />
+        <rect opacity="0.25" x="224" y="144" width="224" height="44" rx="22" />
+        <rect x="160" y="144" width="224" height="44" rx="22" />
+        <rect opacity="0.25" x="168" y="204" width="224" height="44" rx="22" />
+        <rect x="104" y="204" width="224" height="44" rx="22" />
+        <rect opacity="0.25" x="112" y="264" width="224" height="44" rx="22" />
+        <rect x="48" y="264" width="224" height="44" rx="22" />
+        <rect opacity="0.25" x="176" y="324" width="224" height="44" rx="22" />
+        <rect x="112" y="324" width="224" height="44" rx="22" />
+        <rect opacity="0.25" x="304" y="384" width="152" height="44" rx="22" />
+        <rect x="240" y="384" width="152" height="44" rx="22" />
+      </g>
+      <defs>
+        <linearGradient
+          id={`${uid}-lmstudio-bg`}
+          x1="-219.792"
+          y1="229.426"
+          x2="239.06"
+          y2="702.601"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#6E7EF3" />
+          <stop offset="1" stopColor="#4F13BE" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+};

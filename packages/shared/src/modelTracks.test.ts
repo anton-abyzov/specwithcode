@@ -18,6 +18,7 @@ import {
   defaultTrackSelections,
   effectiveModelLanes,
   isFreeTrackModel,
+  isHeldSource,
   isMakerOf,
   launchTrackLanes,
   projectDraftModelSelection,
@@ -532,6 +533,45 @@ describe("tracks at launch", () => {
       sel("claudeAgent", "claude-opus-5-5"),
       sel("copilot", "claude-opus-5.5"),
     ]);
+  });
+
+  it("holds an open-model route whatever it bills, except as the person's own entry (1513)", () => {
+    const localOpus = (over: Partial<ServerProvider>) =>
+      provider("claude_ollama", "claudeAgent", ["claude-opus-5-5"], null, {
+        models: [
+          {
+            slug: "claude-opus-5-5",
+            name: "claude-opus-5-5",
+            isCustom: false,
+            capabilities: null,
+            billing: "local",
+          },
+        ],
+        ...over,
+      });
+    const route = localOpus({ openModelPreset: "ollama" });
+    const byHand = localOpus({});
+    expect(isHeldSource(route, "claude-opus-5-5")).toBe(true);
+    expect(isHeldSource(byHand, "claude-opus-5-5")).toBe(false);
+    // Never an alternate of another entry, nor a built-in row's source.
+    const withRoute = [...all, route];
+    expect(
+      launchTrackLanes(null, withRoute).routine.some((e) => e.instanceId === route.instanceId),
+    ).toBe(false);
+    expect(
+      defaultTrackSelections("complex", withRoute).some((e) => e.instanceId === route.instanceId),
+    ).toBe(false);
+    // A hand-built local instance without the marker is an alternate as before.
+    expect(
+      launchTrackLanes(null, [...all, byHand]).routine.some(
+        (e) => e.instanceId === byHand.instanceId,
+      ),
+    ).toBe(true);
+    // Saved by the person, it leads its own row.
+    const saved = { routine: [sel("claude_ollama", "claude-opus-5-5")], complex: [] };
+    expect(launchTrackLanes(saved, withRoute).routine[0]).toEqual(
+      sel("claude_ollama", "claude-opus-5-5"),
+    );
   });
 
   it("shows a Tracks draft the first Daily model, and a One model draft the project's", () => {

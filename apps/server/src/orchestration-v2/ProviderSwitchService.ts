@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { claudeEndpointFromContinuationKey } from "../provider/Drivers/ClaudeHome.ts";
 import {
   claudeHomeFromContinuationKey,
   claudeHomesDiffer,
@@ -74,12 +75,17 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     // Two Claude homes can share a native session when the transcript the
     // current home holds can be copied across; otherwise the switch hands off.
+    // A transcript never crosses endpoints (D-07): Anthropic to an open-model
+    // vendor, back, or between two vendors always takes the history handoff.
     const transferableNativeThread = (input: {
       readonly fromKey: string;
       readonly toKey: string;
       readonly nativeThreadId: string | null | undefined;
     }) =>
-      input.nativeThreadId == null || !claudeHomesDiffer(input.fromKey, input.toKey)
+      input.nativeThreadId == null ||
+      claudeEndpointFromContinuationKey(input.fromKey) !==
+        claudeEndpointFromContinuationKey(input.toKey) ||
+      !claudeHomesDiffer(input.fromKey, input.toKey)
         ? Effect.succeed(false)
         : findClaudeTranscript({
             home: claudeHomeFromContinuationKey(input.fromKey)!,

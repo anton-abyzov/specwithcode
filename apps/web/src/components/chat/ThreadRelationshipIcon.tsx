@@ -62,6 +62,7 @@ export function ThreadRelationshipIcon({
           driverKind={driver}
           displayName={provider?.displayName ?? driver}
           acpRegistryIconUrl={provider?.iconUrl}
+          openModelPreset={provider?.openModelPreset}
           iconClassName={iconClassName}
           className="z-auto"
         />

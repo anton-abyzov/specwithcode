@@ -158,7 +158,7 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import { parseClaudeLimitReset } from "../../provider/claudeLimitReset.ts";
 import type { ServerProviderShape } from "../../provider/ServerProvider.ts";
-import { mergeNativeSubscriptionEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import * as InstanceEnvironment from "../../provider/ProviderInstanceEnvironment.ts";
 import {
   claudeHumanMessageOrigin,
   compileClaudeWorkflowPolicy,
@@ -1344,7 +1344,7 @@ export function withInheritedSubagentModel(
 ): NodeJS.ProcessEnv {
   if (environment.CLAUDE_CODE_SUBAGENT_MODEL?.trim()) return environment;
   return {
-    ...environment,
+    ...InstanceEnvironment.withOpenModelSlots(environment, apiModelId),
     CLAUDE_CODE_SUBAGENT_MODEL: apiModelId,
     CLAUDE_CODE_SUBAGENT_MODEL_FORCE: "1",
   };
@@ -9969,7 +9969,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const launchCheckpoints = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
     const promptSuggestions = yield* PromptSuggestions.PromptSuggestionOffers;
-    const baseEnvironment = mergeNativeSubscriptionEnvironment(
+    const baseEnvironment = InstanceEnvironment.mergeNativeSubscriptionEnvironment(
       environment,
       hostEnvironment,
       "claudeAgent",

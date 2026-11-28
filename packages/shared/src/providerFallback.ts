@@ -33,6 +33,8 @@ import {
   effectiveFallbackOrder,
   fallbackModelOrder,
   fallbackSelectionKey,
+  isAutoPickHeld,
+  isHeldOffHome,
   namedFallbackOrder,
 } from "./modelTiers.ts";
 import { namedReviewSourceKeys, reviewerChain, usageNeverRead } from "./adversarialReview.ts";
@@ -479,7 +481,7 @@ export function ruleNamesInstance(
  * Whether a thread may start or continue on `provider` with `model`:
  * verified room below `belowPercent`, or a provider that reports no usage
  * and can take a turn. Null when it has neither, is in `limited`, or is
- * billed per token (never picked by itself).
+ * billed per token or an open-model route (never picked by itself).
  */
 function roomOn(
   provider: ServerProvider,
@@ -492,7 +494,7 @@ function roomOn(
     readonly named?: boolean;
   },
 ): "verified" | "unreported" | null {
-  if (input.limited?.has(provider.instanceId) || isPaidModelOn(provider, model)) return null;
+  if (input.limited?.has(provider.instanceId) || isAutoPickHeld(provider, model)) return null;
   if (input.named !== true && isUnknownBillingAgent(provider, model)) return null;
   if (reportsNoUsage(provider)) return canTakeTurn(provider, model) ? "unreported" : null;
   if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return null;
@@ -989,12 +991,9 @@ function resolveProviderFallbackPass(input: {
     // Gemini and Vertex bill a Cloud project even when a read shows room
     // or the project default names them. Other API keys that report usage
     // can still be that default; one that reports none needs the API-credit
-    // rule, never a guess. A model billed per token by its router or API never is.
-    if (
-      isGeminiSpendProvider(provider) ||
-      isPaidModelBilling(providerModelBilling(provider, model))
-    )
-      return false;
+    // rule, never a guess. A model billed per token by its router or API never is,
+    // nor an open-model route the default does not name (1513).
+    if (isGeminiSpendProvider(provider) || isHeldOffHome(provider, model, input.rule)) return false;
     if (reportsNoUsage(provider))
       return allowUnreported && canTakeTurn(provider, model) && !isPerTokenProvider(provider);
     if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return false;
@@ -1247,7 +1246,7 @@ function resolveProviderFallbackPass(input: {
       provider !== undefined &&
       !input.limitedInstanceIds?.has(provider.instanceId) &&
       canTakeTurn(provider, proven.model) &&
-      !isPaidModelOn(provider, proven.model) &&
+      !isAutoPickHeld(provider, proven.model) &&
       !isUnknownBillingAgent(provider, proven.model) &&
       (perTokenHome === null || !reportsNoUsage(provider)) &&
       (used === null || used < (input.belowPercent ?? 100))
@@ -1316,7 +1315,7 @@ function resolveProviderFallbackPass(input: {
       (provider) =>
         usable(provider, candidateModel(provider)) &&
         (perTokenHome === null || !reportsNoUsage(provider)) &&
-        !isPaidModelOn(provider, candidateModel(provider)) &&
+        !isAutoPickHeld(provider, candidateModel(provider)) &&
         !isUnknownBillingAgent(provider, candidateModel(provider)) &&
         !excluded(provider.instanceId, candidateModel(provider)) &&
         !reviewOnly({ model: candidateModel(provider) ?? "" }),
@@ -1469,7 +1468,7 @@ export function resolveWorkerLaunchSelection(input: {
     if (
       provider !== undefined &&
       canTakeTurn(provider, coordinator.model) &&
-      !isPaidModelOn(provider, coordinator.model) &&
+      !isAutoPickHeld(provider, coordinator.model) &&
       !isUnknownBillingAgent(provider, coordinator.model) &&
       !full(provider, coordinator.model) &&
       !isExcludedFallbackModel(
@@ -1789,7 +1788,7 @@ export function resolveCoordinatorTurnSelection(input: {
   ) {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
     // Gemini/Vertex never continue as an automatic fallback, including one
-    // selected before this guard, nor does a model a paid router or API bills.
+    // selected before this guard, nor a paid router or API model or an open-model route.
     // API-credit consent applies to other providers. An unknown-billing agent
     // (Devin) stays only when the person named it, as it may only be picked.
     const chain = namedFallbackOrder(input.rule, input.saved.model, input.providers);
@@ -1803,7 +1802,7 @@ export function resolveCoordinatorTurnSelection(input: {
       );
     const paid =
       isGeminiSpendProvider(current) ||
-      isPaidModelBilling(providerModelBilling(current, thread.model)) ||
+      isHeldOffHome(current, thread.model, input.rule) ||
       (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true) ||
       (isUnknownBillingAgent(current, thread.model) &&
         !ruleNamesInstance(input.rule, thread.instanceId) &&
