@@ -176,26 +176,28 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
         getProviders: Effect.succeed([
           {
             ...provider(instanceId, "codex"),
-            models: [modelSelection.model, trackSelection.model].map(
-              (slug) => ({
-                slug,
-                name: slug,
-                isCustom: false,
-                capabilities: {
-                  optionDescriptors: [
-                    {
-                      id: "reasoning_effort",
-                      label: "Reasoning effort",
-                      type: "select" as const,
-                      options: [
-                        { id: "medium", label: "Medium" },
-                        { id: "high", label: "High", isDefault: true },
-                      ],
-                    },
-                  ],
-                },
-              }),
-            ),
+            models: [modelSelection.model, trackSelection.model].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "reasoning_effort",
+                    label: "Reasoning effort",
+                    type: "select" as const,
+                    options: [
+                      { id: "medium", label: "Medium" },
+                      { id: "high", label: "High", isDefault: true },
+                    ],
+                  },
+                  // The track model offers the Ultracode switch (1506).
+                  ...(slug === trackSelection.model
+                    ? [{ id: "ultracode", label: "Ultracode", type: "boolean" as const }]
+                    : []),
+                ],
+              },
+            })),
           },
         ]),
       }),
@@ -317,6 +319,28 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
       moved: true,
     });
     expect(launched[7]?.modelSelection).toEqual(trackSelection);
+
+    // A named model that matches a Daily row with Ultracode on takes it (1506).
+    const ultracode = { id: "ultracode", value: true };
+    settings = {
+      ...settings,
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultThreadEnvMode: "local",
+          threadModelMode: "tracks",
+          modelLanes: {
+            routine: [{ ...trackSelection, options: [...trackSelection.options, ultracode] }],
+            complex: [],
+          },
+        },
+      },
+    };
+    yield* handle({
+      title: "Named worker",
+      increment: "none",
+      modelSelection: { instanceId, model: trackSelection.model },
+    });
+    expect(launched[8]?.modelSelection.options).toContainEqual(ultracode);
   }),
 );
 

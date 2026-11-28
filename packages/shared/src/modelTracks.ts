@@ -428,6 +428,41 @@ export function withTrackEntryUltracode<S extends ModelSelection>(
 }
 
 /**
+ * A selection that matches a Daily or Complex row, with that row's Ultracode:
+ * a launch that named its model, or a thread moving onto a row, runs as the
+ * row says unless it names `ultracode` itself. `lanes` are the tracks as a
+ * launch reads them (`launchTrackLanes`), so the same model on another
+ * account of its source counts too. Returns the same object otherwise.
+ */
+export function withMatchingTrackRowUltracode<S extends ModelSelection>(
+  selection: S,
+  lanes: Pick<ModelLanes, "routine" | "complex">,
+  providers: ReadonlyArray<Pick<TrackProvider, "instanceId" | "models">>,
+): S {
+  const row = [...lanes.routine, ...lanes.complex].find(
+    (entry) =>
+      entry.instanceId === selection.instanceId &&
+      entry.model === selection.model &&
+      trackEntryUltracode(entry),
+  );
+  return row === undefined ? selection : withTrackEntryUltracode(selection, row, providers);
+}
+
+/** `withMatchingTrackRowUltracode` on a project's saved tracks, fitted as a launch reads them. */
+export function withTrackRowUltracode<S extends ModelSelection>(
+  selection: S,
+  lanes: ModelLanes | null | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+  order?: ReadonlyArray<ProviderInstanceId> | null,
+): S {
+  return withMatchingTrackRowUltracode(
+    selection,
+    launchTrackLanes(lanes, providers, order),
+    providers,
+  );
+}
+
+/**
  * A track entry as it launches: its Ultracode stays only where the model it
  * runs on offers the switch. An entry fitted to another release or source
  * (`fitSavedTrackEntry`, `trackAlternate`, a newer release) may not.

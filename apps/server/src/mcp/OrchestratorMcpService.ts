@@ -1218,6 +1218,7 @@ import {
   withProjectWorkerModel,
   workerModelUnderGrant,
   needsExplicitWorkerTarget,
+  withProjectTrackRowUltracode,
 } from "../project/ProjectDelegation.ts";
 import { type WorkerLaunch, workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
 import {
@@ -1992,6 +1993,8 @@ const make = Effect.gen(function* () {
     >,
     providers: ReadonlyArray<ServerProvider>,
     hostDefault: ModelSelection | null,
+    // A review moved off a full source takes only its model and effort (1506).
+    review = false,
   ) => {
     const preferred = callerWorkerModel(project, caller.id, hostDefault);
     return preferred === null
@@ -2001,6 +2004,7 @@ const make = Effect.gen(function* () {
           preferred,
           coordinator: caller.modelSelection,
           providers,
+          review,
           runtimePolicy: {
             runtimeMode: caller.runtimeMode,
             interactionMode: caller.interactionMode,
@@ -2297,6 +2301,25 @@ const make = Effect.gen(function* () {
     );
   };
 
+  /** A named model on a Tracks project takes the Ultracode of the row it matches (1506). */
+  const namedOnTrackRow = (
+    settings: Parameters<typeof withProjectTrackRowUltracode>[0],
+    project: Parameters<typeof withProjectTrackRowUltracode>[1],
+    baseline: ResolvedTarget,
+    providers: ReadonlyArray<ServerProvider>,
+    unrouted: { readonly target: ResolvedTarget; readonly routing: TaskRoutingDecision | null },
+  ) => {
+    const modelSelection = withProjectTrackRowUltracode(
+      settings,
+      project,
+      baseline.modelSelection,
+      providers,
+    );
+    return modelSelection === baseline.modelSelection
+      ? unrouted
+      : { ...unrouted, target: { ...baseline, modelSelection } };
+  };
+
   /**
    * Auto model routing on top of a resolved worker target (see
    * project/TaskRouting.ts): only when nothing named a model and the app
@@ -2312,6 +2335,8 @@ const make = Effect.gen(function* () {
     readonly task: TaskClassificationInput;
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly baseline: ResolvedTarget;
+    /** Review work (`role` or `taskClass`): a named reviewer never takes a row's Ultracode. */
+    readonly review?: boolean;
     readonly options: WorkerRoutingOptions | undefined;
   }) =>
     Effect.gen(function* () {
@@ -2348,7 +2373,13 @@ const make = Effect.gen(function* () {
           taskLane: input.taskLane,
         })
       )
-        return unrouted;
+        return settings !== null &&
+          tracks &&
+          targetPinsModel(input.requested) &&
+          input.taskClass !== "review" &&
+          input.review !== true
+          ? namedOnTrackRow(settings, input.project, input.baseline, input.providers, unrouted)
+          : unrouted;
       const decision = yield* routeWorkerTask({
         project: input.project,
         baseline: input.baseline.modelSelection,
@@ -3703,6 +3734,7 @@ const make = Effect.gen(function* () {
           parent.thread,
           providers,
           hostDefault,
+          reviewTask,
         );
         const delegationTarget = projectDelegationTarget(
           workerProject,
@@ -3727,6 +3759,7 @@ const make = Effect.gen(function* () {
                 project,
                 parent,
                 requested: input.target,
+                review: reviewTask,
                 taskClass: input.taskClass,
                 taskLane: input.taskLane,
                 task: { text: input.task, title: input.title },
@@ -4197,6 +4230,7 @@ const make = Effect.gen(function* () {
                 parent.thread,
                 providers,
                 hostDefault,
+                request.taskClass === "review",
               );
               const delegationTarget = projectDelegationTarget(
                 workerProject,

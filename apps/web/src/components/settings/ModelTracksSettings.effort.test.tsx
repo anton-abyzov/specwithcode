@@ -509,6 +509,24 @@ describe("ModelTracksSettings Ultracode", () => {
     expect(toggle(root, "Claude Opus 5.5").props["aria-pressed"]).toBe(false);
   });
 
+  it("says off on a row with the switch off, and on once it is on (1506)", () => {
+    const text = (node: ReactTestInstance) =>
+      node
+        .findAll((child) => child.type === "span")
+        .map((span) => span.children.join(""))
+        .join(" ");
+    const root = render();
+    const off = toggle(root, "Claude Opus 5.5");
+    expect(text(off)).toBe("Ultracode off");
+    expect(String(off.props.className)).toContain("border-dashed");
+    act(() => renderer?.unmount());
+    const opus = { instanceId: claudeU.instanceId, model: "claude-opus-5-5", options: [on] };
+    state.settings = { ...state.settings, modelLanes: { routine: [opus], complex: [] } };
+    const saved = toggle(render(), "Claude Opus 5.5");
+    expect(text(saved)).toBe("Ultracode on");
+    expect(String(saved.props.className)).not.toContain("border-dashed");
+  });
+
   it("saves the switch beside the effort and removes it when turned off", () => {
     const medium = { id: "effort", value: "medium" };
     const opus = { instanceId: claudeU.instanceId, model: "claude-opus-5-5", options: [medium] };

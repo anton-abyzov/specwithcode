@@ -38,6 +38,8 @@ export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(fu
   readonly providers: ReadonlyArray<ServerProvider>;
   /** The modes the worker runs with: agents behind an ACP bridge need full access for project folders. */
   readonly runtimePolicy: { readonly runtimeMode: string; readonly interactionMode: string };
+  /** Review work: a moved reviewer never takes a track row's Ultracode (1506). */
+  readonly review?: boolean;
 }) {
   const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const preferences = Option.isSome(settings)
@@ -64,6 +66,7 @@ export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(fu
     limitedInstanceIds: limited,
     // A model a provider just refused stays off new workers too (1460).
     heldSelections: yield* heldLimitSources(nowMs),
+    review: input.review === true,
   });
   const moved = decision.selection !== input.preferred;
   if (moved)

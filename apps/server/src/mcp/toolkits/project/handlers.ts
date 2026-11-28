@@ -42,6 +42,7 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
+import { namedLaunchOnTrackRow } from "../../../project/TrackRowUltracode.ts";
 import {
   newWorkerModel,
   projectUsesTracks,
@@ -397,13 +398,12 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         }),
         Effect.orElseSucceed(() => undefined),
       );
-  // Git's own test for "the worktree registered at this path", on the bytes it
-  // reads: the folder's own `.git` entry (never a link) is either the
-  // repository's git folder itself (the main checkout), or a file whose
-  // `gitdir:` line names a slot directly under `<common dir>/worktrees/`
-  // whose `gitdir` record names this folder's `.git` exactly. That match is
-  // never trimmed, decoded loosely or resolved past what Git resolves; only
-  // the count of other slots naming the folder reads records loosely.
+  // Git's own test for "the worktree registered at this path", on the bytes it reads: the
+  // folder's own `.git` entry (never a link) is either the repository's git folder itself
+  // (the main checkout), or a file whose `gitdir:` line names a slot directly under
+  // `<common dir>/worktrees/` whose `gitdir` record names this folder's `.git` exactly. That
+  // match is never trimmed, decoded loosely or resolved past what Git resolves; only the
+  // count of other slots naming the folder reads records loosely.
   const encoder = new TextEncoder();
   const sameBytes = (left: Uint8Array, right: Uint8Array) =>
     left.length === right.length && left.every((byte, index) => byte === right[index]);
@@ -833,10 +833,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         }
         const isCoordinator =
           caller !== undefined && project?.workspaceSettings?.coordinatorThreadId === caller.id;
-        // Resolved where the thread starts as far as it is known now: an existing
-        // worktree, else the project. A new worktree is not made yet, so a ref
-        // the project lacks is looked up in the caller's own worktree, as
-        // delegate_task and create_threads do. A bad ref launches nothing.
+        // Where the thread starts as far as known now: an existing worktree, else the project.
+        // No new worktree yet, so a ref the project lacks is looked up in the caller's own
+        // worktree, as delegate_task and create_threads do. A bad ref launches nothing.
         const strategy = launchStrategy;
         const { stateDir } = yield* ServerConfig.ServerConfig;
         const incrementResolution =
@@ -882,22 +881,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* Effect.promise(() =>
             raiseSetupCardBeside(setupTargetOf(project, caller, stateDir)),
           );
-        // A provider named without a model starts on its tier model; an
-        // explicit model wins, and naming neither keeps the picks below.
-        const namedSelection =
-          input.modelSelection ??
-          (input.provider === undefined
-            ? undefined
-            : yield* providerTierSelection({
-                project,
-                instanceId: input.provider,
-                tier: input.tier,
-                taskLane: input.taskLane,
-              }));
-        // A thread named no model starts on the project's own model, whoever
-        // launches it; a coordinator falls back to this host's default worker
-        // model (the same pick delegate_task makes). Either is moved off a
-        // provider with no room (see workerLaunchWithRoom).
+        // A provider named without a model gets its tier model; an explicit one wins, with its
+        // Tracks row's Ultracode (a launch sent from elsewhere has the sender's); else picks below.
+        const namedSelection = yield* namedLaunchOnTrackRow({
+          project: input.delegation === undefined ? project : undefined,
+          taskClass: input.taskClass,
+          selection:
+            input.modelSelection ??
+            (input.provider === undefined
+              ? undefined
+              : yield* providerTierSelection({
+                  project,
+                  instanceId: input.provider,
+                  tier: input.tier,
+                  taskLane: input.taskLane,
+                })),
+        });
+        // No model named: the project's own model, whoever launches it, else for a coordinator
+        // this host's default worker model, moved off a source with no room (workerLaunchWithRoom).
         const ownProjectModel =
           namedSelection === undefined && project !== undefined
             ? yield* projectWorkerModelOf(project)
@@ -926,6 +927,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 coordinator: caller?.modelSelection ?? null,
                 providers: workerProviders,
                 runtimePolicy: { runtimeMode, interactionMode },
+                review: input.taskClass === "review",
               })
             : null;
         const workerSelection =
@@ -1043,10 +1045,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // The header badge names the outside client or machine that started it.
         const origin = launchOriginOf(context, work, input.originHint, input.delegation?.carried);
         // An explicit root or existing-worktree strategy wins; a new worktree needs the project's
-        // "Use worktrees" switch on, and with no strategy the switch decides.
-        // A project with the switch off never gets a new worktree from an agent,
-        // whatever it claims the user asked: the switch itself is the user's ask,
-        // and agents otherwise fill the disk with checkouts the user turned off.
+        // "Use worktrees" switch on, and with no strategy the switch decides. With it off an
+        // agent never gets one, whatever it claims: the switch itself is the user's ask.
         const declinedWorktree =
           input.workspaceStrategy?.type === "worktree" &&
           project !== undefined &&
