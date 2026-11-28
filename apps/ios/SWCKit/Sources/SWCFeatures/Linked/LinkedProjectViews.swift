@@ -29,8 +29,11 @@ private struct LinkedProjectMachinesCardContent: View {
 
   var body: some View {
     let copies = state.copies(in: model)
-    if copies.count > 1 {
-      let rows = state.rows(copies)
+    let summary = model.project(state.project)
+    if LinkedProjectState.showsMachinesCard(copies, summary: summary) {
+      let unreached = summary?.members.filter(\.isUnreached) ?? []
+      let unreachedRefs = Set(unreached.map(\.ref))
+      let rows = state.rows(copies).filter { !unreachedRefs.contains($0.copy.ref) }
       let coordinator = LinkedProjectResolver.coordinator(copies)
       VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
         GroupedCard(label: "Machines", footer: "Each machine has the project's files and runs its own coordinator.") {
@@ -43,6 +46,9 @@ private struct LinkedProjectMachinesCardContent: View {
           }
           ForEach(rows) { row in
             copyRow(row)
+          }
+          ForEach(unreached) { member in
+            WeaveRow(member.machineLabel, subtitle: OrchestratorSwitcher.detail(member, approvalCode: model.machine(member.ref.environmentId)?.deviceApprovalCode), symbol: "laptopcomputer")
           }
           switchedOffRow(copies)
         }
@@ -82,28 +88,31 @@ private struct LinkedProjectMachinesCardContent: View {
 /// threads while its coordinator's machine is unreachable.
 struct LinkedCoordinatorBanner: View {
   let project: ProjectRef
+  var coveredMachine: String? = nil
 
   var body: some View {
     // A new project gets new state, never the previous project's.
-    LinkedCoordinatorBannerContent(project: project).id(project)
+    LinkedCoordinatorBannerContent(project: project, coveredMachine: coveredMachine).id(project)
   }
 }
 
 private struct LinkedCoordinatorBannerContent: View {
   let project: ProjectRef
+  let coveredMachine: String?
 
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @State private var state: LinkedProjectState
 
-  init(project: ProjectRef) {
+  init(project: ProjectRef, coveredMachine: String?) {
+    self.coveredMachine = coveredMachine
     self.project = project
     self._state = State(initialValue: LinkedProjectState(project: project))
   }
 
   var body: some View {
     let copies = state.copies(in: model)
-    if let line = state.unreachableLine(copies) {
+    if let line = state.unreachableLine(copies, coveredMachine: coveredMachine) {
       Banner(line, kind: .warn, actionTitle: "Machines") { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(project, in: model)) }
         .accessibilityIdentifier("linked.banner")
         .task { await state.follow(model: model) }

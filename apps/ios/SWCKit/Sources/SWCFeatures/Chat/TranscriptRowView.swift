@@ -7,6 +7,7 @@ struct TranscriptRowView: View {
   let row: TranscriptRow
   let busyRequests: Set<String>
   var thinkingBrand: String? = nil
+  var changeModel: (() -> Void)?
   let onDecision: (String, ApprovalDecision) -> Void
   /// Answers an access request card.
   var onAccess: ((AccessRequestRow, AccessAnswer) -> Void)? = nil
@@ -88,8 +89,8 @@ struct TranscriptRowView: View {
       SubagentRow(title: title, child: child, onOpen: onOpenThread)
         .padding(.leading, Self.textInset)
 
-    case let .error(message):
-      Banner(message, kind: .fail)
+    case let .error(message, limited, resetAt):
+      ChatErrorBanner(message: message, limited: limited, resetAt: resetAt, changeModel: changeModel)
 
     case let .notice(text):
       Text(text)

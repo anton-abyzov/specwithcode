@@ -198,6 +198,8 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
 public struct ProjectMember: Identifiable, Hashable, Sendable {
   public var id: ProjectRef { ref }
   public let ref: ProjectRef
+  /// Only the linked roster names this copy. Its shell has never loaded.
+  public var isUnreached = false
   /// The machine's nickname.
   public var machineLabel: String
   public var machineOnline: Bool
@@ -377,7 +379,7 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
     /// The agent asks to use apps, devices, machines or folders. One answer covers them all.
     case access(AccessRequestRow)
     case subagent(title: String, child: ThreadRef?, isRunning: Bool = false)
-    case error(message: String)
+    case error(message: String, isUsageLimit: Bool = false, resetAt: String? = nil)
     case notice(text: String)
     /// A turn's folded steps: "Worked · Ran 3 commands". Tap to open them.
     case fold(label: String, summary: String?, failures: Int, expanded: Bool, running: Bool)
@@ -526,6 +528,9 @@ public final class ChatSession: Identifiable {
   public var sendBlockedReason: String?
   /// Team rules pause this chat's machine, or it runs above a limit.
   public var teamRulesNotice: ChatTeamRulesNotice?
+  public var machineLastSeenAt: Date?
+  public var coordinatorModel: String?
+  public var canEditCoordinatorModel = false
   /// Last send error, shown inline above the composer.
   public var lastError: String?
   /// The conversation could not be loaded; `AppEngine.reload` tries again.
@@ -562,7 +567,20 @@ public struct ProjectSettingsDraft: Hashable, Sendable {
   public var instructions: String
   public var paused: Bool
   public var archived: Bool
-  /// Display name of the coordinator model, read only in v1.
+  public var coordinatorChoices: [ModelChoice] = []
+  public var savedCoordinatorSelection: ModelSelection?
+  public var pickedCoordinatorSelection: ModelSelection?
+
+  public var selectedChoice: ModelChoice? {
+    guard let selection = pickedCoordinatorSelection ?? savedCoordinatorSelection else { return nil }
+    return coordinatorChoices.first { $0.matches(selection) }
+  }
+
+  public mutating func pickCoordinatorModel(_ choice: ModelChoice) {
+    pickedCoordinatorSelection = savedCoordinatorSelection.map(choice.matches) == true ? nil : choice.selection
+  }
+
+  /// Name of the saved coordinator model, including a model no longer listed.
   public var coordinatorModel: String?
   /// Optimistic-concurrency revision from the last read.
   public var revision: Int

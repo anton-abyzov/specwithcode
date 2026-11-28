@@ -297,12 +297,15 @@ import SWCWire
     var draft = try await h.engine.loadProjectSettings(ref)
     #expect(draft == ProjectSettingsDraft(title: "SpecWeave", goal: "Ship it", instructions: "Be brief", paused: false, archived: false, coordinatorModel: nil, revision: 3))
 
+    draft.pickCoordinatorModel(ModelChoice(instanceId: "codex-alt", provider: "Codex", slug: "gpt-model", name: "GPT Model"))
     draft.goal = "Ship it today"
     try await h.engine.saveProjectSettings(draft, for: ref)
     let mutate = try #require(h.machine.payloads("projects.mutate").first)
     #expect(mutate["type"] == .string("project.update"))
     #expect(mutate["title"] == nil)
     #expect(mutate["workspaceSettings"]?["expectedRevision"] == .number(3))
+    #expect(mutate["workspaceSettings"]?["coordinatorModelSelection"]?["instanceId"] == .string("codex-alt"))
+    #expect(mutate["workspaceSettings"]?["coordinatorModelSelection"]?["model"] == .string("gpt-model"))
     #expect(mutate["workspaceSettings"]?["goal"] == .string("Ship it today"))
 
     h.machine.fail("projects.mutate", with: #"{"_tag":"ProjectMutationError","commandId":"c","message":"Project settings changed elsewhere. Reload before saving."}"#)

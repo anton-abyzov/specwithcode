@@ -9,16 +9,46 @@ struct OrchestratorSwitcher: View {
   let current: ProjectRef
 
   @Environment(AppModel.self) private var model
-  @Environment(AppRouter.self) private var router
-  @Environment(\.isBesideCoordinator) private var isBesideCoordinator
 
   var body: some View {
     let members = Self.choices(model.project(current)?.members ?? [], current: current)
     if members.count > 1 {
+      let rows = members.map { member in
+        MenuRow(ref: member.ref, title: Self.title(member, among: members),
+                detail: Self.detail(member, approvalCode: model.machine(member.ref.environmentId)?.deviceApprovalCode),
+                isUnreached: member.isUnreached)
+      }
       let viewing = members.first { $0.ref == current }
+      ChoicesMenu(current: current, rows: rows, label: viewing?.machineLabel ?? "Machine", offline: viewing?.showsMachineOffline == true)
+        .equatable()
+    }
+  }
+
+  private nonisolated struct MenuRow: Equatable {
+    let ref: ProjectRef
+    let title: String
+    let detail: String
+    let isUnreached: Bool
+  }
+
+  private struct ChoicesMenu: View, Equatable {
+    let current: ProjectRef
+    let rows: [MenuRow]
+    let label: String
+    let offline: Bool
+
+    @Environment(AppModel.self) private var model
+    @Environment(AppRouter.self) private var router
+    @Environment(\.isBesideCoordinator) private var isBesideCoordinator
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+      lhs.current == rhs.current && lhs.rows == rhs.rows && lhs.label == rhs.label && lhs.offline == rhs.offline
+    }
+
+    var body: some View {
       Menu {
         Section("Coordinator runs on") {
-          ForEach(members) { member in
+          ForEach(rows, id: \.ref) { member in
             Button {
               if member.ref != current {
                 // After the menu closes: the switch replaces the chat that
@@ -26,16 +56,20 @@ struct OrchestratorSwitcher: View {
                 let beside = isBesideCoordinator
                 Task { @MainActor in
                   await Task.yield()
+                  if member.isUnreached {
+                    router.push(.machine(member.ref.environmentId))
+                    return
+                  }
                   router.chooseCoordinator(member.ref, besideThread: beside, in: model)
                 }
               }
             } label: {
               if member.ref == current {
-                Label(Self.title(member, among: members), systemImage: "checkmark")
+                Label(member.title, systemImage: "checkmark")
               } else {
-                Text(Self.title(member, among: members))
+                Text(member.title)
               }
-              Text(Self.detail(member))
+              Text(member.detail)
             }
             .accessibilityIdentifier("orchestrator.member")
           }
@@ -43,11 +77,11 @@ struct OrchestratorSwitcher: View {
       } label: {
         HStack(spacing: 6) {
           Circle()
-            .fill(viewing?.showsMachineOffline == true ? Color.weave.muted : Color.weave.pass)
+            .fill(offline ? Color.weave.muted : Color.weave.pass)
             .frame(width: 7, height: 7)
             .accessibilityHidden(true)
           // Long machine names keep both ends ("coordinator…M1").
-          Text(viewing?.machineLabel ?? "Machine")
+          Text(label)
             .font(.weave(.callout, weight: .medium))
             .lineLimit(1)
             .truncationMode(.middle)
@@ -58,7 +92,7 @@ struct OrchestratorSwitcher: View {
             .foregroundStyle(Color.weave.muted)
             .accessibilityHidden(true)
         }
-        .foregroundStyle(viewing?.showsMachineOffline == true ? Color.weave.muted : Color.weave.ink)
+        .foregroundStyle(offline ? Color.weave.muted : Color.weave.ink)
         .padding(.leading, WeaveSpacing.s3)
         .padding(.trailing, WeaveSpacing.s2)
         .frame(height: WeaveSize.minTap)
@@ -66,8 +100,8 @@ struct OrchestratorSwitcher: View {
       }
       .menuIndicator(.hidden)
       .buttonStyle(.plain)
-      .accessibilityLabel("Viewing \(viewing?.machineLabel ?? "this machine")")
-      .accessibilityHint("Shows another machine's orchestrator for this project")
+      .accessibilityLabel("Viewing \(label)")
+      .accessibilityHint("Shows another machine's coordinator for this project")
       .accessibilityIdentifier("orchestrator.switcher")
     }
   }
@@ -75,7 +109,7 @@ struct OrchestratorSwitcher: View {
   /// One entry per folder on each machine: same-folder copies on one machine
   /// would otherwise list that machine twice, while separate checkouts of the
   /// repository each stay openable. Each entry is the viewed copy, else the
-  /// coordinator copy, else a linked copy, else the first copy.
+  /// coordinator copy, else a linked copy, else the lowest project id.
   static func choices(_ members: [ProjectMember], current: ProjectRef) -> [ProjectMember] {
     func rank(_ member: ProjectMember) -> Int {
       if member.ref == current { return 0 }
@@ -83,17 +117,16 @@ struct OrchestratorSwitcher: View {
       return member.isLinked ? 2 : 3
     }
     var best: [String: ProjectMember] = [:]
-    var order: [String] = []
     for member in members {
       let place = "\(member.ref.environmentId)\n\(member.folder ?? "")"
-      if let kept = best[place] {
-        if rank(member) < rank(kept) { best[place] = member }
-      } else {
-        best[place] = member
-        order.append(place)
-      }
+      if let kept = best[place], (rank(kept), kept.ref.projectId) <= (rank(member), member.ref.projectId) { continue }
+      best[place] = member
     }
-    return order.compactMap { best[$0] }
+    return best.values.sorted { a, b in
+      let order = a.machineLabel.localizedStandardCompare(b.machineLabel)
+      if order != .orderedSame { return order == .orderedAscending }
+      return (a.ref.environmentId, a.folder ?? "", a.ref.projectId) < (b.ref.environmentId, b.folder ?? "", b.ref.projectId)
+    }
   }
 
   /// The machine, and the folder's name when the machine holds several checkouts.
@@ -104,7 +137,13 @@ struct OrchestratorSwitcher: View {
   }
 
   /// "Coordinator", "Offline · last seen 2:05 PM", or "Online".
-  static func detail(_ member: ProjectMember, now: Date = .now) -> String {
+  static func detail(_ member: ProjectMember, approvalCode: String? = nil, now: Date = .now) -> String {
+    if member.isUnreached {
+      if let approvalCode, !approvalCode.isEmpty {
+        return "Waiting for approval · type \(approvalCode) on \(member.machineLabel)"
+      }
+      return member.machineSettling ? "Connecting" : "Not reached yet"
+    }
     var parts: [String] = []
     if member.isCoordinator { parts.append("Coordinator") }
     if member.machineOnline {
@@ -112,7 +151,7 @@ struct OrchestratorSwitcher: View {
     } else if member.machineSettling {
       parts.append("Connecting")
     } else if let seen = member.lastSeenAt {
-      parts.append("Offline · last seen \(ThreadPlacement.seenTime(seen, now: now, calendar: .current, locale: .current))")
+      parts.append("Offline · last seen \(ThreadPlacement.seenTime(seen.menuMinute, now: now.menuMinute, calendar: .current, locale: .current))")
     } else {
       parts.append("Offline")
     }

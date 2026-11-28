@@ -457,6 +457,7 @@ extension LiveEngine {
     let name = displayName(entry)
     assign(session, \.machineLabel, name)
     assign(session, \.machineOnline, online)
+    assign(session, \.machineLastSeenAt, entry.lastSeenAt)
     assign(session, \.machineSettling, entry.isSettling(at: options.now()))
     assign(session, \.isStale, controller.projection != nil && (!online || !controller.isSynchronized))
 
@@ -468,6 +469,9 @@ extension LiveEngine {
         let title = project.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !title.isEmpty { assign(session, \.title, title) }
       }
+      let selection = project?.workspaceSettings?.coordinatorModelSelection ?? shell?.modelSelection
+      assign(session, \.coordinatorModel, selection.map { modelName($0, on: entry) })
+      assign(session, \.canEditCoordinatorModel, online && entry.canOperate)
       assign(session, \.subtitle, "Coordinator · \(name)")
     case .thread:
       let title = (shell?.title ?? controller.projection?.thread.title)?.trimmingCharacters(in: .whitespacesAndNewlines)

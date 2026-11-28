@@ -17,7 +17,7 @@ struct CoordinatorPickStore {
     guard project.members.count > 1,
           let saved = picks()[Self.projectKey(project)],
           let ref = Self.ref(saved),
-          project.members.contains(where: { $0.ref == ref }) else { return nil }
+          project.members.contains(where: { $0.ref == ref && !$0.isUnreached }) else { return nil }
     return ref
   }
 

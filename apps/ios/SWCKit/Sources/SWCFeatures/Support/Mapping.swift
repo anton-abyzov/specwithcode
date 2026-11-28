@@ -47,7 +47,9 @@ extension MachineSummary {
   /// little out of date: shown like a connection in progress.
   var displayStatus: WeaveStatus { isStale ? .connecting : status.weaveStatus }
 
-  var statusLabel: String { isDisconnected ? "Disconnected on this phone" : deviceApprovalCode != nil ? "Waiting for approval" : teamRulesRefusal != nil ? "Turned off by team rules" : connectStatusLabel ?? (isStale ? "Catching up" : status.label) }
+  var statusLabel: String { statusLabel(now: .now) }
+
+  func statusLabel(now: Date) -> String { isDisconnected ? "Disconnected on this phone" : deviceApprovalCode != nil ? "Waiting for approval" : teamRulesRefusal != nil ? "Turned off by team rules" : connectStatusLabel(now: now) ?? (isStale ? "Catching up" : status.label) }
 }
 
 extension UserMessageState {
@@ -202,4 +204,8 @@ extension ThreadSummary {
   var accessWaitLine: String? {
     asksForAccess && activity == .needsYou && !isUnknown && !isResolved ? preview : nil
   }
+}
+
+extension Date {
+  var menuMinute: Date { Date(timeIntervalSinceReferenceDate: floor(timeIntervalSinceReferenceDate / 60) * 60) }
 }

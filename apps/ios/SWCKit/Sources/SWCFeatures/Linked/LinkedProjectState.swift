@@ -33,6 +33,18 @@ final class LinkedProjectState {
     (model.engine as? LinkedProjectEngine)?.linkedCopies(of: project, in: model) ?? []
   }
 
+  static func showsMachinesCard(_ copies: [LinkedProjectResolver.Copy], summary: ProjectSummary?) -> Bool {
+    if copies.count > 1 { return true }
+    var machines = Set(copies.map { $0.ref.environmentId })
+    for copy in copies { machines.formUnion(copy.listedMembers.map(\.environmentId)) }
+    if let summary {
+      machines.insert(summary.ref.environmentId)
+      machines.formUnion(summary.linkedMachineIds)
+      machines.formUnion(summary.members.filter(\.isLinked).map { $0.ref.environmentId })
+    }
+    return machines.count > 1
+  }
+
   /// Since when the coordinator's machine has been unreachable, or nil while
   /// it is reachable, switched off on this phone or still connecting.
   func unreachableSince(_ coordinator: LinkedProjectResolver.Copy) -> Date? {
@@ -42,12 +54,13 @@ final class LinkedProjectState {
 
   /// "M4 unreachable · last synced 2:05 PM" while the coordinator's machine is
   /// unreachable, or that it is switched off on this phone.
-  func unreachableLine(_ copies: [LinkedProjectResolver.Copy]) -> String? {
+  func unreachableLine(_ copies: [LinkedProjectResolver.Copy], coveredMachine: String? = nil) -> String? {
     guard let coordinator = LinkedProjectResolver.coordinator(copies) else { return nil }
     switch LinkedProjectResolver.reach(coordinator) {
     case .reachable, .checking: return nil
     case .switchedOff: return LinkedProjectResolver.switchedOffCoordinatorLabel(machine: coordinator.machineLabel)
     case .unreachable:
+      guard coordinator.ref.environmentId != coveredMachine else { return nil }
       return LinkedProjectResolver.unreachableLabel(machine: coordinator.machineLabel, lastSyncedAt: LinkedProjectResolver.lastSynced(with: coordinator, statuses: statuses), now: now)
     }
   }

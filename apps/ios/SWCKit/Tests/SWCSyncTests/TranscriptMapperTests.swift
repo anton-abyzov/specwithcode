@@ -170,7 +170,7 @@ import SWCWire
 
   @Test func subagentErrorAndNotices() throws {
     #expect(try kind("ti_sub") == .subagent(title: "Audit the API", child: ThreadRef(environmentId: "env", threadId: "thr_child"), isRunning: true))
-    #expect(try kind("ti_err") == .error(message: "Usage limit reached"))
+    #expect(try kind("ti_err") == .error(message: "Usage limit reached", isUsageLimit: true, resetAt: "2026-10-18T09:00:00Z"))
     #expect(try kind("ti_notice") == .notice(text: "Context compacted"))
     #expect(try kind("ti_note") == .notice(text: "Audit finished"))
   }

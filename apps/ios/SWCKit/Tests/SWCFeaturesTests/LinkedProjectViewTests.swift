@@ -6,6 +6,33 @@ import SWCWire
 
 @MainActor
 @Suite struct LinkedProjectViewTests {
+  @Test func unreachedSwitcherDetailsPreferTheApprovalCode() {
+    var member = ProjectMember(ref: ProjectRef(environmentId: "linux", projectId: "p"), machineLabel: "linux-mini", machineOnline: false)
+    member.isUnreached = true
+    #expect(OrchestratorSwitcher.detail(member) == "Not reached yet")
+    member.machineSettling = true
+    #expect(OrchestratorSwitcher.detail(member) == "Connecting")
+    #expect(OrchestratorSwitcher.detail(member, approvalCode: "1234") == "Waiting for approval · type 1234 on linux-mini")
+  }
+
+  @Test func aSingleLoadedCopyKeepsTheCardForItsNamedRemoteMachine() {
+    let ref = ProjectRef(environmentId: "m4", projectId: "app")
+    var copy = LinkedProjectResolver.Copy(ref: ref, machineLabel: "M4", machineOnline: true)
+    #expect(!LinkedProjectState.showsMachinesCard([copy], summary: nil))
+    copy.listedMembers = [.init(environmentId: "linux", projectId: "remote", coordinatorThreadId: "c")]
+    #expect(LinkedProjectState.showsMachinesCard([copy], summary: nil))
+  }
+
+  @Test func sidebarMenuIgnoresInputOrderAndSubminuteChanges() {
+    let now = Date(timeIntervalSinceReferenceDate: 6000)
+    let a = MachineSummary(id: "m4", label: "M4", status: .connected)
+    var b = MachineSummary(id: "m1", label: "M1", status: .offline, viaConnect: true, checkedAt: now.addingTimeInterval(-70))
+    let rows = SidebarMachineMenu.rows([a, b], now: now)
+    b.checkedAt = b.checkedAt?.addingTimeInterval(5)
+    #expect(rows.map(\.id) == ["m1", "m4"])
+    #expect(rows == SidebarMachineMenu.rows([b, a], now: now.addingTimeInterval(45)))
+  }
+
   @Test func thePromptIsRememberedPerProject() throws {
     let defaults = try #require(UserDefaults(suiteName: "linked-prompt-\(UUID().uuidString)"))
     #expect(LinkedMachinesPromptMemory.asked(defaults).isEmpty)

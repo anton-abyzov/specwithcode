@@ -183,11 +183,11 @@ struct StepRow: View {
 
 extension MachineSummary {
   /// "Offline · checked 5 min ago" for a Mac reached through Connect.
-  var connectStatusLabel: String? {
+  func connectStatusLabel(now: Date = .now) -> String? {
     if needsSignIn { return "Sign in again" }
     guard viaConnect, status == .offline, !isStale else { return nil }
     guard let checkedAt else { return "Offline" }
-    return "Offline · checked \(Self.relative(checkedAt))"
+    return "Offline · checked \(Self.relative(checkedAt, now: now))"
   }
 
   static func relative(_ date: Date, now: Date = Date()) -> String {
