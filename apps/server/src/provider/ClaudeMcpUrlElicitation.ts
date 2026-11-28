@@ -16,10 +16,11 @@
  * - The card's "I'm done, continue" is the server's `accept` with no content;
  *   Decline and Cancel are the same as a form's. The orchestrator takes only
  *   the person's own press (`ClaudeFormResponses.ts`).
- * - One card per tool call: a retry of the same link after the person
- *   answered gets that answer back, and no new card. A retry with another
- *   link gets a new card if the person said "I'm done", since they never saw
- *   that link; a Decline or Cancel still holds for the whole call.
+ * - One card per link of a tool call: a retry with the same link and message
+ *   after the person said "I'm done" gets that answer back, and no new card.
+ *   Any other link or message gets its own card, since the person never saw
+ *   it. A Decline or Cancel holds for the whole call. Retries carry a new
+ *   elicitation id, so the link and message are all that tell two asks apart.
  *
  * @module ClaudeMcpUrlElicitation
  */
@@ -61,12 +62,6 @@ export function isClaudeTurnWithoutPerson(
   );
 }
 
-/** The person's answer to one link of a tool call. */
-export interface ClaudeUrlAnswer {
-  readonly url: string;
-  readonly result: ElicitationResult;
-}
-
 /** What to do with a URL request: answer it now, or show its card. */
 export type ClaudeUrlPlan =
   | { readonly type: "answer"; readonly result: ElicitationResult; readonly notice?: string }
@@ -80,7 +75,7 @@ const DECLINE: ElicitationResult = { action: "decline" };
  */
 export function planClaudeUrlElicitation(
   request: ElicitationRequest,
-  options: { readonly unattended: boolean; readonly remembered: ClaudeUrlAnswer | undefined },
+  options: { readonly unattended: boolean; readonly remembered: ElicitationResult | undefined },
 ): ClaudeUrlPlan {
   const checked = checkMcpElicitationUrl(request.url);
   if (!checked.ok)
@@ -91,13 +86,7 @@ export function planClaudeUrlElicitation(
     };
   if (options.unattended)
     return { type: "answer", result: DECLINE, notice: urlUnattendedNotice(request.serverName) };
-  const remembered = options.remembered;
-  // "I'm done" counts only for the link the person saw; a refusal holds for the call.
-  if (
-    remembered !== undefined &&
-    (remembered.result.action !== "accept" || remembered.url === checked.link.url)
-  )
-    return { type: "answer", result: remembered.result };
+  if (options.remembered !== undefined) return { type: "answer", result: options.remembered };
   return {
     type: "card",
     elicitation: {
@@ -124,21 +113,50 @@ export function urlElicitationResult(decision: ProviderApprovalDecision): Elicit
 }
 
 const REMEMBERED_CALLS = 200;
+const REMEMBERED_LINKS_PER_CALL = 20;
+
+/** What the person said to the links of one tool call. */
+interface CallAnswers {
+  refusal: ElicitationResult | undefined;
+  readonly done: Set<string>;
+}
+
+const linkKey = (request: Pick<ElicitationRequest, "url" | "message">) =>
+  JSON.stringify([request.url ?? "", request.message]);
 
 /**
- * The person's answer per tool call, so a `-32042` retry of the same call gets
- * it again. Only a key naming a tool call (`<server>:call:<tool use id>`) is
- * kept: a request that keys itself never comes again.
+ * The person's answers per tool call, so a `-32042` retry of the same call gets
+ * them again: a Decline or Cancel for every later link, "I'm done" only for
+ * the same link and message. Only a key naming a tool call
+ * (`<server>:call:<tool use id>`) is kept: a request that keys itself never
+ * comes again.
  */
 export function makeClaudeUrlAnswers() {
-  const answers = new Map<string, ClaudeUrlAnswer>();
+  const calls = new Map<string, CallAnswers>();
   return {
-    get: (callKey: string) => answers.get(callKey),
-    remember: (callKey: string, answer: ClaudeUrlAnswer) => {
+    get: (callKey: string, request: Pick<ElicitationRequest, "url" | "message">) => {
+      const call = calls.get(callKey);
+      if (call === undefined) return undefined;
+      if (call.refusal !== undefined) return call.refusal;
+      return call.done.has(linkKey(request)) ? ({ action: "accept" } as const) : undefined;
+    },
+    remember: (
+      callKey: string,
+      request: Pick<ElicitationRequest, "url" | "message">,
+      result: ElicitationResult,
+    ) => {
       if (!callKey.includes(":call:")) return;
-      answers.delete(callKey);
-      answers.set(callKey, answer);
-      if (answers.size > REMEMBERED_CALLS) answers.delete(answers.keys().next().value as string);
+      const call = calls.get(callKey) ?? { refusal: undefined, done: new Set<string>() };
+      calls.delete(callKey);
+      calls.set(callKey, call);
+      if (calls.size > REMEMBERED_CALLS) calls.delete(calls.keys().next().value as string);
+      if (result.action !== "accept") {
+        call.refusal ??= result;
+        return;
+      }
+      call.done.add(linkKey(request));
+      if (call.done.size > REMEMBERED_LINKS_PER_CALL)
+        call.done.delete(call.done.values().next().value as string);
     },
   };
 }

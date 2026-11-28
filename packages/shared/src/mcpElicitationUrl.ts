@@ -50,7 +50,8 @@ export type McpElicitationUrlCheck =
 // levels, and hosting suffixes where each tenant is its own owner
 // (`tenant.gitlab.io`). A short list of the common ones, not the Public Suffix
 // List, which would weigh down the web bundle: a miss highlights one label too
-// few, and the full host is still shown beside it.
+// few, and the full host is still shown beside it. Wildcard suffixes such as
+// `*.run.app` are left out: one label deeper still names a shared region.
 const MULTI_LABEL_SUFFIXES = new Set([
   "ac.uk",
   "co.uk",
@@ -97,7 +98,6 @@ const MULTI_LABEL_SUFFIXES = new Set([
   "readthedocs.io",
   "firebaseapp.com",
   "web.app",
-  "run.app",
   "cloudfunctions.net",
   "r2.dev",
   "fly.dev",
@@ -144,7 +144,9 @@ export function checkMcpElicitationUrl(raw: unknown): McpElicitationUrlCheck {
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
     return { ok: false, reason: "scheme" };
-  if (!/^https?:\/\//i.test(raw)) return { ok: false, reason: "unparseable" };
+  // An explicit `//` and a host right after it: `https:host` resolves against
+  // the page, and `https:///@host` reads as one host but opens another.
+  if (!/^https?:\/\/[^/?#]/i.test(raw)) return { ok: false, reason: "unparseable" };
   // The parser keeps user info only in these fields; a bare `@` before the
   // host also counts, even when both are empty (`https://@evil.example`).
   if (parsed.username !== "" || parsed.password !== "" || hasEmptyUserInfo(raw))

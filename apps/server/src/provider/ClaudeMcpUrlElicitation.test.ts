@@ -284,4 +284,23 @@ describe("ClaudeMcpUrlElicitation", () => {
     );
     expect(h.cards()).toHaveLength(2);
   });
+
+  it("asks again for the same link with another message, and keeps every I'm done", async () => {
+    const h = harness();
+    h.toolCalls.set("toolu_sign_in", { toolName: "mcp__github__create_issue" });
+    const first = h.ask({ url: SIGN_IN }, undefined, "sdk-request-1");
+    await h.until(() => h.cards().length === 1);
+    await h.press(1, "accept");
+    expect(await first).toEqual({ action: "accept" });
+    // The same link for another step is another ask (1498 review round 2).
+    const confirm = { url: SIGN_IN, message: "Confirm the payment of $500." };
+    const second = h.ask(confirm, undefined, "sdk-request-2");
+    await h.until(() => h.cards().length === 2);
+    await h.press(2, "accept");
+    expect(await second).toEqual({ action: "accept" });
+    // Both answers hold for retries: the second did not replace the first.
+    expect(await h.ask({ url: SIGN_IN }, undefined, "sdk-request-3")).toEqual({ action: "accept" });
+    expect(await h.ask(confirm, undefined, "sdk-request-4")).toEqual({ action: "accept" });
+    expect(h.cards()).toHaveLength(2);
+  });
 });

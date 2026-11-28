@@ -96,6 +96,10 @@ describe("checkMcpElicitationUrl", () => {
       "https://exa\tmple.com/",
       "https://example.com/a\nb",
       "https://example.com/\u007f",
+      // No host right after `//` (1498 review round 2).
+      "https:///@example.test/",
+      "https:///example.test/",
+      "https://?q=example.test",
     ])
       expect(checkMcpElicitationUrl(raw)).toEqual({ ok: false, reason: "unparseable" });
     expect(link("HTTPS://Example.com/a").host).toBe("example.com");
@@ -107,6 +111,7 @@ describe("checkMcpElicitationUrl", () => {
     expect(registrableDomainOf("evil.github.io")).toBe("evil.github.io");
     expect(registrableDomainOf("tenant.gitlab.io")).toBe("tenant.gitlab.io");
     expect(registrableDomainOf("shop.myshopify.com")).toBe("shop.myshopify.com");
+    expect(registrableDomainOf("svc-abc.a.run.app")).toBe("run.app");
     expect(registrableDomainOf("example.com.")).toBe("example.com");
     expect(registrableDomainOf("localhost")).toBe("localhost");
     expect(registrableDomainOf("192.168.1.10")).toBe("192.168.1.10");

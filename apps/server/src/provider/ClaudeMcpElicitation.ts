@@ -399,14 +399,13 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       if (request.mode === "url") {
         const plan = planClaudeUrlElicitation(request, {
           unattended: isClaudeTurnWithoutPerson(context.input),
-          remembered: urlAnswers.get(callKey),
+          remembered: urlAnswers.get(callKey, request),
         });
         if (plan.type === "card")
           return yield* showCard(context, request, signal, owner, nativeRequestId, {
             elicitation: plan.elicitation,
             resultFor: (decision) => urlElicitationResult(decision),
-            remember: (result) =>
-              urlAnswers.remember(callKey, { url: plan.elicitation.url ?? "", result }),
+            remember: (result) => urlAnswers.remember(callKey, request, result),
           });
         // Keyed by the tool call, so a retried request replaces its own note.
         if (plan.notice !== undefined)
