@@ -1993,6 +1993,8 @@ const make = Effect.gen(function* () {
     >,
     providers: ReadonlyArray<ServerProvider>,
     hostDefault: ModelSelection | null,
+    // A review moved off a full source takes only its model and effort (1506).
+    review = false,
   ) => {
     const preferred = callerWorkerModel(project, caller.id, hostDefault);
     return preferred === null
@@ -2002,6 +2004,7 @@ const make = Effect.gen(function* () {
           preferred,
           coordinator: caller.modelSelection,
           providers,
+          review,
           runtimePolicy: {
             runtimeMode: caller.runtimeMode,
             interactionMode: caller.interactionMode,
@@ -3731,6 +3734,7 @@ const make = Effect.gen(function* () {
           parent.thread,
           providers,
           hostDefault,
+          reviewTask,
         );
         const delegationTarget = projectDelegationTarget(
           workerProject,
@@ -4226,6 +4230,7 @@ const make = Effect.gen(function* () {
                 parent.thread,
                 providers,
                 hostDefault,
+                request.taskClass === "review",
               );
               const delegationTarget = projectDelegationTarget(
                 workerProject,
