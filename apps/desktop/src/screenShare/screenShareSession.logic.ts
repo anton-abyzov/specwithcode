@@ -675,13 +675,10 @@ export class ScreenShareSessions {
   private applyViewport(session: Session, viewport: Viewport): void {
     const before = session.viewport;
     session.viewport = viewport;
-    if (
-      before === null ||
-      before.width !== viewport.width ||
-      before.height !== viewport.height ||
-      before.picture !== viewport.picture
-    )
-      session.lastDigest = null;
+    // A new size needs nothing here: the digest carries the picture's size, so a picture
+    // that comes out bigger or smaller differs on its own. A new choice keeps the size and
+    // changes only the encoding, so the last one is not compared against.
+    if (before === null || before.picture !== viewport.picture) session.lastDigest = null;
   }
 
   /** One turn of the frame loop, then the next one soon while the picture changes. */
@@ -713,6 +710,7 @@ export class ScreenShareSessions {
         if (this.session !== session || session.phase !== "live") return;
         if (session.displayId !== displayId) return;
         if (grab.kind === "locked") {
+          session.fastLooks = fastLooksAfter(session.fastLooks, false);
           if (!session.showingLocked) {
             session.showingLocked = true;
             session.lastDigest = null;

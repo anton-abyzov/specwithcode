@@ -1197,7 +1197,7 @@ describe("version skew with slice 1 (1519)", () => {
     expect(viewer.frames[1]!.header.stats).toMatchObject({ confirmMs: 10, grabMs: 0 });
     expect(r.state.looks.at(-1)).toEqual({
       viewport: { width: 2560, height: 1680, picture: "auto" },
-      // A new size is a new picture: the one sent last is not compared against.
+      // The first viewport may change the picture: the one sent last is not compared against.
       previousDigest: null,
     });
     await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 2 });
@@ -1206,6 +1206,24 @@ describe("version skew with slice 1 (1519)", () => {
     await viewer.drain();
     expect(viewer.frames).toHaveLength(3);
     expect(r.closes).toEqual([]);
+  });
+
+  it("a new size keeps the last digest; a new picture choice drops it", async () => {
+    const r = rig();
+    r.state.grabs.push(frame("a"), frame("b"));
+    const viewer = await live(r, await makeDevice());
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1200, height: 800, picture: "auto" });
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 1 });
+    await r.advance(SCREEN_SHARE_FRAME_MIN_MS);
+    await viewer.drain();
+    expect(viewer.frames).toHaveLength(2);
+    await viewer.tell(SCREEN_SHARE_RECORD.frameReceived, { seq: 2 });
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1300, height: 800, picture: "auto" });
+    await r.advance(400);
+    expect(r.state.looks.at(-1)?.previousDigest).not.toBeNull();
+    await viewer.tell(SCREEN_SHARE_RECORD.viewport, { width: 1300, height: 800, picture: "low" });
+    await r.advance(400);
+    expect(r.state.looks.at(-1)?.previousDigest).toBeNull();
   });
 
   it("applies the newest viewport over the rate once the rate allows", async () => {
