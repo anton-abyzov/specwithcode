@@ -14,18 +14,20 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "../IdAllocator.ts";
 import { type ProviderAdapterV2Event, ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 
 const SETTINGS = Schema.decodeSync(ClaudeSettings)({});
@@ -42,8 +44,8 @@ const openElicitationTurn = Effect.gen(function* () {
     prefix: "studio-claude-elicitation-",
   });
   let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-  // Ends the CLI's output, as when its process exits.
-  const exited = yield* Deferred.make<void>();
+  // The CLI's output; its end is the process's exit.
+  const output = yield* Queue.unbounded<SDKMessage, Cause.Done>();
   const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
     instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
     settings: SETTINGS,
@@ -60,8 +62,7 @@ const openElicitationTurn = Effect.gen(function* () {
           openedOptions = input.options;
           return {
             // As the real runner: the output's end runs onOutputEnd first.
-            messages: Stream.fromEffect(Deferred.await(exited)).pipe(
-              Stream.flatMap(() => Stream.empty),
+            messages: Stream.fromQueue(output).pipe(
               Stream.onExit(() => input.onOutputEnd ?? Effect.void),
             ),
             offer: () => Effect.void,
@@ -142,7 +143,8 @@ const openElicitationTurn = Effect.gen(function* () {
     providerThread,
     threadId,
     runId: RunId.make(`run-${attemptId}`),
-    exit: Deferred.succeed(exited, undefined),
+    exit: Queue.end(output),
+    emit: (message: SDKMessage) => Queue.offer(output, message),
     openedOptions: openedOptions as ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined,
   };
 });
@@ -271,7 +273,7 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
         yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
       yield* TestClock.adjust("2 seconds");
     });
-    return { ...opened, cards, notices, ended, ask, settle };
+    return { ...opened, events, cards, notices, ended, ask, settle };
   });
 
   it.effect(
@@ -348,6 +350,49 @@ describe("ClaudeAdapterV2 MCP elicitation", () => {
         yield* forms.settle;
         assert.deepStrictEqual(yield* Fiber.join(second), { action: "cancel" });
         assert.deepStrictEqual(forms.notices(), ["github stopped waiting for an answer."]);
+      }).pipe(Effect.provide(LAYER)),
+    ),
+  );
+
+  it.effect("shows the server's note before a turn that ends at once with an error (1495)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const forms = yield* watchForms;
+        const serverGaveUp = new AbortController();
+        const call = yield* forms.ask(serverGaveUp.signal, "sdk-elicitation-1");
+        assert.isTrue(yield* until(() => forms.cards().length === 1));
+        serverGaveUp.abort();
+        yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+        // Claude reaches its turn limit right after the tool error.
+        yield* forms.emit({
+          type: "result",
+          subtype: "error_max_turns",
+          duration_ms: 1,
+          duration_api_ms: 0,
+          is_error: true,
+          num_turns: 1,
+          stop_reason: null,
+          total_cost_usd: 0,
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+          modelUsage: {},
+          permission_denials: [],
+          errors: [],
+          uuid: "00000000-0000-4000-8000-000000001495",
+          session_id: "native-thread-claude-elicitation",
+        } as unknown as SDKMessage);
+        assert.isTrue(yield* until(forms.ended));
+        const terminal = forms.events.findIndex((event) => event.type === "turn.terminal");
+        const note = forms.events.findIndex(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isAbove(note, -1);
+        assert.isBelow(note, terminal);
+        assert.deepStrictEqual(yield* Fiber.join(call), { action: "cancel" });
       }).pipe(Effect.provide(LAYER)),
     ),
   );

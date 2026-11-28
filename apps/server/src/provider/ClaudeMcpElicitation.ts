@@ -20,9 +20,9 @@
  *   thread's records keep only which fields were answered.
  * - Stopping the turn closes the card as cancelled. When the SDK stops waiting
  *   on its own (the server gave up), the card closes too, and a note says the
- *   server stopped waiting. The adapter marks the cards open when it ends their
- *   calls itself (Stop, steer, closing the CLI) or the CLI's output ends, so
- *   the abort that follows shows no note.
+ *   server stopped waiting. The adapter marks a process's open cards when it
+ *   ends their calls itself (Stop, steer, closing the CLI) or the CLI's output
+ *   ends, so the abort that follows shows no note.
  * - A thread nobody watches (a delegated worker, a routine) cancels the card
  *   after {@link UNATTENDED_MCP_ELICITATION_TIMEOUT_MS}.
  *
@@ -138,21 +138,31 @@ export interface ClaudeMcpElicitationDeps<C extends ClaudeElicitationTurnContext
   readonly commitOutcomeLimit?: Effect.Effect<void>;
 }
 
-export interface ClaudeMcpElicitations {
+/** The forms of one CLI process: its `onElicitation` and the adapter's marks on its cards. */
+export interface ClaudeQueryForms {
   readonly onElicitation: OnElicitation;
+  /**
+   * The adapter is ending this process's open calls itself (Stop, steer, a
+   * close): the aborts that follow are not the server's. Run it before the
+   * interrupt, the steer or the close. A card the SDK aborted already keeps
+   * its own cause.
+   */
+  readonly endedHere: Effect.Effect<void>;
+  /** The CLI's output ended: every abort of this process's cards, even just before, was the exit's. */
+  readonly outputEnded: Effect.Effect<void>;
+}
+
+export interface ClaudeMcpElicitations {
+  /** A new process's forms. */
+  readonly forQuery: () => ClaudeQueryForms;
   /** Answers a card raised here; false when the request is not one of them. */
   readonly respond: (
     input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<boolean>;
   /**
-   * The adapter is ending the open cards' calls itself (Stop, steer, closing
-   * the CLI), or the CLI's output ended: the aborts that follow are not the
-   * server's. Run it before the interrupt, the steer or the close.
-   */
-  readonly endedHere: Effect.Effect<void>;
-  /**
-   * The turn finished on its own: a card the server just gave up on shows its
-   * note now, before the turn's end, instead of waiting out the settle.
+   * The turn is ending (a result, success or error, or the CLI's exit): a card
+   * the server just gave up on shows its note now, before the turn's end,
+   * instead of waiting out the settle. A card the adapter marked shows none.
    */
   readonly settleAborted: Effect.Effect<void>;
 }
@@ -170,6 +180,9 @@ type Answer =
 
 interface PendingCard {
   readonly answer: Deferred.Deferred<Answer>;
+  /** The process that asked: the adapter's marks reach only its cards. */
+  readonly owner: object;
+  readonly signal: AbortSignal;
   /** Why the SDK stopped waiting, decided once: the adapter's own end, or the server. */
   readonly abortCause: Deferred.Deferred<"here" | "server">;
   /** Waiting out the settle after an abort. */
@@ -365,7 +378,12 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       });
     });
 
-  const ask = (request: ElicitationRequest, signal: AbortSignal, sdkRequestId: string) =>
+  const ask = (
+    owner: object,
+    request: ElicitationRequest,
+    signal: AbortSignal,
+    sdkRequestId: string,
+  ) =>
     Effect.gen(function* () {
       const context = yield* deps.activeTurn;
       if (context === null) {
@@ -441,6 +459,8 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       const answer = yield* Deferred.make<Answer>();
       const card: PendingCard = {
         answer,
+        owner,
+        signal,
         abortCause: yield* Deferred.make<"here" | "server">(),
         settling: false,
         done: yield* Deferred.make<void>(),
@@ -543,19 +563,38 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       );
     });
 
-  const onElicitation: OnElicitation = (request, options) =>
-    deps
-      .runPromise(
-        ask(request, options.signal, options.requestId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logError("An MCP elicitation failed; it was cancelled.", {
-              serverName: request.serverName,
-              cause,
-            }).pipe(Effect.as(CANCEL)),
-          ),
+  const markHere = (owner: object, includeAborted: boolean) =>
+    Effect.suspend(() =>
+      Effect.forEach(
+        [...pending.values()].filter(
+          (card) => card.owner === owner && (includeAborted || !card.signal.aborted),
         ),
-      )
-      .catch(() => CANCEL);
+        (card) => Deferred.succeed(card.abortCause, "here"),
+        { discard: true },
+      ),
+    );
+
+  const forQuery = (): ClaudeQueryForms => {
+    const owner = {};
+    const onElicitation: OnElicitation = (request, options) =>
+      deps
+        .runPromise(
+          ask(owner, request, options.signal, options.requestId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("An MCP elicitation failed; it was cancelled.", {
+                serverName: request.serverName,
+                cause,
+              }).pipe(Effect.as(CANCEL)),
+            ),
+          ),
+        )
+        .catch(() => CANCEL);
+    return {
+      onElicitation,
+      endedHere: markHere(owner, false),
+      outputEnded: markHere(owner, true),
+    };
+  };
 
   const respond: ClaudeMcpElicitations["respond"] = (input) =>
     Effect.gen(function* () {
@@ -581,12 +620,6 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
       return true;
     });
 
-  const endedHere: ClaudeMcpElicitations["endedHere"] = Effect.suspend(() =>
-    Effect.forEach([...pending.values()], (card) => Deferred.succeed(card.abortCause, "here"), {
-      discard: true,
-    }),
-  );
-
   const settleAborted: ClaudeMcpElicitations["settleAborted"] = Effect.suspend(() =>
     Effect.forEach(
       [...pending.values()].filter((card) => card.settling),
@@ -599,5 +632,5 @@ export function makeClaudeMcpElicitations<C extends ClaudeElicitationTurnContext
     ),
   );
 
-  return { onElicitation, respond, endedHere, settleAborted };
+  return { forQuery, respond, settleAborted };
 }
