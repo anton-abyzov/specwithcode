@@ -439,28 +439,98 @@ describe("administrator code-block runs", () => {
         ? "/usr/bin/script"
         : NodePath.join(bin, "script"),
   });
+  // Linux only: the state letter of /proc/<pid>/stat, read after the last ")" because the
+  // command name may itself hold spaces or parentheses. Undefined where /proc is absent.
+  const procState = (pid: number): string | undefined => {
+    try {
+      const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat
+        .slice(stat.lastIndexOf(")") + 1)
+        .trim()
+        .split(/\s+/)[0];
+    } catch {
+      return undefined;
+    }
+  };
   const isPidAlive = (pid: number | string) => {
     const numeric = typeof pid === "number" ? pid : Number(pid);
     if (!Number.isInteger(numeric) || numeric <= 1) return false;
     try {
       process.kill(numeric, 0);
-      return true;
     } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "EPERM";
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
     }
+    // kill(pid, 0) also succeeds for an exited child its parent has not reaped yet.
+    return procState(numeric) !== "Z";
+  };
+  const describePid = (pid: number | string) => {
+    const numeric = typeof pid === "number" ? pid : Number(pid);
+    const ps = NodeChildProcess.spawnSync(
+      "/bin/ps",
+      ["-o", "pid=,ppid=,pgid=,stat=,lstart=", "-p", String(numeric)],
+      { encoding: "utf8", env: { ...process.env, TZ: "UTC", LC_ALL: "C" } },
+    );
+    const row = ps.stdout?.trim() || "no row";
+    return `pid ${pid} ${isPidAlive(numeric) ? "alive" : "gone"} (proc state ${procState(numeric) ?? "n/a"}, ps ${row})`;
+  };
+  const describeDir = (dirPath: string): string => {
+    if (!NodeFS.existsSync(dirPath)) return `${dirPath} absent`;
+    const entries: string[] = [];
+    for (const entry of NodeFS.readdirSync(dirPath, { recursive: true }) as string[]) {
+      const full = NodePath.join(dirPath, entry);
+      const stat = NodeFS.lstatSync(full);
+      const body =
+        stat.isFile() && stat.size < 256
+          ? `=${JSON.stringify(NodeFS.readFileSync(full, "utf8"))}`
+          : "";
+      entries.push(`${entry}${stat.isDirectory() ? "/" : body}`);
+    }
+    return `${dirPath} holds [${entries.join(", ")}]`;
   };
   const isNonEmptyFile = (filePath: string) =>
     NodeFS.existsSync(filePath) && NodeFS.statSync(filePath).size > 0;
   const isDirEmpty = (dirPath: string) =>
     !NodeFS.existsSync(dirPath) || NodeFS.readdirSync(dirPath).length === 0;
-  const waitUntil = async (predicate: () => boolean, label: string, timeoutMs = 15_000) => {
+  const waitUntil = async (
+    predicate: () => boolean,
+    label: string,
+    timeoutMs = 15_000,
+    describe?: () => string,
+  ) => {
     const deadline = performance.now() + timeoutMs;
     while (!predicate()) {
       if (performance.now() >= deadline) {
-        throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}`);
+        const detail = describe ? `; ${describe()}` : "";
+        throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}${detail}`);
       }
       await NodeTimersPromises.setTimeout(25);
     }
+  };
+  // Waits for the run folder to go and every pid to exit, naming whatever is left on timeout.
+  const waitForTeardown = (
+    runsDir: string,
+    pids: readonly string[],
+    label: string,
+    context?: () => string,
+  ) =>
+    waitUntil(
+      () => isDirEmpty(runsDir) && pids.every((pid) => !isPidAlive(pid)),
+      label,
+      15_000,
+      () =>
+        [
+          isDirEmpty(runsDir) ? "runsDir empty" : describeDir(runsDir),
+          ...pids.map(describePid),
+          ...(context ? [context()] : []),
+        ].join("; "),
+    );
+  // The wrapper's own record of the running block: "<pid> <own pgid> <start time>".
+  const readBlockRecord = (wrapped: string) => {
+    const file = NodePath.join(
+      NodePath.dirname(wrapped.slice("/bin/sh '".length, -1)),
+      "block.pid",
+    );
+    return NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8").trim() : "absent";
   };
   const prepare = (
     command: string,
@@ -872,10 +942,7 @@ describe("administrator code-block runs", () => {
         .split(/\s+/)[0]!;
       child.kill("SIGKILL");
       await new Promise((resolve) => child.on("exit", resolve));
-      await waitUntil(
-        () => isDirEmpty(runsDir) && !isPidAlive(askpassPid),
-        "runsDir cleanup and askpass exit",
-      );
+      await waitForTeardown(runsDir, [askpassPid], "runsDir cleanup and askpass exit");
       expect(hasState("block-ran")).toBe(false);
       expect(hasState("ticket")).toBe(false);
       expect(hasState("ticket-ever-written")).toBe(false);
@@ -949,11 +1016,14 @@ describe("administrator code-block runs", () => {
         );
         grandchildPid = NodeFS.readFileSync(grandchildFile, "utf8").trim();
         stubbornPid = NodeFS.readFileSync(stubbornFile, "utf8").trim();
+        const blockRecord = readBlockRecord(wrapped);
         child.kill(signal);
         await new Promise((resolve) => child.on("exit", resolve));
-        await waitUntil(
-          () => isDirEmpty(runsDir) && !isPidAlive(grandchildPid) && !isPidAlive(stubbornPid),
+        await waitForTeardown(
+          runsDir,
+          [grandchildPid, stubbornPid],
           "runsDir cleanup and descendant exit",
+          () => `block.pid before ${signal} held ${JSON.stringify(blockRecord)}`,
         );
         expect(hasState("ticket")).toBe(false);
         expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -1027,11 +1097,14 @@ describe("administrator code-block runs", () => {
           expect(NodeFS.existsSync(NodePath.join(dir, file))).toBe(false);
         }
         blockPid = NodeFS.readFileSync(NodePath.join(state, "block-pid"), "utf8").trim();
+        const blockRecord = readBlockRecord(wrapped);
         child.kill(signal);
         await new Promise((resolve) => child.on("exit", resolve));
-        await waitUntil(
-          () => isDirEmpty(runsDir) && !isPidAlive(blockPid),
+        await waitForTeardown(
+          runsDir,
+          [blockPid],
           "runsDir cleanup and block exit",
+          () => `block.pid before ${signal} held ${JSON.stringify(blockRecord)}`,
         );
         expect(hasState("ticket")).toBe(false);
         expect(NodeFS.readdirSync(runsDir)).toEqual([]);
@@ -2951,6 +3024,45 @@ exec /bin/ps "$@"
     expect(ran.status).not.toBe(0);
     expect(hasState("block-ran")).toBe(false);
     expect(NodeFS.readdirSync(runsDir)).toEqual([]);
+  });
+
+  // A start time read from the wrong process is one second late whenever a second boundary
+  // falls between the fork and the read; teardown then takes the live block for a recycled pid.
+  it("records the start time of the launched process, not of the ps that reads it", async () => {
+    const shimDir = NodePath.join(root, "lstart-query-shims");
+    NodeFS.mkdirSync(shimDir, { recursive: true });
+    const queries = NodePath.join(state, "lstart-queries");
+    const fakePs = NodePath.join(shimDir, "ps");
+    NodeFS.writeFileSync(
+      fakePs,
+      `#!/bin/sh
+if [ "$1" = "-o" ] && [ "$2" = "lstart=" ] && [ "$3" = "-p" ]; then
+  printf '%s %s\\n' "$4" "$$" >> "${queries}"
+fi
+exec /bin/ps "$@"
+`,
+      { mode: 0o700 },
+    );
+    const blockPidFile = NodePath.join(state, "block-pid");
+    const wrapped = await prepare(`echo $$ > "${blockPidFile}"`, NodePath.join(root, "runs"), {
+      tools: { ps: fakePs },
+    });
+    const ran = NodeChildProcess.spawnSync("/bin/sh", ["-c", wrapped], {
+      encoding: "utf8",
+      env: environment(),
+      timeout: 25_000,
+    });
+    expect(ran.status).toBe(0);
+    const rows = NodeFS.readFileSync(queries, "utf8")
+      .trim()
+      .split("\n")
+      .map((row) => row.split(" "));
+    // The auth helper and the block each record their own start time once.
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const [queried, psPid] of rows) expect(queried).not.toBe(psPid);
+    expect(rows.map(([queried]) => queried)).toContain(
+      NodeFS.readFileSync(blockPidFile, "utf8").trim(),
+    );
   });
 });
 
