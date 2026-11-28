@@ -253,6 +253,32 @@ describe("motion deck runtime", () => {
     await tab.close();
   });
 
+  it("draws halation with bloom off, and keeps a field's soft edge above zero", async () => {
+    // The same lit world twice: halation on and off, bloom off in both.
+    const halo = WORLDS.replace(
+      'post: { tone: "agx", halation: 0.5, ca: 0.5, shadows: [0, 0, 0.02] }',
+      "post: { bloom: 0, halation: 3 }",
+    ).replace('transition: "portal",', 'transition: "portal", post: { bloom: 0, halation: 0 },');
+    const tab = await open("", true, halo);
+    await ready(tab);
+    const withHalo = await tab.evaluate<number>(
+      `(SpecWithCodeDeck.current.seek("a", 1, 0.4), ${brightness})`,
+    );
+    const without = await tab.evaluate<number>(
+      `(SpecWithCodeDeck.current.seek("b", 1, 0.4), ${brightness})`,
+    );
+    expect(withHalo).toBeGreaterThan(without + 0.5);
+    const soft = await tab.evaluate<number>(`(() => {
+      const scene = new THREE.Scene();
+      const w = SpecWithCodeDeck.world(THREE, scene);
+      const field = w.field({ cols: 2, rows: 2, soft: 0 });
+      field.set({ soft: -5 });
+      return field.material.uniforms.uSoft.value;
+    })()`);
+    expect(soft).toBeGreaterThan(0);
+    await tab.close();
+  });
+
   it("registers the shader transitions and draws each one mid-way", async () => {
     const tab = await open("", true, WORLDS);
     const errors: string[] = [];
