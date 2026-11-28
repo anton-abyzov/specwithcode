@@ -148,6 +148,8 @@ final class SpeechDictation {
       lastPartial = text
       heard = DictationText.remainder(of: text, after: settled, minimumWords: settledMinimum) ?? text
     case let .final(text):
+      // A metadata-bearing result and the final callback can settle the same text.
+      if lastPartial.isEmpty, text == settled { break }
       let phrase = DictationText.remainder(of: text, after: settled, minimumWords: settledMinimum) ?? text
       prefix = DictationText.insert(phrase, into: prefix)
       settled = text
