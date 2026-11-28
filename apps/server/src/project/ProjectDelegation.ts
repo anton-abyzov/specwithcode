@@ -239,11 +239,25 @@ export function projectDelegationTarget(
   const preferred = callerWorkerModel(project, callerThreadId, hostDefault);
   if (!preferred || namesModel(target)) return target;
   const selected = launchSelection ?? preferred;
+  // A worker the room check moved onto a row keeps the row's Ultracode beside
+  // the caller's own options, unless the caller names Ultracode (1506).
+  const movedUltracode =
+    launchSelection != null &&
+    (launchSelection.instanceId !== preferred.instanceId ||
+      launchSelection.model !== preferred.model)
+      ? launchSelection.options?.find((option) => option.id === "ultracode")
+      : undefined;
+  const callerOptions =
+    target?.options === undefined ||
+    movedUltracode === undefined ||
+    target.options.some((option) => option.id === "ultracode")
+      ? target?.options
+      : [...target.options, movedUltracode];
   return {
     providerInstanceId: selected.instanceId,
     model: selected.model,
-    ...(target?.options !== undefined
-      ? { options: target.options }
+    ...(callerOptions !== undefined
+      ? { options: callerOptions }
       : selected.options !== undefined
         ? { options: selected.options }
         : {}),
