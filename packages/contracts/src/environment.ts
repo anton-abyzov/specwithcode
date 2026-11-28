@@ -145,6 +145,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server applies `projectSettingsOverrideChanges` key by key; older servers
       drop that key, so clients replace the whole entry there instead. */
   projectSettingsOverrideChanges: Schema.optionalKey(Schema.Boolean),
+  /** Server installs a skill where `install.scope` says and stores the
+      `skillInstallScope` default; older servers install by the open view. */
+  skillInstallScope: Schema.optionalKey(Schema.Boolean),
   /** Server holds live document sessions (`documents.session.*`): a sheet open
       in several windows merges their edits. Older servers save by revision. */
   documentSessions: Schema.optionalKey(Schema.Boolean),

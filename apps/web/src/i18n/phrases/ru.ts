@@ -10,10 +10,12 @@ import { limitHopsRu } from "./limitHops/ru";
 import { installedPagesRu } from "./installedPages/ru";
 import { guidedTourRu } from "./guidedTour/ru";
 import { helperChatsRu } from "./helperChats/ru";
+import { skillInstallScopeRu } from "./skillInstallScope/ru";
 
 /** Russian Settings titles and labels. "тред" for thread, as in the message catalog. */
 export const ru: PhraseCatalog = {
   ...syncRu,
+  ...skillInstallScopeRu,
   ...handoffRu,
   ...iphoneRu,
   ...machineLabelsRu,

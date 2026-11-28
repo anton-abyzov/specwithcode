@@ -18,6 +18,7 @@ import {
 } from "./storageCleanupSettings.ts";
 export * from "./storageCleanupSettings.ts";
 import { MaxBootedDevices, SshDeviceHostConfigs } from "./device.ts";
+import { SkillInstallScope } from "./projectSkillRepos.ts";
 import { ExternalBrowserTarget } from "./externalBrowser.ts";
 import {
   DEFAULT_KEEP_AWAKE_BATTERY_FLOOR_PERCENT,
@@ -1782,6 +1783,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "advisor",
   "learnedModelPreferences",
   "keepActiveThreadsPerProject",
+  "skillInstallScope",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1847,6 +1849,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   advisor: Schema.optionalKey(AdvisorSettingsPatch),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
+  skillInstallScope: Schema.optionalKey(SkillInstallScope),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1953,6 +1956,14 @@ export const ServerSettings = Schema.Struct({
   ),
   keepActiveThreadsPerProject: KeepActiveThreadsPerProject.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_KEEP_ACTIVE_THREADS_PER_PROJECT)),
+  ),
+  /**
+   * Where a skill installed from a project view goes on this machine by
+   * default (1440 D-06: the project). A project's own override wins, and the
+   * personal assistant's project installs for the user unless it has one.
+   */
+  skillInstallScope: SkillInstallScope.pipe(
+    Schema.withDecodingDefault(Effect.succeed("project" as const)),
   ),
   /**
    * Custom locations used before the current one. Server-maintained so
@@ -2624,6 +2635,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   archiveInactiveThreadsAfterDays: Schema.optionalKey(ArchiveInactiveThreadsAfterDays),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
+  skillInstallScope: Schema.optionalKey(SkillInstallScope),
   // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),

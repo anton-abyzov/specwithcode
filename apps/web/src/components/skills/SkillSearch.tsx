@@ -11,6 +11,7 @@ import {
   type ProjectSkillSourceStatus,
   type ProjectSkillsSearchResult,
   type ProjectSkillUpdateOutcome,
+  type SkillInstallScope,
 } from "@specweave-studio/contracts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -29,6 +30,7 @@ import {
   skillFolderInput,
   type SkillFolderScope,
 } from "./SkillUpdate.logic";
+import { PROGRESS_PHRASES } from "./skillInstallScope.logic";
 import { SkillRolloutAfter } from "./SkillRollout";
 import {
   SkillUpdateOutcomeLine,
@@ -63,9 +65,18 @@ function Group({
 
 export function SkillSearch({
   onChanged,
+  installScope = null,
+  otherInstallRunning = false,
+  onInstallRunning,
   ...scope
 }: SkillFolderScope & {
   /** Called after an install changed this machine. */ onChanged?: () => void;
+  /** Where Install puts a skill; null on a server that only follows the open view. */
+  installScope?: SkillInstallScope | null;
+  /** An install started from the other list is still running. */
+  otherInstallRunning?: boolean;
+  /** Told when an install from this list starts and ends. */
+  onInstallRunning?: (running: boolean) => void;
 }) {
   const tx = useTx();
   const { environmentId } = scope;
@@ -83,6 +94,8 @@ export function SkillSearch({
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
+  // The scope a running install was sent with; the chooser may change meanwhile.
+  const [runScope, setRunScope] = useState<SkillInstallScope | null>(null);
   const [outcomes, setOutcomes] = useState<ReadonlyArray<ProjectSkillUpdateOutcome>>([]);
   const [statuses, setStatuses] = useState<ReadonlyArray<ProjectSkillSourceStatus>>([]);
   const [noteMessage, setNoteMessage] = useState<string | null>(null);
@@ -140,12 +153,30 @@ export function SkillSearch({
   const install = async (entry: ProjectSkillSearchAvailable) => {
     const key = `${entry.repo}/${entry.skill.name}`;
     setInstalling(key);
+    onInstallRunning?.(true);
+    setRunScope(installScope);
     setError(null);
-    const done = await run({
-      operation: "install",
-      install: { repo: entry.repo, skill: entry.skill.name },
-    });
-    setInstalling(null);
+    setOutcomes([]);
+    let done: Awaited<ReturnType<typeof run>>;
+    try {
+      done = await run({
+        operation: "install",
+        install: {
+          repo: entry.repo,
+          skill: entry.skill.name,
+          ...(installScope === null ? {} : { scope: installScope }),
+        },
+      });
+    } catch {
+      done = {
+        ok: false,
+        error: tx("The install did not answer. Check the skill list, then try again."),
+      };
+    } finally {
+      // A thrown or refused run never leaves every Install button disabled.
+      setInstalling(null);
+      onInstallRunning?.(false);
+    }
     if (!done.ok) {
       setError(done.error);
       return;
@@ -191,6 +222,24 @@ export function SkillSearch({
       {error ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {error}
+        </p>
+      ) : null}
+      {installing !== null ? (
+        <p
+          role="status"
+          className="flex items-center gap-1.5 text-xs text-foreground"
+          data-testid="skill-install-progress"
+        >
+          <Spinner className="size-3" />
+          {runScope === null
+            ? tx("Installing {skill} on {machine}…", {
+                skill: installing.split("/").at(-1) ?? installing,
+                machine,
+              })
+            : tx(PROGRESS_PHRASES[runScope], {
+                skill: installing.split("/").at(-1) ?? installing,
+                machine,
+              })}
         </p>
       ) : null}
       {outcomes.map((outcome) => (
@@ -283,7 +332,7 @@ export function SkillSearch({
                           size="xs"
                           variant="outline"
                           type="button"
-                          disabled={!canRun || stale || installing !== null}
+                          disabled={!canRun || stale || installing !== null || otherInstallRunning}
                           onClick={() => void install(entry)}
                         >
                           {installing === key ? <Spinner className="size-3" /> : null}

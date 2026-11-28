@@ -10,10 +10,12 @@ import { limitHopsKo } from "./limitHops/ko";
 import { installedPagesKo } from "./installedPages/ko";
 import { guidedTourKo } from "./guidedTour/ko";
 import { helperChatsKo } from "./helperChats/ko";
+import { skillInstallScopeKo } from "./skillInstallScope/ko";
 
 /** Korean Settings titles and labels. "스레드" for thread, as in the message catalog. */
 export const ko: PhraseCatalog = {
   ...syncKo,
+  ...skillInstallScopeKo,
   ...handoffKo,
   ...iphoneKo,
   ...machineLabelsKo,

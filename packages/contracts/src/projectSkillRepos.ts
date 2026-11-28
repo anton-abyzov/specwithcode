@@ -139,6 +139,13 @@ export type ProjectSkillReposResult = typeof ProjectSkillReposResult.Type;
 // Search
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a skill installs on one machine: `user` for every project (vskill
+ * `--global`, from the home folder), `project` in the project's own folder.
+ */
+export const SkillInstallScope = Schema.Literals(["user", "project"]);
+export type SkillInstallScope = typeof SkillInstallScope.Type;
+
 const skillsFolder = {
   projectId: ProjectId,
   cwd: Schema.optional(TrimmedNonEmptyString),
@@ -272,6 +279,8 @@ export const ProjectSkillUpdateOutcome = Schema.Struct({
   after: Schema.NullOr(ProjectSkillSourceVersion),
   message: Schema.optional(Schema.String),
   readiness: Schema.Array(ProjectSkillAgentReadiness),
+  /** For an install: the lock the copy was read back from, user-wide or the project's. */
+  scope: Schema.optional(SkillInstallScope),
 });
 export type ProjectSkillUpdateOutcome = typeof ProjectSkillUpdateOutcome.Type;
 
@@ -288,6 +297,12 @@ export const ProjectSkillsUpdateInput = Schema.Struct({
     Schema.Struct({
       repo: SkillRepoId,
       skill: Schema.String.check(Schema.isPattern(SKILL_REPO_SKILL_PATTERN)),
+      /**
+       * Where it goes, whatever view is open. Absent, it follows the view
+       * (`userLevel`), as before; only servers reporting the `skillInstallScope`
+       * capability read it.
+       */
+      scope: Schema.optional(SkillInstallScope),
     }),
   ),
   refresh: Schema.optional(Schema.Boolean),

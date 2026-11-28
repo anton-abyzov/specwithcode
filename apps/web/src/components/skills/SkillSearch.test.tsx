@@ -9,12 +9,18 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   refresh: vi.fn(),
   scopes: new Set<string>(),
+  machines: [] as unknown[],
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: { fn: unknown }) => atom.fn,
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
-  projectWorkspace: { skillsSearch: { fn: mocks.search }, skillsUpdate: { fn: mocks.update } },
+  projectWorkspace: {
+    skillsSearch: { fn: mocks.search },
+    skillsUpdate: { fn: mocks.update },
+    skillFleetPush: { fn: vi.fn() },
+    skillsRolloutKeep: { fn: vi.fn() },
+  },
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { refreshProviders: { fn: mocks.refresh } },
@@ -27,10 +33,11 @@ vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (_id: string, label: string) => label,
 }));
 vi.mock("../../studio/fleet", () => ({
-  useStudioFleet: () => ({ snapshot: null }),
+  useStudioFleet: () => ({ snapshot: { machines: mocks.machines }, loading: false }),
   useFleetSkillGithubSupported: () => true,
 }));
 import { SkillSearch } from "./SkillSearch";
+import { useSkillInstallScopePick } from "./skillInstallScope.logic";
 
 const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("project");
@@ -202,6 +209,291 @@ describe("skill search", () => {
     ]);
   });
 
+  it("sends the chosen scope, says where it goes while it runs, and names the scope after", async () => {
+    let finish: (value: unknown) => void = () => {};
+    mocks.update.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="user"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(mocks.update.mock.calls[0]?.[0].input.install).toEqual({
+      repo: "anton-abyzov/vskill",
+      skill: "report-builder",
+      scope: "user",
+    });
+    expect(host.querySelector('[data-testid="skill-install-progress"]')?.textContent).toContain(
+      "Installing report-builder for you in every project on M4…",
+    );
+    await act(async () =>
+      finish(
+        success({
+          checkedAt: "2026-11-28T00:00:00.000Z",
+          statuses: [],
+          outcomes: [
+            {
+              skill: "report-builder",
+              outcome: "installed",
+              before: null,
+              after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+              readiness: [],
+              scope: "user",
+            },
+          ],
+        }),
+      ),
+    );
+    expect(host.querySelector('[data-testid="skill-install-progress"]')).toBeNull();
+    expect(host.textContent).toContain("For you, in every project.");
+  });
+
+  it("tells the other list while an install runs, and waits while one runs there", async () => {
+    let finish: (value: unknown) => void = () => {};
+    mocks.update.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const running = vi.fn();
+    const show = (other: boolean) =>
+      act(async () =>
+        root.render(
+          <SkillSearch
+            environmentId={environmentId}
+            projectId={projectId}
+            cwd="/work/app"
+            installScope="user"
+            otherInstallRunning={other}
+            onInstallRunning={running}
+          />,
+        ),
+      );
+    await show(true);
+    await type("report");
+    expect(button("Install").disabled).toBe(true);
+    await show(false);
+    expect(button("Install").disabled).toBe(false);
+    await act(async () => button("Install").click());
+    expect(running.mock.calls).toEqual([[true]]);
+    await act(async () => finish({ ok: false, error: "no" }));
+    expect(running.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("offers Also add on after a User install from a project view", async () => {
+    mocks.machines = [
+      {
+        id: "m4",
+        label: "m4",
+        environmentId: "env-m4",
+        url: "http://m4:8319",
+        status: "reachable",
+        pairingConfigured: true,
+      },
+    ];
+    mocks.update.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-28T00:00:00.000Z",
+        // The project view's statuses carry the user lock the install wrote.
+        statuses: [
+          {
+            skill: "report-builder",
+            repo: "anton-abyzov/vskill",
+            lockScope: "user",
+            installed: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            installedSource: { path: "skills/report-builder/SKILL.md", branch: "main" },
+            latest: null,
+            state: "current",
+          },
+        ],
+        outcomes: [
+          {
+            skill: "report-builder",
+            outcome: "installed",
+            before: null,
+            after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            readiness: [],
+            scope: "user",
+          },
+        ],
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="user"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(host.querySelector('[data-testid="skill-rollout"]')).not.toBeNull();
+    expect(host.textContent).toContain("m4");
+    mocks.machines = [];
+  });
+
+  it("offers nothing to add on when the lock changed after the install", async () => {
+    mocks.machines = [
+      {
+        id: "m4",
+        label: "m4",
+        environmentId: "env-m4",
+        url: "http://m4:8319",
+        status: "reachable",
+        pairingConfigured: true,
+      },
+    ];
+    mocks.update.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-28T00:00:00.000Z",
+        // The project view's statuses carry the user lock the install wrote.
+        statuses: [
+          {
+            skill: "report-builder",
+            repo: "anton-abyzov/vskill",
+            lockScope: "user",
+            // Another install replaced the copy before the scan.
+            installed: { version: "0.5.0", commit: COMMIT, contentHash: "c".repeat(64) },
+            installedSource: { path: "skills/report-builder/SKILL.md", branch: "main" },
+            latest: null,
+            state: "current",
+          },
+        ],
+        outcomes: [
+          {
+            skill: "report-builder",
+            outcome: "installed",
+            before: null,
+            after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            readiness: [],
+            scope: "user",
+          },
+        ],
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="user"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(host.textContent).toContain("For you, in every project.");
+    expect(host.querySelector('[data-testid="skill-rollout"]')).toBeNull();
+    mocks.machines = [];
+  });
+
+  it("offers nothing to add on when only the commit changed after the install", async () => {
+    mocks.machines = [
+      {
+        id: "m4",
+        label: "m4",
+        environmentId: "env-m4",
+        url: "http://m4:8319",
+        status: "reachable",
+        pairingConfigured: true,
+      },
+    ];
+    mocks.update.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-28T00:00:00.000Z",
+        // The project view's statuses carry the user lock the install wrote.
+        statuses: [
+          {
+            skill: "report-builder",
+            repo: "anton-abyzov/vskill",
+            lockScope: "user",
+            // Another install replaced the copy before the scan.
+            installed: { version: "0.4.0", commit: "d".repeat(40), contentHash: "b".repeat(64) },
+            installedSource: { path: "skills/report-builder/SKILL.md", branch: "main" },
+            latest: null,
+            state: "current",
+          },
+        ],
+        outcomes: [
+          {
+            skill: "report-builder",
+            outcome: "installed",
+            before: null,
+            after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            readiness: [],
+            scope: "user",
+          },
+        ],
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="user"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(host.textContent).toContain("For you, in every project.");
+    expect(host.querySelector('[data-testid="skill-rollout"]')).toBeNull();
+    mocks.machines = [];
+  });
+
+  it("says a project install cannot be added on other machines yet", async () => {
+    mocks.update.mockResolvedValue(
+      success({
+        checkedAt: "2026-11-28T00:00:00.000Z",
+        statuses: [],
+        outcomes: [
+          {
+            skill: "report-builder",
+            outcome: "installed",
+            before: null,
+            after: { version: "0.4.0", commit: COMMIT, contentHash: "b".repeat(64) },
+            readiness: [],
+            scope: "project",
+          },
+        ],
+      }),
+    );
+    await act(async () =>
+      root.render(
+        <SkillSearch
+          environmentId={environmentId}
+          projectId={projectId}
+          cwd="/work/app"
+          installScope="project"
+        />,
+      ),
+    );
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(mocks.update.mock.calls[0]?.[0].input.install.scope).toBe("project");
+    expect(host.textContent).toContain("For this project only.");
+    expect(host.textContent).toContain(
+      "Adding it on other machines works for skills installed for you in every project.",
+    );
+  });
+
+  it("enables Install again when the run throws", async () => {
+    mocks.update.mockRejectedValue(new Error("socket closed"));
+    await render();
+    await type("report");
+    await act(async () => button("Install").click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("did not answer");
+    expect(button("Install").disabled).toBe(false);
+  });
+
   it("says why an install failed and keeps the result", async () => {
     mocks.update.mockResolvedValue({
       _tag: "Failure",
@@ -273,5 +565,32 @@ describe("skill search", () => {
     await type("reports");
     expect(host.querySelector("[data-stale]")).not.toBeNull();
     expect(button("Install").disabled).toBe(true);
+  });
+});
+
+describe("install scope pick (1440)", () => {
+  let pick: (scope: "user" | "project") => void = () => {};
+  function Probe({ resolved }: { readonly resolved: "user" | "project" }) {
+    const [chosen, choose] = useSkillInstallScopePick(resolved);
+    pick = choose;
+    return <output data-testid="chosen">{chosen}</output>;
+  }
+  const show = (resolved: "user" | "project") =>
+    act(async () => root.render(<Probe resolved={resolved} />));
+  const chosen = () => host.querySelector('[data-testid="chosen"]')!.textContent;
+
+  it("keeps a pick while the default holds, and drops it for good when the default changes", async () => {
+    await show("project");
+    await act(async () => pick("user"));
+    expect(chosen()).toBe("user");
+    // Another window saving the same default changes nothing.
+    await show("project");
+    expect(chosen()).toBe("user");
+    // A new default replaces the pick.
+    await show("user");
+    expect(chosen()).toBe("user");
+    // Changing back does not revive the old pick.
+    await show("project");
+    expect(chosen()).toBe("project");
   });
 });

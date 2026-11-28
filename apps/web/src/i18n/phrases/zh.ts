@@ -10,10 +10,12 @@ import { limitHopsZh } from "./limitHops/zh";
 import { installedPagesZh } from "./installedPages/zh";
 import { guidedTourZh } from "./guidedTour/zh";
 import { helperChatsZh } from "./helperChats/zh";
+import { skillInstallScopeZh } from "./skillInstallScope/zh";
 
 /** Simplified Chinese Settings titles and labels. "会话" for thread, as in the message catalog. */
 export const zh: PhraseCatalog = {
   ...syncZh,
+  ...skillInstallScopeZh,
   ...handoffZh,
   ...iphoneZh,
   ...machineLabelsZh,

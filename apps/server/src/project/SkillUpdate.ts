@@ -272,6 +272,9 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
         : {
             path: entry.sourceSkillPath ?? null,
             branch: entry.sourceBranch ?? null,
+            scope: entry.scope ?? null,
+            /** The GitHub repo the entry was installed from, as `owner/name`. */
+            repo: /^github:([^/#\s]+\/[^/#\s]+?)(?:\.git)?$/.exec(entry.source ?? "")?.[1] ?? null,
             version: {
               version: entry.version,
               commit: entry.sourceCommitSha ?? null,
@@ -405,6 +408,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
   });
 
   type RunResult = Omit<ProjectSkillUpdateOutcome, "readiness">;
+  type LockRead = NonNullable<Effect.Success<ReturnType<typeof lockEntry>>>;
 
   /** One `vskill install` from a GitHub source, then the lock read back. */
   const install = (input: {
@@ -418,6 +422,8 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
     /** The source the comparison read, which the lock must record afterwards. */
     readonly source: { readonly branch: string; readonly path: string };
     readonly expected: ProjectSkillSourceVersion;
+    /** Called with the verified entry, from the same read the outcome came from. */
+    readonly verified?: (entry: LockRead) => void;
   }): Effect.Effect<RunResult> =>
     Effect.gen(function* () {
       const before = yield* lockEntry(input.lockPath, input.lockName);
@@ -473,6 +479,7 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       // Success is the lock recording the compared content from the compared source.
       // A rewritten timestamp proves nothing.
       if (
+        after.repo?.toLowerCase() !== input.repo.toLowerCase() ||
         after.path !== input.source.path ||
         after.branch !== input.source.branch ||
         after.version.contentHash === null ||
@@ -480,10 +487,20 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
       )
         return {
           ...failed(
-            `vskill finished, but the lock records ${formatSkillSourceVersion(after.version) || "another copy"} from ${after.path ?? "an unknown path"} on ${after.branch ?? "an unknown branch"}, not ${formatSkillSourceVersion(input.expected)} from ${input.source.path} on ${input.source.branch}. The source may have moved; check again.`,
+            `vskill finished, but the lock records ${formatSkillSourceVersion(after.version) || "another copy"} from ${after.repo ?? "an unknown repo"} ${after.path ?? "an unknown path"} on ${after.branch ?? "an unknown branch"}, not ${formatSkillSourceVersion(input.expected)} from ${input.repo} ${input.source.path} on ${input.source.branch}. The source may have moved; check again.`,
           ),
           after: after.version,
         };
+      // vskill 1.2 records the scope in each entry; one written for the other scope fails.
+      const scope = input.user ? "user" : "project";
+      if (after.scope != null && after.scope !== scope)
+        return {
+          ...failed(
+            `vskill finished, but ${input.lockPath} records ${input.lockName} for ${after.scope === "user" ? "every project" : "one project"}, not ${input.user ? "every project" : "this project"}. Check it with vskill list.`,
+          ),
+          after: after.version,
+        };
+      input.verified?.(after);
       const outcome =
         before === null
           ? "installed"
@@ -637,16 +654,32 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
             ? `${repo.repo} no longer holds ${ask.skill}.`
             : skillRepoRefusalMessage(read.state, repo.repo, "this machine"),
         );
-      const user = input.userLevel === true;
-      const cwd = user ? deps.home : yield* deps.resolveCwd(folderOf(input));
+      // An explicit scope wins over the open view (1440): "This project" from the
+      // machine view has no project folder, so it is refused rather than guessed.
+      const user = ask.scope === undefined ? input.userLevel === true : ask.scope === "user";
+      if (!user && input.userLevel === true)
+        return yield* actionError(
+          input.projectId,
+          "scope_unsupported",
+          "Open a project to install a skill for that project only.",
+        );
+      // The view's folder is checked before anything is written, so a stale thread
+      // folder refuses the run instead of failing after the user lock changed.
+      const viewCwd = yield* deps.resolveCwd(folderOf(input));
+      const cwd = user ? deps.home : viewCwd;
+      const lockPath = user ? userLockPath : path.join(cwd, "vskill.lock");
+      const written: { entry: LockRead | null } = { entry: null };
       const result = yield* install({
+        verified: (entry) => {
+          written.entry = entry;
+        },
         skill: ask.skill,
         lockName: ask.skill,
         repo: repo.repo,
         visibility: read.visibility,
         user,
         cwd,
-        lockPath: user ? userLockPath : path.join(cwd, "vskill.lock"),
+        lockPath,
         source: { branch: read.branch, path: read.skill.path },
         expected: {
           version: read.skill.version,
@@ -654,7 +687,34 @@ export const makeSkillUpdates = Effect.fn("SkillUpdates.make")(function* (deps: 
           contentHash: read.skill.contentHash,
         },
       });
-      return yield* settle(input, [result]);
+      if (result.outcome === "failed") return yield* settle(input, [result]);
+      // The scope is the lock the copy was verified in, which also checked the entry's own record.
+      const scope = user ? "user" : "project";
+      const settled = yield* settle(input, [{ ...result, scope }]);
+      const verifiedEntry = written.entry;
+      // "Also add on" sends the copy this run verified: its repo, folder, branch, commit
+      // and hash. A scanned user status is replaced, since another install may have
+      // changed the lock since, and with a copy in the project too the scan lists none.
+      if (!user || verifiedEntry === null) return settled;
+      return {
+        ...settled,
+        statuses: [
+          ...settled.statuses.filter(
+            (status) => !(status.skill === ask.skill && status.lockScope === "user"),
+          ),
+          {
+            skill: ask.skill,
+            repo: repo.repo,
+            lockScope: "user",
+            installed: verifiedEntry.version,
+            ...(verifiedEntry.path !== null && verifiedEntry.branch !== null
+              ? { installedSource: { path: verifiedEntry.path, branch: verifiedEntry.branch } }
+              : {}),
+            latest: verifiedEntry.version,
+            state: "current",
+          } satisfies ProjectSkillSourceStatus,
+        ],
+      };
     });
 
   const update = (

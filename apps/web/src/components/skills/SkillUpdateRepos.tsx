@@ -10,8 +10,10 @@ import {
   parseSkillRepoRef,
   type ProjectSkillRepo,
   type ProjectSkillReposResult,
+  type ProjectSkillSourceStatus,
   type ProjectSkillUpdateOutcome,
   type SkillRepoRefusalReason,
+  type SkillInstallScope,
 } from "@specweave-studio/contracts";
 import { useState } from "react";
 
@@ -26,6 +28,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
+import { PROGRESS_PHRASES } from "./skillInstallScope.logic";
+import { SkillRolloutAfter } from "./SkillRollout";
 import {
   REPO_REFUSAL_PHRASES,
   SKILL_CHANGE_PERMISSION,
@@ -40,9 +44,18 @@ import {
 
 export function SkillUpdateRepos({
   onChanged,
+  installScope = null,
+  otherInstallRunning = false,
+  onInstallRunning,
   ...scope
 }: SkillFolderScope & {
   /** Called after an install changed this machine. */ onChanged?: () => void;
+  /** Where Install puts a skill; null on a server that only follows the open view. */
+  installScope?: SkillInstallScope | null;
+  /** An install started from the other list is still running. */
+  otherInstallRunning?: boolean;
+  /** Told when an install from this list starts and ends. */
+  onInstallRunning?: (running: boolean) => void;
 }) {
   const tx = useTx();
   const { environmentId, projectId } = scope;
@@ -57,8 +70,11 @@ export function SkillUpdateRepos({
   const [changed, setChanged] = useState<ProjectSkillReposResult | null>(null);
   const [text, setText] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  // The scope a running install was sent with; the chooser may change meanwhile.
+  const [runScope, setRunScope] = useState<SkillInstallScope | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outcomes, setOutcomes] = useState<ReadonlyArray<ProjectSkillUpdateOutcome>>([]);
+  const [statuses, setStatuses] = useState<ReadonlyArray<ProjectSkillSourceStatus>>([]);
 
   const data = changed ?? query.data;
   const repos: ReadonlyArray<ProjectSkillRepo> = data?.repos ?? [];
@@ -104,14 +120,31 @@ export function SkillUpdateRepos({
 
   const install = async (repo: string, skill: string) => {
     setPending(`install:${repo}/${skill}`);
+    onInstallRunning?.(true);
+    setRunScope(installScope);
     setError(null);
-    const done = await run({ operation: "install", install: { repo, skill } });
-    setPending(null);
+    setOutcomes([]);
+    let done: Awaited<ReturnType<typeof run>>;
+    try {
+      done = await run({
+        operation: "install",
+        install: { repo, skill, ...(installScope === null ? {} : { scope: installScope }) },
+      });
+    } catch {
+      done = {
+        ok: false,
+        error: tx("The install did not answer. Check the skill list, then try again."),
+      };
+    } finally {
+      setPending(null);
+      onInstallRunning?.(false);
+    }
     if (!done.ok) {
       setError(done.error);
       return;
     }
     setOutcomes(done.value.outcomes ?? []);
+    setStatuses(done.value.statuses);
   };
 
   return (
@@ -191,8 +224,30 @@ export function SkillUpdateRepos({
           {error ?? query.error}
         </p>
       ) : null}
+      {pending?.startsWith("install:") ? (
+        <p role="status" className="flex items-center gap-1.5 text-xs text-foreground">
+          <Spinner className="size-3" />
+          {runScope === null
+            ? tx("Installing {skill} on {machine}…", {
+                skill: pending.split("/").at(-1) ?? pending,
+                machine,
+              })
+            : tx(PROGRESS_PHRASES[runScope], {
+                skill: pending.split("/").at(-1) ?? pending,
+                machine,
+              })}
+        </p>
+      ) : null}
       {outcomes.map((outcome) => (
-        <SkillUpdateOutcomeLine key={outcome.skill} outcome={outcome} />
+        <div key={outcome.skill} className="space-y-2">
+          <SkillUpdateOutcomeLine outcome={outcome} />
+          <SkillRolloutAfter
+            environmentId={environmentId}
+            projectId={projectId}
+            outcome={outcome}
+            statuses={statuses}
+          />
+        </div>
       ))}
       {repos.length > 0 ? (
         <ul className="space-y-2">
@@ -253,7 +308,7 @@ export function SkillUpdateRepos({
                           size="xs"
                           variant="outline"
                           type="button"
-                          disabled={!canRun || busy}
+                          disabled={!canRun || busy || otherInstallRunning}
                           onClick={() => void install(repo.repo, skill.name)}
                         >
                           {pending === `install:${repo.repo}/${skill.name}` ? (

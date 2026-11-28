@@ -524,6 +524,18 @@ export function SkillRollout({
   );
 }
 
+function sameSkillCopy(
+  a: ProjectSkillUpdateOutcome["after"],
+  b: ProjectSkillUpdateOutcome["after"],
+): boolean {
+  if (a === null || b === null) return false;
+  // The rollout installs by commit, so the commit must agree even when SKILL.md does:
+  // a bundled file can change alone.
+  if (a.commit !== b.commit) return false;
+  if (a.contentHash !== null && b.contentHash !== null) return a.contentHash === b.contentHash;
+  return a.version === b.version;
+}
+
 /** "Also add on" under an install or update outcome, for the skill as the lock now records it. */
 export function SkillRolloutAfter({
   environmentId,
@@ -545,6 +557,8 @@ export function SkillRolloutAfter({
   const status = statuses.find(
     (entry) => entry.skill === outcome.skill && entry.lockScope === "user",
   );
-  if (status === undefined) return null;
+  // Only the copy this run left: if the lock changed since (another install), the
+  // receipt and "Also add on" would name different versions, so nothing is offered.
+  if (status === undefined || !sameSkillCopy(status.installed, outcome.after)) return null;
   return <SkillRollout environmentId={environmentId} projectId={projectId} status={status} />;
 }

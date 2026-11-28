@@ -10,10 +10,12 @@ import { limitHopsDe } from "./limitHops/de";
 import { installedPagesDe } from "./installedPages/de";
 import { guidedTourDe } from "./guidedTour/de";
 import { helperChatsDe } from "./helperChats/de";
+import { skillInstallScopeDe } from "./skillInstallScope/de";
 
 /** German Settings titles and labels, informal "du", as in the message catalog. */
 export const de: PhraseCatalog = {
   ...syncDe,
+  ...skillInstallScopeDe,
   ...handoffDe,
   ...iphoneDe,
   ...machineLabelsDe,

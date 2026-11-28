@@ -63,3 +63,17 @@ describe("requiredScopesForServerSettingsPatch: project scripts", () => {
     ]);
   });
 });
+
+// 1440: where skills install is a settings change, for the machine and for one project.
+describe("requiredScopesForServerSettingsPatch: skill install default", () => {
+  it("needs only settings write for the machine default and a project's own", () => {
+    expect(requiredScopesForServerSettingsPatch({ skillInstallScope: "user" })).toEqual([
+      AuthSettingsWriteScope,
+    ]);
+    expect(
+      requiredScopesForServerSettingsPatch({
+        projectSettingsOverrideChanges: { [projectId]: { set: { skillInstallScope: "user" } } },
+      }),
+    ).toEqual([AuthSettingsWriteScope]);
+  });
+});
